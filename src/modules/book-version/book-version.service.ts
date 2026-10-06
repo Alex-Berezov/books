@@ -16,6 +16,11 @@ import { RightsClearanceLockService } from '../rights-intake/rights-clearance-lo
 import { TerritoryRegionAggregationService } from '../rights-intake/territory-region-aggregation.service';
 import { RightsProfileService } from '../rights-intake/rights-profile.service';
 import type { RightsProfileDetailDto } from '../rights-intake/dto/rights-profile-response.dto';
+import type { RightsIntakeResponseDto } from '../rights-intake/dto/rights-intake-response.dto';
+import type { RightsReviewApprovalDto } from '../rights-intake/dto/rights-review-approval.dto';
+import { mapRightsReviewApproval } from '../rights-intake/rights-review-approval.mapper';
+import type { BookRightsDashboardReviewDto } from './dto/rights-dashboard-review.dto';
+import { mapDashboardReview } from './rights-dashboard-review.mapper';
 import { Language, BookType, Prisma, AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { ContributorRole } from '../persons/person-interface';
 import { CreateBookVersionContributorDto } from './dto/create-version-contributor.dto';
@@ -558,28 +563,31 @@ export class BookVersionService {
     });
 
     const intakeId = version.book.rightsIntakeId;
-    let intake: Record<string, unknown> | null = null;
-    let approvalHistory: Record<string, unknown>[] = [];
+    let intake: RightsIntakeResponseDto | null = null;
+    let approvalHistory: RightsReviewApprovalDto[] = [];
     if (intakeId) {
+      // Строка целиком, без связей — ровно то, что отдаёт `GET /admin/rights/intakes/:id`;
+      // даты уходят в JSON строками, поэтому форма ответа — `RightsIntakeResponseDto`.
       const foundIntake = await this.prisma.rightsIntake.findUnique({
         where: { id: intakeId },
       });
-      intake = (foundIntake as Record<string, unknown> | null) || null;
+      intake = (foundIntake as unknown as RightsIntakeResponseDto | null) || null;
 
       const foundApprovals = await this.prisma.rightsReviewApproval.findMany({
         where: { rightsIntakeId: intakeId },
+        include: { decidedByUser: { select: { id: true, name: true, email: true } } },
         orderBy: { createdAt: 'desc' },
       });
-      approvalHistory = (foundApprovals as Record<string, unknown>[]) || [];
+      approvalHistory = foundApprovals.map(mapRightsReviewApproval);
     }
 
     const profileId = version.rightsProfileId || version.book.currentRightsProfileId;
     // Типизированная проекция — все чтения полей профиля в методе идут через неё, имена полей
-    // сверяет компилятор; `currentProfile` — она же в широком типе контракта дашборда.
+    // сверяет компилятор; `currentProfile` — она же с подменой покрытия и регионов ниже.
     let profileDetail: RightsProfileDetailDto | null = null;
-    let currentProfile: Record<string, unknown> | null = null;
-    let reviewHistory: Record<string, unknown>[] = [];
-    let approvedReview: Record<string, unknown> | null = null;
+    let currentProfile: RightsProfileDetailDto | null = null;
+    let reviewHistory: BookRightsDashboardReviewDto[] = [];
+    let approvedReview: BookRightsDashboardReviewDto | null = null;
 
     if (profileId) {
       // LEGACY-412: дашборд раньше собирал профиль своей сырой выборкой Prisma мимо
@@ -596,19 +604,16 @@ export class BookVersionService {
         }
       }
       if (profileDetail) {
-        currentProfile = profileDetail as unknown as Record<string, unknown>;
+        currentProfile = profileDetail;
         const foundReviews = await this.prisma.rightsReview.findMany({
           where: { rightsProfileId: profileId },
-          include: {
-            rightsReviewImport: true,
-          },
           orderBy: { createdAt: 'desc' },
         });
-        reviewHistory = (foundReviews as Record<string, unknown>[]) || [];
+        reviewHistory = foundReviews.map(mapDashboardReview);
         const approvedId = version.approvedRightsReviewId || version.book.approvedRightsReviewId;
         if (approvedId) {
           approvedReview =
-            reviewHistory.find((r) => r['id'] === approvedId) || reviewHistory[0] || null;
+            reviewHistory.find((r) => r.id === approvedId) || reviewHistory[0] || null;
         } else {
           approvedReview = reviewHistory[0] || null;
         }
@@ -697,11 +702,11 @@ export class BookVersionService {
     // что отдаётся в этом ответе; проекция профиля берёт интейк профиля, и при снимке профиля
     // из другого интейка доли NOT_TARGETED разошлись бы. Как и покрытие, подменяется в профиле.
     const regionalTerritorySummary =
-      (this.regionAggregationService?.aggregateTerritoryDecisions(
+      this.regionAggregationService?.aggregateTerritoryDecisions(
         territoryDecisions,
         intakeTargetCountryCodes,
-      ) as unknown as Array<Record<string, unknown>>) ||
-      (profileDetail?.regionalTerritorySummary as unknown as Array<Record<string, unknown>>) ||
+      ) ||
+      profileDetail?.regionalTerritorySummary ||
       [];
 
     // LEGACY-412: счётчики участников уже посчитаны проекцией профиля — второе правило
@@ -788,17 +793,17 @@ export class BookVersionService {
 
     const regionCount = regionalTerritorySummary.length;
     const blockedRegionCount = regionalTerritorySummary.filter(
-      (r) => r['status'] === 'BLOCKED',
+      (r) => r.status === 'BLOCKED',
     ).length;
     const licenseRequiredRegionCount = regionalTerritorySummary.filter(
-      (r) => r['status'] === 'LICENSE_REQUIRED',
+      (r) => r.status === 'LICENSE_REQUIRED',
     ).length;
     const pendingReviewRegionCount = regionalTerritorySummary.filter(
-      (r) => r['status'] === 'PENDING_REVIEW',
+      (r) => r.status === 'PENDING_REVIEW',
     ).length;
-    const mixedRegionCount = regionalTerritorySummary.filter((r) => r['status'] === 'MIXED').length;
+    const mixedRegionCount = regionalTerritorySummary.filter((r) => r.status === 'MIXED').length;
     const notTargetedRegionCount = regionalTerritorySummary.filter(
-      (r) => r['status'] === 'NOT_TARGETED',
+      (r) => r.status === 'NOT_TARGETED',
     ).length;
 
     // WP-1.2а. A version whose market restrictions are mandatory is only actually restricted while

@@ -5345,23 +5345,17 @@ export interface components {
       type: string;
     };
     BookRightsDashboardDto: {
-      approvalHistory: string[];
-      approvedReview: {
-        [key: string]: unknown;
-      } | null;
+      approvalHistory: components['schemas']['RightsReviewApprovalDto'][];
+      approvedReview: components['schemas']['BookRightsDashboardReviewDto'] | null;
       book: components['schemas']['BookRightsDashboardBookSummaryDto'];
       /** @description Phase 16: up to 50 most recent claims for this version and its book */
       claims: components['schemas']['RightsClaimSummaryDto'][];
       contentHash: components['schemas']['RightsContentHashCheckDto'] | null;
-      currentProfile: {
-        [key: string]: unknown;
-      } | null;
+      currentProfile: components['schemas']['RightsProfileDetailDto'] | null;
       currentVersion: components['schemas']['BookRightsDashboardCurrentVersionDto'];
       /** @description WP-1.2а: health of the GeoIP country source Phase 12 depends on. Counters are per process */
       geoCountrySource: components['schemas']['GeoCountrySourceHealthDto'] | null;
-      intake: {
-        [key: string]: unknown;
-      } | null;
+      intake: components['schemas']['RightsIntakeResponseDto'] | null;
       /** @description Phase 19: up to 50 legal reviews of the rights profile of this version */
       lawyerReviews: components['schemas']['LawyerReviewDto'][];
       pendingLawyerConditions: components['schemas']['LawyerConditionDto'][];
@@ -5369,7 +5363,7 @@ export interface components {
       recheckSchedule: components['schemas']['RecheckScheduleDto'] | null;
       /** @description Phase 18: up to 50 recheck tasks of this version and its rights profile */
       recheckTasks: components['schemas']['RecheckTaskDto'][];
-      reviewHistory: string[];
+      reviewHistory: components['schemas']['BookRightsDashboardReviewDto'][];
       summary: components['schemas']['BookRightsDashboardMetricsDto'];
       versions: components['schemas']['BookRightsDashboardVersionListItemDto'][];
     };
@@ -5494,14 +5488,47 @@ export interface components {
       reviewsCount: number;
       /** @example 0 */
       revokedLicensesCount: number;
-      /** @example HIGH */
-      riskLevel: string | null;
+      /**
+       * @example HIGH
+       * @enum {string|null}
+       */
+      riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' | null;
       /** @example 0 */
       translatorsCount: number;
       /** @example 0 */
       unresolvedBlockingActionsCount: number;
       /** @example HIGH */
       worstClaimSeverity: string | null;
+    };
+    BookRightsDashboardReviewDto: {
+      approvalNotesRu: string | null;
+      approvedAt: string | null;
+      approvedByUserId: string | null;
+      chainRootReviewId: string | null;
+      conclusionRu: string;
+      confidence: string;
+      createdAt: string;
+      id: string;
+      lawyerApprovedAt: string | null;
+      lawyerNameSnapshot: string | null;
+      lawyerReviewId: string | null;
+      lawyerReviewRequired: boolean;
+      nextReviewAt: string | null;
+      overallStatus: string;
+      previousReviewId: string | null;
+      publicationGate: string;
+      reasoningRu: string | null;
+      rejectedAt: string | null;
+      rejectedByUserId: string | null;
+      rejectionReasonRu: string | null;
+      reviewerType: string;
+      revisionNumber: number;
+      rightsProfileId: string;
+      rightsReviewImportId: string;
+      schemaVersion: string | null;
+      status: string;
+      summaryRu: string;
+      updatedAt: string;
     };
     BookRightsDashboardVersionListItemDto: {
       /** @example review-uuid */

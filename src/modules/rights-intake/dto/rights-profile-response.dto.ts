@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional, OmitType } from '@nestjs/swagger';
 import {
   ContributorRole,
   PersonType,
@@ -130,6 +130,16 @@ export class RightsReviewDto {
   @ApiProperty() createdAt!: string;
   @ApiProperty() updatedAt!: string;
 }
+
+/**
+ * Колонки проверки без связей (пользователей решения и списка решений) — форма общей проекции
+ * `mapRightsReviewColumns`; на ней стоит история проверок дашборда версии (`LEGACY-183`, `T104j`).
+ */
+export class RightsReviewColumnsDto extends OmitType(RightsReviewDto, [
+  'approvedByUser',
+  'rejectedByUser',
+  'approvals',
+] as const) {}
 
 export class ComponentTerritoryAssessmentDto {
   @ApiProperty() id!: string;

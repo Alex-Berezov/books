@@ -1,7 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { RightsRiskLevel } from '@prisma/client';
 import { GeoCountrySourceHealthDto } from '../../geo-block/dto/geo-block.dto';
 import { PublicationGateResultDto } from './publication-gate-result.dto';
 import { RightsContentHashCheckDto } from '../../rights-intake/dto/rights-content-hash.dto';
+import { RightsIntakeResponseDto } from '../../rights-intake/dto/rights-intake-response.dto';
+import { RightsProfileDetailDto } from '../../rights-intake/dto/rights-profile-response.dto';
+import { RightsReviewApprovalDto } from '../../rights-intake/dto/rights-review-approval.dto';
+import { BookRightsDashboardReviewDto } from './rights-dashboard-review.dto';
 import { RightsClaimSummaryDto } from '../../rights-claims/dto/rights-claim-response.dto';
 import {
   RecheckScheduleDto,
@@ -301,8 +306,8 @@ export class BookRightsDashboardMetricsDto {
   recheckPolicy!: string | null;
 
   // Phase 19: lawyer workflow
-  @ApiProperty({ type: String, nullable: true, example: 'HIGH' })
-  riskLevel!: string | null;
+  @ApiProperty({ enum: RightsRiskLevel, nullable: true, example: 'HIGH' })
+  riskLevel!: RightsRiskLevel | null;
 
   @ApiProperty({ type: Boolean, example: false })
   lawyerReviewRequired!: boolean;
@@ -343,20 +348,20 @@ export class BookRightsDashboardDto {
   @ApiProperty({ type: [BookRightsDashboardVersionListItemDto] })
   versions!: BookRightsDashboardVersionListItemDto[];
 
-  @ApiProperty({ type: 'object', additionalProperties: true, nullable: true })
-  intake!: Record<string, unknown> | null;
+  @ApiProperty({ type: RightsIntakeResponseDto, nullable: true })
+  intake!: RightsIntakeResponseDto | null;
 
-  @ApiProperty({ type: 'object', additionalProperties: true, nullable: true })
-  currentProfile!: Record<string, unknown> | null;
+  @ApiProperty({ type: RightsProfileDetailDto, nullable: true })
+  currentProfile!: RightsProfileDetailDto | null;
 
-  @ApiProperty({ type: 'object', additionalProperties: true, nullable: true })
-  approvedReview!: Record<string, unknown> | null;
+  @ApiProperty({ type: BookRightsDashboardReviewDto, nullable: true })
+  approvedReview!: BookRightsDashboardReviewDto | null;
 
-  @ApiProperty({ type: Array })
-  reviewHistory!: Record<string, unknown>[];
+  @ApiProperty({ type: [BookRightsDashboardReviewDto] })
+  reviewHistory!: BookRightsDashboardReviewDto[];
 
-  @ApiProperty({ type: Array })
-  approvalHistory!: Record<string, unknown>[];
+  @ApiProperty({ type: [RightsReviewApprovalDto] })
+  approvalHistory!: RightsReviewApprovalDto[];
 
   @ApiProperty({ type: PublicationGateResultDto, nullable: true })
   publicationGate!: PublicationGateResultDto | null;

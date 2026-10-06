@@ -2751,12 +2751,25 @@ describe('BookVersionService', () => {
         overallStatus: 'PUBLISHABLE',
         publicationGate: 'ALLOW',
         confidence: 'HIGH',
-        rightsReviewImport: { id: 'import-1' },
+        approvedAt: new Date('2026-07-25T09:00:00Z'),
+        rejectedAt: null,
+        createdAt: new Date('2026-07-25T08:00:00Z'),
+        updatedAt: new Date('2026-07-25T09:00:00Z'),
+      };
+
+      // Новее одобренной: `approvedReview` обязан найтись по id, а не взяться первым в списке.
+      const mockNewerReview = {
+        ...mockReview,
+        id: 'review-2',
+        approvedAt: null,
+        createdAt: new Date('2026-07-27T08:00:00Z'),
+        updatedAt: new Date('2026-07-27T08:00:00Z'),
       };
 
       const mockApproval = {
         id: 'approval-1',
         rightsIntakeId: 'intake-1',
+        decidedByUser: { id: 'user-1', name: null, email: 'admin@example.com' },
         decision: 'APPROVED',
         createdAt: new Date('2026-07-26T10:00:00Z'),
       };
@@ -2777,7 +2790,7 @@ describe('BookVersionService', () => {
             mockProfile.territoryDecisions,
           ),
       });
-      prisma.rightsReview.findMany.mockResolvedValue([mockReview]);
+      prisma.rightsReview.findMany.mockResolvedValue([mockNewerReview, mockReview]);
 
       (gateService.checkVersionCanPublish as jest.Mock).mockResolvedValue({
         canPublish: true,
@@ -2810,20 +2823,46 @@ describe('BookVersionService', () => {
       expect(res.summary.licenseRequiredRegionCount).toBe(1);
       expect(res.versions).toHaveLength(2);
       expect(res.currentProfile).toBeDefined();
-      expect(
-        (res.currentProfile?.['sourceEdition'] as Record<string, unknown>)['editionRights'],
-      ).toBeDefined();
-      expect(res.currentProfile?.['regionalTerritorySummary'] as unknown[]).toHaveLength(7);
-      expect(
-        (res.currentProfile?.['components'] as Array<Record<string, unknown>>)[0][
-          'territoryAssessments'
-        ] as unknown[],
-      ).toHaveLength(3);
+      expect(res.currentProfile?.sourceEdition?.editionRights).toBeDefined();
+      expect(res.currentProfile?.regionalTerritorySummary).toHaveLength(7);
+      expect(res.currentProfile?.components[0].territoryAssessments).toHaveLength(3);
       // LEGACY-412: дашборд зовёт ту же проекцию, что и ручка профиля, вместо своей выборки.
       expect(rightsProfileService.getById).toHaveBeenCalledTimes(1);
       expect(rightsProfileService.getById).toHaveBeenCalledWith('profile-1');
-      expect(res.reviewHistory).toHaveLength(1);
+      expect(res.reviewHistory).toHaveLength(2);
+      expect(res.approvedReview?.id).toBe('review-1');
+      // Интейк — строка `findUnique` по id интейка книги, как у `GET /admin/rights/intakes/:id`.
+      expect(prisma.rightsIntake.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.rightsIntake.findUnique).toHaveBeenCalledWith({ where: { id: 'intake-1' } });
+      expect(res.intake).toBe(mockIntake);
+      // Контракт `BookRightsDashboardReviewDto`: даты строкой, отчёт импорта в историю не уходит.
+      expect(res.reviewHistory[1]).toMatchObject({
+        id: 'review-1',
+        approvedAt: '2026-07-25T09:00:00.000Z',
+        rejectedAt: null,
+        createdAt: '2026-07-25T08:00:00.000Z',
+      });
+      expect(res.reviewHistory[1]).not.toHaveProperty('rightsReviewImport');
+      expect(prisma.rightsReview.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.rightsReview.findMany).toHaveBeenCalledWith({
+        where: { rightsProfileId: 'profile-1' },
+        orderBy: { createdAt: 'desc' },
+      });
+      // Контракт `RightsReviewApprovalDto`: пользователь решения подгружен, дата строкой.
+      expect(prisma.rightsReviewApproval.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.rightsReviewApproval.findMany).toHaveBeenCalledWith({
+        where: { rightsIntakeId: 'intake-1' },
+        include: { decidedByUser: { select: { id: true, name: true, email: true } } },
+        orderBy: { createdAt: 'desc' },
+      });
       expect(res.approvalHistory).toHaveLength(1);
+      // `User.name = null` уходит `undefined` (в JSON — без ключа): схема объявляет `name?: string`.
+      expect(res.approvalHistory[0].decidedByUser?.name).toBeUndefined();
+      expect(res.approvalHistory[0]).toMatchObject({
+        id: 'approval-1',
+        createdAt: '2026-07-26T10:00:00.000Z',
+        decidedByUser: { id: 'user-1', email: 'admin@example.com' },
+      });
       expect(res.summary.isStale).toBe(false);
 
       // Решение владельца 27.09.2026: расхождение хеша без пометки на версии — не устаревание.
