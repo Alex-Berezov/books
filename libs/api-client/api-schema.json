@@ -36011,6 +36011,9 @@
           }
         ],
         "responses": {
+          "204": {
+            "description": "Deleted; no body"
+          },
           "429": {
             "description": "Rate limit exceeded"
           }

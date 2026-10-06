@@ -18527,6 +18527,13 @@ export interface operations {
     };
     requestBody?: never;
     responses: {
+      /** @description Deleted; no body */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
       /** @description Rate limit exceeded */
       429: {
         headers: {

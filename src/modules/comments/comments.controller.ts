@@ -17,6 +17,7 @@ import {
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiExtraModels,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
@@ -151,6 +152,7 @@ export class CommentsController {
   @UseGuards(JwtAuthGuard, RateLimitGuard)
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Delete (soft) comment. Owner or admin/content_manager.' })
+  @ApiNoContentResponse({ description: 'Deleted; no body' })
   @ApiTooManyRequestsResponse({ description: 'Rate limit exceeded' })
   async remove(@Req() req: { user: RequestUser }, @Param('id') id: string) {
     await this.service.remove(id, req.user);
