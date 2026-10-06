@@ -6710,6 +6710,7 @@
           "slug": {
             "description": "Unique book slug. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: \"harry-potter\", \"book-123\"",
             "example": "harry-potter",
+            "maxLength": 100,
             "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
             "type": "string"
           }
@@ -6727,7 +6728,7 @@
             "type": "boolean"
           },
           "slug": {
-            "description": "Book slug",
+            "description": "Book slug. A new book's slug is at most 100 characters; when attaching, the existing book's slug is accepted as is",
             "example": "the-picture-of-dorian-gray",
             "type": "string"
           },
@@ -22239,6 +22240,7 @@
           "slug": {
             "description": "Unique book slug. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: \"harry-potter\", \"book-123\"",
             "example": "harry-potter-updated",
+            "maxLength": 100,
             "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
             "type": "string"
           }

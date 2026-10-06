@@ -42,3 +42,19 @@ describe('UpdatePageDto: faq и sections (LEGACY-381)', () => {
     expect(errors({ sections: { bookCollections: [1, 2, 3] } })).toEqual([]);
   });
 });
+
+describe('UpdatePageDto: слаг (LEGACY-437)', () => {
+  it('принимает отсутствующий и верный слаг', () => {
+    expect(errors({})).toEqual([]);
+    expect(errors({ slug: 'about-us' })).toEqual([]);
+  });
+
+  it('отбивает `null`: колонка NOT NULL, иначе 500', () => {
+    expect(errors({ slug: null })).toContain('slug');
+  });
+
+  it('отбивает неверный формат', () => {
+    expect(errors({ slug: 'About Us' })).toContain('slug');
+    expect(errors({ slug: '' })).toContain('slug');
+  });
+});

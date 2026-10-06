@@ -8,6 +8,7 @@ import {
   IsString,
   Matches,
   MinLength,
+  ValidateIf,
   ValidateNested,
   MaxLength,
 } from 'class-validator';
@@ -19,7 +20,8 @@ import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-
 
 export class UpdatePageDto {
   @ApiPropertyOptional({ description: 'Page slug', pattern: SLUG_PATTERN })
-  @IsOptional()
+  // `LEGACY-437`: `null` в `Page.slug` NOT NULL — 500; пропускается только отсутствующее поле.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
   slug?: string;

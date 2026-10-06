@@ -335,14 +335,14 @@ export class CreateBookDto {
 }
 ```
 
-### Update DTO — все поля `?` + `@IsOptional()`
+### Update DTO — все поля `?` + `@IsOptional()` (кроме колонок `NOT NULL`, см. ниже)
 
 ```ts
 export class UpdateBookDto {
   @ApiPropertyOptional({ example: 'my-book' })
-  @IsOptional()
+  @ValidateIf((_o, value) => value !== undefined) // `Book.slug` NOT NULL — см. исключение ниже
   @IsString()
-  @Matches(SLUG_PATTERN)
+  @Matches(SLUG_REGEX)
   slug?: string;
 
   @ApiPropertyOptional({ example: 'My Book' })
@@ -364,7 +364,8 @@ export class UpdateBookDto {
   description?: string;
 ```
 
-Живой пример — `description` и `coverImageUrl` в `UpdateBookVersionDto`: пустая строка там
+Живые примеры — `slug` в `UpdateBookDto` и `UpdatePageDto` (пустая строка там отбивается форматом слага);
+`description` и `coverImageUrl` в `UpdateBookVersionDto`: пустая строка там
 разрешена (черновик так очищают), `null` — нет. Возврат к `@IsOptional()` в этих полях вернёт
 пятисотку, поэтому правило выше на них не распространяется.
 

@@ -8,17 +8,34 @@ import {
   ValidateIf,
   ValidateNested,
   Matches,
+  ValidateBy,
 } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { CreateBookFromClearanceVersionDto } from './create-book-from-clearance-version.dto';
+import { SLUG_MAX_LENGTH, SLUG_REGEX } from '../../../shared/validators/slug';
 
 export class CreateBookFromClearanceDto {
-  @ApiProperty({ description: 'Book slug', example: 'the-picture-of-dorian-gray' })
+  @ApiProperty({
+    description: `Book slug. A new book's slug is at most ${SLUG_MAX_LENGTH} characters; when attaching, the existing book's slug is accepted as is`,
+    example: 'the-picture-of-dorian-gray',
+  })
   @IsString()
   @IsNotEmpty()
-  @Matches(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, {
+  @Matches(SLUG_REGEX, {
     message: 'slug must be lowercase alphanumeric with hyphens',
+  })
+  // `LEGACY-437`: новый слаг — не длиннее 100, как в `PATCH /books/:id`. Режим привязки несёт слаг
+  // уже существующей книги, он может быть длиннее: его длину не проверяем.
+  @ValidateBy({
+    name: 'newBookSlugMaxLength',
+    validator: {
+      validate: (value: unknown, args) =>
+        (args?.object as CreateBookFromClearanceDto | undefined)?.attachToExistingBook === true ||
+        typeof value !== 'string' ||
+        value.length <= SLUG_MAX_LENGTH,
+      defaultMessage: () => `Slug must be at most ${SLUG_MAX_LENGTH} characters long`,
+    },
   })
   slug!: string;
 

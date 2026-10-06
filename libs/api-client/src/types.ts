@@ -6506,7 +6506,7 @@ export interface components {
        */
       attachToExistingBook: boolean;
       /**
-       * @description Book slug
+       * @description Book slug. A new book's slug is at most 100 characters; when attaching, the existing book's slug is accepted as is
        * @example the-picture-of-dorian-gray
        */
       slug: string;
