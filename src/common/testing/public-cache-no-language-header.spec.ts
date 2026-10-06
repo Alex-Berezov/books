@@ -1,6 +1,12 @@
 import { readFileSync } from 'fs';
 import * as ts from 'typescript';
-import { SRC_ROOT, listControllerFiles, relativeToSrc } from './controller-decorators';
+import { VISITOR_IP_HEADER } from '../net/client-ip';
+import {
+  SRC_ROOT,
+  guardsInclude,
+  listControllerFiles,
+  relativeToSrc,
+} from './controller-decorators';
 import { PUBLIC_CACHE_HANDLERS } from './public-cache-handlers';
 
 /**
@@ -37,6 +43,14 @@ import { PUBLIC_CACHE_HANDLERS } from './public-cache-handlers';
  * с `cache-headers-wiring.spec.ts`. Вторая рукописная копия разошлась бы
  * с первой молча, и сторожа отвечали бы про разные наборы маршрутов
  * (`LEGACY-290`).
+ *
+ * ⚠️ С 06.10.2026 (`T105`, решение арбитра) сторож смотрит не только заголовки,
+ * но и **того, кто спрашивает**: параметр-декораторы из `USER_DECORATORS`
+ * и гварды из `CALLER_GUARDS` в `@UseGuards` метода или класса (списки
+ * и границы — у самих констант). Это условие переоткрытия принятого остатка `LEGACY-108`: без этой проверки
+ * обработчик под публичным кэшем мог начать читать пользователя, и ни один
+ * сторож этого бы не заметил (`B13` смотрит только добавленную строку
+ * интерцептора).
  */
 
 /** Ниже этого числа разбор сломан, а не репозиторий поредел. */
@@ -68,6 +82,13 @@ const FORBIDDEN_HEADERS = [
   'cookie',
   'cf-ipcountry',
   'x-geo-country',
+  // Адрес клиента — тот же вход, что `@Ip()` ниже: страна по IP (`LEGACY-174`).
+  // `src/common/net/client-ip.ts` читает `cf-connecting-ip` и `x-visitor-ip`
+  // (`VISITOR_IP_HEADER`); `x-forwarded-for` — то, из чего Express собирает
+  // `req.ip` при `trust proxy`.
+  'cf-connecting-ip',
+  'x-forwarded-for',
+  VISITOR_IP_HEADER,
 ];
 
 /**
@@ -90,19 +111,120 @@ const HEADER_DECORATORS: ReadonlyArray<{ module: string; name: string }> = [
   { module: 'language.decorator', name: 'Language' },
 ];
 
-/** Имена запрещённых декораторов **в этом файле**, с учётом псевдонимов импорта. */
-const forbiddenDecoratorNames = (source: ts.SourceFile): Map<string, string> => {
+/**
+ * Читатели пользователя: параметр-декораторы, отдающие запрос целиком или того,
+ * кто спрашивает, и гварды, кладущие пользователя в запрос.
+ *
+ * `@Req()`/`@Request()` запрещены целиком, а не по `req.user`: объект запроса
+ * несёт и пользователя, и все заголовки, и разбирать, что из него прочитали,
+ * значит снова гоняться за формами доступа. Модуль `@nestjs/common` сверяется,
+ * потому что тип `Request` из `express` — не декоратор. `CurrentUser` в проекте
+ * на 06.10.2026 нет (`author.controller.ts`, докблок), поэтому он сверяется
+ * по имени из любого модуля: появится — уже под запретом. `@Ip()` и `@Session()`
+ * — тот же дефект другим входом: страна по адресу клиента (`LEGACY-174`)
+ * и сессия того, кто спрашивает. `@Res()`/`@Response()` — запрос через
+ * `res.req`, `@Next()` — ответ собирает цепочка Express, а не обработчик.
+ *
+ * ⚠️ Чего сторож не видит: `@Inject(REQUEST)` в конструкторе контроллера
+ * или сервиса, гвард из составного декоратора (`applyDecorators`), из
+ * базового класса или глобальный `APP_GUARD`. На 06.10.2026 первых трёх форм
+ * в `src` нет; глобальных гвардов два (`app.module.ts`): `GlobalRateLimitGuard`
+ * читает `authorization` только для корзины лимита, `LanguageResolverGuard`
+ * кладёт язык в `req.language` — тело ответа меняет лишь второй, и его чтение
+ * в обработчике ловит `bodyOffences`/`@Language()`.
+ */
+const WHOLE_REQUEST = 'запрос целиком, с пользователем';
+const CALLER_DATA = 'данные того, кто спрашивает';
+
+const USER_DECORATORS: ReadonlyArray<{ module: string; name: string; reason: string }> = [
+  { module: '@nestjs/common', name: 'Req', reason: WHOLE_REQUEST },
+  { module: '@nestjs/common', name: 'Request', reason: WHOLE_REQUEST },
+  // `@Res()` отдаёт ответ, а через `res.req` — тот же запрос, что `@Req()`.
+  { module: '@nestjs/common', name: 'Res', reason: `ответ, а через res.req ${WHOLE_REQUEST}` },
+  { module: '@nestjs/common', name: 'Response', reason: `ответ, а через res.req ${WHOLE_REQUEST}` },
+  {
+    module: '@nestjs/common',
+    name: 'Next',
+    reason: 'цепочка Express — ответ собирает не обработчик',
+  },
+  { module: '@nestjs/common', name: 'Ip', reason: CALLER_DATA },
+  { module: '@nestjs/common', name: 'Session', reason: CALLER_DATA },
+  { module: '', name: 'CurrentUser', reason: CALLER_DATA },
+];
+
+const USER_DECORATOR_REASON = new Map(USER_DECORATORS.map(({ name, reason }) => [name, reason]));
+
+/**
+ * Гварды, которые читают того, кто спрашивает, или кладут его в запрос.
+ * Ответ под таким гвардом зависит от токена, а общий кэш раздаёт его всем —
+ * в том числе тем, кого гвард не пустил бы (`LEGACY-088`).
+ *
+ * `MetricsAccessGuard` — наследник `AuthGuard('jwt')`, `RolesGuard` читает
+ * `req.user`, `RightsAgentTokenGuard` кладёт в запрос токен агента.
+ *
+ * Сверяются тем же `guardsInclude` из `controller-decorators.ts`, что
+ * и в `swagger-bearer-auth.spec.ts` (`LEGACY-290`), — по границам слова,
+ * поэтому ловятся `new JwtAuthGuard()` и `AuthGuard('jwt')`, а `JwtAuthGuard`
+ * с `AuthGuard` не путается. Но подаётся ему **каждый** `@UseGuards` узла
+ * отдельно и только его аргументы: Nest складывает гварды из всех
+ * вхождений, а `guardsInclude` смотрит первое, и текст соседних декораторов
+ * (`description` у `@ApiOperation`) в сверку не попадает.
+ *
+ * ⚠️ Чего сторож не видит: псевдоним импорта самого гварда
+ * (`import { JwtAuthGuard as G }`) — граница `guardsInclude`;
+ * `swagger-bearer-auth.spec.ts` слеп там же.
+ */
+const CALLER_GUARDS = [
+  'JwtAuthGuard',
+  'OptionalJwtAuthGuard',
+  'MetricsAccessGuard',
+  'AuthGuard',
+  'RolesGuard',
+  'RightsAgentTokenGuard',
+];
+
+/** `UseGuards` из `@nestjs/common` — с псевдонимом и пространством имён. */
+const USE_GUARDS: ReadonlyArray<{ module: string; name: string }> = [
+  { module: '@nestjs/common', name: 'UseGuards' },
+];
+
+/**
+ * Совпадает ли путь импорта с модулем кандидата: пакет целиком или его
+ * подпуть (`@nestjs/common/decorators/...` — так пишет автоимпорт IDE),
+ * либо последний сегмент относительного пути. Подстрокой нельзя —
+ * `@nestjs/common` входит в `@nestjs/common-x` (`L-008`). Пустой модуль — любой.
+ */
+const fromModule = (from: string, module: string): boolean =>
+  module === '' || from === module || from.startsWith(`${module}/`) || from.endsWith(`/${module}`);
+
+/**
+ * Локальные имена импортов из списка **в этом файле**, с учётом псевдонимов
+ * и импорта пространством имён (`import * as common` → `common.Req`):
+ * ключ — имя в коде, значение — экспортируемое имя.
+ */
+const importedNames = (
+  source: ts.SourceFile,
+  wanted: ReadonlyArray<{ module: string; name: string }>,
+): Map<string, string> => {
   const names = new Map<string, string>();
   for (const statement of source.statements) {
     if (!ts.isImportDeclaration(statement)) continue;
     if (!ts.isStringLiteralLike(statement.moduleSpecifier)) continue;
     const from = statement.moduleSpecifier.text;
     const bindings = statement.importClause?.namedBindings;
-    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    if (!bindings) continue;
+    if (ts.isNamespaceImport(bindings)) {
+      for (const candidate of wanted) {
+        if (fromModule(from, candidate.module)) {
+          names.set(`${bindings.name.text}.${candidate.name}`, candidate.name);
+        }
+      }
+      continue;
+    }
     for (const element of bindings.elements) {
       const exported = (element.propertyName ?? element.name).text;
-      const match = HEADER_DECORATORS.find(
-        (candidate) => candidate.name === exported && from.includes(candidate.module),
+      const match = wanted.find(
+        (candidate) => candidate.name === exported && fromModule(from, candidate.module),
       );
       if (match) names.set(element.name.text, match.name);
     }
@@ -198,7 +320,77 @@ const bodyOffences = (method: ts.MethodDeclaration): string[] => {
   return found;
 };
 
+/** Параметр, отдающий обработчику пользователя или запрос целиком, или `null`. */
+const userParameterOffence = (
+  parameter: ts.ParameterDeclaration,
+  userDecorators: Map<string, string>,
+): string | null => {
+  for (const call of decoratorCalls(parameter)) {
+    const local = call.expression.getText();
+    const kind = userDecorators.get(local);
+    if (kind) return `@${local}() — ${USER_DECORATOR_REASON.get(kind)}`;
+  }
+  return null;
+};
+
+/** Гварды того, кто спрашивает, во всех `@UseGuards` узла (метода или класса). */
+const guardOffences = (node: ts.Node, where: string, useGuards: Map<string, string>): string[] =>
+  decoratorCalls(node)
+    .filter((call) => useGuards.has(call.expression.getText()))
+    .map((call) => `@UseGuards(${call.arguments.map((argument) => argument.getText()).join(', ')})`)
+    .flatMap((text) => CALLER_GUARDS.filter((guard) => guardsInclude(text, guard)))
+    .map((guard) => `@UseGuards(${guard}) на ${where} — гвард того, кто спрашивает`);
+
 type Offender = { id: string; reason: string };
+
+/**
+ * Нарушения в одном файле — у методов, которые `isHandler` признал публично
+ * кэшируемыми. Отделено от обхода дерева, чтобы детектор прогонялся
+ * и на заведомо плохом входе (ниже), а не только на дереве, где нарушений
+ * нет (`L-017`). Гвард класса считается один раз на класс, а не на каждый
+ * его обработчик.
+ */
+const offencesIn = (
+  source: ts.SourceFile,
+  where: string,
+  isHandler: (id: string) => boolean,
+): { offenders: Offender[]; seen: string[] } => {
+  const offenders: Offender[] = [];
+  const seen: string[] = [];
+  const forbidden = importedNames(source, HEADER_DECORATORS);
+  const userDecorators = importedNames(source, USER_DECORATORS);
+  const useGuards = importedNames(source, USE_GUARDS);
+
+  source.forEachChild((node) => {
+    if (!ts.isClassDeclaration(node)) return;
+    let handlers = 0;
+    for (const member of node.members) {
+      if (!ts.isMethodDeclaration(member) || !member.name) continue;
+      const id = `${where} → ${member.name.getText()}`;
+      if (!isHandler(id)) continue;
+      seen.push(id);
+      handlers += 1;
+
+      for (const parameter of member.parameters) {
+        const reason = parameterOffence(parameter, forbidden);
+        if (reason) offenders.push({ id, reason });
+        const userReason = userParameterOffence(parameter, userDecorators);
+        if (userReason) offenders.push({ id, reason: userReason });
+      }
+      for (const reason of [
+        ...bodyOffences(member),
+        ...guardOffences(member, 'методе', useGuards),
+      ]) {
+        offenders.push({ id, reason });
+      }
+    }
+    if (handlers === 0) return;
+    const id = `${where} → класс ${node.name?.getText() ?? '<без имени>'}`;
+    for (const reason of guardOffences(node, 'классе', useGuards)) offenders.push({ id, reason });
+  });
+
+  return { offenders, seen };
+};
 
 const collect = (): { offenders: Offender[]; controllers: number; seen: string[] } => {
   const offenders: Offender[] = [];
@@ -212,30 +404,25 @@ const collect = (): { offenders: Offender[]; controllers: number; seen: string[]
       ts.ScriptTarget.Latest,
       true,
     );
-    const where = relativeToSrc(file);
-    const forbidden = forbiddenDecoratorNames(source);
-
-    source.forEachChild((node) => {
-      if (!ts.isClassDeclaration(node)) return;
-      for (const member of node.members) {
-        if (!ts.isMethodDeclaration(member) || !member.name) continue;
-        const id = `${where} → ${member.name.getText()}`;
-        if (!PUBLIC_CACHE_HANDLERS.includes(id)) continue;
-        seen.push(id);
-
-        for (const parameter of member.parameters) {
-          const reason = parameterOffence(parameter, forbidden);
-          if (reason) offenders.push({ id, reason });
-        }
-        for (const reason of bodyOffences(member)) offenders.push({ id, reason });
-      }
-    });
+    const found = offencesIn(source, relativeToSrc(file), (id) =>
+      PUBLIC_CACHE_HANDLERS.includes(id),
+    );
+    offenders.push(...found.offenders);
+    seen.push(...found.seen);
   }
 
   return { offenders, controllers: files.length, seen };
 };
 
-describe('публично кэшируемый ответ не зависит от заголовка запроса', () => {
+/** Причины нарушений в синтетическом контроллере; обработчиком считается любой метод. */
+const reasonsFor = (code: string): string[] =>
+  offencesIn(
+    ts.createSourceFile('fixture.controller.ts', code, ts.ScriptTarget.Latest, true),
+    'fixture',
+    () => true,
+  ).offenders.map((offender) => offender.reason);
+
+describe('публично кэшируемый ответ не зависит от заголовка запроса и от пользователя', () => {
   const { offenders, controllers, seen } = collect();
 
   it(`разбор находит не меньше ${MIN_CONTROLLERS} контроллеров`, () => {
@@ -253,7 +440,202 @@ describe('публично кэшируемый ответ не зависит �
     expect([...seen].sort()).toEqual([...PUBLIC_CACHE_HANDLERS].sort());
   });
 
-  it('ни один из них не читает Accept-Language и прочие заголовки запроса', () => {
+  it('ни один из них не читает Accept-Language, прочие заголовки запроса и пользователя', () => {
     expect(offenders.map((offender) => `${offender.id}: ${offender.reason}`)).toEqual([]);
+  });
+});
+
+/**
+ * 🔴 Проверка выше на дереве, где нарушений нет, зелёная и у сломанного
+ * детектора: опечатка в имени модуля даёт пустую карту импортов, и сторож
+ * молча ничего не ловит (`L-017`, `L-033`). Поэтому каждый вид нарушения
+ * прогоняется на синтетическом контроллере — и чистый вход рядом.
+ */
+describe('детектор краснеет на каждом виде нарушения', () => {
+  const COMMON =
+    "import { Controller, Get, Headers, Ip, Query, Req, Next, Request, Res, Response, Session, UseGuards } from '@nestjs/common';";
+  const handler = (decorators: string, params = ''): string =>
+    `${COMMON}\n@Controller() class C { @Get() ${decorators} handler(${params}) {} }`;
+
+  it.each([
+    [
+      '@Req() под псевдонимом',
+      "import { Req as R } from '@nestjs/common';\n@Controller() class C { @Get() handler(@R() r: unknown) {} }",
+      ['@R() — запрос целиком, с пользователем'],
+    ],
+    [
+      '@Request()',
+      handler('', '@Request() r: unknown'),
+      ['@Request() — запрос целиком, с пользователем'],
+    ],
+    [
+      '@common.Req() при импорте пространством имён',
+      "import * as common from '@nestjs/common';\n@common.Controller() class C { @common.Get() handler(@common.Req() r: unknown) {} }",
+      ['@common.Req() — запрос целиком, с пользователем'],
+    ],
+    [
+      '@CurrentUser()',
+      "import { CurrentUser } from '../auth/current-user.decorator';\n@Controller() class C { @Get() handler(@CurrentUser() u: unknown) {} }",
+      ['@CurrentUser() — данные того, кто спрашивает'],
+    ],
+    ['@Ip()', handler('', '@Ip() ip: string'), ['@Ip() — данные того, кто спрашивает']],
+    [
+      'OptionalJwtAuthGuard на методе',
+      handler('@UseGuards(OptionalJwtAuthGuard)'),
+      ['@UseGuards(OptionalJwtAuthGuard) на методе — гвард того, кто спрашивает'],
+    ],
+    [
+      'new JwtAuthGuard() на методе',
+      handler('@UseGuards(new JwtAuthGuard())'),
+      ['@UseGuards(JwtAuthGuard) на методе — гвард того, кто спрашивает'],
+    ],
+    [
+      "AuthGuard('jwt') на методе",
+      handler("@UseGuards(AuthGuard('jwt'))"),
+      ['@UseGuards(AuthGuard) на методе — гвард того, кто спрашивает'],
+    ],
+    [
+      'MetricsAccessGuard на методе',
+      handler('@UseGuards(MetricsAccessGuard)'),
+      ['@UseGuards(MetricsAccessGuard) на методе — гвард того, кто спрашивает'],
+    ],
+    [
+      'JwtAuthGuard на классе — один раз, а не на каждый обработчик',
+      `${COMMON}\n@UseGuards(JwtAuthGuard) @Controller() class C { @Get() a() {} @Get() b() {} }`,
+      ['@UseGuards(JwtAuthGuard) на классе — гвард того, кто спрашивает'],
+    ],
+    [
+      '@Headers() без имени',
+      handler('', '@Headers() h: unknown'),
+      ['@Headers() без имени — читает все заголовки разом'],
+    ],
+    [
+      '@Session()',
+      handler('', '@Session() session: unknown'),
+      ['@Session() — данные того, кто спрашивает'],
+    ],
+    [
+      '@u.CurrentUser() при импорте пространством имён',
+      "import * as u from '../auth/current-user.decorator';\n@Controller() class C { @Get() handler(@u.CurrentUser() x: unknown) {} }",
+      ['@u.CurrentUser() — данные того, кто спрашивает'],
+    ],
+    [
+      '@Req() из подпути @nestjs/common',
+      "import { Req } from '@nestjs/common/decorators/http/route-params.decorator';\n@Controller() class C { @Get() handler(@Req() r: unknown) {} }",
+      ['@Req() — запрос целиком, с пользователем'],
+    ],
+    [
+      "@Headers('accept-language') под псевдонимом",
+      "import { Headers as H } from '@nestjs/common';\n@Controller() class C { @Get() handler(@H('accept-language') l: string) {} }",
+      ["@H('accept-language')"],
+    ],
+    [
+      "@n.Headers('cookie') при импорте пространством имён",
+      "import * as n from '@nestjs/common';\n@Controller() class C { @Get() handler(@n.Headers('cookie') c: string) {} }",
+      ["@n.Headers('cookie')"],
+    ],
+    [
+      '@Res({ passthrough: true })',
+      handler('', '@Res({ passthrough: true }) res: unknown'),
+      ['@Res() — ответ, а через res.req запрос целиком, с пользователем'],
+    ],
+    [
+      '@Response()',
+      handler('', '@Response() res: unknown'),
+      ['@Response() — ответ, а через res.req запрос целиком, с пользователем'],
+    ],
+    [
+      '@Next()',
+      handler('', '@Next() next: unknown'),
+      ['@Next() — цепочка Express — ответ собирает не обработчик'],
+    ],
+    [
+      'JwtAuthGuard на методе',
+      handler('@UseGuards(JwtAuthGuard)'),
+      ['@UseGuards(JwtAuthGuard) на методе — гвард того, кто спрашивает'],
+    ],
+    [
+      '@common.UseGuards при импорте пространством имён',
+      "import * as common from '@nestjs/common';\n@common.Controller() class C { @common.Get() @common.UseGuards(JwtAuthGuard) handler() {} }",
+      ['@UseGuards(JwtAuthGuard) на методе — гвард того, кто спрашивает'],
+    ],
+    [
+      "@Headers('x-visitor-ip')",
+      handler('', "@Headers('x-visitor-ip') ip: string"),
+      ["@Headers('x-visitor-ip')"],
+    ],
+    [
+      "req.headers['x-forwarded-for'] в теле метода",
+      handler('', 'q: unknown').replace('{} }', "{ return req.headers['x-forwarded-for']; } }"),
+      ["headers['x-forwarded-for'] в теле метода"],
+    ],
+    [
+      "@Headers('cf-connecting-ip')",
+      handler('', "@Headers('cf-connecting-ip') ip: string"),
+      ["@Headers('cf-connecting-ip')"],
+    ],
+    [
+      '@Language() по относительному пути',
+      "import { Language } from '../../common/decorators/language.decorator';\n@Controller() class C { @Get() handler(@Language() l: string) {} }",
+      ['@Language() — язык из Accept-Language через LanguageResolverGuard'],
+    ],
+    [
+      'req.language в теле метода',
+      handler('', 'q: unknown').replace('{} }', '{ return req.language; } }'),
+      ['req.language — язык из Accept-Language через LanguageResolverGuard'],
+    ],
+    [
+      "req.header('cookie') в теле метода",
+      handler('', 'q: unknown').replace('{} }', "{ return req.header('cookie'); } }"),
+      ["req.header('cookie') в теле метода"],
+    ],
+    [
+      'второй @UseGuards на том же методе',
+      handler('@UseGuards(LanguageResolverGuard) @UseGuards(OptionalJwtAuthGuard)'),
+      ['@UseGuards(OptionalJwtAuthGuard) на методе — гвард того, кто спрашивает'],
+    ],
+    [
+      'UseGuards под псевдонимом',
+      "import { Controller, Get, UseGuards as G } from '@nestjs/common';\n@Controller() class C { @Get() @G(JwtAuthGuard) handler() {} }",
+      ['@UseGuards(JwtAuthGuard) на методе — гвард того, кто спрашивает'],
+    ],
+    [
+      'RolesGuard на методе',
+      handler('@UseGuards(RolesGuard)'),
+      ['@UseGuards(RolesGuard) на методе — гвард того, кто спрашивает'],
+    ],
+    [
+      'RightsAgentTokenGuard на методе',
+      handler('@UseGuards(RightsAgentTokenGuard)'),
+      ['@UseGuards(RightsAgentTokenGuard) на методе — гвард того, кто спрашивает'],
+    ],
+  ])('%s', (_name, code, reasons) => {
+    expect(reasonsFor(code)).toEqual(reasons);
+  });
+
+  it('текст соседнего декоратора не подменяет @UseGuards', () => {
+    const code = handler(
+      "@ApiOperation({ description: 'no @UseGuards() needed' }) @UseGuards(JwtAuthGuard)",
+    );
+    expect(reasonsFor(code)).toEqual([
+      '@UseGuards(JwtAuthGuard) на методе — гвард того, кто спрашивает',
+    ]);
+  });
+
+  it('чужой пакет с похожим именем — не @nestjs/common (L-008)', () => {
+    const code =
+      "import { Req, UseGuards } from '@nestjs/common-x';\n@Controller() class C { @Get() @UseGuards(LanguageResolverGuard) handler(@Req() r: unknown) {} }";
+    expect(reasonsFor(code)).toEqual([]);
+  });
+
+  it('чистый обработчик проходит: query, гвард языка, тип Request из express', () => {
+    const code = [
+      COMMON,
+      "import type { Request as ExpressRequest } from 'express';",
+      '@UseGuards(LanguageResolverGuard) @Controller() class C {',
+      '  @Get() handler(@Query() q: unknown, r?: ExpressRequest) {}',
+      '}',
+    ].join('\n');
+    expect(reasonsFor(code)).toEqual([]);
   });
 });
