@@ -2209,6 +2209,38 @@ describe('BookService.checkVersionSlugExists', () => {
     expect(prisma.bookVersion.findUnique).not.toHaveBeenCalled();
   });
 
+  it('trims the base so the suggested slug stays within the limit (LEGACY-437)', async () => {
+    prisma.bookVersion.findFirst.mockResolvedValue(null);
+    prisma.book.findFirst.mockResolvedValue(null);
+    const base = 'a'.repeat(100);
+
+    const suggested = await service.generateUniqueSuggestedSlug(base);
+
+    expect(suggested).toBe(`${'a'.repeat(98)}-2`);
+    expect(suggested.length).toBeLessThanOrEqual(100);
+    // Занятость сверяется по тому же, уже обрезанному кандидату, что уходит в ответ.
+    expect(prisma.book.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.book.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ slug: suggested }) }),
+    );
+  });
+
+  it('trims the base further when the suffix grows to two digits (LEGACY-437)', async () => {
+    prisma.bookVersion.findFirst.mockResolvedValue(null);
+    for (let i = 0; i < 8; i += 1) prisma.book.findFirst.mockResolvedValueOnce({ id: 'other' });
+    prisma.book.findFirst.mockResolvedValue(null);
+    const base = 'a'.repeat(100);
+
+    const suggested = await service.generateUniqueSuggestedSlug(base);
+
+    expect(suggested).toBe(`${'a'.repeat(97)}-10`);
+    expect(prisma.book.findFirst).toHaveBeenCalledTimes(9);
+    expect(prisma.book.findFirst).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ where: expect.objectContaining({ slug: `${'a'.repeat(98)}-2` }) }),
+    );
+  });
+
   it('suggests the first free suffix, resolving the own book once for all candidates', async () => {
     prisma.bookVersion.findUnique.mockResolvedValue({ bookId: 'book-1' });
     prisma.bookVersion.findFirst

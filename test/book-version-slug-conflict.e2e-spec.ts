@@ -5,6 +5,7 @@ import { BookType, Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { SLUG_MAX_LENGTH, SLUG_MAX_LENGTH_MESSAGE } from '../src/shared/validators/slug';
 
 /**
  * У каждой языковой версии свой слаг, и запись его проверяет так же, как подсказка админки
@@ -255,6 +256,61 @@ describe('BookVersion slug conflicts on write (e2e)', () => {
     it('a version slug out of SLUG_PATTERN or longer than 100 is refused by validation', async () => {
       await create(Language.ru, 'Bad--Slug').expect(400);
       await create(Language.ru, 'a'.repeat(101)).expect(400);
+    });
+
+    it('PATCH version: a stored slug over the limit passes unchanged, a changed one is refused (LEGACY-437)', async () => {
+      const longSlug = `${'a'.repeat(SLUG_MAX_LENGTH)}-${stamp}`;
+      const version = await prisma.bookVersion.findFirstOrThrow({
+        where: { bookId: ownBookId, language: Language.ru },
+        select: { id: true, slug: true },
+      });
+      const patch = (body: object) =>
+        request(http())
+          .patch(`/versions/${version.id}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send(body);
+
+      // Слаг старой записи длиннее предела, введённого позже: пишем мимо ручки.
+      await prisma.bookVersion.update({ where: { id: version.id }, data: { slug: longSlug } });
+      try {
+        await patch({ slug: longSlug, title: 'Kept' }).expect(200);
+        const refused = await patch({ slug: `${longSlug}-x` }).expect(400);
+        expect(JSON.stringify(refused.body)).toContain(SLUG_MAX_LENGTH_MESSAGE);
+      } finally {
+        await prisma.bookVersion.update({
+          where: { id: version.id },
+          data: { slug: version.slug },
+        });
+      }
+    });
+
+    it('PATCH book: a stored slug over the limit passes unchanged, a changed one or null is refused (LEGACY-437)', async () => {
+      const longSlug = `${'b'.repeat(SLUG_MAX_LENGTH)}-${stamp}`;
+      await prisma.book.update({ where: { id: ownBookId }, data: { slug: longSlug } });
+      try {
+        await patchBook(longSlug).expect(200);
+        const refused = await patchBook(`${longSlug}-x`).expect(400);
+        expect(JSON.stringify(refused.body)).toContain(SLUG_MAX_LENGTH_MESSAGE);
+        await request(http())
+          .patch(`/books/${ownBookId}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ slug: null })
+          .expect(400);
+      } finally {
+        await prisma.book.update({ where: { id: ownBookId }, data: { slug: ownSlug } });
+      }
+    });
+
+    it('check-slug refuses a slug over the limit and answers one at the limit (LEGACY-437)', async () => {
+      const check = (slug: string) =>
+        request(http())
+          .get('/books/check-slug')
+          .query({ slug })
+          .set('Authorization', `Bearer ${adminToken}`);
+
+      const refused = await check('c'.repeat(SLUG_MAX_LENGTH + 1)).expect(400);
+      expect(JSON.stringify(refused.body)).toContain(SLUG_MAX_LENGTH_MESSAGE);
+      await check('c'.repeat(SLUG_MAX_LENGTH)).expect(200);
     });
   });
 });

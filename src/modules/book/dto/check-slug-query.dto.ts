@@ -1,7 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsString, IsOptional, IsUUID, Matches, MaxLength } from 'class-validator';
 import { Language } from '@prisma/client';
-import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import {
+  SLUG_MAX_LENGTH,
+  SLUG_MAX_LENGTH_MESSAGE,
+  SLUG_PATTERN,
+  SLUG_REGEX_README,
+} from '../../../shared/validators/slug';
 
 export class CheckBookSlugQueryDto {
   @ApiProperty({
@@ -13,7 +18,7 @@ export class CheckBookSlugQueryDto {
   @Matches(new RegExp(SLUG_PATTERN), {
     message: SLUG_REGEX_README,
   })
-  @MaxLength(100, { message: 'Slug must be at most 100 characters long' })
+  @MaxLength(SLUG_MAX_LENGTH, { message: SLUG_MAX_LENGTH_MESSAGE })
   slug!: string;
 
   @ApiPropertyOptional({

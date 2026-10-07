@@ -13,7 +13,11 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { CreateBookFromClearanceVersionDto } from './create-book-from-clearance-version.dto';
-import { SLUG_MAX_LENGTH, SLUG_REGEX } from '../../../shared/validators/slug';
+import {
+  SLUG_MAX_LENGTH,
+  SLUG_MAX_LENGTH_MESSAGE,
+  SLUG_REGEX,
+} from '../../../shared/validators/slug';
 
 export class CreateBookFromClearanceDto {
   @ApiProperty({
@@ -34,7 +38,7 @@ export class CreateBookFromClearanceDto {
         (args?.object as CreateBookFromClearanceDto | undefined)?.attachToExistingBook === true ||
         typeof value !== 'string' ||
         value.length <= SLUG_MAX_LENGTH,
-      defaultMessage: () => `Slug must be at most ${SLUG_MAX_LENGTH} characters long`,
+      defaultMessage: () => SLUG_MAX_LENGTH_MESSAGE,
     },
   })
   slug!: string;

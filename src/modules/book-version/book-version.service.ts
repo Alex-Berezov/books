@@ -49,6 +49,7 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AuthorService } from '../author/author.service';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
+import { assertChangedSlugLength } from '../../shared/validators/slug';
 import {
   BOOK_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE,
   findVersionSlugConflict,
@@ -1080,6 +1081,10 @@ export class BookVersionService {
         if (dto.language != null && dto.language !== current.language) {
           throw new BadRequestException(BOOK_VERSION_LANGUAGE_IMMUTABLE_MESSAGE);
         }
+
+        // Предел длины — только у изменённого слага: DTO текущего слага не знает (`LEGACY-437`).
+        // До любой записи (`Seo`), чтобы отказ не делал работы под замком.
+        assertChangedSlugLength(dto.slug, current.slug);
 
         // Стереть описание или обложку можно только у черновика: то, что уже видел читатель,
         // не должно опустеть. Гейт стоит на входе в публикацию и правку не смотрит вовсе.

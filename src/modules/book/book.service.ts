@@ -61,7 +61,7 @@ import {
   lockBookSlugs,
   type VersionSlugOwner,
 } from '../../shared/slug/book-version-slug-conflict';
-import { assertChangedSlugLength } from '../../shared/validators/slug';
+import { assertChangedSlugLength, suggestedSlugCandidate } from '../../shared/validators/slug';
 
 /**
  * `remove()` каскадом сносит все версии книги вместе с их главами и
@@ -1830,7 +1830,7 @@ export class BookService {
     exclude: VersionSlugOwner = {},
   ): Promise<string> {
     let suffix = 2;
-    let candidateSlug = `${baseSlug}-${suffix}`;
+    let candidateSlug = suggestedSlugCandidate(baseSlug, suffix);
     // The own book is resolved once, not per candidate.
     const owner = language ? await this.resolveVersionSlugOwner(exclude) : {};
     const isTaken = (candidate: string) =>
@@ -1841,7 +1841,7 @@ export class BookService {
     // Find first available suffix
     while (await isTaken(candidateSlug)) {
       suffix++;
-      candidateSlug = `${baseSlug}-${suffix}`;
+      candidateSlug = suggestedSlugCandidate(baseSlug, suffix);
     }
 
     return candidateSlug;

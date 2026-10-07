@@ -3,6 +3,7 @@ import { IsString, Matches, MaxLength } from 'class-validator';
 import { Transform } from 'class-transformer';
 import {
   SLUG_MAX_LENGTH,
+  SLUG_MAX_LENGTH_MESSAGE,
   SLUG_PATTERN,
   SLUG_REGEX,
   SLUG_REGEX_README,
@@ -18,9 +19,7 @@ export class CreateBookDto {
   @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @Matches(SLUG_REGEX, { message: `Slug must match the pattern: ${SLUG_PATTERN}` })
-  @MaxLength(SLUG_MAX_LENGTH, {
-    message: `Slug must be at most ${SLUG_MAX_LENGTH} characters long`,
-  })
+  @MaxLength(SLUG_MAX_LENGTH, { message: SLUG_MAX_LENGTH_MESSAGE })
   slug: string;
 
   // More fields can be added as needed

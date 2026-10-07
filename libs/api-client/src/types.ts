@@ -11913,7 +11913,7 @@ export interface components {
        */
       shortDescription?: Record<string, never> | null;
       /**
-       * @description Слаг версии книги. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: "harry-potter", "book-123"
+       * @description Слаг версии книги. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: "harry-potter", "book-123". Предел 100 символов — только у изменённого слага: текущий слаг версии принимается как есть.
        * @example harry-potter
        */
       slug?: string;

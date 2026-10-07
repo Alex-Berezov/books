@@ -30,7 +30,12 @@ import {
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
-import { SLUG_PATTERN, SLUG_REGEX, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import {
+  SLUG_MAX_LENGTH,
+  SLUG_PATTERN,
+  SLUG_REGEX,
+  SLUG_REGEX_README,
+} from '../../../shared/validators/slug';
 
 export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @ApiPropertyOptional({ enum: Object.values(PrismaLanguage), example: 'es' })
@@ -39,18 +44,18 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   language?: PrismaLanguage;
 
   @ApiPropertyOptional({
-    description: `Слаг версии книги. ${SLUG_REGEX_README}`,
+    description: `Слаг версии книги. ${SLUG_REGEX_README}. Предел ${SLUG_MAX_LENGTH} символов — только у изменённого слага: текущий слаг версии принимается как есть.`,
     example: 'harry-potter',
     pattern: SLUG_PATTERN,
-    maxLength: 100,
   })
   // `LEGACY-437`: `null` не «не менять», а запись NULL в колонку без редиректа (класс `LEGACY-062`):
   // пропускается только отсутствующее поле.
   @ValidateIf((o: UpdateBookVersionDto) => o.slug !== undefined)
   @IsString()
-  // `LEGACY-437`: формат держался только формой админки и `check-slug`; длина — как у `check-slug`.
+  // `LEGACY-437`: формат держался только формой админки и `check-slug`. Длину здесь не проверить: DTO не знает
+  // текущий слаг, а неизменный слаг старой записи длиннее предела не отказ — предел у изменённого слага ставит
+  // сервис (`assertChangedSlugLength`).
   @Matches(SLUG_REGEX, { message: SLUG_REGEX_README })
-  @MaxLength(100, { message: 'Slug must be at most 100 characters long' })
   slug?: string;
 
   @ApiPropertyOptional({ example: "Harry Potter and the Sorcerer's Stone" })

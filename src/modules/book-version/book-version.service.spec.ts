@@ -1,3 +1,4 @@
+import { SLUG_MAX_LENGTH_MESSAGE } from '../../shared/validators/slug';
 import { BookVersionService } from './book-version.service';
 import { PublicationGateService } from './publication-gate.service';
 import { RightsContentHashService } from '../rights-intake/rights-content-hash.service';
@@ -2223,6 +2224,23 @@ describe('BookVersionService', () => {
       expect(slugLocks()).toHaveLength(0);
       expect(prisma.book.findFirst).not.toHaveBeenCalled();
       expect(prisma.bookVersion.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('update: the kept slug longer than the limit passes, a changed one is refused (LEGACY-437)', async () => {
+      const longSlug = 'a'.repeat(101);
+      arrangeCurrentWithBook(longSlug);
+      (prisma.bookVersion.update as jest.Mock).mockResolvedValue({ id: 'v1', seo: null });
+
+      await service.update('v1', { slug: longSlug, title: 'T2' });
+      expect(prisma.bookVersion.update).toHaveBeenCalledTimes(1);
+
+      await expect(
+        service.update('v1', { slug: 'b'.repeat(101), seoMetaTitle: 'Meta' }),
+      ).rejects.toThrow(SLUG_MAX_LENGTH_MESSAGE);
+      expect(prisma.bookVersion.update).toHaveBeenCalledTimes(1);
+      // Отказ до любой записи: `Seo` под замком не пишется.
+      expect(prisma.seo.create).not.toHaveBeenCalled();
+      expect(prisma.seo.update).not.toHaveBeenCalled();
     });
 
     it('update: another book is refused with its own text and nothing is written', async () => {

@@ -3,9 +3,12 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { PrismaService } from '../src/prisma/prisma.service';
+import { SLUG_MAX_LENGTH, SLUG_MAX_LENGTH_MESSAGE } from '../src/shared/validators/slug';
 
 describe('Pages e2e', () => {
   let app: INestApplication;
+  let prisma: PrismaService;
   let adminAccess: string;
   let pageId: string;
   let slug: string;
@@ -15,6 +18,7 @@ describe('Pages e2e', () => {
   beforeAll(async () => {
     process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
@@ -334,5 +338,42 @@ describe('Pages e2e', () => {
       .delete(`/admin/en/pages/${page.id}`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(204);
+  });
+
+  it('PATCH page: slug null is 400, a kept slug over the limit passes, a changed one is refused (LEGACY-437)', async () => {
+    const created = await request(http())
+      .post('/admin/en/pages')
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({
+        slug: `slug-limit-e2e-${Date.now()}`,
+        title: 'Slug limit',
+        type: 'generic',
+        content: 'Hello',
+        language: 'en',
+      })
+      .expect(201);
+    const id = created.body.id as string;
+    const patch = (body: object) =>
+      request(http())
+        .patch(`/admin/en/pages/${id}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send(body);
+
+    try {
+      // NOT NULL колонка: `null` — отказ валидации, а не 500.
+      await patch({ slug: null }).expect(400);
+
+      // Слаг старой записи длиннее предела, введённого позже: пишем мимо ручки.
+      const longSlug = `${'a'.repeat(SLUG_MAX_LENGTH)}-${Date.now()}`;
+      await prisma.page.update({ where: { id }, data: { slug: longSlug } });
+      await patch({ slug: longSlug, title: 'Kept' }).expect(200);
+      const refused = await patch({ slug: `${longSlug}-x` }).expect(400);
+      expect(JSON.stringify(refused.body)).toContain(SLUG_MAX_LENGTH_MESSAGE);
+    } finally {
+      await request(http())
+        .delete(`/admin/en/pages/${id}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(204);
+    }
   });
 });

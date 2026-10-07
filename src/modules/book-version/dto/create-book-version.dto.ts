@@ -29,7 +29,13 @@ import {
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
-import { SLUG_PATTERN, SLUG_REGEX, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import {
+  SLUG_MAX_LENGTH,
+  SLUG_MAX_LENGTH_MESSAGE,
+  SLUG_PATTERN,
+  SLUG_REGEX,
+  SLUG_REGEX_README,
+} from '../../../shared/validators/slug';
 
 export class CreateBookVersionDto {
   @ApiProperty({
@@ -44,13 +50,13 @@ export class CreateBookVersionDto {
     description: `Слаг версии книги. ${SLUG_REGEX_README}`,
     example: 'harry-potter',
     pattern: SLUG_PATTERN,
-    maxLength: 100,
+    maxLength: SLUG_MAX_LENGTH,
   })
   @IsOptional()
   @IsString()
   // `LEGACY-437`: формат держался только формой админки и `check-slug`; длина — как у `check-slug`.
   @Matches(SLUG_REGEX, { message: SLUG_REGEX_README })
-  @MaxLength(100, { message: 'Slug must be at most 100 characters long' })
+  @MaxLength(SLUG_MAX_LENGTH, { message: SLUG_MAX_LENGTH_MESSAGE })
   slug?: string;
 
   @ApiProperty({ description: 'Заголовок', example: "Harry Potter and the Philosopher's Stone" })

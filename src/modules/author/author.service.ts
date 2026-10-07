@@ -44,6 +44,7 @@ import {
   sortLetters,
 } from './author-index.util';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
+import { suggestedSlugCandidate } from '../../shared/validators/slug';
 import { seoDtoToData } from '../seo/utils/seo-dto-to-data.util';
 
 /**
@@ -959,9 +960,8 @@ export class AuthorService {
     excludeId?: string,
   ): Promise<string> {
     for (let start = 2; ; start += SLUG_SUGGESTION_BATCH) {
-      const candidates = Array.from(
-        { length: SLUG_SUGGESTION_BATCH },
-        (_, i) => `${baseSlug}-${start + i}`,
+      const candidates = Array.from({ length: SLUG_SUGGESTION_BATCH }, (_, i) =>
+        suggestedSlugCandidate(baseSlug, start + i),
       );
       const taken = await this.prisma.authorTranslation.findMany({
         where: this.buildTakenSlugWhere({ in: candidates }, language, excludeId),

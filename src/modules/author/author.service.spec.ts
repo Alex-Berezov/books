@@ -856,6 +856,30 @@ describe('AuthorService', () => {
       });
     });
 
+    it('keeps every candidate within the slug limit when the base is 99 characters long (LEGACY-437)', async () => {
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
+      const base = 'a'.repeat(99);
+
+      const result = await service.generateUniqueSuggestedSlug(base, 'ru' as Language);
+
+      expect(result).toBe(`${'a'.repeat(98)}-2`);
+      expect(result.length).toBeLessThanOrEqual(100);
+      // В запрос уходят те же обрезанные кандидаты, что и в ответ: `-2`…`-9` и `-10`…`-21`.
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.authorTranslation.findMany).toHaveBeenCalledWith({
+        where: {
+          language: 'ru',
+          slug: {
+            in: Array.from({ length: 20 }, (_, i) =>
+              i < 8 ? `${'a'.repeat(98)}-${i + 2}` : `${'a'.repeat(97)}-${i + 2}`,
+            ),
+          },
+        },
+        select: { slug: true },
+        take: 20,
+      });
+    });
+
     it('moves to the next batch when the whole first one is taken', async () => {
       prisma.authorTranslation.findMany
         .mockResolvedValueOnce(batch('leo', 2).map((slug) => ({ slug })))

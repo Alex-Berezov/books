@@ -1,7 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsString, IsOptional, IsEnum, Matches, MaxLength } from 'class-validator';
 import { Language } from '@prisma/client';
-import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import {
+  SLUG_MAX_LENGTH,
+  SLUG_MAX_LENGTH_MESSAGE,
+  SLUG_PATTERN,
+  SLUG_REGEX_README,
+} from '../../../shared/validators/slug';
 
 /**
  * LEGACY-215: `lang` обязателен по образцу `pages/dto/check-slug-query.dto.ts`. Слаг автора
@@ -18,7 +23,7 @@ export class CheckAuthorSlugQueryDto {
   @Matches(new RegExp(SLUG_PATTERN), {
     message: SLUG_REGEX_README,
   })
-  @MaxLength(100, { message: 'Slug must be at most 100 characters long' })
+  @MaxLength(SLUG_MAX_LENGTH, { message: SLUG_MAX_LENGTH_MESSAGE })
   slug!: string;
 
   /**

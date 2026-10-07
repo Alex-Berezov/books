@@ -57,11 +57,13 @@ describe('UpdateBookVersionDto: формат слага (LEGACY-437)', () => {
     expect(dtoFieldErrors(UpdateBookVersionDto, { title: 'Harry Potter' })).toEqual([]);
   });
 
-  it('отбивает слаг не по формату и длиннее 100 символов', () => {
+  it('отбивает слаг не по формату; длину не проверяет', () => {
     for (const slug of ['Harry-Potter', 'harry potter', 'harry-', 'harry_potter', 'гарри', '']) {
       expect(dtoFieldErrors(UpdateBookVersionDto, { slug })).toContain('slug');
     }
-    expect(dtoFieldErrors(UpdateBookVersionDto, { slug: 'a'.repeat(101) })).toContain('slug');
+    // С `T109` (решение арбитра 07.10.2026, A) предел 100 — в сервисе и только у изменённого слага:
+    // DTO текущего слага не знает, а неизменный слаг старой версии длиннее 100 — не отказ.
+    expect(dtoFieldErrors(UpdateBookVersionDto, { slug: 'a'.repeat(101) })).toEqual([]);
     expect(dtoFieldErrors(UpdateBookVersionDto, { slug: 'a'.repeat(100) })).toEqual([]);
     // `null` записал бы NULL в колонку слага без редиректа (`LEGACY-437`, класс `LEGACY-062`).
     expect(dtoFieldErrors(UpdateBookVersionDto, { slug: null })).toContain('slug');

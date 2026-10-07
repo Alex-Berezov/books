@@ -3,7 +3,8 @@ import { BadRequestException } from '@nestjs/common';
 export const SLUG_PATTERN = '^[a-z0-9]+(?:-[a-z0-9]+)*$';
 export const SLUG_REGEX = new RegExp(SLUG_PATTERN);
 /**
- * Предел длины слага на записи (`LEGACY-437`); `check-slug` и DTO версии держат то же число литералом.
+ * Предел длины слага на записи (`LEGACY-437`): Create-DTO и `check-slug` держат его `@MaxLength`, правка —
+ * `assertChangedSlugLength` в сервисе (только у изменённого слага).
  * Копия на фронте — `SLUG_MAX_LENGTH` и `isSlugLengthAllowed` в `books-front/lib/utils/slug.ts`: менять вместе.
  */
 export const SLUG_MAX_LENGTH = 100;
