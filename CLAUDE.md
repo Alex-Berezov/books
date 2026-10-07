@@ -42,7 +42,7 @@ cd /opt/books/app/src            # каталог репозитория на с
 | Кэш публичных ответов           | `src/common/interceptors/public-cache.interceptor.ts`, `src/common/decorators/no-public-cache.decorator.ts`                                                                                                              |
 | Языки и переводы                | `src/common/pipes/lang-param.pipe.ts`, `src/common/decorators/language.decorator.ts`, `../books-app-docs/ai-context/translation-rules.md`                                                                                |
 | Гео-ограничения                 | `src/modules/geo-block/geo-block-rule.service.ts`, `src/modules/geo-block/geo-ip-country.service.ts`, `.env.example`                                                                                                     |
-| Фоновые механизмы и очереди     | `src/modules/background-jobs/`, `../books-app-docs/ai-context/background-jobs-audit.md`                                                                                                                                  |
+| Фоновые механизмы и очереди     | `src/modules/background-jobs/`, `src/modules/media-jobs/` (BullMQ), `../books-app-docs/ai-context/architecture.md`                                                                                                       |
 | E2E и прогон миграций           | `test/jest-e2e.json`, `test/setup-e2e.ts`, `docker-compose.yml`, `.env.test.example`                                                                                                                                     |
 | Перед рефакторингом чужого кода | `../books-app-docs/ai-context/legacy-warnings.md` (секцией, в шапке индекс LEGACY), `D:/newDev/.claude/qa-index.md` (полные записи - точечно из `qa-lessons.md`)                                                         |
 | Автономный разбор техдолга      | `../books-app-docs/ai-context/tech-debt-autopilot.md` целиком, `../books-app-docs/ai-context/tech-debt-journal.md`                                                                                                       |
@@ -88,7 +88,8 @@ cd /opt/books/app/src            # каталог репозитория на с
    Тег в таком заходе не ставится.
 
 3. **Не читать `.env` и `.env.*`** - там боевые ключи. Отдельно: `.env.test` и `.env.monitoring`
-   лежат в корне и не закрыты `.gitignore`, в коммит они попасть не должны.
+   лежат в корне, не закрыты `.gitignore` и уже отслеживаются git: правка в них - блокер, в коммит она
+   не идёт. Держать ли их в репозитории - тема владельца №1 (секреты).
 4. **Не менять защищённые файлы.** Полный список - в `D:/newDev/.claude/hooks/rules.books.json`,
    разделы `protected` и `createOnly`; каталога books/.claude/hooks/ не существует вовсе (потому
    и написан без кавычек - путь в кавычках гард `check-doc-paths.mjs` считает живым адресом),

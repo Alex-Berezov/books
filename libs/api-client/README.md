@@ -1,199 +1,54 @@
-# API Client Types for Frontend
+# libs/api-client: снимок контракта OpenAPI
 
-Auto-generated TypeScript types from backend API OpenAPI specification.
+Здесь лежит машинная копия публичного контракта API. Главное в каталоге — снимок схемы;
+остальное сгенерировано из него или оставлено как пример.
 
-## 📦 What's Inside
+## Что внутри
 
-- `types.ts` - TypeScript types for all API endpoints (auto-generated)
-- `api-schema.json` - OpenAPI JSON schema. Committed since 07.09.2026 (`LEGACY-016`): it is the
-  contract snapshot checked by `src/common/testing/openapi-snapshot.spec.ts` on every unit run, so
-  a change of routes, parameters or response fields shows up in the diff of this file. Regenerate
-  it with `yarn openapi:snapshot` after an intentional contract change - not with
-  `yarn openapi:schema`, which downloads whatever a running server currently serves.
-- `.gitignore` - excludes generated files from Git (if configured)
+- `api-schema.json` — закоммиченный снимок схемы OpenAPI, собранный из кода (`LEGACY-016`).
+  Его читают:
+  - `src/common/testing/openapi-snapshot.spec.ts` — на каждом `yarn test` собирает схему
+    из контроллеров и сверяет со снимком: смена маршрута, параметра или поля ответа краснеет
+    и видна в диффе этого файла;
+  - `yarn check:response-schema` (`scripts/check-response-schema.mjs`) — схема ответа
+    не беднее того, что реально отдаёт контроллер;
+  - фронт `books-front`: `yarn check:type-sync` сверяет рукописные типы
+    `types/api-schema/**` с копией этого файла (`scripts/type-sync/api-schema.json`
+    во фронте).
+- `src/types.ts` — типы `paths`/`components`, сгенерированные `openapi-typescript`
+  из `api-schema.json`. Обязан совпадать с выводом генератора побайтно — это проверяет
+  `src/common/testing/api-client-types.spec.ts`.
+- `src/index.ts`, `package.json`, `tsconfig.json`, `examples/` — клиент на axios и примеры
+  к нему. Ни бэкенд, ни `books-front` их не импортируют; сборка — `yarn api-client:build`.
 
-## 🚀 Frontend Usage
+## Как обновить после смены контракта
 
-### 1. Generate Types
-
-```bash
-# In the backend project root
-
-# Option A: Generate from local API (dev server must be running)
-yarn openapi:types
-
-# Option B: Generate from production API
-yarn openapi:types:prod
-
-# Option C: generate types from the committed contract snapshot
-yarn openapi:types:from-schema
-
-# ⚠️ `yarn openapi:schema` / `openapi:schema:prod` OVERWRITE that snapshot with whatever a running
-# server currently serves, which makes the contract guard compare the code against a deployment
-# instead of against the repository. Run them only when you deliberately want that file replaced,
-# and restore it with `yarn openapi:snapshot` afterwards.
-```
-
-### 2. Copy to Frontend Project
+Из корня репозитория:
 
 ```bash
-# From backend project root
-cp libs/api-client/src/types.ts ../frontend/src/types/api.ts
+yarn openapi:snapshot            # пересобрать api-schema.json из кода
+yarn openapi:types:from-schema   # перегенерировать src/types.ts из снимка
 ```
 
-Or create an npm script in your frontend:
+Дифф `api-schema.json` прочитайте глазами: это и есть описание того, что увидит клиент.
+В CI режим обновления снимка не включается — спека только сверяет.
 
-```json
-{
-  "scripts": {
-    "api:types:update": "cp ../books-app-back/libs/api-client/src/types.ts ./src/types/api.ts"
-  }
-}
-```
+⚠️ Не используйте для этого `yarn openapi:schema`, `openapi:schema:prod`, `openapi:types`
+и `openapi:types:prod`: они берут схему с запущенного сервера (локального или продового),
+а не из кода. Снимок тогда описывает развёртывание, а не репозиторий, а `types.ts`
+расходится со снимком и роняет `api-client-types.spec.ts`. Если всё же запускали —
+верните файлы командами выше.
 
-### 3. Use in Code
+## Как фронт получает типы
 
-```typescript
-import { paths, components } from '@/types/api';
+Копированием `types.ts` — никак. `books-front` пишет типы ответов руками в
+`types/api-schema/**` и держит их в согласии с контрактом проверкой `yarn check:type-sync`
+против копии `api-schema.json`. Поэтому после смены контракта нужна парная правка во фронте:
+обновить копию схемы и рукописные типы.
 
-// Типы для endpoints
-type LoginResponse =
-  paths['/api/auth/login']['post']['responses']['200']['content']['application/json'];
+## Адреса
 
-type BookDTO = components['schemas']['BookDto'];
-type UserDTO = components['schemas']['UserDto'];
-
-// Example with fetch
-const login = async (email: string, password: string): Promise<LoginResponse> => {
-  const response = await fetch('https://api.bibliaris.com/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`Login failed: ${response.status}`);
-  }
-
-  return response.json();
-};
-```
-
-## 🔄 Automatic Type Updates
-
-### In Frontend CI/CD
-
-Add a type update step to GitHub Actions:
-
-```yaml
-name: Update API Types
-
-on:
-  schedule:
-    - cron: '0 2 * * *' # Every day at 2:00 AM
-  workflow_dispatch: # Manual trigger
-
-jobs:
-  update-types:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Generate API types
-        run: |
-          npx openapi-typescript https://api.bibliaris.com/api/docs-json -o src/types/api.ts
-
-      - name: Create Pull Request
-        uses: peter-evans/create-pull-request@v5
-        with:
-          commit-message: 'chore: update API types'
-          title: 'Update API types from production'
-          branch: 'update-api-types'
-```
-
-## 📚 Additional Tools
-
-### RTK Query Code Generation
-
-If using Redux Toolkit Query:
-
-```bash
-# Installation
-yarn add -D @rtk-query/codegen-openapi
-
-# Configuration: rtk-query-codegen.config.ts
-import type { ConfigFile } from '@rtk-query/codegen-openapi';
-
-const config: ConfigFile = {
-  schemaFile: 'https://api.bibliaris.com/api/docs-json',
-  apiFile: './src/store/emptyApi.ts',
-  apiImport: 'emptySplitApi',
-  outputFile: './src/store/api.ts',
-  exportName: 'api',
-  hooks: true,
-};
-
-export default config;
-
-# Generation
-yarn rtk-query-codegen rtk-query-codegen.config.ts
-```
-
-### React Query / TanStack Query
-
-```typescript
-// src/lib/api-client.ts
-import { paths } from '@/types/api';
-
-type ApiPath = keyof paths;
-type ApiMethod<P extends ApiPath> = keyof paths[P];
-
-export async function apiRequest<P extends ApiPath, M extends ApiMethod<P>>(
-  path: P,
-  method: M,
-  options?: RequestInit,
-) {
-  const response = await fetch(`https://api.bibliaris.com${path}`, {
-    method: method.toString().toUpperCase(),
-    ...options,
-  });
-
-  if (!response.ok) {
-    throw new Error(`API error: ${response.status}`);
-  }
-
-  return response.json();
-}
-```
-
-## 🔗 Useful Links
-
-- **Production API**: https://api.bibliaris.com
-- **Swagger UI**: https://api.bibliaris.com/docs
-- **OpenAPI JSON**: https://api.bibliaris.com/api/docs-json
-- **Health Check**: https://api.bibliaris.com/api/health/liveness
-
-## 📖 API Documentation
-
-Complete documentation for frontend integration:
-
-- [Frontend Integration Guide](../../docs/FRONTEND_INTEGRATION.md)
-- [API Examples](../../docs/examples/frontend-examples.ts)
-
-## 🛠️ Troubleshooting
-
-### Error: "Cannot find module '@/types/api'"
-
-Make sure:
-
-1. Types are generated: `yarn openapi:types` (in backend)
-2. File is copied to frontend project
-3. TypeScript alias `@` is configured in `tsconfig.json`
-
-### Error: "Error fetching schema"
-
-Check:
-
-1. API server is running (for local generation)
-2. `/docs-json` endpoint is accessible (Swagger is always enabled)
-3. Production URL is accessible (for prod generation)
+- Swagger UI: `https://api.bibliaris.com/docs` (локально `http://localhost:5000/docs`).
+- Схема OpenAPI: `https://api.bibliaris.com/docs-json` — без префикса `/api`.
+- Контракты фронт-бэк описаны в
+  [ai-context/api-contracts.md](https://github.com/Alex-Berezov/books-app-docs/blob/main/ai-context/api-contracts.md).
