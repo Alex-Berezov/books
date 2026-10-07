@@ -1225,6 +1225,48 @@ describe('BookService.update (LEGACY-320)', () => {
     });
   });
 
+  describe('slug length limit applies only to a changed slug (LEGACY-437)', () => {
+    it('passes an unchanged slug longer than 100 without the slug lock and conflict check', async () => {
+      const long = 'a'.repeat(101);
+      prisma.$queryRaw.mockResolvedValue([{ slug: long }]);
+      prisma.book.update.mockResolvedValue({ id: 'b1', slug: long });
+
+      await service.update('b1', { slug: long });
+
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+      expect(prisma.book.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a changed slug longer than 100 before the slug lock, conflict check and write', async () => {
+      prisma.$queryRaw.mockResolvedValue([{ slug: 'old-slug' }]);
+
+      await expect(service.update('b1', { slug: 'b'.repeat(101) })).rejects.toThrow(
+        new BadRequestException('Slug must be at most 100 characters long'),
+      );
+      // Только замок строки книги: ни замка слагов, ни поиска конфликта.
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findFirst).not.toHaveBeenCalled();
+      expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+      expect(prisma.book.update).not.toHaveBeenCalled();
+    });
+
+    it('accepts a changed slug of exactly 100 characters', async () => {
+      prisma.$queryRaw.mockImplementation((...call: unknown[]) => {
+        if (renderSql(call).includes('unnest')) return Promise.resolve([{ key: 11 }, { key: 22 }]);
+        if (renderSql(call).includes('pg_advisory_xact_lock'))
+          return Promise.resolve([{ locked: true }]);
+        return Promise.resolve([{ slug: 'old-slug' }]);
+      });
+      routeOldAddresses(prisma);
+      prisma.book.update.mockResolvedValue({ id: 'b1', slug: 'c'.repeat(100) });
+
+      await service.update('b1', { slug: 'c'.repeat(100) });
+
+      expect(prisma.book.update).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('answers 404, not 500, when the lock finds no book row', async () => {
     prisma.$queryRaw.mockResolvedValue([]);
 

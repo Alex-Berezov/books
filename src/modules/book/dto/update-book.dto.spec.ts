@@ -1,3 +1,4 @@
+import { plainToInstance } from 'class-transformer';
 import { dtoFieldErrors } from '../../../common/testing/dto-field-errors';
 import { UpdateBookDto } from './update-book.dto';
 
@@ -17,9 +18,12 @@ describe('UpdateBookDto: слаг (LEGACY-437)', () => {
     expect(dtoFieldErrors(UpdateBookDto, { slug: '   ' })).toContain('slug');
   });
 
-  it('держит предел 100 после обрезки пробелов', () => {
-    expect(dtoFieldErrors(UpdateBookDto, { slug: 'a'.repeat(100) })).toEqual([]);
-    expect(dtoFieldErrors(UpdateBookDto, { slug: ` ${'a'.repeat(100)} ` })).toEqual([]);
-    expect(dtoFieldErrors(UpdateBookDto, { slug: 'a'.repeat(101) })).toContain('slug');
+  it('длину не проверяет: неизменный слаг старой книги длиннее 100 — не отказ (предел в `BookService.update`)', () => {
+    expect(dtoFieldErrors(UpdateBookDto, { slug: 'a'.repeat(101) })).toEqual([]);
+  });
+
+  it('обрезает пробелы до сервиса: предел изменённого слага считается по обрезанному значению', () => {
+    const padded = ` ${'a'.repeat(100)} `;
+    expect(plainToInstance(UpdateBookDto, { slug: padded }).slug).toBe('a'.repeat(100));
   });
 });

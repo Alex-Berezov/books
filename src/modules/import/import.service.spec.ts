@@ -2472,3 +2472,246 @@ describe('ImportService — годный однофамилец партии н�
     expect(tx.category.create).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * 🔴 `LEGACY-437`. DTO импорта длину слага не держат: `@Matches(SLUG_PATTERN)` пропускает
+ * слаг любой длины, и до правки он доезжал до записи. Предел стоит в сервисе — у нового
+ * и у изменённого слага; неизменный длинный слаг старой записи отказа не даёт.
+ *
+ * ⚠️ Смотрим на отчёт, а не на внутренности: отказ элемента — строка в `errors`
+ * с текстом предела и отсутствие записи, а не исключение из ручки. Партия не атомарна,
+ * транзакция на термин, поэтому каждый кейс проверяет ещё и счётчики.
+ */
+describe('ImportService — предел длины нового и изменённого слага (LEGACY-437)', () => {
+  const LIMIT_MESSAGE = 'Slug must be at most 100 characters long';
+  /** Слаг заданной длины, годный по `SLUG_PATTERN`: шаблон длину не ограничивает. */
+  const slugOf = (length: number) => 'a'.repeat(length);
+
+  const existingTagWith = (slug: string, translations: LockedTranslationRow[] = []) => ({
+    id: 'tag-1',
+    key: 'aestheticism',
+    slug,
+    indexable: true,
+    isVisible: true,
+    sortOrder: 0,
+    translations,
+  });
+
+  /** Строка тега, которую видит транзакция: по ней импорт выбирает ветку и берёт текущий слаг. */
+  const seedTagInTx = (tx: FakeClient, row: ReturnType<typeof existingTagWith>) => {
+    tx.tag.findUnique.mockImplementation((args: { where?: { key?: string } }) =>
+      Promise.resolve(args?.where?.key === 'aestheticism' ? row : null),
+    );
+  };
+
+  const existingCategory = {
+    id: 'cat-1',
+    // `type` и `parentId` нужны: по ним считается смена типа (`LEGACY-308`).
+    type: CategoryType.genre,
+    parentId: null,
+    indexable: true,
+    isVisible: true,
+    sortOrder: 0,
+  };
+
+  /** Категория уже в базе; переводы под замком строки задаёт сам кейс. */
+  const seedCategoryInTx = (tx: FakeClient) => {
+    tx.category.findUnique.mockImplementation((args: { where?: { key?: string } }) =>
+      Promise.resolve(args?.where?.key === 'victorian-literature' ? existingCategory : null),
+    );
+  };
+
+  it('новый тег со слагом длиннее 100 отвергается строкой в errors, тег не заводится', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importTags([{ ...tagDto(), slug: slugOf(101) } as ImportTagDto]);
+
+    expect(result).toEqual({
+      imported: 0,
+      updated: 0,
+      errors: [{ key: 'aestheticism', message: LIMIT_MESSAGE }],
+    });
+    expect(tx.tag.create).not.toHaveBeenCalled();
+    expect(tx.tagTranslation.create).not.toHaveBeenCalled();
+  });
+
+  it('новый тег со слагом ровно 100 импортируется: граница входит в предел', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importTags([{ ...tagDto(), slug: slugOf(100) } as ImportTagDto]);
+
+    expect(result).toEqual({ imported: 1, updated: 0, errors: [] });
+    expect(tx.tag.create).toHaveBeenCalledTimes(1);
+    expect(tx.tag.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ slug: slugOf(100) }) }),
+    );
+  });
+
+  it('новая категория, слаг первого перевода которой длиннее 100, отвергается: перевод не заводится', async () => {
+    const log: WriteLog = [];
+    const { service, root, tx } = makeService(log);
+    seedEmpty(log, root, tx);
+
+    const result = await service.importCategories([
+      {
+        ...categoryDto(),
+        translations: { [Language.en]: { name: 'Victorian Literature', slug: slugOf(101) } },
+      } as unknown as ImportCategoryDto,
+    ]);
+
+    expect(result).toEqual({
+      imported: 0,
+      updated: 0,
+      errors: [{ key: 'victorian-literature', message: LIMIT_MESSAGE }],
+    });
+    expect(tx.categoryTranslation.create).not.toHaveBeenCalled();
+  });
+
+  it('существующий тег с тем же длинным слагом обновляется: неизменный слаг предел не проверяет', async () => {
+    const log: WriteLog = [];
+    const { service, tx, slugRedirects } = makeService(log);
+    seedTagInTx(tx, existingTagWith(slugOf(101)));
+
+    const result = await service.importTags([{ ...tagDto(), slug: slugOf(101) } as ImportTagDto]);
+
+    expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
+    expect(tx.tag.update).toHaveBeenCalledTimes(1);
+    // Слаг не менялся — истории базового слага нет.
+    expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+  });
+
+  it('существующий тег, слаг которого меняется на длиннее 100, отвергается и не обновляется', async () => {
+    const log: WriteLog = [];
+    const { service, tx, slugRedirects } = makeService(log);
+    seedTagInTx(tx, existingTagWith('aestheticism'));
+
+    const result = await service.importTags([{ ...tagDto(), slug: slugOf(101) } as ImportTagDto]);
+
+    expect(result).toEqual({
+      imported: 0,
+      updated: 0,
+      errors: [{ key: 'aestheticism', message: LIMIT_MESSAGE }],
+    });
+    expect(tx.tag.update).not.toHaveBeenCalled();
+    // Редирект на слаг, который так и не записан, не заводится.
+    expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+  });
+
+  it('перевод тега, слаг которого меняется на длиннее 100, отвергает элемент', async () => {
+    const log: WriteLog = [];
+    const { service, tx, slugRedirects } = makeService(log);
+    seedTagInTx(
+      tx,
+      existingTagWith('aestheticism', [{ language: Language.en, slug: 'aestheticism' }]),
+    );
+
+    const result = await service.importTags([
+      {
+        ...tagDto(),
+        translations: { [Language.en]: { name: 'Aestheticism', slug: slugOf(101) } },
+      } as unknown as ImportTagDto,
+    ]);
+
+    expect(result).toEqual({
+      imported: 0,
+      updated: 0,
+      errors: [{ key: 'aestheticism', message: LIMIT_MESSAGE }],
+    });
+    expect(tx.tagTranslation.update).not.toHaveBeenCalled();
+    expect(slugRedirects.record).not.toHaveBeenCalled();
+  });
+
+  it('новый перевод существующего тега со слагом длиннее 100 отвергает элемент', async () => {
+    const log: WriteLog = [];
+    const { service, tx } = makeService(log);
+    seedTagInTx(tx, existingTagWith('aestheticism'));
+
+    const result = await service.importTags([
+      {
+        ...tagDto(),
+        translations: { [Language.ru]: { name: 'Эстетизм', slug: slugOf(101) } },
+      } as unknown as ImportTagDto,
+    ]);
+
+    expect(result).toEqual({
+      imported: 0,
+      updated: 0,
+      errors: [{ key: 'aestheticism', message: LIMIT_MESSAGE }],
+    });
+    expect(tx.tagTranslation.create).not.toHaveBeenCalled();
+  });
+
+  it('новый перевод категории со слагом длиннее 100 отвергает элемент, перевод не заводится', async () => {
+    const log: WriteLog = [];
+    const { service, tx, lockedTranslations } = makeService(log);
+    seedCategoryInTx(tx);
+    lockedTranslations.push({ language: Language.en, slug: 'victorian-literature' });
+
+    const result = await service.importCategories([
+      {
+        ...categoryDto(),
+        translations: {
+          [Language.en]: { name: 'Victorian Literature', slug: 'victorian-literature' },
+          [Language.ru]: { name: 'Викторианская литература', slug: slugOf(101) },
+        },
+      } as unknown as ImportCategoryDto,
+    ]);
+
+    expect(result).toEqual({
+      imported: 0,
+      updated: 0,
+      errors: [{ key: 'victorian-literature', message: LIMIT_MESSAGE }],
+    });
+    expect(tx.categoryTranslation.create).not.toHaveBeenCalled();
+  });
+
+  it('существующий перевод категории с тем же длинным слагом проходит, новый ровно 100 — тоже', async () => {
+    const log: WriteLog = [];
+    const { service, tx, lockedTranslations } = makeService(log);
+    seedCategoryInTx(tx);
+    lockedTranslations.push({ language: Language.en, slug: slugOf(101) });
+
+    const result = await service.importCategories([
+      {
+        ...categoryDto(),
+        translations: {
+          [Language.en]: { name: 'Victorian Literature', slug: slugOf(101) },
+          [Language.ru]: { name: 'Викторианская литература', slug: slugOf(100) },
+        },
+      } as unknown as ImportCategoryDto,
+    ]);
+
+    expect(result).toEqual({ imported: 0, updated: 1, errors: [] });
+    expect(tx.categoryTranslation.update).toHaveBeenCalledTimes(1);
+    expect(tx.categoryTranslation.create).toHaveBeenCalledTimes(1);
+    expect(tx.categoryTranslation.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ slug: slugOf(100) }) }),
+    );
+  });
+
+  it('перевод категории, слаг которого меняется на длиннее 100, отвергает элемент', async () => {
+    const log: WriteLog = [];
+    const { service, tx, slugRedirects, lockedTranslations } = makeService(log);
+    seedCategoryInTx(tx);
+    lockedTranslations.push({ language: Language.en, slug: 'victorian-literature' });
+
+    const result = await service.importCategories([
+      {
+        ...categoryDto(),
+        translations: { [Language.en]: { name: 'Victorian Literature', slug: slugOf(101) } },
+      } as unknown as ImportCategoryDto,
+    ]);
+
+    expect(result).toEqual({
+      imported: 0,
+      updated: 0,
+      errors: [{ key: 'victorian-literature', message: LIMIT_MESSAGE }],
+    });
+    expect(tx.categoryTranslation.update).not.toHaveBeenCalled();
+    expect(slugRedirects.record).not.toHaveBeenCalled();
+  });
+});

@@ -12,16 +12,22 @@ import {
   IsUUID,
   MaxLength,
 } from 'class-validator';
-import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import {
+  SLUG_PATTERN,
+  SLUG_REGEX_README,
+  SLUG_MAX_LENGTH,
+  SLUG_MAX_LENGTH_MESSAGE,
+} from '../../../shared/validators/slug';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
 import { SeoInputDto } from './seo-input.dto';
 import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 
 export class CreatePageDto {
-  @ApiProperty({ description: 'Page slug', pattern: SLUG_PATTERN })
+  @ApiProperty({ description: 'Page slug', pattern: SLUG_PATTERN, maxLength: SLUG_MAX_LENGTH })
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
+  @MaxLength(SLUG_MAX_LENGTH, { message: SLUG_MAX_LENGTH_MESSAGE })
   slug!: string;
 
   @ApiProperty({ description: 'Page title' })

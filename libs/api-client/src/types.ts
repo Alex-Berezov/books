@@ -11756,7 +11756,7 @@ export interface components {
     };
     UpdateBookDto: {
       /**
-       * @description Unique book slug. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: "harry-potter", "book-123"
+       * @description Unique book slug. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: "harry-potter", "book-123". The 100-character limit applies only when the slug changes: the book's current slug is accepted as is.
        * @example harry-potter-updated
        */
       slug?: string;

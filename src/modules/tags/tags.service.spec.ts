@@ -110,6 +110,21 @@ describe('TagsService', () => {
     );
   });
 
+  describe('generateUniqueSuggestedSlug: подсказка не длиннее предела (LEGACY-437)', () => {
+    it('к занятому слагу из 100 символов подсказывает свободный кандидат не длиннее 100', async () => {
+      const taken = 'a'.repeat(100);
+      prisma.tag.findFirst.mockImplementation(({ where }: { where: { slug: string } }) =>
+        Promise.resolve(where.slug === taken ? { id: 't1' } : null),
+      );
+
+      const suggested = await service.generateUniqueSuggestedSlug(taken);
+
+      expect(suggested).toBe(`${'a'.repeat(98)}-2`);
+      expect(suggested.length).toBeLessThanOrEqual(100);
+      expect(prisma.tag.findFirst).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('list projects per-language indexability', () => {
     const translation = (
       language: Language,
@@ -1520,5 +1535,88 @@ describe('TagsService — писатели тега идут под замком
     for (const call of $transaction.mock.calls as unknown[][]) {
       expect(call[1]).toEqual(TAG_TX_OPTIONS);
     }
+  });
+
+  /**
+   * `LEGACY-437`. Предел длины слага (100) стоит только у ИЗМЕНЁННОГО слага:
+   * старая запись со слагом длиннее предела, которую админка шлёт в PATCH как есть,
+   * проходит; новый длинный слаг — 400 до записи и до редиректа; ровно 100 — граница, проходит.
+   */
+  describe('предел длины изменённого слага (LEGACY-437)', () => {
+    const SLUG_101 = 'a'.repeat(101);
+    const SLUG_100 = 'b'.repeat(100);
+
+    it('update: неизменный слаг длиной 101 проходит — запись выполнена', async () => {
+      const { tagsService, log, redirects } = setup({
+        'tag.findUnique': () => ({ id: 't1', key: 'k', slug: SLUG_101 }),
+      });
+
+      await tagsService.update('t1', { slug: SLUG_101 });
+
+      expect(log).toContain('tx.tag.update');
+      expect(redirects.recordBaseSlugChange).not.toHaveBeenCalled();
+    });
+
+    it('update: изменённый слаг длиной 101 — 400 без записи и без редиректа', async () => {
+      const { tagsService, log, redirects } = setup({
+        'tag.findUnique': () => ({ id: 't1', key: 'k', slug: 'old' }),
+      });
+
+      const call = tagsService.update('t1', { slug: SLUG_101 });
+
+      await expect(call).rejects.toBeInstanceOf(BadRequestException);
+      await expect(call).rejects.toThrow('Slug must be at most 100 characters long');
+      expect(log).not.toContain('tx.tag.update');
+      expect(redirects.recordBaseSlugChange).not.toHaveBeenCalled();
+    });
+
+    it('update: изменённый слаг ровно 100 проходит — запись и редирект выполнены', async () => {
+      const { tagsService, log, redirects } = setup({
+        'tag.findUnique': () => ({ id: 't1', key: 'k', slug: 'old' }),
+      });
+
+      await tagsService.update('t1', { slug: SLUG_100 });
+
+      expect(log).toContain('tx.tag.update');
+      expect(redirects.recordBaseSlugChange).toHaveBeenCalledTimes(1);
+    });
+
+    it('updateTranslation: неизменный слаг длиной 101 проходит — запись выполнена', async () => {
+      const { tagsService, log, redirects } = setup({
+        'tagTranslation.findUnique': () => ({ id: 'tr1', slug: SLUG_101, seoId: null }),
+        'tagTranslation.update': () => ({ id: 'tr1' }),
+      });
+
+      await tagsService.updateTranslation('t1', Language.en, { slug: SLUG_101 });
+
+      expect(log).toContain('tx.tagTranslation.update');
+      expect(redirects.record).not.toHaveBeenCalled();
+    });
+
+    it('updateTranslation: изменённый слаг длиной 101 — 400 без записи и без редиректа', async () => {
+      const { tagsService, log, redirects } = setup({
+        'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: null }),
+        'tagTranslation.update': () => ({ id: 'tr1' }),
+      });
+
+      const call = tagsService.updateTranslation('t1', Language.en, { slug: SLUG_101 });
+
+      await expect(call).rejects.toBeInstanceOf(BadRequestException);
+      await expect(call).rejects.toThrow('Slug must be at most 100 characters long');
+      expect(log).not.toContain('tx.tagTranslation.update');
+      expect(redirects.record).not.toHaveBeenCalled();
+    });
+
+    it('updateTranslation: изменённый слаг ровно 100 проходит — запись и редирект выполнены', async () => {
+      const { tagsService, log, redirects } = setup({
+        'tagTranslation.findUnique': () => ({ id: 'tr1', slug: 'old', seoId: null }),
+        'tagTranslation.update': () => ({ id: 'tr1' }),
+      });
+
+      await tagsService.updateTranslation('t1', Language.en, { slug: SLUG_100 });
+
+      expect(log).toContain('tx.tagTranslation.update');
+      expect(redirects.record).toHaveBeenCalledTimes(1);
+    });
   });
 });

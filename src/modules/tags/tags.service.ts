@@ -41,6 +41,7 @@ import {
   seoInputHasData,
   mirrorTranslationMetaToSeo,
 } from '../../shared/seo/translation-meta-seo.util';
+import { assertChangedSlugLength, suggestedSlugCandidate } from '../../shared/validators/slug';
 
 /**
  * Форма ответа трёх ручек перевода тега (`listTranslations`/`createTranslation`/
@@ -264,6 +265,8 @@ export class TagsService {
             `Attempted to change "${exists.key}" to "${dto.key}".`,
         );
       }
+      // `LEGACY-437`: предел длины — только у изменённого слага; неизменный слаг старой записи проходит.
+      assertChangedSlugLength(dto.slug, exists.slug);
       // См. категории: базовый слаг — фолбэк резолва, его смена ломает все языки.
       const baseSlugChanged = !!dto.slug && dto.slug !== exists.slug;
 
@@ -635,6 +638,8 @@ export class TagsService {
         where: { tagId_language: { tagId, language } },
       });
       if (!tr) throw new NotFoundException('Translation not found');
+      // `LEGACY-437`: предел длины — только у изменённого слага; неизменный слаг старой записи проходит.
+      assertChangedSlugLength(dto.slug, tr.slug);
 
       if (dto.slug) {
         const dup = await tx.tagTranslation.findFirst({
@@ -864,7 +869,7 @@ export class TagsService {
     let exists = await this.prisma.tag.findFirst({ where: { slug: candidate } });
     while (exists) {
       counter++;
-      candidate = `${baseSlug}-${counter}`;
+      candidate = suggestedSlugCandidate(baseSlug, counter);
       exists = await this.prisma.tag.findFirst({ where: { slug: candidate } });
     }
 

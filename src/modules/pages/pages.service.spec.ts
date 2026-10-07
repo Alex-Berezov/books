@@ -679,6 +679,74 @@ describe('PagesService (unit)', () => {
   });
 
   /**
+   * `LEGACY-437`. Предел длины 100 — только у **изменённого** слага. Форма правки шлёт запись
+   * целиком, и неизменный слаг старой страницы длиннее предела не должен давать 400: иначе
+   * её нельзя было бы даже переименовать. Сравнение — со слагом строки под замком.
+   */
+  describe('update: предел длины только у изменённого слага (LEGACY-437)', () => {
+    const slugOf = (length: number) => 'a'.repeat(length);
+
+    it('неизменный слаг длиной 101 — запись проходит', async () => {
+      const longSlug = slugOf(101);
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: longSlug, language: 'en', seoId: null }]);
+      prisma.page.findFirst.mockResolvedValueOnce(null);
+      prisma.page.update.mockResolvedValueOnce({ id: 'p1', slug: longSlug, title: 'Renamed' });
+
+      await service.update(
+        'p1',
+        {
+          slug: longSlug,
+          title: 'Renamed',
+        } as unknown as import('./dto/update-page.dto').UpdatePageDto,
+        'admin-1',
+      );
+
+      expect(prisma.page.update).toHaveBeenCalled();
+      // Слаг не менялся — редиректа нет.
+      expect(slugRedirects.record).not.toHaveBeenCalled();
+    });
+
+    it('изменённый слаг длиной 101 — 400 до проверки дубля, записи и редиректа', async () => {
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'about', language: 'en', seoId: null }]);
+
+      await expect(
+        service.update(
+          'p1',
+          { slug: slugOf(101) } as unknown as import('./dto/update-page.dto').UpdatePageDto,
+          'admin-1',
+        ),
+      ).rejects.toThrow(new BadRequestException('Slug must be at most 100 characters long'));
+      expect(prisma.page.findFirst).not.toHaveBeenCalled();
+      expect(prisma.page.update).not.toHaveBeenCalled();
+      expect(slugRedirects.record).not.toHaveBeenCalled();
+      expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+    });
+
+    it('изменённый слаг ровно 100 — граница включительно, запись проходит', async () => {
+      const edgeSlug = slugOf(100);
+      prisma.$queryRaw.mockResolvedValueOnce([{ slug: 'about', language: 'en', seoId: null }]);
+      prisma.page.findFirst.mockResolvedValueOnce(null);
+      prisma.page.update.mockResolvedValueOnce({ id: 'p1', slug: edgeSlug });
+
+      await service.update(
+        'p1',
+        { slug: edgeSlug } as unknown as import('./dto/update-page.dto').UpdatePageDto,
+        'admin-1',
+      );
+
+      expect(prisma.page.update).toHaveBeenCalledTimes(1);
+      expect(prisma.page.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ slug: edgeSlug }) }),
+      );
+      expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+      expect(slugRedirects.record).toHaveBeenCalledWith(
+        { entityType: 'page', language: 'en', oldSlug: 'about', newSlug: edgeSlug },
+        prisma,
+      );
+    });
+  });
+
+  /**
    * `LEGACY-400`. Проверка дубля `(language, slug)` и запись `Seo` шли на пуле
    * — вне транзакции, которая пишет саму страницу, и до её строки под замком.
    * Дубль, вставленный встречной правкой в том же окне, доходил до уникального

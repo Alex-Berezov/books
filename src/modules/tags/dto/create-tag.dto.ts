@@ -1,6 +1,20 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsString, Matches, Min, MinLength, ValidateIf } from 'class-validator';
-import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import {
+  IsBoolean,
+  IsInt,
+  IsString,
+  Matches,
+  Min,
+  MinLength,
+  ValidateIf,
+  MaxLength,
+} from 'class-validator';
+import {
+  SLUG_PATTERN,
+  SLUG_REGEX_README,
+  SLUG_MAX_LENGTH,
+  SLUG_MAX_LENGTH_MESSAGE,
+} from '../../../shared/validators/slug';
 
 /**
  * 🔴 `LEGACY-363`. У полей на `NOT NULL`-колонках нет `@IsOptional()` — он пропустил бы
@@ -14,9 +28,15 @@ export class CreateTagDto {
   @MinLength(2)
   name!: string;
 
-  @ApiProperty({ description: 'Tag slug', example: 'motivation', pattern: SLUG_PATTERN })
+  @ApiProperty({
+    description: 'Tag slug',
+    example: 'motivation',
+    pattern: SLUG_PATTERN,
+    maxLength: SLUG_MAX_LENGTH,
+  })
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
+  @MaxLength(SLUG_MAX_LENGTH, { message: SLUG_MAX_LENGTH_MESSAGE })
   slug!: string;
 
   @ApiProperty({ description: 'Stable unique key', example: 'motivation', pattern: SLUG_PATTERN })

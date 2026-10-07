@@ -38,6 +38,7 @@ import {
   seoInputHasData,
   mirrorTranslationMetaToSeo,
 } from '../../shared/seo/translation-meta-seo.util';
+import { assertChangedSlugLength, suggestedSlugCandidate } from '../../shared/validators/slug';
 
 export type CategoryTreeNode = {
   id: string;
@@ -420,6 +421,8 @@ export class CategoryService {
         Pick<PrismaCategory, 'id' | 'type' | 'slug' | 'parentId'>[]
       >`SELECT id, type, slug, "parentId" FROM "Category" WHERE id = ${id} FOR NO KEY UPDATE`;
       if (!current) throw new NotFoundException('Category not found');
+      // `LEGACY-437`: предел длины — только у изменённого слага; неизменный слаг старой записи проходит.
+      assertChangedSlugLength(dto.slug, current.slug);
 
       // 🔴 `LEGACY-276`. Вторая проверка — та, что решает. Идёт клиентом
       // транзакции и **под замком по слагу**, взятым входом `runIn*` первым
@@ -962,6 +965,8 @@ export class CategoryService {
         // снимка на пуле — встречная смена слага иначе оставалась без редиректа.
         const tr = await this.categoryTree.lockTranslation(tx, categoryId, language);
         if (!tr) throw new NotFoundException('Translation not found');
+        // `LEGACY-437`: предел длины — только у изменённого слага; неизменный слаг старой записи проходит.
+        assertChangedSlugLength(dto.slug, tr.slug);
 
         if (dto.slug) {
           const dup = await tx.categoryTranslation.findFirst({
@@ -1663,7 +1668,7 @@ export class CategoryService {
 
     while (exists) {
       counter++;
-      candidate = `${baseSlug}-${counter}`;
+      candidate = suggestedSlugCandidate(baseSlug, counter);
       exists = await this.prisma.category.findFirst({ where: { slug: candidate } });
     }
 

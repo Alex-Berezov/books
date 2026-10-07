@@ -9,6 +9,7 @@ import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CategoryTreeService, MismatchedChildEdge } from '../category/category-tree.service';
 import { TagLockService } from '../tags/tag-lock.service';
 import { mirrorTranslationMetaToSeo } from '../../shared/seo/translation-meta-seo.util';
+import { assertChangedSlugLength } from '../../shared/validators/slug';
 
 const SUPPORTED_LANGS = new Set(Object.values(Language));
 const SUPPORTED_LANGS_TEXT = Object.values(Language).join(', ');
@@ -794,6 +795,8 @@ export class ImportService {
         // между снимком и записью оставалась без редиректа.
         const existingTr = await this.categoryTree.lockTranslation(tx, existing.id, language);
         if (existingTr) {
+          // `LEGACY-437`: DTO импорта длину слага не держит — предел здесь, у нового и изменённого слага.
+          assertChangedSlugLength(tr.slug, existingTr.slug);
           // Импорт — такой же путь смены слага, как форма в админке, и до 09.08.2026
           // он шёл в обход истории: класс считался закрытым для категорий и тегов,
           // хотя закрыт был только через сервисы (LEGACY-062). Запись в историю
@@ -857,6 +860,8 @@ export class ImportService {
     language: Language,
     tr: TranslationInput,
   ) {
+    // `LEGACY-437`: DTO импорта длину слага не держит — предел здесь, у нового и изменённого слага.
+    assertChangedSlugLength(tr.slug, null);
     const data = this.buildCategoryTranslationData(tr);
     // `LEGACY-436`: meta/OG — и в `Seo`, публика читает только его.
     const seoId = await mirrorTranslationMetaToSeo(tx, null, tr);
@@ -963,6 +968,8 @@ export class ImportService {
         include: { translations: true },
       });
 
+      // `LEGACY-437`: DTO импорта длину слага не держит — предел здесь, у нового и изменённого слага.
+      assertChangedSlugLength(dto.slug, existing?.slug ?? null);
       if (!existing) {
         // Тот же рисунок, что у категорий, и та же причина (`LEGACY-131`): тег
         // без переводов занимает `slug` и `key`, но публичным маршрутам не виден.
@@ -1023,6 +1030,7 @@ export class ImportService {
         const language = langCode as Language;
         const existingTr = existing.translations.find((t) => t.language === language);
         if (existingTr) {
+          assertChangedSlugLength(tr.slug, existingTr.slug);
           if (tr.slug && existingTr.slug !== tr.slug) {
             await this.slugRedirects.record(
               { entityType: 'tag', language, oldSlug: existingTr.slug, newSlug: tr.slug },
@@ -1055,6 +1063,7 @@ export class ImportService {
     language: Language,
     tr: TranslationInput,
   ) {
+    assertChangedSlugLength(tr.slug, null);
     const data = this.buildTagTranslationData(tr);
     // `LEGACY-436`: meta/OG — и в `Seo`, публика читает только его.
     const seoId = await mirrorTranslationMetaToSeo(tx, null, tr);

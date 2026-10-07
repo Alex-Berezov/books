@@ -9,9 +9,15 @@ import {
   Min,
   MinLength,
   ValidateIf,
+  MaxLength,
 } from 'class-validator';
 import { CategoryType as PrismaCategoryType } from '@prisma/client';
-import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
+import {
+  SLUG_PATTERN,
+  SLUG_REGEX_README,
+  SLUG_MAX_LENGTH,
+  SLUG_MAX_LENGTH_MESSAGE,
+} from '../../../shared/validators/slug';
 
 /**
  * 🔴 `LEGACY-363`. У полей на `NOT NULL`-колонках нет `@IsOptional()` — он пропустил бы
@@ -29,9 +35,15 @@ export class CreateCategoryDto {
   @MinLength(2)
   name!: string;
 
-  @ApiProperty({ description: 'Category slug', example: 'fantasy', pattern: SLUG_PATTERN })
+  @ApiProperty({
+    description: 'Category slug',
+    example: 'fantasy',
+    pattern: SLUG_PATTERN,
+    maxLength: SLUG_MAX_LENGTH,
+  })
   @IsString()
   @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
+  @MaxLength(SLUG_MAX_LENGTH, { message: SLUG_MAX_LENGTH_MESSAGE })
   slug!: string;
 
   @ApiProperty({ description: 'Stable unique key', example: 'epic-fantasy', pattern: SLUG_PATTERN })

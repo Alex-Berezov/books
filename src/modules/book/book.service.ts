@@ -61,6 +61,7 @@ import {
   lockBookSlugs,
   type VersionSlugOwner,
 } from '../../shared/slug/book-version-slug-conflict';
+import { assertChangedSlugLength } from '../../shared/validators/slug';
 
 /**
  * `remove()` каскадом сносит все версии книги вместе с их главами и
@@ -1609,6 +1610,8 @@ export class BookService {
     return this.prisma.$transaction(async (tx) => {
       const currentSlug = await this.lockBookRow(tx, id, 'noKeyUpdate');
 
+      // `LEGACY-437`: предел длины — только у изменённого слага; неизменный слаг старой книги проходит.
+      assertChangedSlugLength(data.slug, currentSlug);
       if (data.slug && data.slug !== currentSlug) {
         // `LEGACY-437`: `Book.slug` — фоллбэк резолва, версия чужой книги с этим слагом или её
         // старый адрес нашлись бы раньше него. Замок слагов — общий с писателями версий; прежний

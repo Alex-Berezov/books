@@ -21,6 +21,7 @@ import {
   violationModelName,
 } from '../../shared/prisma/prisma-error.util';
 import { deleteSeoIfUnreferenced, seoOwnersCount } from '../../shared/seo/seo-orphan.util';
+import { assertChangedSlugLength, suggestedSlugCandidate } from '../../shared/validators/slug';
 
 /**
  * Точная форма, которую реально возвращает Prisma с `include: { seo: true }` — используется как
@@ -329,6 +330,8 @@ export class PagesService {
           throw new BadRequestException(PAGE_LANGUAGE_IMMUTABLE_MESSAGE);
         }
 
+        // `LEGACY-437`: предел длины — только у изменённого слага; неизменный слаг старой записи проходит.
+        assertChangedSlugLength(dto.slug, locked.slug);
         if (dto.slug) {
           // Renaming *into* a reserved slug is worse than creating one: the old
           // address gets a `SlugRedirect` pointing at a path the router will never
@@ -597,12 +600,12 @@ export class PagesService {
    */
   async generateUniqueSuggestedSlug(baseSlug: string, language: Language): Promise<string> {
     let suffix = 2;
-    let candidateSlug = `${baseSlug}-${suffix}`;
+    let candidateSlug = suggestedSlugCandidate(baseSlug, suffix);
 
     // Find first available suffix
     while (await this.checkSlugExists(candidateSlug, language)) {
       suffix++;
-      candidateSlug = `${baseSlug}-${suffix}`;
+      candidateSlug = suggestedSlugCandidate(baseSlug, suffix);
     }
 
     return candidateSlug;

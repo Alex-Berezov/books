@@ -3202,4 +3202,129 @@ describe('CategoryService', () => {
       expect(adminAudit.record).not.toHaveBeenCalled();
     });
   });
+
+  /**
+   * `LEGACY-437`. Предел длины слага (100) ставится только **изменённому** слагу:
+   * в Update-DTO его не поставить — DTO не знает текущего слага, а старая запись
+   * со слагом длиннее предела, сохраняемая без смены слага (админка шлёт сущность
+   * целиком), обязана проходить, а не ловить 400. Проверка идёт по слагу из запертой
+   * строки — у категории из `FOR NO KEY UPDATE` строки `Category`, у перевода
+   * из `lockTranslation`.
+   *
+   * ⚠️ Граница проверяется с обеих сторон: 101 — отказ, ровно 100 — проходит.
+   * Мутация `>` в `>=` красит тесты «ровно 100», снятие вызова — тесты «изменённый 101».
+   */
+  describe('предел длины изменённого слага (LEGACY-437)', () => {
+    const slugOf = (length: number, ch = 'a'): string => ch.repeat(length);
+    const LONG_MESSAGE = 'Slug must be at most 100 characters long';
+
+    describe('update', () => {
+      // Пул и транзакция — один стаб (`beforeEach`): строку под замком отдаёт
+      // `category.findUnique` через `rowLockVia`, дешёвая проверка занятости на пуле
+      // (`assertSlugFree` до транзакции) видит `findFirst: null` и пропускает.
+      const withLockedCategory = (slug: string) => {
+        prisma.category.findUnique.mockResolvedValue({
+          id: 'A',
+          type: 'genre',
+          slug,
+          parentId: null,
+          key: 'a',
+        });
+        prisma.category.findFirst.mockResolvedValue(null);
+        prisma.category.update.mockResolvedValue({ id: 'A' });
+      };
+
+      it('неизменный слаг длиной 101 у старой записи — запись проходит', async () => {
+        const legacy = slugOf(101);
+        withLockedCategory(legacy);
+
+        await service.update('A', { slug: legacy, name: 'Renamed' });
+
+        expect(prisma.category.update).toHaveBeenCalledTimes(1);
+        expect(prisma.category.update).toHaveBeenCalledWith(
+          expect.objectContaining({ where: { id: 'A' } }),
+        );
+        // Слаг не менялся — редиректа нет.
+        expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+      });
+
+      it('изменённый слаг длиной 101 — 400, ни записи, ни редиректа', async () => {
+        withLockedCategory('a-old');
+
+        await expect(service.update('A', { slug: slugOf(101) })).rejects.toThrow(
+          new BadRequestException(LONG_MESSAGE),
+        );
+        await expect(service.update('A', { slug: slugOf(101) })).rejects.toBeInstanceOf(
+          BadRequestException,
+        );
+        expect(prisma.category.update).not.toHaveBeenCalled();
+        expect(slugRedirects.recordBaseSlugChange).not.toHaveBeenCalled();
+      });
+
+      it('изменённый слаг ровно 100 — запись проходит', async () => {
+        withLockedCategory('a-old');
+        const next = slugOf(100);
+
+        await service.update('A', { slug: next });
+
+        expect(prisma.category.update).toHaveBeenCalledTimes(1);
+        expect(prisma.category.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ slug: next }) }),
+        );
+        expect(slugRedirects.recordBaseSlugChange).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    describe('updateTranslation', () => {
+      // Строку перевода под замком отдаёт `$queryRaw` транзакции — тот же приём,
+      // что у `withLockedTx` в блоке `updateTranslation` выше.
+      const withLockedTranslation = (slug: string) => {
+        const tx = {
+          $queryRaw: jest.fn().mockResolvedValue([{ id: 'tr1', slug, seoId: null }]),
+          categoryTranslation: {
+            findFirst: jest.fn().mockResolvedValue(null),
+            update: jest.fn().mockResolvedValue({ id: 'tr1' }),
+          },
+        };
+        prisma.$transaction = jest.fn((cb: (client: typeof tx) => unknown) => cb(tx));
+        return tx;
+      };
+
+      it('неизменный слаг длиной 101 у старого перевода — запись проходит', async () => {
+        const legacy = slugOf(101);
+        const tx = withLockedTranslation(legacy);
+
+        await service.updateTranslation('c1', Language.en, { slug: legacy, name: 'N' });
+
+        expect(tx.categoryTranslation.update).toHaveBeenCalledTimes(1);
+        expect(slugRedirects.record).not.toHaveBeenCalled();
+      });
+
+      it('изменённый слаг длиной 101 — 400, ни записи, ни редиректа', async () => {
+        const tx = withLockedTranslation('old');
+
+        await expect(
+          service.updateTranslation('c1', Language.en, { slug: slugOf(101) }),
+        ).rejects.toThrow(new BadRequestException(LONG_MESSAGE));
+        await expect(
+          service.updateTranslation('c1', Language.en, { slug: slugOf(101) }),
+        ).rejects.toBeInstanceOf(BadRequestException);
+        expect(tx.categoryTranslation.update).not.toHaveBeenCalled();
+        expect(slugRedirects.record).not.toHaveBeenCalled();
+      });
+
+      it('изменённый слаг ровно 100 — запись проходит', async () => {
+        const tx = withLockedTranslation('old');
+        const next = slugOf(100);
+
+        await service.updateTranslation('c1', Language.en, { slug: next });
+
+        expect(tx.categoryTranslation.update).toHaveBeenCalledTimes(1);
+        expect(tx.categoryTranslation.update).toHaveBeenCalledWith(
+          expect.objectContaining({ data: expect.objectContaining({ slug: next }) }),
+        );
+        expect(slugRedirects.record).toHaveBeenCalledTimes(1);
+      });
+    });
+  });
 });
