@@ -39,7 +39,8 @@ import {
 
 export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   @ApiPropertyOptional({ enum: Object.values(PrismaLanguage), example: 'es' })
-  @IsOptional()
+  // `LEGACY-437`: колонка NOT NULL, `null` не «не менять» — пропускается только отсутствующее поле.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsIn(Object.values(PrismaLanguage))
   language?: PrismaLanguage;
 
@@ -59,13 +60,15 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   slug?: string;
 
   @ApiPropertyOptional({ example: "Harry Potter and the Sorcerer's Stone" })
-  @IsOptional()
+  // `LEGACY-437`: колонка NOT NULL, `null` не «не менять» — пропускается только отсутствующее поле.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
   @MinLength(2)
   title?: string;
 
   @ApiPropertyOptional({ example: 'J.K. Rowling' })
-  @IsOptional()
+  // `LEGACY-437`: колонка NOT NULL, `null` не «не менять» — пропускается только отсутствующее поле.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsString()
   @MaxLength(500, { message: 'Author must be at most 500 characters long' })
   author?: string;
@@ -93,12 +96,14 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   coverImageUrl?: string;
 
   @ApiPropertyOptional({ enum: Object.values(PrismaBookType), example: 'audio' })
-  @IsOptional()
+  // `LEGACY-437`: колонка NOT NULL, `null` не «не менять» — пропускается только отсутствующее поле.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsIn(Object.values(PrismaBookType))
   type?: PrismaBookType;
 
   @ApiPropertyOptional({ example: false })
-  @IsOptional()
+  // `LEGACY-437`: колонка NOT NULL, `null` не «не менять» — пропускается только отсутствующее поле.
+  @ValidateIf((_o, value) => value !== undefined)
   @IsBoolean()
   isFree?: boolean;
 

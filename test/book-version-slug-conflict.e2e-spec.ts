@@ -301,6 +301,25 @@ describe('BookVersion slug conflicts on write (e2e)', () => {
       }
     });
 
+    it('PATCH version: null in a required field is 400, not 500 (LEGACY-437, T110)', async () => {
+      // Версия из `beforeAll`: тест не зависит от порядка соседних.
+      const version = await prisma.bookVersion.findFirstOrThrow({
+        where: { slug: otherVersionSlug },
+        select: { id: true },
+      });
+      for (const field of ['language', 'title', 'author', 'type', 'isFree']) {
+        const res = await request(http())
+          .patch(`/versions/${version.id}`)
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ [field]: null })
+          .expect(400);
+        expect(JSON.stringify(res.body)).toContain(field);
+      }
+      // Отказ на входе: запись не тронута.
+      const after = await prisma.bookVersion.findUniqueOrThrow({ where: { id: version.id } });
+      expect(after).toMatchObject({ title: 'Title', author: 'Author', isFree: true });
+    });
+
     it('check-slug refuses a slug over the limit and answers one at the limit (LEGACY-437)', async () => {
       const check = (slug: string) =>
         request(http())

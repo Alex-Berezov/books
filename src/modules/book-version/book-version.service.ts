@@ -1075,9 +1075,9 @@ export class BookVersionService {
         });
         if (!current) throw new NotFoundException('BookVersion not found');
 
-        // `null` проходит `@IsOptional` и значит «не прислано»; тот же язык — не смена. В запись
-        // `language` не идёт вовсе (отсекается ниже вместе с полями SEO): `null` на обязательной
-        // колонке дал бы 500, а тот же язык записывать незачем.
+        // `null` с 07.10.2026 отбивает DTO (`LEGACY-437`); здесь он, как и отсутствующее поле, значит
+        // «не прислано» — на случай вызова мимо DTO. Тот же язык — не смена. В запись `language` не идёт
+        // вовсе (отсекается ниже вместе с полями SEO).
         if (dto.language != null && dto.language !== current.language) {
           throw new BadRequestException(BOOK_VERSION_LANGUAGE_IMMUTABLE_MESSAGE);
         }

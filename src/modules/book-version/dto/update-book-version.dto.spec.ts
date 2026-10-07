@@ -70,3 +70,22 @@ describe('UpdateBookVersionDto: формат слага (LEGACY-437)', () => {
     expect(dtoFieldErrors(UpdateBookVersionDto, {})).toEqual([]);
   });
 });
+
+describe('UpdateBookVersionDto: `null` в обязательных колонках (LEGACY-437, T110)', () => {
+  it.each(['language', 'title', 'author', 'type', 'isFree'])('отбивает `null` в %s', (field) => {
+    expect(dtoFieldErrors(UpdateBookVersionDto, { [field]: null })).toContain(field);
+  });
+
+  it('принимает правку без этих полей и с верными значениями', () => {
+    expect(dtoFieldErrors(UpdateBookVersionDto, {})).toEqual([]);
+    expect(
+      dtoFieldErrors(UpdateBookVersionDto, {
+        language: 'en',
+        title: 'Harry Potter',
+        author: 'J.K. Rowling',
+        type: 'audio',
+        isFree: false,
+      }),
+    ).toEqual([]);
+  });
+});
