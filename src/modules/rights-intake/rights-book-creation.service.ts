@@ -16,7 +16,7 @@ import { CreateBookFromClearanceVersionDto } from './dto/create-book-from-cleara
 import { BookType, Prisma } from '@prisma/client';
 import { AuthorService } from '../author/author.service';
 import { CLEARANCE_TX_OPTIONS } from './rights-clearance-lock.service';
-import { findBookSlugConflict, lockBookSlugs } from '../../shared/slug/book-version-slug-conflict';
+import { findBookSlugConflict, lockBookSlugs } from '../../shared/slug/book-slug-conflict';
 
 /**
  * WP-L.2: версия, на которую ложится снимок прав. В обычном режиме она создаётся из запроса, в

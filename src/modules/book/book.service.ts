@@ -60,7 +60,7 @@ import {
   findVersionSlugConflict,
   lockBookSlugs,
   type VersionSlugOwner,
-} from '../../shared/slug/book-version-slug-conflict';
+} from '../../shared/slug/book-slug-conflict';
 import { assertChangedSlugLength, suggestedSlugCandidate } from '../../shared/validators/slug';
 
 /**
@@ -1775,7 +1775,7 @@ export class BookService {
 
   /**
    * Check if a slug can be given to a book version in `language` - the rule of
-   * `findVersionSlugConflict` (`src/shared/slug/book-version-slug-conflict.ts`), the same one
+   * `findVersionSlugConflict` (`src/shared/slug/book-slug-conflict.ts`), the same one
    * the version write path enforces.
    * @param slug - The slug to check
    * @param language - Version language

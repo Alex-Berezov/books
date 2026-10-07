@@ -7,13 +7,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { AuthorService } from '../author/author.service';
 import { CLEARANCE_TX_OPTIONS } from './rights-clearance-lock.service';
-import { findBookSlugConflict, lockBookSlugs } from '../../shared/slug/book-version-slug-conflict';
+import { findBookSlugConflict, lockBookSlugs } from '../../shared/slug/book-slug-conflict';
 
 // `LEGACY-437`: правило слага книги проверено в своём файле; здесь — что создание его зовёт
 // под замком в транзакции и что отказ не создаёт книгу. По умолчанию слаг свободен.
-jest.mock('../../shared/slug/book-version-slug-conflict', () => ({
-  ...jest.requireActual<typeof import('../../shared/slug/book-version-slug-conflict')>(
-    '../../shared/slug/book-version-slug-conflict',
+jest.mock('../../shared/slug/book-slug-conflict', () => ({
+  ...jest.requireActual<typeof import('../../shared/slug/book-slug-conflict')>(
+    '../../shared/slug/book-slug-conflict',
   ),
   lockBookSlugs: jest.fn().mockResolvedValue(undefined),
   findBookSlugConflict: jest.fn().mockResolvedValue(null),
@@ -496,9 +496,9 @@ describe('RightsBookCreationService', () => {
       });
 
       it('the real rule runs on the transaction client: a version of another book refuses', async () => {
-        const actual = jest.requireActual<
-          typeof import('../../shared/slug/book-version-slug-conflict')
-        >('../../shared/slug/book-version-slug-conflict');
+        const actual = jest.requireActual<typeof import('../../shared/slug/book-slug-conflict')>(
+          '../../shared/slug/book-slug-conflict',
+        );
         (findBookSlugConflict as jest.Mock).mockImplementationOnce(actual.findBookSlugConflict);
         const txStub = arrangeTx();
         const reads = {

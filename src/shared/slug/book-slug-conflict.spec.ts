@@ -1,9 +1,5 @@
 import { Language, Prisma } from '@prisma/client';
-import {
-  findBookSlugConflict,
-  findVersionSlugConflict,
-  lockBookSlugs,
-} from './book-version-slug-conflict';
+import { findBookSlugConflict, findVersionSlugConflict, lockBookSlugs } from './book-slug-conflict';
 
 const makeTx = (
   version: { bookId: string; language: Language } | null,

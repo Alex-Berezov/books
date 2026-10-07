@@ -54,7 +54,7 @@ import {
   BOOK_SLUG_TAKEN_BY_OTHER_BOOK_MESSAGE,
   findVersionSlugConflict,
   lockBookSlugs,
-} from '../../shared/slug/book-version-slug-conflict';
+} from '../../shared/slug/book-slug-conflict';
 import { uniqueViolationFields, violationModelName } from '../../shared/prisma/prisma-error.util';
 
 interface BookWithRights {

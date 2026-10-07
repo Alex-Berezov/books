@@ -155,7 +155,7 @@ async function findRedirectToOtherBook(
 }
 
 // Пространство имён двухаргументного `pg_advisory_xact_lock`; занятые — в перечне у `RECHECK_SCAN_LOCK_KEY`.
-const BOOK_VERSION_SLUG_LOCK_NAMESPACE = 831_427_005;
+const BOOK_SLUG_LOCK_NAMESPACE = 831_427_005;
 
 /**
  * Замок на книжные слаги до конца транзакции — общий для всех писателей адреса книги:
@@ -179,7 +179,7 @@ export async function lockBookSlugs(
   if (distinct.length === 1) {
     await tx.$queryRaw`
       SELECT true AS locked
-        FROM pg_advisory_xact_lock(${BOOK_VERSION_SLUG_LOCK_NAMESPACE}::int4, hashtext(${distinct[0]}::text))`;
+        FROM pg_advisory_xact_lock(${BOOK_SLUG_LOCK_NAMESPACE}::int4, hashtext(${distinct[0]}::text))`;
     return;
   }
   // Ключ замка — `hashtext(slug)`, а не сам слаг: порядок берётся по ключам, иначе два слага
@@ -190,6 +190,6 @@ export async function lockBookSlugs(
   for (const { key } of keys) {
     await tx.$queryRaw`
       SELECT true AS locked
-        FROM pg_advisory_xact_lock(${BOOK_VERSION_SLUG_LOCK_NAMESPACE}::int4, ${key}::int4)`;
+        FROM pg_advisory_xact_lock(${BOOK_SLUG_LOCK_NAMESPACE}::int4, ${key}::int4)`;
   }
 }
