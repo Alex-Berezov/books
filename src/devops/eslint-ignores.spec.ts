@@ -55,7 +55,6 @@ describe('LEGACY-146: исключения линта', () => {
   it.each([
     ['libs/api-client/src/types.ts', 'версия в гите, туда же пишет yarn openapi:types'],
     ['libs/api-client/dist/**/*', 'сборка пакета'],
-    ['libs/api-client/examples/**/*', 'примеры для потребителей'],
     ['dist/**/*', 'сборка сервиса'],
   ])('ignores содержит %s (%s)', (path) => {
     expect(ignoreEntries()).toContain(path);

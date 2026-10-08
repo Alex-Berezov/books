@@ -11,7 +11,6 @@ export default tseslint.config(
     ignores: [
       'eslint.config.mjs',
       'libs/api-client/dist/**/*',
-      'libs/api-client/examples/**/*',
       'dist/**/*',
       // openapi-typescript output, regenerated in place by yarn openapi:types*
       'libs/api-client/src/types.ts',

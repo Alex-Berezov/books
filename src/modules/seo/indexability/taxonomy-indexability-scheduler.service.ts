@@ -47,8 +47,8 @@ function parseHour(raw: unknown, fallback: number): number {
  * production until the sitemap advertised 2205 empty pages — the point of this
  * service is that such a drift can survive at most one day.
  *
- * **Why an in-process timer and not a BullMQ repeatable job** (which `PLAN.md`
- * WP-4.2 called for): production runs no Redis. `docker-compose.prod.yml`
+ * **Why an in-process timer and not a BullMQ repeatable job** (the sweep's rule is in `seo-rules.md`,
+ * section P4): production runs no Redis. `docker-compose.prod.yml`
  * defines exactly two services, `app` and `postgres`, and `QueueModule` resolves
  * every one of its providers to `undefined` unless `REDIS_URL` / `REDIS_HOST` is
  * set. A repeatable job would therefore never be scheduled at all — the same

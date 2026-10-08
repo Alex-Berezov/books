@@ -3,7 +3,7 @@ import { RelatedTaxonomyService } from './related-taxonomy.service';
 import { PrismaService } from '../../../prisma/prisma.service';
 
 /**
- * WP-9, `tasks/seo-noindex/PLAN.md`.
+ * WP-9, `seo-rules.md`, раздел «Связанные термины на странице тега».
  *
  * Четыре массива `related*Slugs` рендерились на странице тега напрямую.
  * Замер на проде 09.08.2026 по `en`: из 1039 ссылок 114 вели на несуществующий
