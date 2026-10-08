@@ -194,8 +194,7 @@ Swagger отдаётся по `/docs-json`, не по `/api/docs-json`.
   в `eslint.config.mjs` стоит `'error'`, блока-исключения на спеки нет. Голых
   `/* eslint-disable */` и отключений `no-explicit-any` в репозитории нет; файловые отключения
   стоят в `test/*.e2e-spec.ts` на `no-unsafe-member-access`, `no-unsafe-assignment`,
-  `no-unsafe-argument` (тело ответа `supertest` типизировано как `any`), часть из них без причины,
-  и в нелинтуемом `scripts/check_prod_config.js`.
+  `no-unsafe-argument` (тело ответа `supertest` типизировано как `any`), часть из них без причины.
   Новое файловое отключение - только с правилом и причиной после `--`. Возврат любого `any` красит `yarn lint`,
   а значит и оба конвейера. ⚠️ `noImplicitAny` в `tsconfig.json` по-прежнему выключен:
   переменная без типа и без инициализатора компилятором не ловится, это отдельная работа.

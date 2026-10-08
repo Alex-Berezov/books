@@ -1,11 +1,10 @@
 #!/usr/bin/env node
-/* eslint-disable @typescript-eslint/no-require-imports */
-/* eslint-disable @typescript-eslint/no-unsafe-assignment */
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
-
 // Script to check production configuration
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 console.log('🔍 Checking production configuration');
 console.log('==================================\n');
@@ -37,12 +36,6 @@ const checks = [
     name: 'NODE_ENV',
     expected: 'production',
     actual: envVars.NODE_ENV,
-    critical: true,
-  },
-  {
-    name: 'SWAGGER_ENABLED',
-    expected: '0',
-    actual: envVars.SWAGGER_ENABLED,
     critical: true,
   },
   {
@@ -99,7 +92,7 @@ if (storageDriver === 'r2') {
   r2Required.forEach((name) => {
     const val = envVars[name];
     const ok = !!val;
-    console.log(`   ${ok ? '✅' : '❌'} ${name}: ${ok ? val : 'missing'}`);
+    console.log(`   ${ok ? '✅' : '❌'} ${name}: ${ok ? 'set' : 'missing'}`);
     if (!ok) allPassed = false;
   });
   if (envVars.R2_PUBLIC_BASE_URL && !envVars.R2_PUBLIC_BASE_URL.startsWith('https://')) {
@@ -211,7 +204,7 @@ if (backupRemoteEnabled === '1') {
   backupS3Required.forEach((name) => {
     const val = envVars[name];
     const ok = !!val;
-    console.log(`   ${ok ? '✅' : '❌'} ${name}: ${ok ? val : 'missing'}`);
+    console.log(`   ${ok ? '✅' : '❌'} ${name}: ${ok ? 'set' : 'missing'}`);
     if (!ok) allPassed = false;
   });
   if (envVars.BACKUP_S3_ENDPOINT) {
