@@ -10,11 +10,13 @@ import {
   ArrayMinSize,
 } from 'class-validator';
 import { ASSIGNABLE_ROLE_NAMES, type AssignableRoleName } from '../users.constants';
+import { NormalizeEmail } from '../../../shared/validators/normalize-email.decorator';
 
 export class UpdateUserDto {
   @ApiPropertyOptional({ example: 'new-email@example.com' })
   @IsOptional()
   @IsEmail()
+  @NormalizeEmail()
   email?: string;
 
   @ApiPropertyOptional({ example: 'NewName' })

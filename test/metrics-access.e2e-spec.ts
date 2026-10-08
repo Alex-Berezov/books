@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * LEGACY-072. Раньше `/api/metrics` отдавал реестр prom-client кому угодно: состав
@@ -24,7 +25,6 @@ describe('Metrics access (e2e)', () => {
   const scrapeToken = 'test-metrics-token-value';
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = adminEmail;
     process.env.METRICS_TOKEN = scrapeToken;
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
@@ -78,6 +78,7 @@ describe('Metrics access (e2e)', () => {
 
   it('serves the registry to an admin', async () => {
     const token = await tokenFor(adminEmail);
+    await grantStaffRoles(app, adminEmail);
     const res = await request(http())
       .get('/metrics')
       .set('Authorization', `Bearer ${token}`)

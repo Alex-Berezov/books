@@ -4,6 +4,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * LEGACY-061. Своей проверки слага у тегов не было вовсе, и форма в админке
@@ -21,8 +22,6 @@ describe('Tags: Check Slug (e2e)', () => {
   beforeAll(async () => {
     const adminEmail = 'admin-tag-slug@test.com';
     const adminPassword = 'password123';
-    process.env.ADMIN_EMAILS = adminEmail;
-
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -48,6 +47,7 @@ describe('Tags: Check Slug (e2e)', () => {
     } else {
       throw new Error(`Unexpected admin register status: ${regRes.status}`);
     }
+    await grantStaffRoles(app, adminEmail);
 
     await prisma.tag.create({
       data: { name: `Taken ${stamp}`, slug: takenSlug, key: takenSlug },

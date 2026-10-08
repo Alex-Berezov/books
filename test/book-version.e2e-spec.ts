@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 // Response shape helper for stronger typing in assertions
 interface BookVersionResponse {
@@ -42,7 +43,6 @@ describe('BookVersions e2e', () => {
     );
     await app.init();
 
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const slug = `book-${Date.now()}`;
     const bookWithRights = await createBookWithRights(prisma, slug);
     bookId = bookWithRights.book.id;
@@ -61,6 +61,7 @@ describe('BookVersions e2e', () => {
     } else {
       throw new Error(`Admin register unexpected status ${reg.status}`);
     }
+    await grantStaffRoles(app, email);
   });
 
   afterAll(async () => {

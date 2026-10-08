@@ -21,6 +21,7 @@ import {
 } from '@prisma/client';
 import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
+import { normalizeEmail } from '../../shared/validators/normalize-email.decorator';
 
 /**
  * Пользователь в ответах входа и регистрации.
@@ -137,7 +138,8 @@ export class AuthService {
         },
         select: ACCOUNT_USER_SELECT,
       });
-      await this.grantRegistrationRoles(tx, created.id, created.email);
+      // Регистрация паролем адрес не доказывает: повышенных ролей по спискам не выдаёт (LEGACY-443).
+      await this.grantRegistrationRoles(tx, created.id, created.email, false);
       return created;
     }, REGISTRATION_TX_OPTIONS);
 
@@ -187,7 +189,7 @@ export class AuthService {
     identity: SocialIdentity,
     languagePreference?: PrismaLanguage,
   ): Promise<AuthSession> {
-    const email = identity.email.trim().toLowerCase();
+    const email = normalizeEmail(identity.email) as string;
 
     const link = await this.prisma.userIdentity.findUnique({
       where: {
@@ -272,20 +274,35 @@ export class AuthService {
   private static parseEmailList(csv: string | undefined): string[] {
     return (csv || '')
       .split(',')
-      .map((e) => e.trim().toLowerCase())
+      .map((e) => normalizeEmail(e) as string)
       .filter(Boolean);
   }
 
+  /** Повышенные роли, которые списки окружения назначают адресу. */
+  private listedRoles(email: string): RoleName[] {
+    const address = normalizeEmail(email) as string;
+    const elevated: RoleName[] = [];
+    // Ключи названы литералами: `check:env` сверяет чтения окружения с `.env.example` по имени.
+    const admins = AuthService.parseEmailList(this.config.get<string>('ADMIN_EMAILS'));
+    const managers = AuthService.parseEmailList(this.config.get<string>('CONTENT_MANAGER_EMAILS'));
+    if (admins.includes(address)) elevated.push(RoleName.admin);
+    if (managers.includes(address)) elevated.push(RoleName.content_manager);
+    return elevated;
+  }
+
   /**
-   * Роли при регистрации: базовая `user` всем, повышенные — по спискам `ADMIN_EMAILS`
-   * и `CONTENT_MANAGER_EMAILS` (бутстрап первого администратора, `LEGACY-170`).
+   * Роли нового пользователя: базовая `user` всем, повышенные — по спискам `ADMIN_EMAILS`
+   * и `CONTENT_MANAGER_EMAILS` (бутстрап первого администратора, `LEGACY-170`), но только
+   * когда `isAddressProven` — то есть адрес доказан провайдером (`LEGACY-443`, решение арбитра
+   * 08.10.2026): пароль владение адресом не доказывает, и незанятый адрес из списка
+   * иначе получал админа у первого, кто его зарегистрировал.
    *
    * ⚠️ Выдача повышенной роли пишет `ROLE_ASSIGNED` той же транзакцией (`LEGACY-015`,
    * решение арбитра 27.09.2026, пачка `T43`): смена ролей журналируется всеми путями,
    * публичность маршрута тут ничего не решает. Актёр `null`, а не сам пользователь —
    * иначе журнал утверждал бы, что он выдал админку себе; путь отличает `source`.
-   * Базовая роль события не получает: это не привилегия. Зовётся внутри транзакции
-   * `register()`, создающей самого пользователя, — `tx` приходит оттуда.
+   * Базовая роль события не получает: это не привилегия. Зовётся внутри транзакции,
+   * создающей самого пользователя (`register()` и `createSocialUser()`), — `tx` приходит оттуда.
    *
    * ⚠️ Признак «роль появилась» — `count` вставки с `skipDuplicates` (решение арбитра).
    * Пока пользователь создаётся этой же транзакцией, `count` всегда 1: чужая транзакция
@@ -297,14 +314,9 @@ export class AuthService {
     tx: Prisma.TransactionClient,
     userId: string,
     email: string,
+    isAddressProven: boolean,
   ): Promise<void> {
-    const address = email.toLowerCase();
-    const elevated: RoleName[] = [];
-    // Ключи названы литералами: `check:env` сверяет чтения окружения с `.env.example` по имени.
-    const admins = AuthService.parseEmailList(this.config.get<string>('ADMIN_EMAILS'));
-    const managers = AuthService.parseEmailList(this.config.get<string>('CONTENT_MANAGER_EMAILS'));
-    if (admins.includes(address)) elevated.push(RoleName.admin);
-    if (managers.includes(address)) elevated.push(RoleName.content_manager);
+    const elevated = isAddressProven ? this.listedRoles(email) : [];
     const wanted = [RoleName.user, ...elevated];
 
     const roles = await tx.role.findMany({
@@ -335,9 +347,24 @@ export class AuthService {
     identity: SocialIdentity,
     languagePreference?: PrismaLanguage,
   ): Promise<AccountUser> {
-    // Baseline role only. Elevated roles are never granted from an e-mail
-    // list here — ADMIN_EMAILS bootstraps the first administrator through
-    // register(), and nothing else.
+    const profile = {
+      email,
+      name: identity.name,
+      avatarUrl: identity.avatarUrl,
+      languagePreference: languagePreference ?? PrismaLanguage.en,
+    };
+
+    // Повышенные роли по `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS` выдаются только здесь и только
+    // адресу, доказанному провайдером (`LEGACY-443`). Вход в уже существующий аккаунт роли
+    // не повышает, регистрация паролем даёт одну `user`. Базовые роли уже завёл `socialLogin()`.
+    if (identity.emailVerified && this.listedRoles(email).length > 0) {
+      return this.prisma.$transaction(async (tx) => {
+        const created = await tx.user.create({ data: profile, select: ACCOUNT_USER_SELECT });
+        await this.grantRegistrationRoles(tx, created.id, created.email, true);
+        return created;
+      }, REGISTRATION_TX_OPTIONS);
+    }
+
     const userRole = await this.prisma.role.findUnique({ where: { name: RoleName.user } });
 
     // Роль пишется вложенной записью в тот же `create`, а не отдельным `upsert` следом
@@ -348,10 +375,7 @@ export class AuthService {
     // в базе уже с ролью, окна, которое он закрывал бы, не возникает.
     return this.prisma.user.create({
       data: {
-        email,
-        name: identity.name,
-        avatarUrl: identity.avatarUrl,
-        languagePreference: languagePreference ?? PrismaLanguage.en,
+        ...profile,
         roles: userRole ? { create: { roleId: userRole.id } } : undefined,
       },
       select: ACCOUNT_USER_SELECT,
@@ -468,8 +492,9 @@ export class AuthService {
    * `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS` used to elevate here as well.
    * Two independent sources for one role is a defect on its own, and the
    * second one compared an env list against a string that arrived in the
-   * request. The lists now only bootstrap the first administrator through
-   * {@link register}, which writes the role into `UserRole`.
+   * request. The lists now only bootstrap the first administrator when an account
+   * is created by a provider sign-in with a verified address (`createSocialUser`,
+   * LEGACY-443), which writes the role into `UserRole`; {@link register} never elevates.
    */
   private async computeRoles(user: Pick<User, 'id'>): Promise<RoleName[]> {
     const dbLinks = await this.prisma.userRole.findMany({

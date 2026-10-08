@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { httpServerOf } from './http-server';
 import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-201`. `GET /admin/authors` и `GET /admin/authors/check-slug` отвечали
@@ -50,10 +51,7 @@ describe('Admin authors routing (e2e)', () => {
   };
 
   beforeAll(async () => {
-    // Роль администратора выдаётся при регистрации по списку `ADMIN_EMAILS`,
-    // а его читает `ConfigService` — значит переменная ставится до сборки модуля.
     const adminEmail = 'admin-authors-routing@test.com';
-    process.env.ADMIN_EMAILS = adminEmail;
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
@@ -63,7 +61,10 @@ describe('Admin authors routing (e2e)', () => {
     await app.init();
 
     adminToken = await registerOrLogin(adminEmail);
-    // Обычный читатель: его почты нет в `ADMIN_EMAILS`, роли в `UserRole` он
+    // Роль администратора пишет в `UserRole` `grantStaffRoles`: регистрация паролем
+    // выдаёт только `user` (`LEGACY-443`).
+    await grantStaffRoles(app, adminEmail);
+    // Обычный читатель: `grantStaffRoles` для него не зовётся, роли в `UserRole` он
     // не получает. Нужен, чтобы отличить «маршрут закрыт входом» от «маршрут
     // закрыт ролью» — без него снятие `RolesGuard` не красит ничего.
     readerToken = await registerOrLogin(`reader-authors-routing-${Date.now()}@test.com`);

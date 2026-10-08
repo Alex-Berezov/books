@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 //
 
@@ -25,8 +26,6 @@ describe('Comments e2e', () => {
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
     );
     await app.init();
-
-    process.env.ADMIN_EMAILS = 'admin@example.com';
 
     const book = await createBookFixture(prisma, `book-${Date.now()}`);
     const version = await prisma.bookVersion.create({
@@ -63,6 +62,7 @@ describe('Comments e2e', () => {
       adminToken = (
         await request(http()).post('/auth/login').send({ email: adminEmail, password: pass })
       ).body.accessToken as string;
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

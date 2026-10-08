@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 type ImportResult = {
   imported: number;
@@ -67,7 +68,6 @@ describe('LEGACY-262 — импорт таксономий (e2e)', () => {
   beforeAll(async () => {
     const adminEmail = 'admin-import-taxonomy@test.com';
     const adminPassword = 'password123';
-    process.env.ADMIN_EMAILS = adminEmail;
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -91,6 +91,7 @@ describe('LEGACY-262 — импорт таксономий (e2e)', () => {
         .send({ email: adminEmail, password: adminPassword });
       adminToken = (login.body as { accessToken: string }).accessToken;
     }
+    await grantStaffRoles(app, adminEmail);
 
     await prisma.category.create({
       data: {

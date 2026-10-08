@@ -6,6 +6,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Categories: Check Slug (e2e)', () => {
   let app: INestApplication;
@@ -15,7 +16,6 @@ describe('Categories: Check Slug (e2e)', () => {
   beforeAll(async () => {
     const adminEmail = 'admin-cat-slug@test.com';
     const adminPassword = 'password123';
-    process.env.ADMIN_EMAILS = adminEmail;
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -45,6 +45,7 @@ describe('Categories: Check Slug (e2e)', () => {
     } else {
       throw new Error(`Unexpected admin register status: ${regRes.status}`);
     }
+    await grantStaffRoles(app, adminEmail);
 
     // Cleanup
     await prisma.category.deleteMany({

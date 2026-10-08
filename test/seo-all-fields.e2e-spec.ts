@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * E2E test to verify ALL 8 SEO fields mentioned in BACKEND_SEO_FIELDS_NOT_SAVED.md
@@ -19,8 +20,6 @@ describe('SEO All Fields E2E (BACKEND_SEO_FIELDS_NOT_SAVED.md)', () => {
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
-
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -64,6 +63,7 @@ describe('SEO All Fields E2E (BACKEND_SEO_FIELDS_NOT_SAVED.md)', () => {
     } else {
       throw new Error('Admin registration failed');
     }
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

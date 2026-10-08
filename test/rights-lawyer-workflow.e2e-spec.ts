@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * Phase 19 lawyer workflow e2e. Requires a live database, so it is NOT part of the local unit
@@ -99,7 +100,6 @@ describe('Rights lawyer workflow e2e', () => {
   });
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     process.env.RIGHTS_LAWYER_WORKFLOW_ENABLED = '1';
     process.env.RIGHTS_LAWYER_BLOCK_APPROVAL_ON_HIGH_RISK = '1';
     process.env.RIGHTS_LAWYER_MIN_RISK_LEVEL = 'HIGH';
@@ -127,6 +127,7 @@ describe('Rights lawyer workflow e2e', () => {
         .expect(200);
       adminAccess = login.body.accessToken as string;
     }
+    await grantStaffRoles(app, 'admin@example.com');
   });
 
   afterAll(async () => {

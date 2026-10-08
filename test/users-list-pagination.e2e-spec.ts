@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * LEGACY-118. `GET /users` отвечал 400 на любой `page` и `limit`: в
@@ -20,7 +21,6 @@ describe('Users list pagination e2e (LEGACY-118)', () => {
   let adminToken: string;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     process.env.RATE_LIMIT_AUTH_ENABLED = '0';
     process.env.RATE_LIMIT_GLOBAL_ENABLED = '0';
     process.env.RATE_LIMIT_ENABLED = '0';
@@ -37,6 +37,7 @@ describe('Users list pagination e2e (LEGACY-118)', () => {
     if (![201, 409].includes(reg.status)) {
       throw new Error(`Unexpected admin register status: ${reg.status}`);
     }
+    await grantStaffRoles(app, email);
     const login = await request(httpServerOf(app))
       .post('/auth/login')
       .send({ email, password })

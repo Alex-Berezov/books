@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 import { SLUG_MAX_LENGTH, SLUG_MAX_LENGTH_MESSAGE } from '../src/shared/validators/slug';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * У каждой языковой версии свой слаг, и запись его проверяет так же, как подсказка админки
@@ -45,7 +46,6 @@ describe('BookVersion slug conflicts on write (e2e)', () => {
     );
     await app.init();
 
-    process.env.ADMIN_EMAILS = 'admin-vsc@example.com';
     const email = 'admin-vsc@example.com';
     const password = 'password123';
     const reg = await request(http()).post('/auth/register').send({ email, password });
@@ -55,6 +55,7 @@ describe('BookVersion slug conflicts on write (e2e)', () => {
       const login = await request(http()).post('/auth/login').send({ email, password }).expect(200);
       adminToken = (login.body as { accessToken: string }).accessToken;
     }
+    await grantStaffRoles(app, email);
 
     ownBookId = (
       await createBookWithRights(prisma, ownSlug, { languages: [Language.en, Language.ru] })

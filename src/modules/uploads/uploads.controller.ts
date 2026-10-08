@@ -34,6 +34,7 @@ import {
 import { UploadLimitsDto } from './dto/upload-limits.dto';
 import { UploadsService } from './uploads.service';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
+import { DeleteMediaResponseDto } from '../media/dto/delete-media-response.dto';
 
 /**
  * ⚠️ `@Roles(Role.Admin, Role.ContentManager, Role.User)` на маршрутах ниже —
@@ -134,18 +135,18 @@ export class UploadsController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager, Role.User)
   @Delete()
-  async delete(@Query('key', RequiredStringPipe) key: string, @Req() req: Request): Promise<void> {
+  @ApiOkResponse({ type: DeleteMediaResponseDto })
+  async delete(
+    @Query('key', RequiredStringPipe) key: string,
+    @Req() req: Request,
+  ): Promise<DeleteMediaResponseDto> {
     const typedReq = req as Request & { user?: { userId: string; email: string } };
     const userId = typedReq.user?.userId;
     const email = typedReq.user?.email;
     if (!userId || !email) throw new UnauthorizedException();
 
-    if (!key.startsWith('covers/')) {
-      const isStaff = await this.moderatorRoles.isModerator({ userId, email });
-      if (!isStaff)
-        throw new ForbiddenException('Only admin or content_manager can delete audio assets');
-    }
-
-    await this.uploads.delete(key);
+    // Кто что удаляет, решает сервис (`UploadsService.remove`, `LEGACY-444`).
+    const isModerator = await this.moderatorRoles.isModerator({ userId, email });
+    return this.uploads.remove(key, { userId, isModerator });
   }
 }

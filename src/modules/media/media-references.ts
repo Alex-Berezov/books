@@ -163,10 +163,13 @@ export async function findMediaReferenceDescriptors(
   asset: { id: string; key: string },
 ): Promise<string[]> {
   const lookups: Array<() => Promise<string[]>> = [
-    ...MEDIA_FOREIGN_KEYS.map(
-      (fk) => async () =>
-        (await fk.matching(prisma, asset.id, REFERENCE_SAMPLE_LIMIT)).map(fk.describe),
-    ),
+    // Объект без записи (`id: ''`, `DELETE /uploads` по ключу presign) внешним ключом не занят.
+    ...(asset.id
+      ? MEDIA_FOREIGN_KEYS.map(
+          (fk) => async () =>
+            (await fk.matching(prisma, asset.id, REFERENCE_SAMPLE_LIMIT)).map(fk.describe),
+        )
+      : []),
     ...(asset.key.trim()
       ? MEDIA_URL_COLUMNS.map(
           (column) => async () =>

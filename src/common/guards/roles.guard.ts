@@ -51,8 +51,9 @@ export class RolesGuard implements CanActivate {
     // `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS` used to elevate here as a
     // fallback, comparing an env list against the e-mail claim carried by the
     // request. That made the token's e-mail, rather than the account, decide
-    // the role. Bootstrapping the first administrator is register()'s job and
-    // it writes to `UserRole`.
+    // the role. The first administrator is bootstrapped when an account is created
+    // by a provider sign-in with a verified address (LEGACY-443) or by the seed,
+    // and both write to `UserRole`. Password registration never elevates.
     const dbRoles: (UserRoleModel & { role: RoleModel })[] = await this.prisma.userRole.findMany({
       where: { userId: user.userId },
       include: { role: true },

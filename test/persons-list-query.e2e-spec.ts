@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * Окно выдачи админского списка персон (`LEGACY-177`, решение арбитра 13.09.2026).
@@ -25,7 +26,6 @@ describe('Persons list query (LEGACY-177) e2e', () => {
 
   beforeAll(async () => {
     const adminEmail = `persons-query-${Date.now()}@test.com`;
-    process.env.ADMIN_EMAILS = adminEmail;
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
@@ -38,6 +38,7 @@ describe('Persons list query (LEGACY-177) e2e', () => {
       .post('/auth/register')
       .send({ email: adminEmail, password: 'password123' });
     adminToken = (reg.body as { accessToken: string }).accessToken;
+    await grantStaffRoles(app, adminEmail);
 
     // Три персоны — чтобы вторая страница размера 1 была непустой и отличалась
     // от первой, иначе проверка смещения проходит на пустой выдаче.

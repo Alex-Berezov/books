@@ -23,6 +23,7 @@ import {
   type RightsLicenseRecord,
 } from '../src/modules/rights-licenses/rights-license-interface';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-377`, остаток ревью `T10`. Общие списки претензий и лицензий резали страницу
@@ -86,7 +87,6 @@ describe('Admin rights lists: filters in the database (LEGACY-377) e2e', () => {
     names.map((name) => map[name]).sort();
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     coverage = moduleRef.get(RightsLicenseCoverageService);
@@ -340,6 +340,7 @@ describe('Admin rights lists: filters in the database (LEGACY-377) e2e', () => {
         .expect(200);
       adminAccess = (login.body as { accessToken: string }).accessToken;
     }
+    await grantStaffRoles(app, 'admin@example.com');
   });
 
   afterAll(async () => {

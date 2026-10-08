@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * Критерий готовности `tasks/background-jobs-visibility/TASK.md`:
@@ -46,7 +47,6 @@ describe('Background jobs inventory (e2e)', () => {
   beforeAll(async () => {
     const adminEmail = 'admin-background-jobs@test.com';
     const adminPassword = 'password123';
-    process.env.ADMIN_EMAILS = adminEmail;
 
     const app = await bootApp({});
     const reg = await request(httpServerOf(app))
@@ -61,6 +61,7 @@ describe('Background jobs inventory (e2e)', () => {
         .send({ email: adminEmail, password: adminPassword });
       adminToken = (login.body as { accessToken: string }).accessToken;
     }
+    await grantStaffRoles(app, adminEmail);
     await app.close();
   });
 

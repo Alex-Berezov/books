@@ -4,12 +4,12 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('User roles e2e', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
@@ -30,6 +30,7 @@ describe('User roles e2e', () => {
     if (![201, 409].includes(regAdmin.status)) {
       throw new Error(`Unexpected admin register status: ${regAdmin.status}`);
     }
+    await grantStaffRoles(app, aEmail);
     const aLogin = await request(app.getHttpServer())
       .post('/auth/login')
       .send({ email: aEmail, password: aPass })

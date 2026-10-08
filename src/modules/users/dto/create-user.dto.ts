@@ -9,10 +9,12 @@ import {
   IsIn,
 } from 'class-validator';
 import { ASSIGNABLE_ROLE_NAMES, type AssignableRoleName } from '../users.constants';
+import { NormalizeEmail } from '../../../shared/validators/normalize-email.decorator';
 
 export class CreateUserDto {
   @ApiProperty({ example: 'user@example.com' })
   @IsEmail()
+  @NormalizeEmail()
   email!: string;
 
   @ApiProperty({ example: 'securePassword123', minLength: 6 })

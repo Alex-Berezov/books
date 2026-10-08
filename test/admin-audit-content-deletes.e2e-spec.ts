@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * 🔴 `LEGACY-015`, пачка `T19`. Журнал административных действий на четырёх путях
@@ -31,9 +32,6 @@ describe('LEGACY-015 T19: журнал удалений книжного кон�
   let adminToken: string;
   let actorUserId: string;
   const createdBookSlugs: string[] = [];
-  // Переменная окружения восстанавливается в `afterAll`: прогон идёт в общем процессе
-  // с соседними спеками, и оставленное значение меняет их поведение (круг 2 ревью).
-  const adminEmailsBefore = process.env.ADMIN_EMAILS;
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
@@ -46,7 +44,6 @@ describe('LEGACY-015 T19: журнал удалений книжного кон�
     );
     await app.init();
 
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const email = 'admin@example.com';
     const password = 'password123';
     const reg = await request(http()).post('/auth/register').send({ email, password });
@@ -58,6 +55,7 @@ describe('LEGACY-015 T19: журнал удалений книжного кон�
     } else {
       throw new Error(`Admin register unexpected status ${reg.status}`);
     }
+    await grantStaffRoles(app, email);
 
     const admin = await prisma.user.findUniqueOrThrow({ where: { email } });
     actorUserId = admin.id;
@@ -66,11 +64,6 @@ describe('LEGACY-015 T19: журнал удалений книжного кон�
   afterAll(async () => {
     for (const slug of createdBookSlugs) {
       await cleanupBookWithRights(prisma, slug);
-    }
-    if (adminEmailsBefore === undefined) {
-      delete process.env.ADMIN_EMAILS;
-    } else {
-      process.env.ADMIN_EMAILS = adminEmailsBefore;
     }
     await app.close();
   });

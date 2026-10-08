@@ -411,6 +411,18 @@ model Legacy436Backfill {
   @@map("_legacy436_backfill")
 }
 
+/// Журнал коллизий email (`LEGACY-443`, миграция `20261008120000_legacy_443_lowercase_email`): аккаунты,
+/// чей адрес после `lower(btrim())` совпал с чужим и потому не приведён к нижнему регистру. Непустой —
+/// пары разбирает владелец; приложение журнал не читает. Снятие таблицы — решение владельца (`DROP TABLE`).
+model Legacy443EmailCollision {
+  userId          String   @id
+  normalizedEmail String
+  email           String
+  recordedAt      DateTime @default(now())
+
+  @@map("_legacy443_email_collisions")
+}
+
 model Like {
   id            String       @id @default(uuid())
   userId        String
@@ -2169,7 +2181,7 @@ model UserIdentity {
 ///
 /// ⚠️ Смена ролей журналируется независимо от доступа к маршруту — всеми путями, кроме
 /// двух исключений ниже, включая выдачу `admin`/`content_manager` по
-/// `ADMIN_EMAILS`/`CONTENT_MANAGER_EMAILS` при регистрации (решение арбитра 27.09.2026, пачка `T43`): `ROLE_ASSIGNED` с
+/// `ADMIN_EMAILS`/`CONTENT_MANAGER_EMAILS` при создании аккаунта соцвходом с подтверждённым адресом (с `LEGACY-443`; решение арбитра 27.09.2026, пачка `T43`): `ROLE_ASSIGNED` с
 /// `actorUserId = null` и `payload = { role, source: 'env_bootstrap' }` — актёром не пишется
 /// сам пользователь, иначе журнал утверждал бы самовыдачу админки. Вне охвата, и
 /// **отсутствие строки там ничего не доказывает**: базовая роль `user` (при регистрации

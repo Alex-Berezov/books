@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Admin language context (e2e)', () => {
   let app: INestApplication;
@@ -24,7 +25,6 @@ describe('Admin language context (e2e)', () => {
     );
     await app.init();
 
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const email = 'admin@example.com';
     const password = 'password123';
     const reg = await request(http()).post('/auth/register').send({ email, password });
@@ -36,6 +36,7 @@ describe('Admin language context (e2e)', () => {
     } else {
       throw new Error(`Admin register unexpected status ${reg.status}`);
     }
+    await grantStaffRoles(app, email);
   });
 
   afterAll(async () => {

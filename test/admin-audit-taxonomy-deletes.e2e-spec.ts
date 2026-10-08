@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language } from '@prisma/client';
 import { taxonomyFixture } from './helpers/taxonomy-null-cases';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * 🔴 `LEGACY-015`, пачка `T20`. Журнал административных действий на четырёх путях
@@ -32,9 +33,6 @@ describe('LEGACY-015 T20: журнал удалений таксономии (e2
   let actorUserId: string;
   const createdCategoryIds: string[] = [];
   const createdTagIds: string[] = [];
-  // Переменная окружения восстанавливается в `afterAll`: прогон идёт в общем процессе
-  // с соседними спеками, и оставленное значение меняет их поведение.
-  const adminEmailsBefore = process.env.ADMIN_EMAILS;
   const prefix = `t20-${Date.now()}`;
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
@@ -55,7 +53,6 @@ describe('LEGACY-015 T20: журнал удалений таксономии (e2
     );
     await app.init();
 
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const email = 'admin@example.com';
     const password = 'password123';
     const reg = await request(http()).post('/auth/register').send({ email, password });
@@ -67,6 +64,7 @@ describe('LEGACY-015 T20: журнал удалений таксономии (e2
     } else {
       throw new Error(`Admin register unexpected status ${reg.status}`);
     }
+    await grantStaffRoles(app, email);
 
     const admin = await prisma.user.findUniqueOrThrow({ where: { email } });
     actorUserId = admin.id;
@@ -80,11 +78,6 @@ describe('LEGACY-015 T20: журнал удалений таксономии (e2
       await prisma.tag.deleteMany({ where: { id } });
     }
     await prisma.slugRedirect.deleteMany({ where: { oldSlug: { startsWith: prefix } } });
-    if (adminEmailsBefore === undefined) {
-      delete process.env.ADMIN_EMAILS;
-    } else {
-      process.env.ADMIN_EMAILS = adminEmailsBefore;
-    }
     await app.close();
   });
 

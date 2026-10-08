@@ -4,6 +4,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-068`. `Category.key` и `Tag.key` — единственные неизменяемые
@@ -29,8 +30,6 @@ describe('Taxonomy key immutability (e2e)', () => {
   beforeAll(async () => {
     const adminEmail = 'admin-key-immutable@test.com';
     const adminPassword = 'password123';
-    process.env.ADMIN_EMAILS = adminEmail;
-
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -53,6 +52,7 @@ describe('Taxonomy key immutability (e2e)', () => {
         .send({ email: adminEmail, password: adminPassword });
       adminToken = (login.body as { accessToken: string }).accessToken;
     }
+    await grantStaffRoles(app, adminEmail);
 
     const category = await prisma.category.create({
       data: {

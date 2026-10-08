@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-037` — журнал связей участников профиля прав читается через API.
@@ -67,7 +68,6 @@ describe('Rights profile contributor events (e2e)', () => {
   };
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin-profile-contributor-events@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -86,6 +86,7 @@ describe('Rights profile contributor events (e2e)', () => {
       const login = await request(http()).post('/auth/login').send({ email, password }).expect(200);
       adminToken = tokenOf(login.body);
     }
+    await grantStaffRoles(app, email);
 
     bookWithRights = await createBookWithRights(prisma, slug);
 

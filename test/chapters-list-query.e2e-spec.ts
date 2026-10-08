@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { grantStaffRoles } from './helpers/staff-roles';
 import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
 
 /**
@@ -35,7 +36,6 @@ describe('Chapters list query validation (LEGACY-178) e2e', () => {
 
   beforeAll(async () => {
     const adminEmail = `chapters-query-${Date.now()}@test.com`;
-    process.env.ADMIN_EMAILS = adminEmail;
 
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
@@ -76,6 +76,7 @@ describe('Chapters list query validation (LEGACY-178) e2e', () => {
       .post('/auth/register')
       .send({ email: adminEmail, password: 'password123' });
     adminToken = (reg.body as { accessToken: string }).accessToken;
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

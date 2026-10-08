@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * Сквозной прогон кейса По в строгом режиме: чистый public-domain материал проходит путь
@@ -213,8 +214,6 @@ describe('Rights clearance in strict mode e2e', () => {
   };
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
-
     // Умолчания кода — предмет этого набора, поэтому чужие значения снимаются, а свои не ставятся.
     delete process.env.RIGHTS_LAWYER_MIN_RISK_LEVEL;
     delete process.env.RIGHTS_LAWYER_WORKFLOW_ENABLED;
@@ -248,6 +247,7 @@ describe('Rights clearance in strict mode e2e', () => {
         .expect(200);
       adminAccess = login.body.accessToken as string;
     }
+    await grantStaffRoles(app, 'admin@example.com');
   });
 
   afterAll(async () => {

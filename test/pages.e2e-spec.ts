@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { SLUG_MAX_LENGTH, SLUG_MAX_LENGTH_MESSAGE } from '../src/shared/validators/slug';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Pages e2e', () => {
   let app: INestApplication;
@@ -16,7 +17,6 @@ describe('Pages e2e', () => {
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -42,6 +42,7 @@ describe('Pages e2e', () => {
     } else {
       throw new Error('Admin register failed');
     }
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

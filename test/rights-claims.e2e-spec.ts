@@ -7,6 +7,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookWithRights } from './helpers/book-with-rights';
 import type { PrismaClient } from '@prisma/client';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * Phase 16 rights claims / DMCA e2e. Requires a live database, so it is not part of the
@@ -27,7 +28,6 @@ describe('Rights claims e2e', () => {
   const slug = `rights-claims-e2e-${Date.now()}`;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -96,6 +96,7 @@ describe('Rights claims e2e', () => {
         .expect(200);
       adminAccess = login.body.accessToken as string;
     }
+    await grantStaffRoles(app, 'admin@example.com');
   });
 
   afterAll(async () => {

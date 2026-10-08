@@ -11,6 +11,7 @@ import {
   taxonomyFixture,
   uniqueMark,
 } from './helpers/taxonomy-null-cases';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Tags e2e', () => {
   let app: INestApplication;
@@ -22,7 +23,6 @@ describe('Tags e2e', () => {
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -64,6 +64,7 @@ describe('Tags e2e', () => {
     } else {
       throw new Error('Admin register failed');
     }
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

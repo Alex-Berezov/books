@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * WP-7 — языковое измерение модели прав (R2-01, R3-01, R4-03).
@@ -134,7 +135,6 @@ describe('Rights language assessments e2e', () => {
   });
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -156,6 +156,7 @@ describe('Rights language assessments e2e', () => {
         .expect(200);
       adminAccess = login.body.accessToken as string;
     }
+    await grantStaffRoles(app, 'admin@example.com');
 
     const created = await request(http())
       .post('/admin/rights/intakes')

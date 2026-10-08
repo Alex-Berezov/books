@@ -5,6 +5,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language } from '@prisma/client';
 import { readSlugRedirect, taxonomyFixture, uniqueMark } from './helpers/taxonomy-null-cases';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-390` и `LEGACY-392`. Второй путь смерти публичного адреса категории:
@@ -58,7 +59,6 @@ describe('LEGACY-390, LEGACY-392: удаление категории целик
     readSlugRedirect(prisma, 'category', Language.ru, oldSlug);
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -76,6 +76,7 @@ describe('LEGACY-390, LEGACY-392: удаление категории целик
       const login = await request(http()).post('/auth/login').send({ email, password }).expect(200);
       admin = (login.body as TokenBody).accessToken;
     }
+    await grantStaffRoles(app, email);
   });
 
   afterAll(async () => {

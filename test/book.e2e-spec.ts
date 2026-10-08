@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Books (e2e) - slug validation', () => {
   let app: INestApplication;
@@ -20,7 +21,6 @@ describe('Books (e2e) - slug validation', () => {
     const server = app.getHttpServer() as unknown as Parameters<typeof request>[0];
     const adminEmail = 'books-admin@test.local';
     const adminPassword = 'Passw0rd!';
-    process.env.ADMIN_EMAILS = adminEmail;
 
     // try register; if exists, login
     const reg = await request(server).post('/auth/register').send({
@@ -37,6 +37,7 @@ describe('Books (e2e) - slug validation', () => {
         .send({ email: adminEmail, password: adminPassword });
       adminToken = (login.body as { accessToken: string }).accessToken;
     }
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

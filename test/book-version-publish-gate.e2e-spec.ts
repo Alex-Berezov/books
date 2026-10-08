@@ -8,6 +8,7 @@ import { Language, BookType, RightsPublicationGate } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('BookVersion Publication Gate (e2e)', () => {
   let app: INestApplication;
@@ -35,7 +36,6 @@ describe('BookVersion Publication Gate (e2e)', () => {
     );
     await app.init();
 
-    process.env.ADMIN_EMAILS = 'admin-gate@example.com';
     bookWithRights = await createBookWithRights(prisma, slug);
     createdSlugs.push(slug);
 
@@ -50,6 +50,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
     } else {
       throw new Error(`Admin register unexpected status ${reg.status}`);
     }
+    await grantStaffRoles(app, email);
 
     // Create a draft version
     const createRes = await request(http())

@@ -7,6 +7,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { markBookRightsFreshForTests } from './helpers/rights-fresh';
+import { grantStaffRoles } from './helpers/staff-roles';
 import { httpServerOf } from './http-server';
 import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
 
@@ -75,8 +76,8 @@ describe('Draft and rights exposure (e2e)', () => {
     );
     await app.init();
 
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     adminToken = await registerOrLogin('admin@example.com');
+    await grantStaffRoles(app, 'admin@example.com');
     readerToken = await registerOrLogin(`reader_${Date.now()}@example.com`);
 
     const stamp = Date.now();

@@ -3,18 +3,22 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Users authorized e2e', () => {
   let app: INestApplication;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     process.env.RATE_LIMIT_AUTH_ENABLED = '0';
     process.env.RATE_LIMIT_GLOBAL_ENABLED = '0';
     process.env.RATE_LIMIT_ENABLED = '0';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
-    app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
+    // `transform: true` - как в боевом `src/main.ts`: без него нормализация email из DTO
+    // (`@NormalizeEmail`, LEGACY-443) до обработчика не доезжает.
+    app.useGlobalPipes(
+      new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
+    );
     await app.init();
   });
 
@@ -112,7 +116,7 @@ describe('Users authorized e2e', () => {
       .expect(201);
     const userId = uReg.body.user.id as string;
 
-    // admin user (email in ADMIN_EMAILS)
+    // admin user: the role is written by grantStaffRoles (LEGACY-443), not by registration
     const aEmail = 'admin@example.com';
     const aPass = 'password123';
     const regAdmin = await request(app.getHttpServer())
@@ -122,6 +126,7 @@ describe('Users authorized e2e', () => {
     if (![201, 409].includes(regAdmin.status)) {
       throw new Error(`Unexpected admin register status: ${regAdmin.status}`);
     }
+    await grantStaffRoles(app, aEmail);
 
     const aLogin = await request(app.getHttpServer())
       .post('/auth/login')
@@ -145,5 +150,36 @@ describe('Users authorized e2e', () => {
       .get(`/users/${userId}`)
       .set('Authorization', `Bearer ${aToken}`)
       .expect(404);
+  });
+
+  // LEGACY-443: админское создание пишет тот же `User.email`, что регистрация, - в нижнем регистре.
+  it('admin POST /users: адрес в другом регистре - тот же аккаунт, 409', async () => {
+    const aEmail = `users_case_admin_${Date.now()}@example.com`;
+    const pass = 'password123';
+    await request(app.getHttpServer())
+      .post('/auth/register')
+      .send({ email: aEmail, password: pass })
+      .expect(201);
+    await grantStaffRoles(app, aEmail);
+    const aToken = (
+      await request(app.getHttpServer())
+        .post('/auth/login')
+        .send({ email: aEmail, password: pass })
+        .expect(200)
+    ).body.accessToken as string;
+
+    const email = `users_case_${Date.now()}@example.com`;
+    const created = await request(app.getHttpServer())
+      .post('/users')
+      .set('Authorization', `Bearer ${aToken}`)
+      .send({ email: ` ${email.toUpperCase()} `, password: pass })
+      .expect(201);
+    expect(created.body.email).toBe(email);
+
+    await request(app.getHttpServer())
+      .post('/users')
+      .set('Authorization', `Bearer ${aToken}`)
+      .send({ email, password: pass })
+      .expect(409);
   });
 });

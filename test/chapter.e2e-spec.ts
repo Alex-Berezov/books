@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Chapters e2e', () => {
   let app: INestApplication;
@@ -20,8 +21,6 @@ describe('Chapters e2e', () => {
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
-    // Force admin env for this test to avoid polluted .env values
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -59,7 +58,7 @@ describe('Chapters e2e', () => {
       .expect(201);
     userAccess = regUser.body.accessToken as string;
 
-    // Register admin (email must be in ADMIN_EMAILS env to pass RolesGuard)
+    // Register admin; the admin role is written by grantStaffRoles below (LEGACY-443)
     const adminEmail = 'admin@example.com';
     const regAdmin = await request(http())
       .post('/auth/register')
@@ -76,6 +75,7 @@ describe('Chapters e2e', () => {
       console.log('admin register unexpected', regAdmin.status, regAdmin.body);
       throw new Error('Admin register failed');
     }
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language, BookType } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Public versions list — Accept-Language fallback (e2e)', () => {
   let app: INestApplication;
@@ -16,7 +17,6 @@ describe('Public versions list — Accept-Language fallback (e2e)', () => {
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -36,6 +36,7 @@ describe('Public versions list — Accept-Language fallback (e2e)', () => {
     } else {
       throw new Error('Admin auth failed');
     }
+    await grantStaffRoles(app, email);
   });
 
   afterAll(async () => {

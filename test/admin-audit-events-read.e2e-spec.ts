@@ -3,6 +3,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-015` пункт 3, пачка `T45`: ручка чтения журнала `GET /admin/audit-events`
@@ -17,12 +18,10 @@ describe('LEGACY-015 T45: GET /admin/audit-events (e2e)', () => {
   let cmToken: string;
   let cmId: string;
   let userToken: string;
-  const adminEmailsBefore = process.env.ADMIN_EMAILS;
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
@@ -36,6 +35,7 @@ describe('LEGACY-015 T45: GET /admin/audit-events (e2e)', () => {
     if (![201, 409].includes(reg.status)) {
       throw new Error(`Admin register unexpected status ${reg.status}`);
     }
+    await grantStaffRoles(app, email);
     const login = await request(http()).post('/auth/login').send({ email, password }).expect(200);
     adminToken = login.body.accessToken as string;
     adminId = login.body.user.id as string;
@@ -66,11 +66,6 @@ describe('LEGACY-015 T45: GET /admin/audit-events (e2e)', () => {
   });
 
   afterAll(async () => {
-    if (adminEmailsBefore === undefined) {
-      delete process.env.ADMIN_EMAILS;
-    } else {
-      process.env.ADMIN_EMAILS = adminEmailsBefore;
-    }
     await app.close();
   });
 

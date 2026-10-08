@@ -7,6 +7,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { MediaProbeService } from '../src/modules/media-jobs/media-probe.service';
 import { MediaCleanupService } from '../src/modules/media-jobs/media-cleanup.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Media jobs e2e', () => {
   let app: INestApplication;
@@ -18,7 +19,6 @@ describe('Media jobs e2e', () => {
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     probe = moduleRef.get(MediaProbeService);
@@ -45,6 +45,7 @@ describe('Media jobs e2e', () => {
     } else {
       throw new Error(`Admin register failed: ${regAdmin.status}`);
     }
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

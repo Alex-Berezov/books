@@ -169,27 +169,26 @@ describe('AuthService (unit)', () => {
   });
 
   /**
-   * 🔴 Вторая половина контракта `LEGACY-170`. Роль времени выполнения по почте
-   * больше не выдаётся нигде, но **бутстрап первого администратора этими же
-   * списками жив** и обязан оставаться живым: без него на свежем стенде роль в
-   * `UserRole` положить некому. Снимут выдачу по `ADMIN_EMAILS` в
-   * `grantRegistrationRoles()` — этот тест краснеет; e2e-сторож `test/env-role-escalation.e2e-spec.ts` его не
-   * ловит, он проверяет ровно противоположный случай.
+   * 🔴 `LEGACY-443` (решение арбитра 08.10.2026). Регистрация паролем адрес не доказывает,
+   * поэтому адрес из `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS` получает только `user`:
+   * иначе незанятый адрес из списка отдавал админа первому, кто его зарегистрировал.
+   * Бутстрап первого администратора живёт на соцвходе с подтверждённым адресом
+   * (блок ниже) и в `prisma/seed.ts`. Вернут выдачу в `register()` — тест краснеет.
    */
-  it('register: почта из ADMIN_EMAILS пишет роль admin в UserRole', async () => {
+  it('register: почта из ADMIN_EMAILS роль admin не получает, только user', async () => {
     config.get = jest.fn((k: string) => {
       const map: Record<string, string> = {
         JWT_ACCESS_SECRET: 'a',
         JWT_REFRESH_SECRET: 'r',
         ADMIN_EMAILS: user.email,
-        CONTENT_MANAGER_EMAILS: '',
+        CONTENT_MANAGER_EMAILS: user.email,
       };
       return map[k];
     });
     (argon2.hash as jest.Mock).mockResolvedValueOnce('hashed');
     prisma.user.findUnique.mockResolvedValueOnce(null);
     prisma.user.create.mockResolvedValueOnce(user);
-    prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.admin } }]);
+    prisma.userRole.findMany.mockResolvedValue([]);
     prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
 
     await service.register({ email: user.email, password: 'p', name: 'n' });
@@ -197,7 +196,8 @@ describe('AuthService (unit)', () => {
     const grantedRoleIds = tx.userRole.createMany.mock.calls.map(
       (call: [{ data: Array<{ roleId: string }> }]) => call[0].data[0].roleId,
     );
-    expect(grantedRoleIds).toContain(`r-${RoleName.admin}`);
+    expect(grantedRoleIds).toEqual([`r-${RoleName.user}`]);
+    expect(adminAudit.record).not.toHaveBeenCalled();
   });
 
   /**
@@ -205,7 +205,7 @@ describe('AuthService (unit)', () => {
    * по env-списку при регистрации — шестой путь смены ролей, и он пишет `ROLE_ASSIGNED`
    * той же транзакцией. Базовая `user` события не получает; повтор (`count === 0`) — тоже.
    */
-  describe('register: журнал выдачи ролей по env-спискам (LEGACY-015, T43)', () => {
+  describe('соцвход: роли по env-спискам и журнал выдачи (LEGACY-015, T43; LEGACY-443)', () => {
     const withEnv = (admins: string, managers: string) => {
       config.get = jest.fn((k: string) => {
         const map: Record<string, string> = {
@@ -218,13 +218,20 @@ describe('AuthService (unit)', () => {
       });
     };
 
-    const register = async () => {
-      (argon2.hash as jest.Mock).mockResolvedValueOnce('hashed');
-      prisma.user.findUnique.mockResolvedValueOnce(null);
-      prisma.user.create.mockResolvedValueOnce(user);
+    // Первый вход через провайдера: привязки и аккаунта с таким адресом нет.
+    const register = async (emailVerified = true) => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-new',
+        email: user.email,
+        emailVerified,
+      });
+      prisma.user.findUnique.mockResolvedValue(null);
+      prisma.user.create.mockResolvedValue(user);
+      prisma.role.findUnique.mockResolvedValue({ id: `r-${RoleName.user}`, name: RoleName.user });
       prisma.userRole.findMany.mockResolvedValue([]);
       prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
-      await service.register({ email: user.email, password: 'p', name: 'n' });
+      return service.socialLogin({ provider: 'google', token: 'id-token' });
     };
 
     it('адрес из ADMIN_EMAILS: одно событие admin, актёр null, запись тем же tx', async () => {
@@ -256,11 +263,66 @@ describe('AuthService (unit)', () => {
       expect(tx.userRole.createMany).toHaveBeenCalledTimes(3);
     });
 
-    it('адрес вне списков: базовая роль выдана, событий нет', async () => {
+    it('адрес вне списков: базовая роль вложена в create, событий нет', async () => {
       withEnv('other@example.com', 'someone@example.com');
+      prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
+      const res = await register();
+
+      expect(res.user.roles).toEqual([RoleName.user]);
+      expect(tx.userRole.createMany).not.toHaveBeenCalled();
+      expect(prisma.userRole.upsert).not.toHaveBeenCalled();
+      expect(prisma.user.create).toHaveBeenCalledTimes(1);
+      expect(prisma.user.create.mock.calls[0][0].data.roles).toEqual({
+        create: { roleId: `r-${RoleName.user}` },
+      });
+      // `LEGACY-015`/`T67`: роль читается до вставки, иначе вложить её в `create` нечем.
+      expect(prisma.role.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
+        prisma.user.create.mock.invocationCallOrder[0],
+      );
+      expect(adminAudit.record).not.toHaveBeenCalled();
+    });
+
+    // 🔴 LEGACY-443: провайдер вошёл, но адрес не доказал - список не работает.
+    it('адрес из списка, но провайдер его не подтвердил: повышенной роли нет', async () => {
+      withEnv(user.email, user.email);
+      await register(false);
+
+      expect(tx.userRole.createMany).not.toHaveBeenCalled();
+      expect(adminAudit.record).not.toHaveBeenCalled();
+      // Базовая роль при этом на месте - вложенной записью в сам `create`.
+      expect(prisma.user.create).toHaveBeenCalledTimes(1);
+      expect(prisma.user.create.mock.calls[0][0].data.roles).toEqual({
+        create: { roleId: `r-${RoleName.user}` },
+      });
+    });
+
+    it('список сверяется без учёта регистра: подтверждённый адрес получает content_manager', async () => {
+      withEnv('', ` ${user.email.toUpperCase()} `);
       await register();
 
-      expect(tx.userRole.createMany).toHaveBeenCalledTimes(1);
+      const roles = adminAudit.record.mock.calls.map(
+        (call: [unknown, { payload: { role: RoleName } }]) => call[1].payload.role,
+      );
+      expect(roles).toEqual([RoleName.content_manager]);
+      expect(tx.userRole.createMany).toHaveBeenCalledTimes(2);
+    });
+
+    // 🔴 LEGACY-443: список выдаёт роль только при создании, не при входе в готовый аккаунт.
+    it('аккаунт с этим адресом уже есть: вход повышенной роли не выдаёт', async () => {
+      withEnv(user.email, user.email);
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-old',
+        email: user.email,
+        emailVerified: true,
+      });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.userRole.findMany.mockResolvedValue([]);
+      prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
+
+      await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+      expect(tx.userRole.createMany).not.toHaveBeenCalled();
       expect(adminAudit.record).not.toHaveBeenCalled();
     });
 
@@ -294,16 +356,11 @@ describe('AuthService (unit)', () => {
      * роль — аккаунт оставался без ролей вовсе, а повторная регистрация получала 409.
      * Создание пользователя обязано идти тем же `tx`, что и роли.
      */
-    it('пользователь создаётся той же транзакцией, что роли и журнал; отказ журнала роняет регистрацию', async () => {
+    it('пользователь создаётся той же транзакцией, что роли и журнал; отказ журнала роняет вход', async () => {
       withEnv(user.email, '');
       adminAudit.record.mockRejectedValueOnce(new Error('audit write failed'));
-      (argon2.hash as jest.Mock).mockResolvedValueOnce('hashed');
-      prisma.user.findUnique.mockResolvedValueOnce(null);
-      prisma.user.create.mockResolvedValueOnce(user);
 
-      await expect(
-        service.register({ email: user.email, password: 'p', name: 'n' }),
-      ).rejects.toThrow('audit write failed');
+      await expect(register()).rejects.toThrow('audit write failed');
       expect(tx.user.create).toHaveBeenCalledTimes(1);
       expect(tx.user.create.mock.calls[0][0]).toMatchObject({ select: ACCOUNT_USER_SELECT });
       expect(prisma.user.update).not.toHaveBeenCalled();
@@ -530,44 +587,6 @@ describe('AuthService (unit)', () => {
 
       expect(res.user.roles).toEqual(
         expect.arrayContaining([RoleName.user, RoleName.admin, RoleName.content_manager]),
-      );
-    });
-
-    it('does not grant roles from ADMIN_EMAILS when creating an account', async () => {
-      config.get = jest.fn((k: string) => {
-        const map: Record<string, string> = {
-          JWT_ACCESS_SECRET: 'a',
-          JWT_REFRESH_SECRET: 'r',
-          ADMIN_EMAILS: 'newcomer@example.com',
-        };
-        return map[k];
-      });
-      social.verify.mockResolvedValue({
-        provider: 'google',
-        providerUserId: 'g-new',
-        email: 'newcomer@example.com',
-        emailVerified: true,
-      });
-      const created = { ...user, id: 'u-new', email: 'newcomer@example.com' };
-      prisma.user.findUnique.mockResolvedValue(null);
-      prisma.user.create.mockResolvedValue(created);
-      prisma.role.findUnique.mockResolvedValue({ id: 'r-user', name: RoleName.user });
-      prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
-      prisma.user.update.mockResolvedValue({ ...created, lastLogin: now });
-
-      const res = await service.socialLogin({ provider: 'google', token: 'id-token' });
-
-      expect(res.user.roles).toEqual([RoleName.user]);
-      // `LEGACY-015`/`T67`: базовая роль идёт вложенной записью в сам `user.create`, а не
-      // отдельным `upsert` следом — окна «пользователь есть, роли нет» не существует.
-      expect(prisma.userRole.upsert).not.toHaveBeenCalled();
-      expect(prisma.user.create).toHaveBeenCalledTimes(1);
-      expect(prisma.user.create.mock.calls[0][0].data.roles).toEqual({
-        create: { roleId: 'r-user' },
-      });
-      // Роль читается до вставки: иначе вложить её в `create` нечем.
-      expect(prisma.role.findUnique.mock.invocationCallOrder[0]).toBeLessThan(
-        prisma.user.create.mock.invocationCallOrder[0],
       );
     });
 

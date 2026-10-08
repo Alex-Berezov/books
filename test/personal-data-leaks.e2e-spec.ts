@@ -8,6 +8,7 @@ import { RightsContentHashService } from '../src/modules/rights-intake/rights-co
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { markBookRightsFreshForTests } from './helpers/rights-fresh';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-088` / `LEGACY-089`. Две утечки персональных данных, найденные обходом
@@ -53,8 +54,8 @@ describe('Personal data leaks (e2e)', () => {
     );
     await app.init();
 
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     adminToken = await registerOrLogin('admin@example.com');
+    await grantStaffRoles(app, 'admin@example.com');
 
     const readerEmail = `reader_${Date.now()}@example.com`;
     readerToken = await registerOrLogin(readerEmail);

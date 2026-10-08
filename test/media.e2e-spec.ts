@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
 import { createBookFixture } from './helpers/book-fixture';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 // Smoke e2e for Media library: confirm -> list -> delete
 // NOTE: This suite is skipped by default until DB migrations with MediaAsset are applied locally.
@@ -17,7 +18,6 @@ describe('Media e2e', () => {
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
@@ -42,6 +42,7 @@ describe('Media e2e', () => {
     } else {
       throw new Error('Admin register failed');
     }
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

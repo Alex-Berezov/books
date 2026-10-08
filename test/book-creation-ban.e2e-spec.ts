@@ -4,6 +4,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * Сторож запрета «книга создаётся только из утверждённого клиренса» (`LEGACY-039`).
@@ -34,18 +35,12 @@ describe('Book creation ban (e2e)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let adminToken: string;
-  let adminEmailsBefore: string | undefined;
 
   const http = () => httpServerOf(app);
 
   beforeAll(async () => {
     const adminEmail = 'admin-book-ban@test.com';
     const adminPassword = 'password123';
-    // Значение возвращается в `afterAll`: воркер жив дольше набора (`maxWorkers: 2`), и
-    // оставленный список админов достаётся следующему набору, который его не задавал.
-    adminEmailsBefore = process.env.ADMIN_EMAILS;
-    process.env.ADMIN_EMAILS = adminEmail;
-
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -71,15 +66,11 @@ describe('Book creation ban (e2e)', () => {
     } else {
       throw new Error(`Unexpected admin register status: ${registration.status}`);
     }
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {
     await app.close();
-    if (adminEmailsBefore === undefined) {
-      delete process.env.ADMIN_EMAILS;
-    } else {
-      process.env.ADMIN_EMAILS = adminEmailsBefore;
-    }
   });
 
   describe('прямое создание книги', () => {

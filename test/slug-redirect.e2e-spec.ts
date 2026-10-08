@@ -5,6 +5,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { SlugRedirectService } from '../src/modules/slug-redirect/slug-redirect.service';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * LEGACY-062. Слаг таксономии — индексируемый публичный URL, и до этой правки
@@ -41,7 +42,6 @@ describe('Slug redirects (LEGACY-062) e2e', () => {
   };
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     redirects = moduleRef.get(SlugRedirectService);
@@ -64,6 +64,7 @@ describe('Slug redirects (LEGACY-062) e2e', () => {
         .expect(200);
       adminAccess = (login.body as { accessToken: string }).accessToken;
     }
+    await grantStaffRoles(app, 'admin@example.com');
   });
 
   afterAll(async () => {

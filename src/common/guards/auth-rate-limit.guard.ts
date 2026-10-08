@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { parseInternalProxyCidrs, parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
+import { normalizeEmail } from '../../shared/validators/normalize-email.decorator';
 
 /**
  * Auth Rate Limit Guard
@@ -88,7 +89,10 @@ export class AuthRateLimitGuard implements CanActivate {
     }>();
 
     const path = req.path || req.originalUrl || '';
-    const email = req.body?.email || '';
+    // Ключ по той же форме адреса, что ищет вход (LEGACY-443): иначе `Victim@x.com`, `vIctim@x.com`
+    // и прочие варианты регистра получали бы по своей корзине на один и тот же аккаунт.
+    const rawEmail = req.body?.email;
+    const email = typeof rawEmail === 'string' ? (normalizeEmail(rawEmail) as string) : '';
     // Тот же адрес, что и у глобального лимитера: за Cloudflare `req.ip` — это узел
     // CF, и без этой замены пять попыток входа делили бы все посетители одного PoP.
     // Чужие неудачные входы блокировали бы вход человеку, который ничего не делал.

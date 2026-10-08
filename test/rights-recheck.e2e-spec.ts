@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * Phase 18 recheck e2e. Requires a live database, so it is NOT part of the local
@@ -94,7 +95,6 @@ describe('Rights recheck e2e', () => {
   });
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     // Deterministic runs: only the explicit admin scan triggers the workflow.
     process.env.RIGHTS_RECHECK_SCHEDULER_ENABLED = '0';
 
@@ -119,6 +119,7 @@ describe('Rights recheck e2e', () => {
         .expect(200);
       adminAccess = login.body.accessToken as string;
     }
+    await grantStaffRoles(app, 'admin@example.com');
   });
 
   afterAll(async () => {

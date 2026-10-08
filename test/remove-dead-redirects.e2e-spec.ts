@@ -8,6 +8,7 @@ import { Language, BookType } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 import { markBookRightsFreshForTests } from './helpers/rights-fresh';
 import { taxonomyFixture, uniqueMark, readSlugRedirect } from './helpers/taxonomy-null-cases';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-395`. `remove()` в `tags`, `pages`, `book`, `book-version` не убирал историю
@@ -110,7 +111,6 @@ describe('LEGACY-395: remove() чистит мёртвую историю сла
   };
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     rightsContentHashService = moduleRef.get(RightsContentHashService);
@@ -129,6 +129,7 @@ describe('LEGACY-395: remove() чистит мёртвую историю сла
       const login = await request(http()).post('/auth/login').send({ email, password }).expect(200);
       admin = (login.body as { accessToken: string }).accessToken;
     }
+    await grantStaffRoles(app, email);
   });
 
   afterAll(async () => {

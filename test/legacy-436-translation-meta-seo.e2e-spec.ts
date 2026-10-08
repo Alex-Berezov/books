@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 type ResolveBody = { meta?: { title?: string; description?: string } };
 
@@ -36,7 +37,6 @@ describe('LEGACY-436 — плоские meta/OG перевода доходят 
   beforeAll(async () => {
     const adminEmail = 'admin-legacy-436@test.com';
     const adminPassword = 'password123';
-    process.env.ADMIN_EMAILS = adminEmail;
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -59,6 +59,7 @@ describe('LEGACY-436 — плоские meta/OG перевода доходят 
             .send({ email: adminEmail, password: adminPassword })
             .expect(200);
     adminToken = (auth.body as { accessToken: string }).accessToken;
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

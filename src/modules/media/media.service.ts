@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -12,7 +11,7 @@ import { ConfirmMediaDto, MediaListQueryDto } from './dto/create-media.dto';
 import { Inject } from '@nestjs/common';
 import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
 import { MediaProbeService } from '../media-jobs/media-probe.service';
-import { findMediaReferenceDescriptors } from './media-references';
+import { deleteMediaObject } from './media-delete';
 import { paginated } from '../../shared/dto/paginated-response.dto';
 import { MEDIA_CATEGORIES, MediaCategory } from './dto/create-media.dto';
 
@@ -134,47 +133,12 @@ export class MediaService {
     const asset = await this.prisma.mediaAsset.findUnique({ where: { id } });
     if (!asset) throw new NotFoundException('Media not found');
 
-    const key: string = asset.key as unknown as string;
-
-    // 🔴 Отказ вместо удаления. Восстановить объект нельзя: хранилище не версионирует,
-    // и единственный путь назад — заново загрузить исходный файл, которого у оператора
-    // может не быть. Поэтому сомнение разрешается в пользу отказа.
-    const references = await findMediaReferenceDescriptors(this.prisma, { id, key });
-    if (references.length > 0) {
-      throw new ConflictException({
-        statusCode: 409,
-        error: 'Conflict',
-        message: 'Media is still referenced and was not deleted',
-        references,
-      });
-    }
-
-    // `deletedAt` обязателен: без него stage 2 уборки строку не выбирает никогда (LEGACY-421).
-    await this.prisma.mediaAsset.update({
-      where: { id },
-      // Повторный DELETE срок не отодвигает: у ассета, помеченного сейчас, дата первой пометки
-      // остаётся. Проверка `isDeleted` страхует от даты, оставшейся у ожившей строки.
-      data: {
-        isDeleted: true,
-        deletedAt: asset.isDeleted && asset.deletedAt ? asset.deletedAt : new Date(),
-      },
-    });
-
-    // Ошибка хранилища не проглатывается. Запись остаётся помеченной удалённой; включённая уборка
-    // через `hardDays` сделает одну повторную попытку, а при новом отказе удалит строку и оставит
-    // объект сиротой с error-логом. Свидетельство до тех пор — этот лог.
-    let storageDeleted = true;
-    try {
-      await this.storage.delete(key);
-    } catch (error) {
-      storageDeleted = false;
-      this.logger.error(
-        `Storage object was not deleted for media ${id} (key: ${key}). ` +
-          'The database record is marked deleted; the media cleanup, if enabled, tries once more ' +
-          'after MEDIA_CLEANUP_HARD_DAYS, otherwise the object has to be removed by hand.',
-        error instanceof Error ? error.stack : String(error),
-      );
-    }
+    // 🔴 Отказ вместо удаления, если на объект ссылаются: восстановить его нельзя - хранилище
+    // не версионирует. Протокол общий с `DELETE /uploads` (`media-delete.ts`).
+    const { storageDeleted } = await deleteMediaObject(
+      { prisma: this.prisma, storage: this.storage, logger: this.logger },
+      { key: asset.key, asset },
+    );
 
     return { success: true, storageDeleted };
   }

@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * Phase 17 agent/API import automation e2e. Requires a live database, so it is not part of the
@@ -72,7 +73,6 @@ describe('Rights agent import e2e', () => {
   });
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     process.env.RIGHTS_AGENT_UPLOAD_ENABLED = '1';
     process.env.RATE_LIMIT_AGENT_UPLOAD_ENABLED = '0';
 
@@ -97,6 +97,7 @@ describe('Rights agent import e2e', () => {
         .expect(200);
       adminAccess = login.body.accessToken as string;
     }
+    await grantStaffRoles(app, 'admin@example.com');
   });
 
   afterAll(async () => {

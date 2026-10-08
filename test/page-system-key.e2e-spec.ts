@@ -5,6 +5,7 @@ import { Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * A2, `tasks/system-pages-slug/TASK.md`. Пять страниц сайт ищет сам, и адресом
@@ -29,7 +30,6 @@ describe('Pages: system key (e2e)', () => {
   beforeAll(async () => {
     const adminEmail = 'admin-system-key@test.com';
     const adminPassword = 'password123';
-    process.env.ADMIN_EMAILS = adminEmail;
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -56,6 +56,7 @@ describe('Pages: system key (e2e)', () => {
     } else {
       throw new Error(`Unexpected admin register status: ${regRes.status}`);
     }
+    await grantStaffRoles(app, adminEmail);
 
     // Своей системной страницы в тестовой базе может и не быть, а ключи —
     // закрытый список, выдумать шестой нельзя. Поэтому один одалживаем.

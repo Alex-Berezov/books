@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('BookVersion preview e2e', () => {
   let app: INestApplication;
@@ -14,7 +15,6 @@ describe('BookVersion preview e2e', () => {
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -39,6 +39,7 @@ describe('BookVersion preview e2e', () => {
     } else {
       throw new Error(`Admin register failed: ${regAdmin.status}`);
     }
+    await grantStaffRoles(app, adminEmail);
   });
 
   afterAll(async () => {

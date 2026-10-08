@@ -6,6 +6,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { BookType, Language, RightsPublicationGate } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * Решение владельца 27.09.2026 (тема №4): «Разрешить публикацию» — последняя инстанция по правам.
@@ -39,7 +40,6 @@ describe('Rights publication override (e2e)', () => {
       .expect(200);
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin-override@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -49,6 +49,7 @@ describe('Rights publication override (e2e)', () => {
     await app.init();
 
     adminToken = (await registerOrLogin('admin-override@example.com')).token;
+    await grantStaffRoles(app, 'admin-override@example.com');
     const manager = await registerOrLogin(`manager-override-${Date.now()}@example.com`);
     managerToken = manager.token;
     await request(http())

@@ -6,6 +6,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * WP-8.1 (R1-01) — участники в content hash, сквозная трассировка «HTTP-вход → эффект в БД».
@@ -79,7 +80,6 @@ describe('Rights content hash — contributors (e2e)', () => {
   };
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin-hash-contributors@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -97,6 +97,7 @@ describe('Rights content hash — contributors (e2e)', () => {
       const login = await request(http()).post('/auth/login').send({ email, password }).expect(200);
       adminToken = login.body.accessToken as string;
     }
+    await grantStaffRoles(app, email);
 
     bookWithRights = await createBookWithRights(prisma, slug);
 

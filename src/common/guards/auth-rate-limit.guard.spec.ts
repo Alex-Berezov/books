@@ -26,6 +26,29 @@ describe('AuthRateLimitGuard', () => {
     expect(consume).toHaveBeenCalledWith('auth:login:203.0.113.1:a@b.c', 1, 60_000, 5);
   });
 
+  // 🔴 LEGACY-443: вход ищет адрес в нижнем регистре, значит и корзина лимита - одна на все
+  // варианты регистра. Иначе каждый вариант `Victim@x.com` давал свои пять попыток к одному хешу.
+  it('варианты регистра и пробелы одного адреса делят одну корзину', async () => {
+    const consume = jest.fn().mockResolvedValue(true);
+    for (const email of ['Victim@X.com', ' vIctim@x.COM ', 'victim@x.com']) {
+      await guard(consume).canActivate(ctx('/api/auth/login', '203.0.113.1', { email }));
+    }
+
+    expect(consume).toHaveBeenCalledTimes(3);
+    for (const call of consume.mock.calls) {
+      expect(call[0]).toBe('auth:login:203.0.113.1:victim@x.com');
+    }
+  });
+
+  it('нестроковый email или его отсутствие - корзина по одному IP', async () => {
+    const consume = jest.fn().mockResolvedValue(true);
+    await guard(consume).canActivate(ctx('/api/auth/login', '203.0.113.1', { email: { a: 1 } }));
+    await guard(consume).canActivate(ctx('/api/auth/login', '203.0.113.1', {}));
+
+    expect(consume).toHaveBeenCalledTimes(2);
+    for (const call of consume.mock.calls) expect(call[0]).toBe('auth:login:203.0.113.1');
+  });
+
   // Control landing 5 (CR auth-social). The `else` branch used to `return true`,
   // so /auth/social — the very route that hands out sessions — was outside every
   // limit, and so is any auth route added later. "Unrecognised → allow" is the

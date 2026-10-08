@@ -1,5 +1,7 @@
 import {
   BadRequestException,
+  ConflictException,
+  ForbiddenException,
   PayloadTooLargeException,
   UnauthorizedException,
   UnsupportedMediaTypeException,
@@ -7,12 +9,16 @@ import {
 import type { Readable } from 'node:stream';
 import { UploadsService } from './uploads.service';
 import { UploadType } from './dto/presign.dto';
+import type { PrismaService } from '../../prisma/prisma.service';
+import { deleteMediaObject } from '../media/media-delete';
 import type { CacheService } from '../../shared/cache/cache.interface';
 import type {
   StorageSaveOptions,
   StorageService,
   StorageStat,
 } from '../../shared/storage/storage.interface';
+
+jest.mock('../media/media-delete', () => ({ deleteMediaObject: jest.fn() }));
 
 describe('UploadsService (unit)', () => {
   const cache = {
@@ -28,6 +34,11 @@ describe('UploadsService (unit)', () => {
     getPublicUrl: jest.fn<string, [string]>(),
   };
 
+  const prisma = {
+    mediaAsset: { findUnique: jest.fn() },
+  };
+  const deleteObject = deleteMediaObject as jest.Mock;
+
   let service: UploadsService;
 
   beforeEach(() => {
@@ -35,7 +46,9 @@ describe('UploadsService (unit)', () => {
     service = new UploadsService(
       cache as unknown as CacheService,
       storage as unknown as StorageService,
+      prisma as unknown as PrismaService,
     );
+    deleteObject.mockResolvedValue({ storageDeleted: true });
   });
 
   describe('presign', () => {
@@ -146,12 +159,110 @@ describe('UploadsService (unit)', () => {
     });
   });
 
-  describe('delete/getPublicUrl', () => {
-    it('delegates delete to storage', async () => {
-      await service.delete('k1');
-      expect(storage.delete).toHaveBeenCalledWith('k1');
+  describe('remove (LEGACY-444)', () => {
+    const owner = { userId: 'u1', isModerator: false };
+    const staff = { userId: 'm1', isModerator: true };
+    const key = 'covers/2026/10/08/x.jpg';
+    const asset = { id: 'a1', key, createdById: 'u1', isDeleted: false, deletedAt: null };
+
+    it.each([
+      'rights-private/doc.pdf',
+      'prod/rights-private/doc.pdf',
+      'covers/../rights-private/doc.pdf',
+      'covers/./2026/10/08/x.jpg',
+      'covers//x.jpg',
+      'covers/',
+      'covers',
+      '../covers/x.jpg',
+      'covers/a b.jpg',
+    ])('ключ %s вне формы presign - 400 даже модератору, ничего не тронуто', async (bad) => {
+      await expect(service.remove(bad, staff)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.mediaAsset.findUnique).not.toHaveBeenCalled();
+      expect(deleteObject).not.toHaveBeenCalled();
     });
 
+    it('аудио обычному пользователю - 403', async () => {
+      await expect(service.remove('audio/2026/10/08/x.mp3', owner)).rejects.toBeInstanceOf(
+        ForbiddenException,
+      );
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('чужая обложка: 403, удаление не начато', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue({ ...asset, createdById: 'someone-else' });
+      await expect(service.remove(key, owner)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(prisma.mediaAsset.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.mediaAsset.findUnique).toHaveBeenCalledWith({ where: { key } });
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('своя, но уже помеченная удалённой запись: 403', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue({ ...asset, isDeleted: true });
+      await expect(service.remove(key, owner)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('ключ без MediaAsset: обычному пользователю 403', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue(null);
+      await expect(service.remove(key, owner)).rejects.toBeInstanceOf(ForbiddenException);
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
+
+    it('ключ без MediaAsset: модератор удаляет по общему протоколу', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue(null);
+      await service.remove(key, staff);
+      expect(deleteObject).toHaveBeenCalledTimes(1);
+      expect(deleteObject.mock.calls[0][1]).toEqual({ key, asset: null });
+    });
+
+    it('своя обложка: удаление по общему протоколу с записью', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue(asset);
+      await service.remove(key, owner);
+      expect(deleteObject).toHaveBeenCalledTimes(1);
+      expect(deleteObject.mock.calls[0][1]).toEqual({ key, asset });
+      expect(storage.delete).not.toHaveBeenCalled();
+    });
+
+    it('аудио у модератора: удаляется', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue(null);
+      await expect(service.remove('audio/2026/10/08/x.mp3', staff)).resolves.toEqual({
+        success: true,
+        storageDeleted: true,
+      });
+      expect(deleteObject).toHaveBeenCalledTimes(1);
+    });
+
+    it('отказ хранилища доходит до ответа: storageDeleted=false', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue(asset);
+      deleteObject.mockResolvedValue({ storageDeleted: false });
+      await expect(service.remove(key, owner)).resolves.toEqual({
+        success: true,
+        storageDeleted: false,
+      });
+    });
+
+    it('409 владельцу без перечня ссылок, модератору - с перечнем', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue(asset);
+      const withRefs = new ConflictException({ message: 'x', references: ['rights claim (1)'] });
+      deleteObject.mockRejectedValue(withRefs);
+
+      const ownerError = await service.remove(key, owner).catch((e: unknown) => e);
+      expect(ownerError).toBeInstanceOf(ConflictException);
+      expect(JSON.stringify((ownerError as ConflictException).getResponse())).not.toContain(
+        'rights claim',
+      );
+
+      await expect(service.remove(key, staff)).rejects.toBe(withRefs);
+    });
+
+    it('чужая обложка у модератора: удаляется', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue(asset);
+      await service.remove(key, staff);
+      expect(deleteObject).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('getPublicUrl', () => {
     it('delegates getPublicUrl to storage', () => {
       storage.getPublicUrl.mockReturnValue('u');
       expect(service.getPublicUrl('k')).toBe('u');

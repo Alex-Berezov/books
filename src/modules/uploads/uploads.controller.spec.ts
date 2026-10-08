@@ -18,13 +18,13 @@ const makeController = (
   isModerator: boolean,
 ): {
   controller: UploadsController;
-  uploads: { presign: jest.Mock; getPublicUrl: jest.Mock; delete: jest.Mock };
+  uploads: { presign: jest.Mock; getPublicUrl: jest.Mock; remove: jest.Mock };
   isModeratorMock: jest.Mock;
 } => {
   const uploads = {
     presign: jest.fn().mockResolvedValue({ key: 'k', url: 'u', method: 'POST' }),
     getPublicUrl: jest.fn().mockReturnValue('https://cdn.example.com/k'),
-    delete: jest.fn().mockResolvedValue(undefined),
+    remove: jest.fn().mockResolvedValue({ success: true, storageDeleted: true }),
   };
   const isModeratorMock = jest.fn().mockResolvedValue(isModerator);
   const moderatorRoles = { isModerator: isModeratorMock } as unknown as ModeratorRolesService;
@@ -111,27 +111,22 @@ describe('UploadsController', () => {
   });
 
   describe('delete', () => {
-    it('ключ вне covers/ без роли модератора — 403, объект остаётся', async () => {
-      const { controller, uploads, isModeratorMock } = makeController(false);
-      await expect(controller.delete('audio/x.mp3', req(staff))).rejects.toBeInstanceOf(
-        ForbiddenException,
-      );
-      expect(isModeratorMock).toHaveBeenCalledWith(staff);
-      expect(uploads.delete).not.toHaveBeenCalled();
-    });
-
-    it('ключ вне covers/ с ролью модератора — объект удаляется', async () => {
-      const { controller, uploads } = makeController(true);
-      await controller.delete('audio/x.mp3', req(staff));
-      expect(uploads.delete).toHaveBeenCalledWith('audio/x.mp3');
-    });
-
-    it('ключ covers/ роль не спрашивает', async () => {
-      const { controller, uploads, isModeratorMock } = makeController(false);
-      await controller.delete('covers/x.jpg', req(staff));
-      expect(isModeratorMock).not.toHaveBeenCalled();
-      expect(uploads.delete).toHaveBeenCalledWith('covers/x.jpg');
-    });
+    it.each([
+      [true, 'audio/x.mp3'],
+      [false, 'covers/x.jpg'],
+    ])(
+      'isModerator=%s: решение отдаётся сервису вместе с тем, кто спрашивает (LEGACY-444)',
+      async (isModerator, key) => {
+        const { controller, uploads, isModeratorMock } = makeController(isModerator);
+        await expect(controller.delete(key, req(staff))).resolves.toEqual({
+          success: true,
+          storageDeleted: true,
+        });
+        expect(isModeratorMock).toHaveBeenCalledWith(staff);
+        expect(uploads.remove).toHaveBeenCalledTimes(1);
+        expect(uploads.remove).toHaveBeenCalledWith(key, { userId: staff.userId, isModerator });
+      },
+    );
 
     it('без пользователя в запросе — 401', async () => {
       const { controller } = makeController(true);

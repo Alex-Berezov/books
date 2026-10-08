@@ -14,6 +14,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
 import { CLAIM_SEVERITY_RANK } from '../src/modules/rights-claims/rights-claim.constants';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-377`, остаток. Три админских списка выбирали всё без `take` и отдавали одной
@@ -55,7 +56,6 @@ describe('Admin rights lists pagination (LEGACY-377) e2e', () => {
   };
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -153,6 +153,7 @@ describe('Admin rights lists pagination (LEGACY-377) e2e', () => {
         .expect(200);
       adminAccess = (login.body as { accessToken: string }).accessToken;
     }
+    await grantStaffRoles(app, 'admin@example.com');
   });
 
   afterAll(async () => {

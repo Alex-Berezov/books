@@ -4,6 +4,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 describe('Books: Check Slug (e2e)', () => {
   let app: INestApplication;
@@ -14,10 +15,9 @@ describe('Books: Check Slug (e2e)', () => {
   const http = () => app.getHttpServer() as unknown as Parameters<typeof request>[0];
 
   beforeAll(async () => {
-    // Use fixed admin email - must be set BEFORE module creation for ConfigService
+    // Fixed admin email; the admin role is written by grantStaffRoles after register (LEGACY-443)
     const adminEmail = 'admin-book-slug@test.com';
     const adminPassword = 'password123';
-    process.env.ADMIN_EMAILS = adminEmail;
 
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -48,6 +48,7 @@ describe('Books: Check Slug (e2e)', () => {
     } else {
       throw new Error(`Unexpected admin register status: ${regRes.status}`);
     }
+    await grantStaffRoles(app, adminEmail);
 
     // Cleanup any leftover test data from previous runs
     await prisma.book.deleteMany({

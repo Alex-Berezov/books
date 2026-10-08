@@ -2,10 +2,12 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
 import { Language as PrismaLanguage } from '@prisma/client';
 import { SOCIAL_PROVIDERS, type SocialProvider } from '../providers/social-identity.service';
+import { NormalizeEmail } from '../../../shared/validators/normalize-email.decorator';
 
 export class RegisterDto {
   @ApiProperty({ example: 'user@example.com' })
   @IsEmail()
+  @NormalizeEmail()
   email!: string;
 
   @ApiProperty({ minLength: 8, example: 'securePassword123' })
@@ -27,6 +29,7 @@ export class RegisterDto {
 export class LoginDto {
   @ApiProperty({ example: 'user@example.com' })
   @IsEmail()
+  @NormalizeEmail()
   email!: string;
 
   @ApiProperty({ example: 'securePassword123' })

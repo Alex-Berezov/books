@@ -5,6 +5,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookWithRights } from './helpers/book-with-rights';
+import { grantStaffRoles } from './helpers/staff-roles';
 import type { PrismaClient } from '@prisma/client';
 
 /**
@@ -24,7 +25,6 @@ describe('Rights licenses e2e', () => {
   const slug = `rights-licenses-e2e-${Date.now()}`;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -84,6 +84,7 @@ describe('Rights licenses e2e', () => {
         .expect(200);
       adminAccess = login.body.accessToken as string;
     }
+    await grantStaffRoles(app, 'admin@example.com');
 
     const userRegistration = await request(http())
       .post('/auth/register')

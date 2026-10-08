@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 import { PAGINATION_MAX_LIMIT } from '../src/shared/dto/pagination.dto';
 
 /**
@@ -33,11 +34,11 @@ describe('Admin categories list query validation (LEGACY-298/353/387) e2e', () =
     await app.init();
 
     const adminEmail = `categories-query-${Date.now()}@test.com`;
-    process.env.ADMIN_EMAILS = adminEmail;
     const reg = await request(http())
       .post('/auth/register')
       .send({ email: adminEmail, password: 'password123' });
     adminToken = (reg.body as { accessToken: string }).accessToken;
+    await grantStaffRoles(app, adminEmail);
 
     // Два термина разного `type` — иначе фильтр нечем проверить: список без
     // фикстур остаётся непустым и без фильтрации, а тест это не отличит.

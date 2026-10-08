@@ -3,6 +3,10 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import {
+  SocialIdentityService,
+  type SocialIdentity,
+} from '../src/modules/auth/providers/social-identity.service';
 import { httpServerOf } from './http-server';
 import { createBookFixture } from './helpers/book-fixture';
 
@@ -14,18 +18,21 @@ import { createBookFixture } from './helpers/book-fixture';
  * чужие комментарии и видел черновики.
  *
  * ⚠️ Почта попадает в `ADMIN_EMAILS` **после** регистрации намеренно. Заводить
- * первого администратора по этим спискам `register()` и `prisma/seed.ts` по-
- * прежнему вправе (`LEGACY-070`), и они пишут строку в `UserRole` — тогда роль
- * настоящая. Проверяется здесь другое: почта в списке, строки в базе нет.
- * Вторая половина контракта — что бутстрап жив — лежит в юните
- * `auth.service.spec.ts` («register: почта из ADMIN_EMAILS пишет роль в БД»).
+ * первого администратора по этим спискам вправе только первый вход через провайдера
+ * с подтверждённым адресом (`createSocialUser`, `LEGACY-443`) и `prisma/seed.ts`, и они
+ * пишут строку в `UserRole` — тогда роль настоящая; регистрация паролем роли по списку
+ * не даёт. Проверяется здесь другое: почта в списке, строки в базе нет.
+ * Вторая половина контракта — что бутстрап жив — два последних кейса ниже и блок
+ * «соцвход: роли по env-спискам» в `auth.service.spec.ts`.
  *
  * Обе половины обязаны быть красными при возврате эскалации: маршрут с
  * `@Roles(Role.Admin)` ловит только чтение из гварда, ветка `isModerator` —
  * только чтение из сервиса ролей.
  *
- * Последний кейс — `LEGACY-015`, пачка `T43` (решение арбитра 27.09.2026): бутстрап
- * по списку на живой базе пишет ровно одно событие `ROLE_ASSIGNED` с актёром `null`.
+ * Два последних кейса — `LEGACY-443` (решение арбитра 08.10.2026): регистрация паролем роль
+ * по списку не даёт (пароль адрес не доказывает), а `LEGACY-015`, пачка `T43` (решение арбитра
+ * 27.09.2026): бутстрап по списку на первом входе через провайдера с подтверждённым адресом
+ * пишет ровно одно событие `ROLE_ASSIGNED` с актёром `null`.
  * Откат при отказе журнала он не доказывает — это держат мутации юнит-спеки.
  */
 describe('ENV role escalation e2e (LEGACY-170)', () => {
@@ -40,6 +47,8 @@ describe('ENV role escalation e2e (LEGACY-170)', () => {
   const ownerEmail = `comment_owner_${Date.now()}@example.com`;
   const bootstrapEmail = `env_bootstrap_${Date.now()}@example.com`;
   const pass = 'password123';
+  const emailsToClean: string[] = [];
+  const socialIdentities = new Map<string, SocialIdentity>();
 
   /** Присваивание `undefined` кладёт в `process.env` строку `"undefined"`. */
   const setEnv = (key: string, value: string | undefined): void => {
@@ -64,7 +73,13 @@ describe('ENV role escalation e2e (LEGACY-170)', () => {
     // в `UserRole`, и проверять станет нечего.
     setEnv('ADMIN_EMAILS', '');
 
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(SocialIdentityService)
+      .useValue({
+        verify: (_provider: string, token: string): Promise<SocialIdentity> =>
+          Promise.resolve(socialIdentities.get(token) as SocialIdentity),
+      } satisfies Pick<SocialIdentityService, 'verify'>)
+      .compile();
     prisma = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
@@ -109,12 +124,13 @@ describe('ENV role escalation e2e (LEGACY-170)', () => {
     await prisma.book.deleteMany({ where: { id: bookId } });
     // Связи ролей сносятся до самих аккаунтов: `UserRole` ссылается на `User`
     // без каскада, и обратный порядок роняет уборку на внешнем ключе.
-    const emails = [envEmail, ownerEmail, bootstrapEmail];
+    const emails = [envEmail, ownerEmail, bootstrapEmail, ...emailsToClean];
     const users = await prisma.user.findMany({ where: { email: { in: emails } } });
     const userIds = users.map((u) => u.id);
     await prisma.adminAuditEvent.deleteMany({
       where: { targetType: 'USER', targetId: { in: userIds } },
     });
+    await prisma.userIdentity.deleteMany({ where: { userId: { in: userIds } } });
     await prisma.userRole.deleteMany({ where: { userId: { in: userIds } } });
     await prisma.user.deleteMany({ where: { email: { in: emails } } });
     await app.close();
@@ -151,13 +167,47 @@ describe('ENV role escalation e2e (LEGACY-170)', () => {
     expect((res.body as { roles: string[] }).roles).toEqual(['user']);
   });
 
-  it('бутстрап по ADMIN_EMAILS пишет одно событие ROLE_ASSIGNED с актёром null (LEGACY-015, T43)', async () => {
+  it('регистрация паролем адреса из ADMIN_EMAILS и в другом регистре роль admin не даёт (LEGACY-443)', async () => {
+    const listed = `env_listed_${Date.now()}@example.com`;
+    emailsToClean.push(listed);
+    setEnv('ADMIN_EMAILS', listed);
+    try {
+      const res = await request(httpServerOf(app))
+        .post('/auth/register')
+        .send({ email: listed.toUpperCase(), password: pass })
+        .expect(201);
+      expect((res.body as { user: { roles: string[] } }).user.roles).toEqual(['user']);
+      // Тот же адрес другим регистром - тот же аккаунт, второго не заводится.
+      await request(httpServerOf(app))
+        .post('/auth/register')
+        .send({ email: listed, password: pass })
+        .expect(409);
+    } finally {
+      setEnv('ADMIN_EMAILS', envEmail);
+    }
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { email: listed },
+      select: { id: true, roles: { select: { role: { select: { name: true } } } } },
+    });
+    expect(user.roles.map((r) => r.role.name)).toEqual(['user']);
+    expect(
+      await prisma.adminAuditEvent.count({ where: { targetType: 'USER', targetId: user.id } }),
+    ).toBe(0);
+  });
+
+  it('бутстрап по ADMIN_EMAILS при первом входе через Google с подтверждённым адресом: одно событие ROLE_ASSIGNED с актёром null (LEGACY-015, T43; LEGACY-443)', async () => {
+    socialIdentities.set('bootstrap-verified', {
+      provider: 'google',
+      providerUserId: `g-${bootstrapEmail}`,
+      email: bootstrapEmail,
+      emailVerified: true,
+    });
     setEnv('ADMIN_EMAILS', bootstrapEmail);
     try {
       await request(httpServerOf(app))
-        .post('/auth/register')
-        .send({ email: bootstrapEmail, password: pass })
-        .expect(201);
+        .post('/auth/social')
+        .send({ provider: 'google', token: 'bootstrap-verified' })
+        .expect(200);
     } finally {
       setEnv('ADMIN_EMAILS', envEmail);
     }

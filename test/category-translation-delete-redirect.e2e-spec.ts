@@ -4,6 +4,7 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { Language } from '@prisma/client';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-085`. Политика владельца от 15.09.2026: удаление перевода категории уводит
@@ -72,7 +73,6 @@ describe('LEGACY-085: удаление перевода категории и и
   };
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     db = moduleRef.get(PrismaService);
     app = moduleRef.createNestApplication();
@@ -90,6 +90,7 @@ describe('LEGACY-085: удаление перевода категории и и
       const login = await request(http()).post('/auth/login').send({ email, password }).expect(200);
       admin = (login.body as TokenBody).accessToken;
     }
+    await grantStaffRoles(app, email);
   });
 
   afterAll(async () => {

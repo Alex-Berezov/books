@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * `LEGACY-379`: списочные маршруты отдают `{items, pagination}`, а не голый массив.
@@ -17,7 +18,6 @@ describe('List shape e2e (LEGACY-379)', () => {
   let adminToken: string;
 
   beforeAll(async () => {
-    process.env.ADMIN_EMAILS = 'admin@example.com';
     process.env.RATE_LIMIT_AUTH_ENABLED = '0';
     process.env.RATE_LIMIT_GLOBAL_ENABLED = '0';
     process.env.RATE_LIMIT_ENABLED = '0';
@@ -39,6 +39,7 @@ describe('List shape e2e (LEGACY-379)', () => {
       .send({ email, password })
       .expect(200);
     adminToken = (login.body as { accessToken: string }).accessToken;
+    await grantStaffRoles(app, email);
   });
 
   afterAll(async () => {
