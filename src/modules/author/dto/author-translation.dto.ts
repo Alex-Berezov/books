@@ -9,6 +9,7 @@ import {
   ValidateNested,
   Matches,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { UpdateSeoDto } from '../../seo/dto/update-seo.dto';
@@ -18,6 +19,7 @@ import {
   FAQ_ANSWER_MAX_LENGTH,
   FAQ_QUESTION_MAX_LENGTH,
 } from '../../../shared/constants/validation';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 export class AuthorQuoteDto {
   @ApiProperty({ description: 'Text of the quote' })
@@ -71,24 +73,31 @@ export class AuthorTranslationDto {
     description: 'Wikidata URL for this language',
     example: 'https://www.wikidata.org/wiki/Q30875',
   })
-  @IsOptional()
-  @IsString()
+  // `javascript:` в ссылке исполнился бы по клику на сайте или в админке (`LEGACY-447`).
+  // `''` — «не задано», как было при `@IsString()`: пачка сужает формат адреса, а не пустое
+  // значение (решение арбитра T94, `decisions-log.md` 03.10.2026).
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsAbsoluteHttpUrl()
   wikidataUrl?: string;
 
   @ApiPropertyOptional({
     description: 'Wikipedia URL for this language',
     example: 'https://en.wikipedia.org/wiki/Oscar_Wilde',
   })
-  @IsOptional()
-  @IsString()
+  // `''` — «не задано», как было при `@IsString()`: пачка сужает формат адреса, а не пустое
+  // значение (решение арбитра T94, `decisions-log.md` 03.10.2026).
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsAbsoluteHttpUrl()
   wikipediaUrl?: string;
 
   @ApiPropertyOptional({
     description: 'Author photo URL for this language',
     example: 'https://example.com/author.jpg',
   })
-  @IsOptional()
-  @IsString()
+  // `''` — «не задано», как было при `@IsString()`: пачка сужает формат адреса, а не пустое
+  // значение (решение арбитра T94, `decisions-log.md` 03.10.2026).
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsAbsoluteHttpUrl()
   photoUrl?: string;
 
   @ApiPropertyOptional({ description: 'Quotes array', type: [AuthorQuoteDto] })

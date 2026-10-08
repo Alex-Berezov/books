@@ -8,6 +8,7 @@ import {
   IsOptional,
   IsString,
   Matches,
+  ValidateIf,
 } from 'class-validator';
 import {
   RightsLicenseMediaFormat,
@@ -15,6 +16,7 @@ import {
   RightsLicenseTerritoryScope,
   RightsLicenseType,
 } from '../rights-license-interface';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 export enum RightsLicenseConfidenceDto {
   HIGH = 'HIGH',
@@ -183,8 +185,11 @@ export class CreateRightsLicenseDto {
   documentSha256?: string;
 
   @ApiPropertyOptional({ example: 'https://example.org/license.pdf' })
-  @IsOptional()
-  @IsString()
+  // `javascript:` в ссылке исполнился бы по клику на сайте или в админке (`LEGACY-447`).
+  // `''` — «не задано», как было при `@IsString()`: пачка сужает формат адреса, а не пустое
+  // значение (решение арбитра T94, `decisions-log.md` 03.10.2026).
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsAbsoluteHttpUrl()
   documentUrl?: string;
 
   @ApiPropertyOptional()

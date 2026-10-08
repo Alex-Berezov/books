@@ -8,6 +8,7 @@ import {
   IsString,
   IsUUID,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import {
   RightsClaimChannel,
@@ -15,6 +16,7 @@ import {
   RightsClaimType,
   RightsClaimantType,
 } from '../rights-claim-interface';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 export class CreateRightsClaimDto {
   @ApiProperty({ enum: RightsClaimType })
@@ -162,7 +164,8 @@ export class CreateRightsClaimDto {
   @ApiPropertyOptional({ type: [String] })
   @IsOptional()
   @IsArray()
-  @IsString({ each: true })
+  // `javascript:` в ссылке исполнился бы по клику на сайте или в админке (`LEGACY-447`).
+  @IsAbsoluteHttpUrl({ each: true })
   infringingUrls?: string[];
 
   @ApiPropertyOptional({ default: false })
@@ -181,8 +184,10 @@ export class CreateRightsClaimDto {
   originalNoticeText?: string;
 
   @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
+  // `''` — «не задано», как было при `@IsString()`: пачка сужает формат адреса, а не пустое
+  // значение (решение арбитра T94, `decisions-log.md` 03.10.2026).
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsAbsoluteHttpUrl()
   originalNoticeUrl?: string;
 
   // --- Handling ---

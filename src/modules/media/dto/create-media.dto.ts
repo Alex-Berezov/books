@@ -1,7 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, IsUrl, Max, Min } from 'class-validator';
+import { IsIn, IsInt, IsNotEmpty, IsOptional, IsString, Max, Min } from 'class-validator';
 import { Type } from 'class-transformer';
 import { PAGINATION_MAX_LIMIT } from '../../../shared/dto/pagination.dto';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 export const MEDIA_CATEGORIES = ['image', 'video', 'audio', 'document'] as const;
 export type MediaCategory = (typeof MEDIA_CATEGORIES)[number];
@@ -19,7 +20,9 @@ export class ConfirmMediaDto {
     description: 'Public URL resolved by storage',
     example: 'http://localhost:3000/static/covers/2025/08/26/uuid.jpg',
   })
-  @IsUrl({ require_tld: false })
+  // `IsUrl` без обязательной схемы пускал `javascript:1/alert(1)//` (`LEGACY-447`); сервис
+  // и раньше отбивал адрес не с `http` (`media.service.ts`), так что форма входа та же.
+  @IsAbsoluteHttpUrl()
   url!: string;
 
   @ApiPropertyOptional({ description: 'Content type (MIME)', example: 'image/jpeg' })

@@ -1,7 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsEnum, IsInt, IsOptional, IsString, IsUUID, MaxLength, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 import { RightsClaimAttachmentType } from '../rights-claim-interface';
+import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 export class CreateClaimAttachmentDto {
   @ApiPropertyOptional({
@@ -34,8 +44,11 @@ export class CreateClaimAttachmentDto {
   storageKey?: string;
 
   @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
+  // `javascript:` в ссылке исполнился бы по клику на сайте или в админке (`LEGACY-447`).
+  // `''` — «не задано», как было при `@IsString()`: пачка сужает формат адреса, а не пустое
+  // значение (решение арбитра T94, `decisions-log.md` 03.10.2026).
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsAbsoluteHttpUrl()
   url?: string;
 
   @ApiPropertyOptional({ description: '64 hex characters' })
