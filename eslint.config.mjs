@@ -10,19 +10,9 @@ export default tseslint.config(
     // weight under ESLint 9 and must not be reintroduced (see src/devops/eslint-ignores.spec.ts).
     ignores: [
       'eslint.config.mjs',
-      'libs/api-client/dist/**/*',
       'dist/**/*',
-      // openapi-typescript output, regenerated in place by yarn openapi:types*
+      // openapi-typescript output, regenerated in place by yarn openapi:types:from-schema
       'libs/api-client/src/types.ts',
-      // Hand-written Node script that no lint can actually read. tsconfig.eslint.json
-      // includes scripts/**/* while allowJs is off, so type-aware ESLint cannot put a
-      // .js file in the program. Measured 26.08.2026: without this line
-      // `eslint scripts/generate-openapi-schema.js` exits 1 with
-      // `Parsing error: "parserOptions.project" ... file was not found`; with it, exit 0.
-      // lint-staged reaches the file through its *.{ts,tsx,js} glob, so the failure
-      // would land on every commit touching it. The four rule-suppression directives in
-      // its header are already dead for the same reason — see LEGACY-281.
-      'scripts/generate-openapi-schema.js',
     ],
   },
   eslint.configs.recommended,
@@ -62,18 +52,6 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-call': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
       '@typescript-eslint/no-unsafe-argument': 'off',
-    },
-  },
-  // Loosen rules for libs (API client) where type-aware linting often misfires
-  {
-    files: ['libs/**/*.ts'],
-    rules: {
-      '@typescript-eslint/no-unsafe-assignment': 'off',
-      '@typescript-eslint/no-unsafe-member-access': 'off',
-      '@typescript-eslint/no-unsafe-call': 'off',
-      '@typescript-eslint/no-unsafe-return': 'off',
-      '@typescript-eslint/no-unsafe-argument': 'off',
-      '@typescript-eslint/no-floating-promises': 'off',
     },
   },
   {

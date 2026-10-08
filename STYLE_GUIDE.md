@@ -187,7 +187,7 @@ src/
     constants/        — validation messages
     enums/            — Language, UploadType
     language/         — language.util
-    prisma/           — PrismaService
+    prisma/           — PrismaModule, утилиты ошибок и JSON-полей (сам PrismaService — src/prisma/prisma.service.ts)
     dto/              — PaginationDto (общие DTO)
     sentry/           — SentryExceptionFilter
     security/         — security.module
@@ -486,14 +486,14 @@ async checkSlugExists(slug: string, excludeId?: string): Promise<Book | null> {
 
 Базовые правила (настоятся через `.prettierrc` + ESLint):
 
-| Правило         | Значение                                                        |
-| --------------- | --------------------------------------------------------------- |
-| Кавычки         | Одинарные `'`                                                   |
-| Trailing commas | Везде (`all`)                                                   |
-| Ширина строки   | 100 символов                                                    |
-| Табуляция       | 2 пробела                                                       |
-| Точка с запятой | Да                                                              |
-| `any`           | Не использовать (если очень нужно — `eslint-disable` на строку) |
+| Правило         | Значение                                                                                  |
+| --------------- | ----------------------------------------------------------------------------------------- |
+| Кавычки         | Одинарные `'`                                                                             |
+| Trailing commas | Везде (`all`)                                                                             |
+| Ширина строки   | 100 символов                                                                              |
+| Табуляция       | 2 пробела                                                                                 |
+| Точка с запятой | Да                                                                                        |
+| `any`           | Не использовать (если очень нужно — `// eslint-disable-next-line <правило> -- <причина>`) |
 
 ### Запуск форматирования
 
@@ -547,22 +547,7 @@ describe('BookService', () => {
 
 ## 12. Чеклист перед пушом
 
-```bash
-# 1. Форматирование
-yarn format
-
-# 2. Линтер
-yarn lint
-
-# 3. Тайпчек
-yarn typecheck
-
-# 4. Unit-тесты
-yarn test
-
-# 5. E2E-тесты (если менялись эндпоинты)
-yarn test:e2e
-```
+Какие проверки гонять и когда — `CLAUDE.md`, раздел «Команды». Список здесь не дублируется.
 
 ### Что проверить визуально
 
@@ -573,4 +558,4 @@ yarn test:e2e
 - [ ] Сервис — early throw, нет вложенности
 - [ ] Ошибки — NestJS-исключения, не голые `Error`
 - [ ] Нет закомментированного кода
-- [ ] Нет `any` (или есть `eslint-disable` с причиной)
+- [ ] Нет `any` (или есть `// eslint-disable-next-line <правило> -- <причина>`)

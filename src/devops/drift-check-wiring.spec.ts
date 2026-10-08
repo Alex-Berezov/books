@@ -20,7 +20,7 @@ import { join, resolve } from 'node:path';
  * скрипта в `package.json` стоит настоящий файл.
  *
  * Ни `scripts/**`, ни `.github/workflows/**`, ни `package.json` не читают ни `tsc`, ни `eslint`
- * (тот ходит по `{src,apps,libs,test}/**\/*.ts`), ни один шаг конвейера, кроме спек этого каталога.
+ * (тот ходит по `{src,test}/**\/*.ts`), ни один шаг конвейера, кроме спек этого каталога.
  */
 
 const ROOT = resolve(__dirname, '..', '..');

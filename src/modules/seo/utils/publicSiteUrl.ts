@@ -6,7 +6,8 @@
  * `R2_PUBLIC_BASE_URL` describe where *files* are served from (api./media.
  * subdomains) and are unrelated to where *pages* live. Mixing them leaked
  * `https://api.bibliaris.com/{lang}/tag/{slug}` into canonical/hreflang and got
- * those URLs discovered by Google (see tasks/tz-seo-subdomain-leak.md).
+ * those URLs discovered by Google (see books-app-docs/ai-context/seo-rules.md,
+ * section «canonical»).
  */
 
 export const PUBLIC_SITE_URL_ENV = 'PUBLIC_SITE_URL';

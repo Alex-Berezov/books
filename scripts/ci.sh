@@ -27,7 +27,7 @@ step "Typecheck"
 yarn typecheck
 
 # LEGACY-241. Синтаксис shell-скриптов. `scripts/*.sh` — слепая зона: их не читает ни
-# eslint (он ходит по `{src,apps,libs,test}/**/*.ts`), ни tsc, ни jest. До 17.08.2026
+# eslint (он ходит по `{src,test}/**/*.ts`), ни tsc, ни jest. До 17.08.2026
 # это было терпимо: единственный `deploy_production.sh` исполнялся на сервере, и его
 # отказ был отказом выката. Теперь `notify_telegram.sh` вызывается из job'а `deploy`
 # **до** отметки `📍 Mark server stage reached`, и опечатка в нём валит релиз при

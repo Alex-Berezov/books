@@ -262,7 +262,8 @@ export class PublicController {
 
   /**
    * The five pages the site looks up for itself, addressed by a key an editor
-   * cannot change (A2, `tasks/system-pages-slug/TASK.md`).
+   * cannot change (A2; contract: `books-app-docs/ai-context/api-contracts.md`,
+   * section «Pages (CMS)»).
    *
    * ⚠️ Must stay **above** `pages/:slug`: the two patterns differ in segment
    * count today, so Nest separates them, but a future one-segment alias would

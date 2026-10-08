@@ -12,7 +12,7 @@
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix --max-warnings=0",
+    "lint": "eslint \"{src,test}/**/*.ts\" --fix --max-warnings=0",
     "typecheck": "yarn typecheck:src && yarn typecheck:test",
     "typecheck:src": "tsc --noEmit",
     "typecheck:test": "tsc --noEmit -p test/tsconfig.json",
@@ -30,11 +30,9 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
-    "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json --forceExit",
     "test:e2e:parallel": "NODE_OPTIONS=\"--max-old-space-size=8192 --expose-gc\" jest --config ./test/jest-e2e.json --forceExit --logHeapUsage",
     "test:e2e:serial": "NODE_OPTIONS=\"--max-old-space-size=8192 --expose-gc\" jest --config ./test/jest-e2e.json --runInBand --forceExit --logHeapUsage",
-    "test:e2e:serial:ci": "NODE_OPTIONS=\"--max-old-space-size=8192 --expose-gc\" jest --config ./test/jest-e2e.json --runInBand --forceExit --no-cache --logHeapUsage",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:seed": "prisma db seed",
@@ -47,11 +45,7 @@
     "prepare": "husky || exit 0",
     "ci": "bash scripts/ci.sh",
     "openapi:snapshot": "bash -c 'UPDATE_OPENAPI_SNAPSHOT=1 jest src/common/testing/openapi-snapshot.spec.ts'",
-    "openapi:schema": "node scripts/generate-openapi-schema.js",
-    "openapi:schema:prod": "node scripts/generate-openapi-schema.js https://api.bibliaris.com/docs-json",
-    "openapi:types": "openapi-typescript ${OPENAPI_URL:-http://localhost:5000/docs-json} -o libs/api-client/src/types.ts && prettier --write libs/api-client/src/types.ts",
-    "openapi:types:from-schema": "openapi-typescript libs/api-client/api-schema.json -o libs/api-client/src/types.ts && prettier --write libs/api-client/src/types.ts",
-    "openapi:types:prod": "openapi-typescript https://api.bibliaris.com/docs-json -o libs/api-client/src/types.ts && prettier --write libs/api-client/src/types.ts"
+    "openapi:types:from-schema": "openapi-typescript libs/api-client/api-schema.json -o libs/api-client/src/types.ts && prettier --write libs/api-client/src/types.ts"
   },
   "packageManager": "yarn@1.22.22",
   "dependencies": {

@@ -3,7 +3,8 @@ import { BackgroundJobsRegistry } from './background-jobs.registry';
 import { BackgroundJobsService } from './background-jobs.service';
 
 /**
- * `tasks/background-jobs-visibility/TASK.md`.
+ * Реестр фоновых механизмов (`M2`, 20.09.2026; связанная запись — `LEGACY-009`
+ * в `books-app-docs/ai-context/legacy-warnings.md`).
  *
  * За одну неделю нашлись три механизма, которые не выполнялись, и ни один не
  * подал признака. Общее у всех трёх — отсутствие работы **неотличимо от

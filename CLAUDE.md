@@ -31,22 +31,22 @@ cd /opt/books/app/src            # каталог репозитория на с
 
 Документы с пометкой «секцией» больше 10 КБ - сначала `grep -nE "^## " <файл>`, потом `Read` с `offset`.
 
-| Тип задачи                      | Что открыть                                                                                                                                                                                                              |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Стиль кода (любая задача)       | `STYLE_GUIDE.md`, `../books-app-docs/ai-context/agent-rules.md`; окружение и раскладка - `AGENTS.md`, исполняемые правила - этот файл                                                                                    |
-| Новый эндпоинт или DTO          | `src/modules/<модуль>/<модуль>.controller.ts`, `<модуль>.service.ts`, `dto/`, `../books-app-docs/ai-context/api-contracts.md` (секцией)                                                                                  |
-| Схема базы и миграция           | `prisma/schema.prisma`, `prisma/migrations/<последний каталог>/migration.sql`, `scripts/drift-check.mjs`, `../books-app-docs/ai-context/database-schema.md` (секцией)                                                    |
-| Публичная выдача книг           | `src/common/selects/public-book.select.ts`, `src/modules/public/public.controller.ts`, `src/modules/book/book.service.ts`                                                                                                |
-| Права, клиренс, публикация      | `src/modules/rights-clearance/`, `src/modules/book-version/publication-gate.service.ts`, `../books-app-docs/ai-context/rights-clearance.md` (секцией), `ai-context/adr/ADR-008-publication-gate-server-side-additive.md` |
-| Аутентификация и роли           | `src/modules/auth/`, `src/common/guards/`, `src/common/roles/moderator-roles.service.ts`, `../books-app-docs/ai-context/auth-and-permissions.md` (секцией)                                                               |
-| Кэш публичных ответов           | `src/common/interceptors/public-cache.interceptor.ts`, `src/common/decorators/no-public-cache.decorator.ts`                                                                                                              |
-| Языки и переводы                | `src/common/pipes/lang-param.pipe.ts`, `src/common/decorators/language.decorator.ts`, `../books-app-docs/ai-context/translation-rules.md`                                                                                |
-| Гео-ограничения                 | `src/modules/geo-block/geo-block-rule.service.ts`, `src/modules/geo-block/geo-ip-country.service.ts`, `.env.example`                                                                                                     |
-| Фоновые механизмы и очереди     | `src/modules/background-jobs/`, `src/modules/media-jobs/` (BullMQ), `../books-app-docs/ai-context/architecture.md`                                                                                                       |
-| E2E и прогон миграций           | `test/jest-e2e.json`, `test/setup-e2e.ts`, `docker-compose.yml`, `.env.test.example`                                                                                                                                     |
-| Перед рефакторингом чужого кода | `../books-app-docs/ai-context/legacy-warnings.md` (секцией, в шапке индекс LEGACY), `D:/newDev/.claude/qa-index.md` (полные записи - точечно из `qa-lessons.md`)                                                         |
-| Автономный разбор техдолга      | `../books-app-docs/ai-context/tech-debt-autopilot.md` целиком, `../books-app-docs/ai-context/tech-debt-journal.md`                                                                                                       |
-| Что считается сделанным         | `../books-app-docs/ai-context/definition-of-done.md`, `../books-app-docs/ai-context/quality-gates.md`                                                                                                                    |
+| Тип задачи                      | Что открыть                                                                                                                                                                                                                                |
+| ------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Стиль кода (любая задача)       | `STYLE_GUIDE.md`, `../books-app-docs/ai-context/agent-rules.md`; окружение и раскладка - `AGENTS.md`, исполняемые правила - этот файл                                                                                                      |
+| Новый эндпоинт или DTO          | `src/modules/<модуль>/<модуль>.controller.ts`, `<модуль>.service.ts`, `dto/`, `../books-app-docs/ai-context/api-contracts.md` (секцией)                                                                                                    |
+| Схема базы и миграция           | `prisma/schema.prisma`, `prisma/migrations/<последний каталог>/migration.sql`, `scripts/drift-check.mjs`, `../books-app-docs/ai-context/database-schema.md` (секцией)                                                                      |
+| Публичная выдача книг           | `src/common/selects/public-book.select.ts`, `src/modules/public/public.controller.ts`, `src/modules/book/book.service.ts`                                                                                                                  |
+| Права, клиренс, публикация      | `src/modules/rights-clearance/`, `src/modules/book-version/publication-gate.service.ts`, `../books-app-docs/ai-context/rights-clearance.md` (секцией), `../books-app-docs/ai-context/adr/ADR-008-publication-gate-server-side-additive.md` |
+| Аутентификация и роли           | `src/modules/auth/`, `src/common/guards/`, `src/common/roles/moderator-roles.service.ts`, `../books-app-docs/ai-context/auth-and-permissions.md` (секцией)                                                                                 |
+| Кэш публичных ответов           | `src/common/interceptors/public-cache.interceptor.ts`, `src/common/decorators/no-public-cache.decorator.ts`                                                                                                                                |
+| Языки и переводы                | `src/common/pipes/lang-param.pipe.ts`, `src/common/decorators/language.decorator.ts`, `../books-app-docs/ai-context/translation-rules.md`                                                                                                  |
+| Гео-ограничения                 | `src/modules/geo-block/geo-block-rule.service.ts`, `src/modules/geo-block/geo-ip-country.service.ts`, `.env.example`                                                                                                                       |
+| Фоновые механизмы и очереди     | `src/modules/background-jobs/`, `src/modules/media-jobs/` (BullMQ), `../books-app-docs/ai-context/architecture.md`                                                                                                                         |
+| E2E и прогон миграций           | `test/jest-e2e.json`, `test/setup-e2e.ts`, `docker-compose.yml`, `.env.test.example`                                                                                                                                                       |
+| Перед рефакторингом чужого кода | `../books-app-docs/ai-context/legacy-warnings.md` (секцией, в шапке индекс LEGACY), `D:/newDev/.claude/qa-index.md` (полные записи - точечно из `qa-lessons.md`)                                                                           |
+| Автономный разбор техдолга      | `../books-app-docs/ai-context/tech-debt-autopilot.md` целиком, `../books-app-docs/ai-context/tech-debt-journal.md`                                                                                                                         |
+| Что считается сделанным         | `../books-app-docs/ai-context/definition-of-done.md`, `../books-app-docs/ai-context/quality-gates.md`                                                                                                                                      |
 
 ## Жёсткие запреты
 
@@ -191,8 +191,12 @@ Swagger отдаётся по `/docs-json`, не по `/api/docs-json`.
 - **`PrismaService` не добавляется в `providers` своего модуля.** Он раздаётся модулем из
   `src/shared/prisma`; локальное объявление создаёт лишний клиент и лишний пул соединений.
 - **`any` ловится линтом** (`LEGACY-181`): правило `no-explicit-any`
-  в `eslint.config.mjs` стоит `'error'`, блока-исключения на спеки нет, файловых
-  `/* eslint-disable */` в репозитории не осталось. Возврат любого `any` красит `yarn lint`,
+  в `eslint.config.mjs` стоит `'error'`, блока-исключения на спеки нет. Голых
+  `/* eslint-disable */` и отключений `no-explicit-any` в репозитории нет; файловые отключения
+  стоят в `test/*.e2e-spec.ts` на `no-unsafe-member-access`, `no-unsafe-assignment`,
+  `no-unsafe-argument` (тело ответа `supertest` типизировано как `any`), часть из них без причины,
+  и в нелинтуемом `scripts/check_prod_config.js`.
+  Новое файловое отключение - только с правилом и причиной после `--`. Возврат любого `any` красит `yarn lint`,
   а значит и оба конвейера. ⚠️ `noImplicitAny` в `tsconfig.json` по-прежнему выключен:
   переменная без типа и без инициализатора компилятором не ловится, это отдельная работа.
 - **Форма списочного ответа одна** (`LEGACY-177` за логином 13.09.2026,

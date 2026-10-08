@@ -17,8 +17,9 @@ import { join, resolve } from 'node:path';
  * `libs/api-client/types.ts` (туда тогда писал `yarn openapi:types`, в гите такого файла нет)
  * и `libs/api-client/api-schema.json` (на день правки не существовал; заведён 07.09.2026
  * снапшотом контракта, `LEGACY-016`), а линтовался
- * `libs/api-client/src/types.ts`. С 26.09.2026 (`LEGACY-016`, `T42`) `yarn openapi:types*`
- * пишут в `src/types.ts`, и второй путь снят из исключений.
+ * `libs/api-client/src/types.ts`. С 26.09.2026 (`LEGACY-016`, `T42`) генерация типов
+ * пишет в `src/types.ts` (с 08.10.2026 — только `yarn openapi:types:from-schema`), и второй
+ * путь снят из исключений.
  *
  * ⚠️ С 11.09.2026 (`LEGACY-182`) цена этих строк выросла: `yarn lint` идёт
  * с `--max-warnings=0`, и предупреждение по сгенерированному файлу теперь красит конвейер,
@@ -53,27 +54,27 @@ describe('LEGACY-146: исключения линта', () => {
   });
 
   it.each([
-    ['libs/api-client/src/types.ts', 'версия в гите, туда же пишет yarn openapi:types'],
-    ['libs/api-client/dist/**/*', 'сборка пакета'],
+    [
+      'libs/api-client/src/types.ts',
+      'версия в гите, туда же пишет yarn openapi:types:from-schema; yarn lint в libs не ходит, исключение держит lint-staged',
+    ],
     ['dist/**/*', 'сборка сервиса'],
   ])('ignores содержит %s (%s)', (path) => {
     expect(ignoreEntries()).toContain(path);
   });
 
   /**
-   * Отдельным случаем, потому что при ревью на нём разошлись два ревьюера. Файл рукописный,
-   * и на вид исключать его из линта — потеря покрытия. Замер 26.08.2026 говорит обратное:
-   * `tsconfig.eslint.json` включает весь каталог `scripts`, а `allowJs` нет ни в нём, ни в
-   * `tsconfig.json`, поэтому `.js` в программу тип-зависимого линта не попадает вовсе.
-   * Без этой строки `npx eslint scripts/generate-openapi-schema.js` — exit 1,
-   * `Parsing error: "parserOptions.project" ... file was not found`; со строкой — exit 0.
-   * `lint-staged` доносит до файла `eslint --fix` глобом `*.{ts,tsx,js}`, то есть отказ
-   * прилетал бы на каждом коммите, который его трогает. Четыре директивы отключения правил
-   * в шапке файла по той же причине мертвы — причина в `LEGACY-281`, здесь не чинится.
-   * Решение арбитра 26.08.2026, `decisions-log.md`.
+   * До 08.10.2026 здесь стояло обратное требование: `scripts/generate-openapi-schema.js` обязан
+   * быть в `ignores`. Рукописный `.js` не попадал в программу тип-зависимого линта (`allowJs`
+   * выключен), и без исключения `eslint` на нём падал с `Parsing error` — решение арбитра
+   * 26.08.2026, `LEGACY-281`. Скрипт качал схему с запущенного сервера в
+   * `libs/api-client/api-schema.json` и тем подменял снимок контракта развёртыванием, поэтому
+   * удалён вместе с `yarn openapi:schema*` 08.10.2026, а строка исключения снята. Вернуть файл —
+   * значит вернуть и нечитаемый линтом скрипт, и способ испортить снимок: сначала `LEGACY-281`.
    */
-  it('ignores содержит scripts/generate-openapi-schema.js — линт его не читает', () => {
-    expect(ignoreEntries()).toContain('scripts/generate-openapi-schema.js');
+  it('scripts/generate-openapi-schema.js удалён и в ignores не числится', () => {
+    expect(existsSync(join(ROOT, 'scripts', 'generate-openapi-schema.js'))).toBe(false);
+    expect(ignoreEntries()).not.toContain('scripts/generate-openapi-schema.js');
   });
 
   it('сгенерированный types.ts действительно сгенерирован, а не написан руками', () => {

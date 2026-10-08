@@ -63,12 +63,8 @@ decorators, the controller/service split, naming. Shape, not procedure:
 
 - All DTOs carry class-validator and Swagger decorators.
 - Controllers handle HTTP routing; business logic belongs in Services.
-- `any` is **caught by the linter** since 2026-09-11 (`LEGACY-181`):
-  `@typescript-eslint/no-explicit-any` is `'error'` in `eslint.config.mjs`, with no spec-wide
-  exemption and no file-level `/* eslint-disable */` left in the repo. Any new `any` turns
-  `yarn lint` red, and with it both pipelines. Note `noImplicitAny` is still off in
-  `tsconfig.json`: a variable with no type and no initializer is still not caught
-  (`books/CLAUDE.md` §«Специфика проекта»).
+- `any` is caught by the linter (`LEGACY-181`); what is and is not disabled, and where —
+  `books/CLAUDE.md` §«Специфика проекта».
 
 When to run what, and the requirement of zero warnings in the files you touched, live in
 `books/CLAUDE.md` §«Команды» — not here.
