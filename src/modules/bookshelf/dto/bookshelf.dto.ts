@@ -1,8 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import type {
-  ReferenceObject,
-  SchemaObject,
-} from '@nestjs/swagger/dist/interfaces/open-api-spec.interface';
+import type { ReferenceObject, SchemaObject } from '@nestjs/swagger';
 import {
   PaginationWithNextDto,
   PaginatedResult,

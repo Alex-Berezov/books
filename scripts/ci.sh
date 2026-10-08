@@ -103,6 +103,13 @@ step "Environment key check"
 yarn check:env:self-test
 yarn check:env
 
+# LEGACY-450. Аудит рабочих зависимостей: совет high/critical вне `scripts/audit-allowlist.json`
+# (или со строкой с истёкшим сроком) роняет шаг. Уязвимая зависимость приходила обновлением
+# lockfile и уезжала на прод молча. Продублирован в `deploy.yml` (тег `v*` не проходит `ci.yml`).
+step "Dependency audit (high/critical)"
+yarn audit:deps:self-test
+yarn audit:deps
+
 # Конфигурация мониторинга — единственная часть репозитория, которую до сих пор
 # не читал ни один прогон: ни typecheck, ни lint, ни jest её не видят. Опечатка
 # в `expr` или лишний отступ в `receivers` уезжали в main зелёными и всплывали

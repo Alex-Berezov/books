@@ -6,6 +6,8 @@ import { ConfigService } from '@nestjs/config';
 import {
   JWT_ACCESS_SECRET_ENV,
   JWT_REFRESH_SECRET_ENV,
+  readJwtAccessExpiresIn,
+  readJwtRefreshExpiresIn,
   requireJwtSecret,
 } from '../../common/config/jwt-secrets';
 import { LoginDto, RegisterDto, RefreshDto, SocialLoginDto } from './dto/auth.dto';
@@ -458,8 +460,8 @@ export class AuthService {
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const accessSecret = this.secret(JWT_ACCESS_SECRET_ENV);
     const refreshSecret = this.secret(JWT_REFRESH_SECRET_ENV);
-    const accessExpiresIn = this.config.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m';
-    const refreshExpiresIn = this.config.get<string>('JWT_REFRESH_EXPIRES_IN') || '7d';
+    const accessExpiresIn = readJwtAccessExpiresIn((key) => this.config.get<string>(key));
+    const refreshExpiresIn = readJwtRefreshExpiresIn((key) => this.config.get<string>(key));
 
     const payload = { sub: userId, email, roles };
 

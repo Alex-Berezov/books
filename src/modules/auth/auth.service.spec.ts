@@ -397,6 +397,15 @@ describe('AuthService (unit)', () => {
   });
 
   it('refresh: verifies refresh token and returns new pair', async () => {
+    config.get.mockImplementation(
+      (k: string) =>
+        ({
+          JWT_ACCESS_SECRET: 'a',
+          JWT_REFRESH_SECRET: 'r',
+          JWT_ACCESS_EXPIRES_IN: '2h',
+          JWT_REFRESH_EXPIRES_IN: '30d',
+        })[k as 'JWT_ACCESS_SECRET'],
+    );
     jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email });
     prisma.user.findUnique.mockResolvedValueOnce(user);
     prisma.userRole.findMany.mockResolvedValue([]); // no DB roles
@@ -404,6 +413,32 @@ describe('AuthService (unit)', () => {
     const res = await service.refresh({ refreshToken: 'tok' });
     expect(res.accessToken).toBe('a3');
     expect(res.refreshToken).toBe('r3');
+    // Срок жизни и секрет каждого токена — из конфига, а не умолчания: значения нарочно не 15m/7d.
+    const payload = { sub: user.id, email: user.email, roles: ['user'] };
+    expect(jwt.signAsync).toHaveBeenCalledTimes(2);
+    expect(jwt.signAsync).toHaveBeenNthCalledWith(1, payload, { secret: 'a', expiresIn: '2h' });
+    expect(jwt.signAsync).toHaveBeenNthCalledWith(2, payload, { secret: 'r', expiresIn: '30d' });
+  });
+
+  it('signTokens: без JWT_*_EXPIRES_IN в окружении сроки по умолчанию 15m и 7d', async () => {
+    config.get.mockImplementation(
+      (k: string) =>
+        ({ JWT_ACCESS_SECRET: 'a', JWT_REFRESH_SECRET: 'r' })[k as 'JWT_ACCESS_SECRET'],
+    );
+    jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email });
+    prisma.user.findUnique.mockResolvedValueOnce(user);
+    prisma.userRole.findMany.mockResolvedValue([]);
+    jwt.signAsync = jest.fn().mockResolvedValueOnce('a4').mockResolvedValueOnce('r4');
+    await service.refresh({ refreshToken: 'tok' });
+    expect(jwt.signAsync).toHaveBeenCalledTimes(2);
+    expect(jwt.signAsync).toHaveBeenNthCalledWith(1, expect.anything(), {
+      secret: 'a',
+      expiresIn: '15m',
+    });
+    expect(jwt.signAsync).toHaveBeenNthCalledWith(2, expect.anything(), {
+      secret: 'r',
+      expiresIn: '7d',
+    });
   });
 
   it('refresh: invalid/expired token → Unauthorized', async () => {

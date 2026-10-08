@@ -1,7 +1,4 @@
-import type {
-  ReferenceObject,
-  SchemaObject,
-} from '@nestjs/swagger/dist/interfaces/open-api-spec.interface';
+import type { ReferenceObject, SchemaObject } from '@nestjs/swagger';
 import { UserActivityDto } from './user-activity.dto';
 import {
   PaginationWithNextDto,

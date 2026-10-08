@@ -1,4 +1,4 @@
-import { DECORATORS } from '@nestjs/swagger/dist/constants';
+import { DECORATORS } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
 import { AuthorController } from './author.controller';
 import type { AuthorService } from './author.service';

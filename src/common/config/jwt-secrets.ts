@@ -1,5 +1,5 @@
 /**
- * Single source of truth for the JWT signing secrets.
+ * Single source of truth for the JWT signing secrets and token lifetimes.
  *
  * Every read site used to fall back to a hardcoded development string
  * (`'dev_access_secret'`). A fallback like that means the process starts
@@ -9,7 +9,12 @@
  * today is not a property of the code, only of the deployment.
  *
  * Fail at boot instead, in the same shape as `assertPublicSiteUrl()`.
+ *
+ * Token lifetimes live here too, and unlike the secrets they do have safe defaults (`15m` / `7d`):
+ * a missing lifetime cannot be used to forge a token, so it falls back instead of failing.
  */
+
+import type { JwtSignOptions } from '@nestjs/jwt';
 
 export const JWT_ACCESS_SECRET_ENV = 'JWT_ACCESS_SECRET';
 export const JWT_REFRESH_SECRET_ENV = 'JWT_REFRESH_SECRET';
@@ -47,6 +52,30 @@ export function requireJwtSecret(name: string, read: EnvReader = processEnvReade
     );
   }
   return value;
+}
+
+const JWT_ACCESS_EXPIRES_IN_ENV = 'JWT_ACCESS_EXPIRES_IN';
+const JWT_REFRESH_EXPIRES_IN_ENV = 'JWT_REFRESH_EXPIRES_IN';
+
+/** Token lifetime for `jsonwebtoken`: an `ms`-style string (`'15m'`, `'7d'`); bare digits are read by `ms` as milliseconds. */
+type JwtExpiresIn = NonNullable<JwtSignOptions['expiresIn']>;
+
+/**
+ * Token lifetime from the environment, or {@link fallback}. The value reaches `jsonwebtoken` as is,
+ * exactly as before `@nestjs/jwt` 11.0.2: its types narrowed `expiresIn` to the `ms` format, which the
+ * compiler cannot check on an env string, so a malformed value is still rejected by the signing call.
+ */
+function readJwtExpiresIn(name: string, fallback: JwtExpiresIn, read: EnvReader): JwtExpiresIn {
+  const value = read(name);
+  return value ? (value as JwtExpiresIn) : fallback;
+}
+
+export function readJwtAccessExpiresIn(read: EnvReader = processEnvReader): JwtExpiresIn {
+  return readJwtExpiresIn(JWT_ACCESS_EXPIRES_IN_ENV, '15m', read);
+}
+
+export function readJwtRefreshExpiresIn(read: EnvReader = processEnvReader): JwtExpiresIn {
+  return readJwtExpiresIn(JWT_REFRESH_EXPIRES_IN_ENV, '7d', read);
 }
 
 export function requireJwtAccessSecret(read: EnvReader = processEnvReader): string {

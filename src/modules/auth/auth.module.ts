@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { requireJwtAccessSecret } from '../../common/config/jwt-secrets';
+import { readJwtAccessExpiresIn, requireJwtAccessSecret } from '../../common/config/jwt-secrets';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { SocialIdentityService } from './providers/social-identity.service';
@@ -21,7 +21,7 @@ import { AdminAuditModule } from '../../shared/admin-audit/admin-audit.module';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: requireJwtAccessSecret((key) => config.get<string>(key)),
-        signOptions: { expiresIn: config.get<string>('JWT_ACCESS_EXPIRES_IN') || '15m' },
+        signOptions: { expiresIn: readJwtAccessExpiresIn((key) => config.get<string>(key)) },
       }),
     }),
   ],

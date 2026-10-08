@@ -1,4 +1,4 @@
-import { DECORATORS } from '@nestjs/swagger/dist/constants';
+import { DECORATORS } from '@nestjs/swagger';
 import { BadRequestException } from '@nestjs/common';
 import { SeoController } from './seo.controller';
 

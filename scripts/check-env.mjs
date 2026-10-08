@@ -118,6 +118,27 @@ const FORWARDED_READS = [
     reason: 'EnvReader handed to requireJwtAccessSecret(), which supplies the name itself.',
   },
   {
+    file: 'src/modules/auth/auth.module.ts',
+    arg: 'key',
+    snippet: 'readJwtAccessExpiresIn((key) =>',
+    reason:
+      'EnvReader handed to readJwtAccessExpiresIn(), which supplies JWT_ACCESS_EXPIRES_IN_ENV itself.',
+  },
+  {
+    file: 'src/modules/auth/auth.service.ts',
+    arg: 'key',
+    snippet: 'readJwtAccessExpiresIn((key) =>',
+    reason:
+      'EnvReader handed to readJwtAccessExpiresIn(), which supplies JWT_ACCESS_EXPIRES_IN_ENV itself.',
+  },
+  {
+    file: 'src/modules/auth/auth.service.ts',
+    arg: 'key',
+    snippet: 'readJwtRefreshExpiresIn((key) =>',
+    reason:
+      'EnvReader handed to readJwtRefreshExpiresIn(), which supplies JWT_REFRESH_EXPIRES_IN_ENV itself.',
+  },
+  {
     file: 'src/modules/auth/auth.service.ts',
     arg: 'key',
     snippet: 'requireJwtSecret(name, (key) =>',
@@ -143,7 +164,7 @@ const FORWARDED_READS = [
  * Helper functions whose first argument is an environment key name. Without them the JWT
  * secrets would be invisible: every read of them goes through an EnvReader callback.
  */
-const KEY_TAKING_HELPERS = ['requireJwtSecret'];
+const KEY_TAKING_HELPERS = ['requireJwtSecret', 'readJwtExpiresIn'];
 
 /* ---------------- source scan ---------------- */
 

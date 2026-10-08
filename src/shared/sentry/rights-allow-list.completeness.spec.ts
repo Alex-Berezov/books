@@ -1,6 +1,6 @@
 import { PATH_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { RouteParamtypes } from '@nestjs/common/enums/route-paramtypes.enum';
-import { DECORATORS } from '@nestjs/swagger/dist/constants';
+import { DECORATORS } from '@nestjs/swagger';
 
 import { listControllerFiles } from '../../common/testing/controller-decorators';
 import { normalizeKey } from './redact.util';

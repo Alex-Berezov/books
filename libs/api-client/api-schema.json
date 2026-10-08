@@ -1402,7 +1402,8 @@
                 "$ref": "#/components/schemas/AuthorTranslationSeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "nullable": true,
@@ -2474,7 +2475,8 @@
                 "$ref": "#/components/schemas/BookCategoryWithTranslationsDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "primaryCategoryId": {
             "nullable": true,
@@ -2550,7 +2552,8 @@
                 "$ref": "#/components/schemas/BookOverviewSeoEntryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "main": {
             "allOf": [
@@ -2558,7 +2561,8 @@
                 "$ref": "#/components/schemas/BookOverviewSeoEntryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "read": {
             "allOf": [
@@ -2566,7 +2570,8 @@
                 "$ref": "#/components/schemas/BookOverviewSeoEntryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "summary": {
             "allOf": [
@@ -2574,7 +2579,8 @@
                 "$ref": "#/components/schemas/BookOverviewSeoEntryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           }
         },
         "type": "object"
@@ -3119,7 +3125,8 @@
                 "$ref": "#/components/schemas/BookRightsDashboardReviewDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "book": {
             "$ref": "#/components/schemas/BookRightsDashboardBookSummaryDto"
@@ -3137,7 +3144,8 @@
                 "$ref": "#/components/schemas/RightsContentHashCheckDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "currentProfile": {
             "allOf": [
@@ -3145,7 +3153,8 @@
                 "$ref": "#/components/schemas/RightsProfileDetailDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "currentVersion": {
             "$ref": "#/components/schemas/BookRightsDashboardCurrentVersionDto"
@@ -3157,7 +3166,8 @@
               }
             ],
             "description": "WP-1.2а: health of the GeoIP country source Phase 12 depends on. Counters are per process",
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "intake": {
             "allOf": [
@@ -3165,7 +3175,8 @@
                 "$ref": "#/components/schemas/RightsIntakeResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "lawyerReviews": {
             "description": "Phase 19: up to 50 legal reviews of the rights profile of this version",
@@ -3186,7 +3197,8 @@
                 "$ref": "#/components/schemas/PublicationGateResultDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "recheckSchedule": {
             "allOf": [
@@ -3194,7 +3206,8 @@
                 "$ref": "#/components/schemas/RecheckScheduleDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "recheckTasks": {
             "description": "Phase 18: up to 50 recheck tasks of this version and its rights profile",
@@ -4218,7 +4231,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "nullable": true,
@@ -4832,7 +4846,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "nullable": true,
@@ -5084,7 +5099,8 @@
                 "$ref": "#/components/schemas/CategoryCardSummaryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "items": {
             "items": {
@@ -5148,7 +5164,8 @@
                 "$ref": "#/components/schemas/BookCategoryTranslationDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "translations": {
             "items": {
@@ -5387,7 +5404,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "nullable": true,
@@ -5914,7 +5932,8 @@
                 "$ref": "#/components/schemas/CommentRatingDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "ratingId": {
             "nullable": true,
@@ -5995,7 +6014,8 @@
                 "$ref": "#/components/schemas/CommentRatingDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "ratingId": {
             "nullable": true,
@@ -11838,7 +11858,8 @@
                 "$ref": "#/components/schemas/SeoResponse"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "example": 1,
@@ -12004,7 +12025,8 @@
                 "$ref": "#/components/schemas/SeoResponse"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "example": 1,
@@ -12759,7 +12781,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "similarAuthors": {
             "items": {
@@ -12926,7 +12949,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "shortDescription": {
             "nullable": true,
@@ -13037,7 +13061,8 @@
                 "$ref": "#/components/schemas/SeoMetaSummaryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "shortDescription": {
             "nullable": true,
@@ -13258,7 +13283,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           }
         },
         "required": [
@@ -13318,7 +13344,8 @@
                 "$ref": "#/components/schemas/PublicCategoryTranslationDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "type": {
             "enum": [
@@ -13431,7 +13458,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "nullable": true,
@@ -13515,7 +13543,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "nullable": true,
@@ -13647,7 +13676,8 @@
                 "$ref": "#/components/schemas/TagBookVersionSeoDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "shortDescription": {
             "nullable": true,
@@ -13728,7 +13758,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "tag": {
             "$ref": "#/components/schemas/TagWithTranslationDto"
@@ -14102,7 +14133,8 @@
                 "$ref": "#/components/schemas/PublicationGateSupervisorOverrideDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "versionId": {
             "type": "string"
@@ -14316,7 +14348,8 @@
               }
             ],
             "description": "Null for anonymous callers and for a reader with no saved progress",
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "slug": {
             "type": "string"
@@ -15739,7 +15772,8 @@
                 "$ref": "#/components/schemas/ReviewChainDiffDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "id": {
             "type": "string"
@@ -17259,7 +17293,8 @@
                 "$ref": "#/components/schemas/RightsIntakeReviewImportSummaryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "currentRightsProfile": {
             "allOf": [
@@ -17267,7 +17302,8 @@
                 "$ref": "#/components/schemas/RightsIntakeRightsProfileSummaryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "id": {
             "type": "string"
@@ -18528,7 +18564,8 @@
                 "$ref": "#/components/schemas/PersonSummaryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "personId": {
             "nullable": true,
@@ -18678,7 +18715,8 @@
                 "$ref": "#/components/schemas/RightsProfileContributorEventSnapshotDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "sourceEditionId": {
             "nullable": true,
@@ -18839,7 +18877,8 @@
                 "$ref": "#/components/schemas/LicenseCoverageResultDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "licenseCoveredCountriesCount": {
             "type": "number"
@@ -18919,7 +18958,8 @@
                 "$ref": "#/components/schemas/SourceEditionDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "status": {
             "type": "string"
@@ -19141,7 +19181,8 @@
                 "$ref": "#/components/schemas/RightsPublicationOverrideDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "history": {
             "description": "Все решения по книге, новые сверху; действующее тоже здесь.",
@@ -19222,7 +19263,8 @@
                 "$ref": "#/components/schemas/DecidedByUserDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "decision": {
             "enum": [
@@ -19832,7 +19874,8 @@
                 "$ref": "#/components/schemas/LawyerReviewDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "explicitLawyerRequest": {
             "type": "boolean"
@@ -20900,7 +20943,8 @@
                 "$ref": "#/components/schemas/TagCardSummaryDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           }
         },
         "required": [
@@ -20967,7 +21011,8 @@
                 "$ref": "#/components/schemas/TagTranslationDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "translations": {
             "items": {
@@ -21410,7 +21455,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "nullable": true,
@@ -21725,7 +21771,8 @@
                 "$ref": "#/components/schemas/SeoResponseDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "seoId": {
             "nullable": true,
@@ -21800,7 +21847,8 @@
                 "$ref": "#/components/schemas/TagTranslationWithRelationsDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           }
         },
         "required": [
@@ -23984,7 +24032,8 @@
                 "$ref": "#/components/schemas/ActivityBookVersionDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "createdAt": {
             "format": "date-time",
@@ -24003,7 +24052,8 @@
                 "$ref": "#/components/schemas/ActivityCommentDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "parentId": {
             "format": "uuid",
@@ -24243,7 +24293,8 @@
                 "$ref": "#/components/schemas/RecheckScheduleDto"
               }
             ],
-            "nullable": true
+            "nullable": true,
+            "type": "object"
           },
           "taskIds": {
             "items": {

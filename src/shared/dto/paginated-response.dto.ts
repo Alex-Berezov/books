@@ -1,8 +1,5 @@
 import { ApiProperty, getSchemaPath } from '@nestjs/swagger';
-import type {
-  ReferenceObject,
-  SchemaObject,
-} from '@nestjs/swagger/dist/interfaces/open-api-spec.interface';
+import type { ReferenceObject, SchemaObject } from '@nestjs/swagger';
 
 /**
  * Единая обёртка списочного ответа (`LEGACY-177`, решение владельца 13.09.2026).

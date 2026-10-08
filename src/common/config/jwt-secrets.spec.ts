@@ -2,6 +2,8 @@ import {
   JWT_ACCESS_SECRET_ENV,
   JWT_REFRESH_SECRET_ENV,
   assertJwtSecrets,
+  readJwtAccessExpiresIn,
+  readJwtRefreshExpiresIn,
   requireJwtAccessSecret,
   requireJwtRefreshSecret,
 } from './jwt-secrets';
@@ -53,5 +55,19 @@ describe('jwt-secrets', () => {
         }),
       ),
     ).not.toThrow();
+  });
+});
+
+describe('token lifetimes', () => {
+  it('returns the configured value as is', () => {
+    const env = reader({ JWT_ACCESS_EXPIRES_IN: '30m', JWT_REFRESH_EXPIRES_IN: '14d' });
+    expect(readJwtAccessExpiresIn(env)).toBe('30m');
+    expect(readJwtRefreshExpiresIn(env)).toBe('14d');
+  });
+
+  it('falls back to 15m / 7d when the variable is missing or empty', () => {
+    expect(readJwtAccessExpiresIn(reader({}))).toBe('15m');
+    expect(readJwtAccessExpiresIn(reader({ JWT_ACCESS_EXPIRES_IN: '' }))).toBe('15m');
+    expect(readJwtRefreshExpiresIn(reader({ JWT_REFRESH_EXPIRES_IN: '' }))).toBe('7d');
   });
 });
