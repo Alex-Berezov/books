@@ -27,6 +27,7 @@ import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-u
 import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-user.select';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { rolesCache } from '../../common/roles/roles-cache';
+import { sessionStateCache } from '../../shared/session/session-state-cache';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 
 /**
@@ -90,6 +91,19 @@ async function lockUserRow(
       : Prisma.sql`SELECT id FROM "User" WHERE id = ${userId} FOR NO KEY UPDATE`;
   const rows = await tx.$queryRaw<{ id: string }[]>(lock);
   if (rows.length === 0) throw new NotFoundException('User not found');
+}
+
+/**
+ * Гасит все выданные пользователю токены (`LEGACY-451`): claim `tv` перестаёт совпадать
+ * с колонкой. Зовётся внутри транзакции смены ролей — после коммита вызывающий сбрасывает
+ * `sessionStateCache`.
+ */
+async function bumpTokenVersion(tx: Prisma.TransactionClient, userId: string): Promise<void> {
+  await tx.user.update({
+    where: { id: userId },
+    data: { tokenVersion: { increment: 1 } },
+    select: { id: true },
+  });
 }
 
 /**
@@ -383,6 +397,8 @@ export class UsersService {
       USER_WRITE_TX_OPTIONS,
     );
     rolesCache.invalidate(userId);
+    // Строки больше нет — `JwtStrategy` ответит 401, как только забудет закэшированное состояние.
+    sessionStateCache.invalidate(userId);
 
     return {
       id: deleted.id,
@@ -449,6 +465,7 @@ export class UsersService {
       });
       // Состояние не изменилось — записывать нечего (инвариант модели `AdminAuditEvent`).
       if (count === 0) return;
+      await bumpTokenVersion(tx, userId);
       await this.recordRoleAuditEvents(
         tx,
         [{ action: AdminAuditAction.ROLE_ASSIGNED, role: role.name }],
@@ -459,6 +476,7 @@ export class UsersService {
     // Сброс кэша — вне транзакции намеренно: это не запись в базу, и откат транзакции
     // его бы не отменил. Внутри он сбросился бы раньше, чем данные стали видны.
     rolesCache.invalidate(userId);
+    sessionStateCache.invalidate(userId);
     return { userId, role: role.name };
   }
 
@@ -484,6 +502,7 @@ export class UsersService {
       await this.prisma.$transaction(async (tx) => {
         await lockUserRow(tx, userId, 'NO_KEY_UPDATE');
         await tx.userRole.delete({ where: { userId_roleId: { userId, roleId: role.id } } });
+        await bumpTokenVersion(tx, userId);
         await this.recordRoleAuditEvents(
           tx,
           [{ action: AdminAuditAction.ROLE_REVOKED, role: role.name }],
@@ -504,6 +523,7 @@ export class UsersService {
       throw error;
     }
     rolesCache.invalidate(userId);
+    sessionStateCache.invalidate(userId);
     return { userId, role: role.name };
   }
 
@@ -736,6 +756,8 @@ export class UsersService {
       if (!exists) throw new NotFoundException('User not found');
       data.passwordHash = await argon2.hash(password);
     }
+    // Смена пароля и блокировка гасят все выданные сессии (`LEGACY-451`, `LEGACY-452`).
+    if (password || dto.isActive === false) data.tokenVersion = { increment: 1 };
 
     const updatedUser = await this.prisma.$transaction(async (tx) => {
       await lockUserRow(tx, id, 'NO_KEY_UPDATE');
@@ -753,8 +775,6 @@ export class UsersService {
         const newLastName = dto.lastName !== undefined ? dto.lastName : locked.lastName;
         data.name = [newFirstName, newLastName].filter(Boolean).join(' ') || null;
       }
-
-      const u = await tx.user.update({ where: { id }, data, select: ACCOUNT_USER_SELECT });
 
       if (rolesDto) {
         const desired = Array.from(new Set(rolesDto));
@@ -778,25 +798,26 @@ export class UsersService {
           data: dbRoles.map((r) => ({ userId: id, roleId: r.id })),
           skipDuplicates: true,
         });
-        await this.recordRoleAuditEvents(
-          tx,
-          [
-            ...dbRoles
-              .filter((r) => !had.has(r.name))
-              .map((r) => ({ action: AdminAuditAction.ROLE_ASSIGNED, role: r.name })),
-            ...before
-              .map((ur) => ur.role.name)
-              .filter((name) => !wanted.has(name))
-              .map((name) => ({ action: AdminAuditAction.ROLE_REVOKED, role: name })),
-          ],
-          id,
-          actorUserId,
-        );
+        const roleEvents = [
+          ...dbRoles
+            .filter((r) => !had.has(r.name))
+            .map((r) => ({ action: AdminAuditAction.ROLE_ASSIGNED, role: r.name })),
+          ...before
+            .map((ur) => ur.role.name)
+            .filter((name) => !wanted.has(name))
+            .map((name) => ({ action: AdminAuditAction.ROLE_REVOKED, role: name })),
+        ];
+        // Версия растёт по разнице наборов, как и журнал: замена набора на такой же
+        // сессий не гасит (`LEGACY-451`). Пишется той же записью строки `User` ниже.
+        if (roleEvents.length > 0) data.tokenVersion = { increment: 1 };
+        await this.recordRoleAuditEvents(tx, roleEvents, id, actorUserId);
       }
 
-      return u;
+      // Строка пишется после ролей: в `data` к этому моменту сведены и профиль, и версия сессий.
+      return tx.user.update({ where: { id }, data, select: ACCOUNT_USER_SELECT });
     }, USER_WRITE_TX_OPTIONS);
     if (rolesDto) rolesCache.invalidate(id);
+    if (password || dto.isActive !== undefined || rolesDto) sessionStateCache.invalidate(id);
 
     const roles = await this.computeRoles(updatedUser);
 

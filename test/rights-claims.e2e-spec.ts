@@ -642,12 +642,17 @@ describe('Rights claims e2e', () => {
         .post('/auth/register')
         .send({ email, password: 'password123' })
         .expect(201);
-      const managerAccess = registered.body.accessToken as string;
       const managerId = registered.body.user.id as string;
       await request(http())
         .post(`/users/${managerId}/roles/content_manager`)
         .set('Authorization', `Bearer ${adminAccess}`)
         .expect(201);
+      // Смена ролей гасит выданные токены (`LEGACY-451`): с новой ролью — новый вход.
+      const login = await request(http())
+        .post('/auth/login')
+        .send({ email, password: 'password123' })
+        .expect(200);
+      const managerAccess = login.body.accessToken as string;
 
       const path = '/admin/rights/claims/00000000-0000-0000-0000-000000000000/claimant-person';
       await request(http()).delete(path).expect(401);

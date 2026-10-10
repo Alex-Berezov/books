@@ -1,5 +1,5 @@
 import { Role } from '../decorators/roles.decorator';
-import { ROLES_CACHE_MAX_ENTRIES, rolesCache } from './roles-cache';
+import { ROLES_CACHE_MAX_ENTRIES, readRolesCacheTtlMs, rolesCache } from './roles-cache';
 
 /**
  * Срок жизни, сброс и потолок записей (`LEGACY-112`). Ключ кэша — `userId`,
@@ -101,5 +101,18 @@ describe('rolesCache', () => {
     rolesCache.set('u1', new Set<Role>([Role.User]), 2_000, 0, rolesCache.beginRead());
     expect(rolesCache.size).toBe(1);
     expect(rolesCache.get('u1', 0)).toEqual(new Set([Role.User]));
+  });
+});
+
+describe('readRolesCacheTtlMs — общий разбор для кэша ролей и кэша сессии (LEGACY-451)', () => {
+  it.each([
+    [undefined, 5000],
+    ['', 5000],
+    ['abc', 5000],
+    ['-1', 5000],
+    ['0', 0],
+    ['1500', 1500],
+  ])('readRolesCacheTtlMs(%p) = %p', (raw, expected) => {
+    expect(readRolesCacheTtlMs(raw)).toBe(expected);
   });
 });

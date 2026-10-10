@@ -15,6 +15,7 @@ import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { rolesCache } from '../../common/roles/roles-cache';
+import { sessionStateCache } from '../../shared/session/session-state-cache';
 import { Role } from '../../common/decorators/roles.decorator';
 import { STAFF_ROLE_NAMES } from './users.constants';
 
@@ -104,6 +105,7 @@ describe('UsersService (unit)', () => {
     lastName: null,
     nickname: null,
     isActive: true,
+    tokenVersion: 0,
     avatarUrl: null,
     languagePreference: PrismaLanguage.en,
     createdAt: new Date('2025-01-01T00:00:00Z'),
@@ -1255,6 +1257,161 @@ describe('UsersService (unit)', () => {
 
       await service.update('u1', { firstName: 'Jane' }, 'actor-1');
       expect(cached('u1')).toEqual(new Set([Role.Admin]));
+    });
+  });
+
+  /**
+   * 🔴 `LEGACY-451`, `LEGACY-452`. Смена пароля, блокировка и смена ролей обязаны гасить все
+   * выданные токены: `tokenVersion++` в базе и сброс `sessionStateCache` на этом экземпляре.
+   * Без инкремента старый access и refresh живут до своего срока; без сброса кэша — ещё
+   * до `ROLES_CACHE_TTL_MS` после записи.
+   */
+  describe('версия сессий (LEGACY-451, LEGACY-452)', () => {
+    const INCREMENT = { increment: 1 };
+    const seedSession = (userId: string): void => {
+      sessionStateCache.set(
+        userId,
+        { isActive: true, tokenVersion: 0 },
+        Date.now() + 60_000,
+        Date.now(),
+        sessionStateCache.beginRead(),
+      );
+    };
+    const sessionCached = (userId: string) => sessionStateCache.get(userId, Date.now());
+    /** `data` единственной записи строки `User` в `update`. */
+    const updateData = (): Record<string, unknown> => {
+      expect(prismaMock.user.update).toHaveBeenCalledTimes(1);
+      return prismaMock.user.update.mock.calls[0][0].data as Record<string, unknown>;
+    };
+
+    beforeEach(() => {
+      sessionStateCache.clear();
+      prismaMock.user.findUniqueOrThrow.mockResolvedValue({ firstName: null, lastName: null });
+      prismaMock.user.findUnique.mockResolvedValue(baseUser);
+      prismaMock.user.update.mockResolvedValue(baseUser);
+      prismaMock.userRole.findMany.mockResolvedValue([]);
+      prismaMock.role.findUnique.mockResolvedValue({ id: 'r1', name: 'admin' as RoleName });
+      prismaMock.userRole.createMany = jest.fn().mockResolvedValue({ count: 1 });
+      prismaMock.userRole.delete = jest.fn().mockResolvedValue({});
+    });
+
+    afterAll(() => sessionStateCache.clear());
+
+    it('update с паролем: версия растёт, кэш сессии сброшен', async () => {
+      seedSession('u1');
+      (argon2.hash as jest.Mock).mockResolvedValueOnce('new-hash');
+      await service.update('u1', { password: 'secret12' }, 'actor-1');
+      expect(updateData().tokenVersion).toEqual(INCREMENT);
+      expect(sessionCached('u1')).toBeUndefined();
+    });
+
+    it('update isActive=false: версия растёт, кэш сессии сброшен', async () => {
+      seedSession('u1');
+      await service.update('u1', { isActive: false }, 'actor-1');
+      expect(updateData()).toEqual(
+        expect.objectContaining({ isActive: false, tokenVersion: INCREMENT }),
+      );
+      expect(sessionCached('u1')).toBeUndefined();
+    });
+
+    it('update isActive=true: версию не трогает, но кэш сброшен — разблокировка видна сразу', async () => {
+      seedSession('u1');
+      await service.update('u1', { isActive: true }, 'actor-1');
+      expect(updateData()).not.toHaveProperty('tokenVersion');
+      expect(sessionCached('u1')).toBeUndefined();
+    });
+
+    it('update с другим набором ролей: версия растёт той же записью строки', async () => {
+      seedSession('u1');
+      prismaMock.role.findMany = jest.fn().mockResolvedValue([{ id: 'r1', name: 'admin' }]);
+      prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
+      await service.update('u1', { roles: ['admin'] }, 'actor-1');
+      expect(updateData().tokenVersion).toEqual(INCREMENT);
+      expect(sessionCached('u1')).toBeUndefined();
+    });
+
+    it('update тем же набором ролей: версия не растёт', async () => {
+      prismaMock.role.findMany = jest.fn().mockResolvedValue([{ id: 'r1', name: 'admin' }]);
+      prismaMock.userRole.findMany.mockResolvedValue([{ role: { name: 'admin' } }]);
+      prismaMock.userRole.deleteMany.mockResolvedValue({ count: 1 });
+      await service.update('u1', { roles: ['admin'] }, 'actor-1');
+      expect(updateData()).not.toHaveProperty('tokenVersion');
+    });
+
+    it('update профиля без пароля, ролей и блокировки: версия и кэш сессии не тронуты', async () => {
+      seedSession('u1');
+      await service.update('u1', { firstName: 'Jane' }, 'actor-1');
+      expect(updateData()).not.toHaveProperty('tokenVersion');
+      expect(sessionCached('u1')).toBeDefined();
+    });
+
+    it('assignRole: версия растёт в той же транзакции, кэш сессии сброшен', async () => {
+      seedSession('u1');
+      await service.assignRole('u1', 'admin', 'admin-1');
+      expect(prismaMock.user.update).toHaveBeenCalledTimes(1);
+      expect(prismaMock.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { tokenVersion: INCREMENT },
+        select: { id: true },
+      });
+      expect(sessionCached('u1')).toBeUndefined();
+    });
+
+    it('deleteById: кэш сессии удалённого сброшен сразу', async () => {
+      seedSession('u1');
+      prismaMock.like.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.bookshelf.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.readingProgress.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.viewStat.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.mediaAsset.updateMany.mockResolvedValue({ count: 0 });
+      prismaMock.userRole.findMany.mockResolvedValueOnce([]);
+      prismaMock.userRole.deleteMany.mockResolvedValue({ count: 0 });
+      prismaMock.user.delete.mockResolvedValue(baseUser);
+
+      await service.deleteById('u1', 'admin-1');
+      expect(sessionCached('u1')).toBeUndefined();
+    });
+
+    it.each([
+      ['assignRole', (svc: UsersService) => svc.assignRole('u1', 'admin', 'admin-1')],
+      ['revokeRole', (svc: UsersService) => svc.revokeRole('u1', 'admin', 'admin-1')],
+    ])('%s: версия растёт клиентом транзакции, а не корневым', async (_name, act) => {
+      const txUserUpdate = jest.fn().mockResolvedValue({ id: 'u1' });
+      prismaMock.$transaction.mockImplementationOnce(async (arg: TransactionArg) => {
+        if (typeof arg !== 'function') return Promise.all(arg);
+        return arg({
+          ...prismaMock,
+          user: { ...prismaMock.user, update: txUserUpdate },
+        } as PrismaStub);
+      });
+
+      await act(service);
+
+      expect(txUserUpdate).toHaveBeenCalledTimes(1);
+      expect(txUserUpdate).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { tokenVersion: INCREMENT },
+        select: { id: true },
+      });
+      expect(prismaMock.user.update).not.toHaveBeenCalled();
+    });
+
+    it('assignRole уже имеющейся роли: версия не растёт', async () => {
+      prismaMock.userRole.createMany = jest.fn().mockResolvedValue({ count: 0 });
+      await service.assignRole('u1', 'admin', 'admin-1');
+      expect(prismaMock.user.update).not.toHaveBeenCalled();
+    });
+
+    it('revokeRole: версия растёт, кэш сессии сброшен', async () => {
+      seedSession('u1');
+      await service.revokeRole('u1', 'admin', 'admin-1');
+      expect(prismaMock.user.update).toHaveBeenCalledTimes(1);
+      expect(prismaMock.user.update).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        data: { tokenVersion: INCREMENT },
+        select: { id: true },
+      });
+      expect(sessionCached('u1')).toBeUndefined();
     });
   });
 

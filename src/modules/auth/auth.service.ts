@@ -1,5 +1,5 @@
 import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
-import { JwtService } from '@nestjs/jwt';
+import { JsonWebTokenError, JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
@@ -23,6 +23,13 @@ import {
 } from '@prisma/client';
 import { ACCOUNT_USER_SELECT, AccountUser } from '../../common/selects/account-user.select';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
+import { sessionStateCache } from '../../shared/session/session-state-cache';
+import {
+  claimedTokenVersion,
+  isSessionAlive,
+  SESSION_REVOKED_MESSAGE,
+  type SessionTokenClaims,
+} from '../../shared/session/session-token';
 import { normalizeEmail } from '../../shared/validators/normalize-email.decorator';
 
 /**
@@ -51,8 +58,8 @@ type PublicUser = AccountUser;
  * Владелец перед `.user` при этом не проверяется — `tx.user.*` внутри транзакции
  * под охраной наравне с `this.prisma.user.*`.
  *
- * Остальные десять обращений читают белым списком
- * `ACCOUNT_USER_SELECT` или одним `id`: до правки все одиннадцать шли без `select` вовсе,
+ * Остальные обращения читают белым списком `ACCOUNT_USER_SELECT`, одним `id` или узким
+ * состоянием сессии (`refresh`, `markSignIn`: `isActive`, `tokenVersion`): до правки все шли без `select` вовсе,
  * то есть хеш лежал в памяти и в объекте, который дальше уходил в `publicUser` и в ответ.
  * Наружу он не попадал по единственной причине — `publicUser` перечисляет поля руками;
  * одна невнимательная правка вида `return { ...user, roles }` отправила бы его в тело
@@ -65,6 +72,12 @@ const LOGIN_USER_SELECT = {
   ...ACCOUNT_USER_SELECT,
   passwordHash: true,
 } satisfies Prisma.UserSelect;
+
+/** Refresh-токен после проверки подписи: поля сессии и срок, секунды. */
+type RefreshTokenPayload = SessionTokenClaims & { exp: number };
+
+/** Отказ заблокированному пользователю на входе любым путём (`LEGACY-452`). */
+const ACCOUNT_DISABLED_MESSAGE = 'Account is disabled';
 
 type AuthSession = {
   user: PublicUser & { roles: RoleName[] };
@@ -145,13 +158,9 @@ export class AuthService {
       return created;
     }, REGISTRATION_TX_OPTIONS);
 
+    const tokenVersion = await this.markSignIn(user.id);
     const roles = await this.computeRoles(user);
-    const tokens = await this.signTokens(user.id, user.email, roles);
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { lastLogin: new Date() },
-      select: { id: true },
-    });
+    const tokens = await this.signTokens(user.id, user.email, roles, tokenVersion);
 
     // Include roles in register response
     return { user: { ...this.publicUser(user), roles }, ...tokens };
@@ -227,47 +236,57 @@ export class AuthService {
       user = byEmail ?? (await this.createSocialUser(email, identity, languagePreference));
     }
 
-    // upsert, а не create: два одновременных первых входа одной личности иначе
-    // разошлись бы по уникальному индексу, и один из них упал бы с 500.
-    await this.prisma.userIdentity.upsert({
-      where: {
-        provider_providerUserId: {
+    // До привязки и правки профиля: заблокированному пользователю вход провайдером
+    // не открывает ни сессии, ни новой привязки (`LEGACY-452`). Снимок строки отсекает
+    // блокировку сразу, а отметка входа (`markSignIn`, условием записи) — и блокировку,
+    // пришедшую после чтения.
+    if (!user.isActive) throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
+    const signedInUser = user;
+
+    // Отметка входа, привязка и дополнение профиля — одной транзакцией: отказ отметки
+    // (блокировка в окне) не оставляет привязки, а сбой привязки — отметки входа без входа.
+    const { tokenVersion, profile } = await this.prisma.$transaction(async (tx) => {
+      const version = await this.markSignIn(signedInUser.id, tx);
+      // upsert, а не create: два одновременных первых входа одной личности иначе
+      // разошлись бы по уникальному индексу, и один из них упал бы с 500.
+      await tx.userIdentity.upsert({
+        where: {
+          provider_providerUserId: {
+            provider: identity.provider,
+            providerUserId: identity.providerUserId,
+          },
+        },
+        create: {
+          userId: signedInUser.id,
           provider: identity.provider,
           providerUserId: identity.providerUserId,
+          email,
+          lastLoginAt: new Date(),
         },
-      },
-      create: {
-        userId: user.id,
-        provider: identity.provider,
-        providerUserId: identity.providerUserId,
-        email,
-        lastLoginAt: new Date(),
-      },
-      // Адрес обновляется **у привязки**, а не у пользователя: смена почты на
-      // стороне провайдера не должна переименовывать аккаунт на нашей стороне.
-      update: { email, lastLoginAt: new Date() },
-    });
-
-    // Профиль дополняется, но не перезаписывается: провайдер вправе добавить
-    // недостающее имя или аватар и не вправе затирать выставленное человеком.
-    const updateData: Partial<User> = {};
-    if (!user.name && identity.name) updateData.name = identity.name;
-    if (!user.avatarUrl && identity.avatarUrl) updateData.avatarUrl = identity.avatarUrl;
-    if (Object.keys(updateData).length > 0) {
-      user = await this.prisma.user.update({
-        where: { id: user.id },
-        data: updateData,
-        select: ACCOUNT_USER_SELECT,
+        // Адрес обновляется **у привязки**, а не у пользователя: смена почты на
+        // стороне провайдера не должна переименовывать аккаунт на нашей стороне.
+        update: { email, lastLoginAt: new Date() },
       });
-    }
+
+      // Профиль дополняется, но не перезаписывается: провайдер вправе добавить
+      // недостающее имя или аватар и не вправе затирать выставленное человеком.
+      const updateData: Partial<User> = {};
+      if (!signedInUser.name && identity.name) updateData.name = identity.name;
+      if (!signedInUser.avatarUrl && identity.avatarUrl) updateData.avatarUrl = identity.avatarUrl;
+      const updated =
+        Object.keys(updateData).length > 0
+          ? await tx.user.update({
+              where: { id: signedInUser.id },
+              data: updateData,
+              select: ACCOUNT_USER_SELECT,
+            })
+          : signedInUser;
+      return { tokenVersion: version, profile: updated };
+    }, REGISTRATION_TX_OPTIONS);
+    user = profile;
 
     const roles = await this.computeRoles(user);
-    const tokens = await this.signTokens(user.id, user.email, roles);
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { lastLogin: new Date() },
-      select: { id: true },
-    });
+    const tokens = await this.signTokens(user.id, user.email, roles, tokenVersion);
 
     return { user: { ...this.publicUser(user), roles }, ...tokens };
   }
@@ -420,56 +439,159 @@ export class AuthService {
 
     const valid = await argon2.verify(user.passwordHash, dto.password);
     if (!valid) throw new UnauthorizedException('Invalid credentials');
+    // После сверки пароля: о блокировке узнаёт только тот, кто знает пароль (`LEGACY-452`).
+    if (!user.isActive) throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
 
+    const tokenVersion = await this.markSignIn(user.id);
     const roles = await this.computeRoles(user);
-    const tokens = await this.signTokens(user.id, user.email, roles);
-    await this.prisma.user.update({
-      where: { id: user.id },
-      data: { lastLogin: new Date() },
-      select: { id: true },
-    });
+    const tokens = await this.signTokens(user.id, user.email, roles, tokenVersion);
 
     // Include roles in login response
     return { user: { ...this.publicUser(user), roles }, ...tokens };
   }
 
+  /**
+   * Новая пара по живому refresh (`LEGACY-451`, решение арбитра 10.10.2026).
+   *
+   * ⚠️ Refresh **не продлевает** сессию: новая пара наследует `exp` исходного refresh, access
+   * живёт не дольше него. Пока каждый вызов выдавал refresh на полный срок, украденный токен
+   * продлевал сессию бесконечно. Теперь сессия кончается через `JWT_REFRESH_EXPIRES_IN`
+   * от входа, а раньше — при `tokenVersion++` (выход, пароль, роли, блокировка).
+   */
   async refresh(dto: RefreshDto): Promise<{ accessToken: string; refreshToken: string }> {
-    const payload = await this.jwt.verifyAsync<{ sub: string; email: string }>(dto.refreshToken, {
-      secret: this.secret(JWT_REFRESH_SECRET_ENV),
-    });
+    const payload = await this.verifyRefreshToken(dto.refreshToken);
 
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
-      select: ACCOUNT_USER_SELECT,
+      select: { id: true, isActive: true, tokenVersion: true },
     });
     if (!user) throw new UnauthorizedException('User not found');
+    if (!user.isActive) throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
+    if (!isSessionAlive(user, payload)) throw new UnauthorizedException(SESSION_REVOKED_MESSAGE);
 
     const roles = await this.computeRoles(user);
-    const tokens = await this.signTokens(payload.sub, payload.email, roles);
-    return tokens;
+    return this.signTokens(payload.sub, payload.email, roles, user.tokenVersion, payload.exp);
   }
 
-  logout(): { success: true } {
+  /**
+   * Выход гасит **все** сессии пользователя: `tokenVersion++` (`LEGACY-451`, решение арбитра
+   * 10.10.2026). Вход — refresh-токен в теле, а не access в заголовке: к моменту выхода access
+   * (15 минут) часто уже истёк, а гасить нужно именно refresh.
+   *
+   * Подпись и срок проверяются — иначе 401. Версия сравнивается в самом `UPDATE`: токен,
+   * уже погашенный прежним выходом, отвечает 200 и версию повторно не поднимает, иначе
+   * повтор старого токена гасил бы сессию, открытую после него.
+   */
+  async logout(dto: RefreshDto): Promise<{ success: true }> {
+    const payload = await this.verifyRefreshToken(dto.refreshToken);
+    const { count } = await this.prisma.user.updateMany({
+      where: { id: payload.sub, tokenVersion: claimedTokenVersion(payload) },
+      data: { tokenVersion: { increment: 1 } },
+    });
+    if (count > 0) sessionStateCache.invalidate(payload.sub);
     return { success: true };
   }
 
+  /**
+   * Отметка входа (`lastLogin`) — и единственное чтение версии сессий для подписи.
+   *
+   * ⚠️ Версия и блокировка берутся **в момент подписи**, условием самой записи. Чтение до
+   * `argon2.verify` (или до привязки провайдера) не годится: смена пароля, ролей или блокировка
+   * за это время выдала бы токены уже погашенной версии — «вход удался» и тут же 401.
+   * Роли читаются **после** неё: смена ролей поднимает версию той же транзакцией, поэтому
+   * роли, прочитанные позже версии, не старше её — токен с новой `tv` и старыми ролями
+   * не выдаётся.
+   * Заблокированная строка под условие `isActive: true` не попадает: `P2025` — 401, и `lastLogin`
+   * ей не пишется.
+   */
+  private async markSignIn(
+    userId: string,
+    client: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<number> {
+    try {
+      const { tokenVersion } = await client.user.update({
+        where: { id: userId, isActive: true },
+        data: { lastLogin: new Date() },
+        select: { tokenVersion: true },
+      });
+      return tokenVersion;
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Подпись и срок refresh-токена. Отказ проверки токена — 401, а не 500 из библиотеки.
+   *
+   * ⚠️ Перехват узкий: `JsonWebTokenError` и его наследники (`TokenExpiredError`,
+   * `NotBeforeError`). Секрет читается до `try` — ошибка конфигурации остаётся 500 и уходит
+   * в Sentry, а не притворяется негодным токеном каждого пользователя.
+   */
+  private async verifyRefreshToken(token: string): Promise<RefreshTokenPayload> {
+    const secret = this.secret(JWT_REFRESH_SECRET_ENV);
+    try {
+      return await this.jwt.verifyAsync<RefreshTokenPayload>(token, { secret });
+    } catch (error) {
+      if (error instanceof JsonWebTokenError) {
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * @param tokenVersion claim `tv` обоих токенов; сверяется в `JwtStrategy` и в `refresh`.
+   * @param refreshExp `exp` исходного refresh (секунды) — только из `refresh`: новая пара его
+   *   наследует, access обрезается до него же. Без него — полные сроки из окружения.
+   */
   private async signTokens(
     userId: string,
     email: string,
     roles: RoleName[],
+    tokenVersion: number,
+    refreshExp?: number,
   ): Promise<{ accessToken: string; refreshToken: string }> {
     const accessSecret = this.secret(JWT_ACCESS_SECRET_ENV);
     const refreshSecret = this.secret(JWT_REFRESH_SECRET_ENV);
     const accessExpiresIn = readJwtAccessExpiresIn((key) => this.config.get<string>(key));
     const refreshExpiresIn = readJwtRefreshExpiresIn((key) => this.config.get<string>(key));
 
-    const payload = { sub: userId, email, roles };
+    // `iat` задаётся явно: `jsonwebtoken` считает `exp = iat + expiresIn`, и унаследованный
+    // срок выходит точным, а не со сдвигом на смену секунды между двумя вызовами.
+    const iat = Math.floor(Date.now() / 1000);
+    const payload: SessionTokenClaims & { roles: RoleName[]; iat: number } = {
+      sub: userId,
+      email,
+      roles,
+      tv: tokenVersion,
+      iat,
+    };
+    // `Math.max`: refresh, истекающий в эту же секунду, даёт уже мёртвую пару, а не ошибку подписи.
+    const remaining = refreshExp === undefined ? undefined : Math.max(0, refreshExp - iat);
 
     const [accessToken, refreshToken] = await Promise.all([
       this.jwt.signAsync(payload, { secret: accessSecret, expiresIn: accessExpiresIn }),
-      this.jwt.signAsync(payload, { secret: refreshSecret, expiresIn: refreshExpiresIn }),
+      this.jwt.signAsync(payload, {
+        secret: refreshSecret,
+        expiresIn: remaining ?? refreshExpiresIn,
+      }),
     ]);
-    return { accessToken, refreshToken };
+    if (remaining === undefined) return { accessToken, refreshToken };
+
+    // Срок access задан строкой окружения (`'15m'`) и в секунды здесь не переводится:
+    // переподписывается только тот access, что пережил бы свой refresh.
+    const { exp } = this.jwt.decode<{ exp: number }>(accessToken);
+    if (exp <= iat + remaining) return { accessToken, refreshToken };
+    return {
+      accessToken: await this.jwt.signAsync(payload, {
+        secret: accessSecret,
+        expiresIn: remaining,
+      }),
+      refreshToken,
+    };
   }
 
   private publicUser(user: AccountUser): PublicUser {

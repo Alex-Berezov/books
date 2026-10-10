@@ -116,3 +116,16 @@ class RolesCache {
 }
 
 export const rolesCache = new RolesCache();
+
+/**
+ * TTL кэша ролей, мс, из `ROLES_CACHE_TTL_MS`: пусто, не число или отрицательное — 5000.
+ *
+ * ⚠️ Один разбор на два кэша: та же переменная задаёт и окно кэша состояния сессии
+ * в `JwtStrategy` (`src/shared/session/session-state-cache.ts`, `LEGACY-451`). Окно отзыва
+ * сессии обещано равным окну отзыва роли — держит это общая функция, а не две копии.
+ */
+export function readRolesCacheTtlMs(raw: string | undefined): number {
+  const parsed = raw ? Number(raw) : NaN;
+  const value = Number.isFinite(parsed) ? parsed : 5000;
+  return value >= 0 ? value : 5000;
+}

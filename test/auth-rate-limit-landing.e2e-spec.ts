@@ -41,6 +41,19 @@ describe('Auth rate limit landing (e2e)', () => {
     else process.env.RATE_LIMIT_AUTH_ENABLED = previousEnabled;
   });
 
+  // Запасная ветка гарда (`auth:other`) после `T122` держит только /auth/social: у выхода
+  // свои корзины. Без этого сценария единственный e2e лимитера ходил бы мимо неё.
+  it('counts POST /auth/social in the catch-all bucket and refuses the 11th', async () => {
+    const codes: number[] = [];
+    for (let i = 0; i < 11; i += 1) {
+      const res = await request(http()).post('/auth/social').send({});
+      codes.push(res.status);
+    }
+
+    expect(codes.slice(0, 10)).not.toContain(429);
+    expect(codes[10]).toBe(429);
+  });
+
   it('counts POST /auth/logout and refuses the 11th', async () => {
     const codes: number[] = [];
     for (let i = 0; i < 11; i += 1) {

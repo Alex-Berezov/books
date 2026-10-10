@@ -3,7 +3,7 @@ import { Reflector } from '@nestjs/core';
 import { ROLES_KEY, Role } from '../decorators/roles.decorator';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
-import { rolesCache } from '../roles/roles-cache';
+import { readRolesCacheTtlMs, rolesCache } from '../roles/roles-cache';
 import type { UserRole as UserRoleModel, Role as RoleModel } from '@prisma/client';
 
 @Injectable()
@@ -14,10 +14,7 @@ export class RolesGuard implements CanActivate {
     private config: ConfigService,
     private prisma: PrismaService,
   ) {
-    const raw = this.config.get<string>('ROLES_CACHE_TTL_MS');
-    const parsed = raw ? Number(raw) : NaN;
-    const value = Number.isFinite(parsed) ? parsed : 5000;
-    this.ttlMs = value >= 0 ? value : 5000;
+    this.ttlMs = readRolesCacheTtlMs(this.config.get<string>('ROLES_CACHE_TTL_MS'));
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {

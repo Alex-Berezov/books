@@ -254,6 +254,9 @@ model User {
   lastName           String?
   nickname           String?           @unique
   isActive           Boolean           @default(true)
+  /// Версия сессий (LEGACY-451): claim `tv` обоих токенов обязан ей совпадать. Растёт на выходе,
+  /// смене пароля, смене ролей и деактивации — все выданные токены гаснут разом.
+  tokenVersion       Int               @default(0)
   avatarUrl          String?
   languagePreference Language
   createdAt          DateTime          @default(now())

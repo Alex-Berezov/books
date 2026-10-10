@@ -34467,6 +34467,16 @@
       "post": {
         "operationId": "AuthController_logout",
         "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RefreshDto"
+              }
+            }
+          },
+          "required": true
+        },
         "responses": {
           "200": {
             "content": {
@@ -34482,9 +34492,12 @@
               }
             },
             "description": ""
+          },
+          "401": {
+            "description": "Refresh token is malformed, forged or expired"
           }
         },
-        "summary": "Logout (stateless placeholder)",
+        "summary": "Logout: revoke every session of the refresh token owner (LEGACY-451)",
         "tags": [
           "auth"
         ]

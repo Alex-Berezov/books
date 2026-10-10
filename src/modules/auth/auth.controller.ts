@@ -1,5 +1,11 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, UseGuards } from '@nestjs/common';
-import { ApiOperation, ApiTags, ApiOkResponse, ApiCreatedResponse } from '@nestjs/swagger';
+import {
+  ApiOperation,
+  ApiTags,
+  ApiOkResponse,
+  ApiCreatedResponse,
+  ApiUnauthorizedResponse,
+} from '@nestjs/swagger';
 import { AuthRateLimitGuard } from '../../common/guards/auth-rate-limit.guard';
 import { AuthService } from './auth.service';
 import { LoginDto, RefreshDto, RegisterDto, SocialLoginDto } from './dto/auth.dto';
@@ -42,11 +48,14 @@ export class AuthController {
     return this.auth.refresh(dto);
   }
 
-  @ApiOperation({ summary: 'Logout (stateless placeholder)' })
+  @ApiOperation({
+    summary: 'Logout: revoke every session of the refresh token owner (LEGACY-451)',
+  })
   @ApiOkResponse({ schema: { properties: { success: { type: 'boolean', example: true } } } })
+  @ApiUnauthorizedResponse({ description: 'Refresh token is malformed, forged or expired' })
   @HttpCode(HttpStatus.OK)
   @Post('logout')
-  logout() {
-    return this.auth.logout();
+  logout(@Body() dto: RefreshDto) {
+    return this.auth.logout(dto);
   }
 }

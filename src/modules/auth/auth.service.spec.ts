@@ -1,4 +1,6 @@
 import { ConflictException, UnauthorizedException } from '@nestjs/common';
+import { JsonWebTokenError, TokenExpiredError } from '@nestjs/jwt';
+import { Prisma } from '@prisma/client';
 import { AuthService, ENV_BOOTSTRAP_AUDIT_SOURCE } from './auth.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { SocialIdentityService } from './providers/social-identity.service';
@@ -18,6 +20,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ACCOUNT_USER_SELECT } from '../../common/selects/account-user.select';
 import { stripComments } from '../../common/testing/module-registration';
+import { sessionStateCache } from '../../shared/session/session-state-cache';
 
 jest.mock('argon2', () => ({
   hash: jest.fn(),
@@ -26,7 +29,7 @@ jest.mock('argon2', () => ({
 
 interface PrismaStub {
   role: { upsert: jest.Mock; findUnique: jest.Mock };
-  user: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock };
+  user: { findUnique: jest.Mock; create: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
   userRole: { upsert: jest.Mock; findMany: jest.Mock };
   userIdentity: { findUnique: jest.Mock; upsert: jest.Mock };
   $transaction: jest.Mock;
@@ -37,14 +40,16 @@ interface PrismaStub {
  * запись тем же `tx` от записи корневым клиентом (урок `T20`, `LEGACY-015`).
  */
 interface TxStub {
-  user: { create: jest.Mock };
+  user: { create: jest.Mock; update: jest.Mock };
   role: { findMany: jest.Mock };
   userRole: { createMany: jest.Mock };
+  userIdentity: { upsert: jest.Mock };
 }
 
 interface JwtStub {
   signAsync: jest.Mock;
   verifyAsync: jest.Mock;
+  decode: jest.Mock;
 }
 
 interface ConfigStub {
@@ -73,6 +78,8 @@ describe('AuthService (unit)', () => {
     email: 'user@example.com',
     passwordHash: 'hash',
     name: 'John',
+    isActive: true,
+    tokenVersion: 0,
     avatarUrl: null,
     languagePreference: PrismaLanguage.en,
     createdAt: now,
@@ -86,7 +93,9 @@ describe('AuthService (unit)', () => {
       user: {
         findUnique: jest.fn(),
         create: jest.fn(),
-        update: jest.fn(),
+        // Отметка входа отдаёт версию сессий на момент подписи (`markSignIn`).
+        update: jest.fn().mockResolvedValue({ tokenVersion: 0 }),
+        updateMany: jest.fn(),
       },
       userRole: { upsert: jest.fn(), findMany: jest.fn() },
       // Привязка личности провайдера. По умолчанию её нет — так выглядит первый
@@ -101,7 +110,15 @@ describe('AuthService (unit)', () => {
     tx = {
       // Отдельный мок, пробрасывающий в `prisma.user.create`: сторожа белого списка
       // (`LEGACY-190`) смотрят на `prisma.user.*`, а посадка T43 — на то, что создание шло через `tx`.
-      user: { create: jest.fn((args: unknown) => prisma.user.create(args) as Promise<unknown>) },
+      // `update` и `upsert` привязки пробрасываются туда же: соцвход пишет отметку входа,
+      // привязку и профиль одной транзакцией, а сценарные проверки смотрят на `prisma.*`.
+      user: {
+        create: jest.fn((args: unknown) => prisma.user.create(args) as Promise<unknown>),
+        update: jest.fn((args: unknown) => prisma.user.update(args) as Promise<unknown>),
+      },
+      userIdentity: {
+        upsert: jest.fn((args: unknown) => prisma.userIdentity.upsert(args) as Promise<unknown>),
+      },
       role: {
         findMany: jest.fn((args: { where: { name: { in: string[] } } }) =>
           Promise.resolve(args.where.name.in.map((name) => ({ id: `r-${name}`, name }))),
@@ -113,6 +130,7 @@ describe('AuthService (unit)', () => {
     jwt = {
       signAsync: jest.fn().mockResolvedValueOnce('acc').mockResolvedValueOnce('ref'),
       verifyAsync: jest.fn(),
+      decode: jest.fn(),
     };
     config = {
       get: jest.fn((k: string) => {
@@ -146,6 +164,37 @@ describe('AuthService (unit)', () => {
     await expect(
       service.register({ email: user.email, password: 'p', name: 'n' }),
     ).rejects.toBeInstanceOf(ConflictException);
+  });
+
+  it('register: версия сессий в токенах — из отметки входа, запись только живой строке', async () => {
+    (argon2.hash as jest.Mock).mockResolvedValueOnce('hashed');
+    prisma.user.findUnique.mockResolvedValueOnce(null);
+    prisma.user.create.mockResolvedValueOnce(user);
+    prisma.userRole.findMany.mockResolvedValue([]);
+    prisma.user.update.mockResolvedValueOnce({ tokenVersion: 3 });
+
+    await service.register({ email: user.email, password: 'p', name: 'n' });
+
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
+    expect(prisma.user.update.mock.calls[0][0]).toEqual({
+      where: { id: user.id, isActive: true },
+      data: { lastLogin: now },
+      select: { tokenVersion: true },
+    });
+    expect(jwt.signAsync).toHaveBeenCalledTimes(2);
+    for (const [payload] of jwt.signAsync.mock.calls as [{ tv: number }][]) {
+      expect(payload.tv).toBe(3);
+    }
+  });
+
+  it('login: заблокированный с неверным паролем получает «Invalid credentials», а не «disabled»', async () => {
+    prisma.user.findUnique.mockResolvedValueOnce({ ...user, isActive: false });
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(false);
+
+    await expect(service.login({ email: user.email, password: 'wrong' })).rejects.toThrow(
+      'Invalid credentials',
+    );
+    expect(prisma.user.update).not.toHaveBeenCalled();
   });
 
   it('register: success, assigns roles and returns tokens', async () => {
@@ -345,8 +394,13 @@ describe('AuthService (unit)', () => {
       const callbackCalls = prisma.$transaction.mock.calls.filter(
         (call: unknown[]) => typeof call[0] === 'function',
       );
-      expect(callbackCalls).toHaveLength(1);
-      expect(callbackCalls[0][1]).toEqual({ timeout: 10_000, maxWait: 5_000 });
+      // Две транзакции: создание пользователя с ролями и журналом, затем отметка входа
+      // с привязкой провайдера (`T122`). Обе — с явным бюджетом, роли пишет первая.
+      expect(callbackCalls).toHaveLength(2);
+      for (const call of callbackCalls) {
+        expect(call[1]).toEqual({ timeout: 10_000, maxWait: 5_000 });
+      }
+      expect(tx.userRole.createMany).toHaveBeenCalled();
       expect(prisma.userRole.upsert).not.toHaveBeenCalled();
     });
 
@@ -396,7 +450,17 @@ describe('AuthService (unit)', () => {
     expect(prisma.user.update).toHaveBeenCalled();
   });
 
-  it('refresh: verifies refresh token and returns new pair', async () => {
+  /** Отказ `update` по условию `where`: строки под условием нет (здесь — пользователь заблокирован). */
+  const notFound = () =>
+    new Prisma.PrismaClientKnownRequestError('No record was found for an update.', {
+      code: 'P2025',
+      clientVersion: 'test',
+    });
+
+  /** Секунды «сейчас» под поддельным временем спеки — `iat` выдаваемых токенов. */
+  const nowSec = Math.floor(now.getTime() / 1000);
+
+  it('login: сроки и секреты токенов — из конфига, в обоих токенах версия сессий', async () => {
     config.get.mockImplementation(
       (k: string) =>
         ({
@@ -406,15 +470,16 @@ describe('AuthService (unit)', () => {
           JWT_REFRESH_EXPIRES_IN: '30d',
         })[k as 'JWT_ACCESS_SECRET'],
     );
-    jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email });
     prisma.user.findUnique.mockResolvedValueOnce(user);
-    prisma.userRole.findMany.mockResolvedValue([]); // no DB roles
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
+    prisma.userRole.findMany.mockResolvedValue([]);
+    prisma.user.update.mockResolvedValueOnce({ tokenVersion: 4 });
     jwt.signAsync = jest.fn().mockResolvedValueOnce('a3').mockResolvedValueOnce('r3');
-    const res = await service.refresh({ refreshToken: 'tok' });
+    const res = await service.login({ email: user.email, password: 'p' });
     expect(res.accessToken).toBe('a3');
     expect(res.refreshToken).toBe('r3');
     // Срок жизни и секрет каждого токена — из конфига, а не умолчания: значения нарочно не 15m/7d.
-    const payload = { sub: user.id, email: user.email, roles: ['user'] };
+    const payload = { sub: user.id, email: user.email, roles: ['user'], tv: 4, iat: nowSec };
     expect(jwt.signAsync).toHaveBeenCalledTimes(2);
     expect(jwt.signAsync).toHaveBeenNthCalledWith(1, payload, { secret: 'a', expiresIn: '2h' });
     expect(jwt.signAsync).toHaveBeenNthCalledWith(2, payload, { secret: 'r', expiresIn: '30d' });
@@ -425,11 +490,11 @@ describe('AuthService (unit)', () => {
       (k: string) =>
         ({ JWT_ACCESS_SECRET: 'a', JWT_REFRESH_SECRET: 'r' })[k as 'JWT_ACCESS_SECRET'],
     );
-    jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email });
     prisma.user.findUnique.mockResolvedValueOnce(user);
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
     prisma.userRole.findMany.mockResolvedValue([]);
     jwt.signAsync = jest.fn().mockResolvedValueOnce('a4').mockResolvedValueOnce('r4');
-    await service.refresh({ refreshToken: 'tok' });
+    await service.login({ email: user.email, password: 'p' });
     expect(jwt.signAsync).toHaveBeenCalledTimes(2);
     expect(jwt.signAsync).toHaveBeenNthCalledWith(1, expect.anything(), {
       secret: 'a',
@@ -441,15 +506,295 @@ describe('AuthService (unit)', () => {
     });
   });
 
-  it('refresh: invalid/expired token → Unauthorized', async () => {
-    jwt.verifyAsync.mockRejectedValueOnce(new UnauthorizedException('invalid'));
-    await expect(service.refresh({ refreshToken: 'bad' })).rejects.toBeInstanceOf(
-      UnauthorizedException,
+  it('login: заблокированный пользователь с верным паролем сессии не получает (LEGACY-452)', async () => {
+    prisma.user.findUnique.mockResolvedValueOnce({ ...user, isActive: false });
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
+    await expect(service.login({ email: user.email, password: 'p' })).rejects.toThrow(
+      'Account is disabled',
+    );
+    expect(jwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('login: версия сессий — из отметки входа после сверки пароля, а не из чтения до неё', async () => {
+    // Чтение по почте видит версию 1, за время argon2 админ сменил пароль — версия 2.
+    prisma.user.findUnique.mockResolvedValueOnce({ ...user, tokenVersion: 1 });
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
+    prisma.userRole.findMany.mockResolvedValue([]);
+    prisma.user.update.mockResolvedValueOnce({ tokenVersion: 2 });
+
+    await service.login({ email: user.email, password: 'p' });
+
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
+    // Условие записи — живая строка: заблокированной отметка не пишется вовсе.
+    expect(prisma.user.update.mock.calls[0][0]).toEqual({
+      where: { id: user.id, isActive: true },
+      data: { lastLogin: now },
+      select: { tokenVersion: true },
+    });
+    expect(jwt.signAsync).toHaveBeenCalledTimes(2);
+    for (const [payload] of jwt.signAsync.mock.calls as [{ tv: number }][]) {
+      expect(payload.tv).toBe(2);
+    }
+  });
+
+  it('login: блокировка, пришедшая за время сверки пароля, — 401 без токенов', async () => {
+    prisma.user.findUnique.mockResolvedValueOnce(user);
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
+    prisma.userRole.findMany.mockResolvedValue([]);
+    prisma.user.update.mockRejectedValueOnce(notFound());
+
+    await expect(service.login({ email: user.email, password: 'p' })).rejects.toThrow(
+      'Account is disabled',
+    );
+    expect(jwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('login: роли читаются после версии сессий — токен не несёт ролей старше своей tv', async () => {
+    prisma.user.findUnique.mockResolvedValueOnce(user);
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
+    prisma.userRole.findMany.mockResolvedValue([]);
+
+    await service.login({ email: user.email, password: 'p' });
+
+    expect(prisma.user.update).toHaveBeenCalledTimes(1);
+    expect(prisma.userRole.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.user.update.mock.invocationCallOrder[0]).toBeLessThan(
+      prisma.userRole.findMany.mock.invocationCallOrder[0],
     );
   });
 
-  it('logout: returns success=true', () => {
-    expect(service.logout()).toEqual({ success: true });
+  it('login: чужой отказ базы на отметке входа не выдаётся за блокировку', async () => {
+    prisma.user.findUnique.mockResolvedValueOnce(user);
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
+    prisma.userRole.findMany.mockResolvedValue([]);
+    const outage = new Error('connection reset');
+    prisma.user.update.mockRejectedValueOnce(outage);
+
+    await expect(service.login({ email: user.email, password: 'p' })).rejects.toBe(outage);
+  });
+
+  describe('refresh (LEGACY-451, LEGACY-452)', () => {
+    /** Refresh, выданный при входе, истекает через сутки от «сейчас». */
+    const refreshExp = nowSec + 24 * 3600;
+
+    function liveRefresh(tv: number | undefined = 2) {
+      jwt.verifyAsync.mockResolvedValueOnce({
+        sub: user.id,
+        email: user.email,
+        tv,
+        exp: refreshExp,
+      });
+      prisma.user.findUnique.mockResolvedValueOnce({
+        id: user.id,
+        isActive: true,
+        tokenVersion: 2,
+      });
+      prisma.userRole.findMany.mockResolvedValue([]);
+    }
+
+    it('новая пара наследует exp исходного refresh, а не получает полный срок', async () => {
+      liveRefresh();
+      jwt.signAsync = jest.fn().mockResolvedValueOnce('a5').mockResolvedValueOnce('r5');
+      // access на 15 минут умирает раньше refresh — переподписывать нечего.
+      jwt.decode.mockReturnValueOnce({ exp: nowSec + 900 });
+
+      const res = await service.refresh({ refreshToken: 'tok' });
+
+      expect(res).toEqual({ accessToken: 'a5', refreshToken: 'r5' });
+      const payload = { sub: user.id, email: user.email, roles: ['user'], tv: 2, iat: nowSec };
+      expect(jwt.signAsync).toHaveBeenCalledTimes(2);
+      expect(jwt.signAsync).toHaveBeenNthCalledWith(1, payload, { secret: 'a', expiresIn: '15m' });
+      // Остаток срока в секундах: `iat + expiresIn` даёт ровно прежний `exp`.
+      expect(jwt.signAsync).toHaveBeenNthCalledWith(2, payload, {
+        secret: 'r',
+        expiresIn: refreshExp - nowSec,
+      });
+    });
+
+    it('срок access на refresh — из конфига, а не умолчание', async () => {
+      config.get.mockImplementation(
+        (k: string) =>
+          ({
+            JWT_ACCESS_SECRET: 'a',
+            JWT_REFRESH_SECRET: 'r',
+            JWT_ACCESS_EXPIRES_IN: '2h',
+          })[k as 'JWT_ACCESS_SECRET'],
+      );
+      liveRefresh();
+      jwt.decode.mockReturnValueOnce({ exp: nowSec + 7200 });
+
+      await service.refresh({ refreshToken: 'tok' });
+
+      expect(jwt.signAsync).toHaveBeenCalledTimes(2);
+      expect(jwt.signAsync.mock.calls[0][1]).toEqual({ secret: 'a', expiresIn: '2h' });
+    });
+
+    it('access, переживший бы свой refresh, переподписывается до срока refresh', async () => {
+      liveRefresh();
+      jwt.signAsync = jest
+        .fn()
+        .mockResolvedValueOnce('a-long')
+        .mockResolvedValueOnce('r6')
+        .mockResolvedValueOnce('a-cut');
+      jwt.decode.mockReturnValueOnce({ exp: refreshExp + 1 });
+
+      const res = await service.refresh({ refreshToken: 'tok' });
+
+      expect(res).toEqual({ accessToken: 'a-cut', refreshToken: 'r6' });
+      expect(jwt.signAsync).toHaveBeenCalledTimes(3);
+      expect(jwt.signAsync).toHaveBeenNthCalledWith(3, expect.objectContaining({ tv: 2 }), {
+        secret: 'a',
+        expiresIn: refreshExp - nowSec,
+      });
+    });
+
+    it('версия токена не совпала с текущей — 401, новой пары нет', async () => {
+      liveRefresh(1);
+      await expect(service.refresh({ refreshToken: 'tok' })).rejects.toThrow(
+        'Session is no longer valid',
+      );
+      expect(jwt.signAsync).not.toHaveBeenCalled();
+    });
+
+    it('токен без tv (выдан до T122) считается версией 0', async () => {
+      jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email, exp: refreshExp });
+      prisma.user.findUnique.mockResolvedValueOnce({
+        id: user.id,
+        isActive: true,
+        tokenVersion: 0,
+      });
+      prisma.userRole.findMany.mockResolvedValue([]);
+      jwt.decode.mockReturnValueOnce({ exp: nowSec + 900 });
+      await expect(service.refresh({ refreshToken: 'tok' })).resolves.toEqual({
+        accessToken: 'acc',
+        refreshToken: 'ref',
+      });
+    });
+
+    it('заблокированный пользователь — 401', async () => {
+      jwt.verifyAsync.mockResolvedValueOnce({
+        sub: user.id,
+        email: user.email,
+        tv: 0,
+        exp: refreshExp,
+      });
+      prisma.user.findUnique.mockResolvedValueOnce({
+        id: user.id,
+        isActive: false,
+        tokenVersion: 0,
+      });
+      await expect(service.refresh({ refreshToken: 'tok' })).rejects.toThrow('Account is disabled');
+      expect(jwt.signAsync).not.toHaveBeenCalled();
+    });
+
+    it('битый или просроченный токен — 401, а не 500 из библиотеки', async () => {
+      // Библиотека бросает свою ошибку, а не исключение Nest: без перевода она уходит наружу 500.
+      jwt.verifyAsync.mockRejectedValueOnce(new TokenExpiredError('jwt expired', new Date(0)));
+      await expect(service.refresh({ refreshToken: 'bad' })).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+    });
+
+    it('сбой не проверки токена, а чего-то другого — пробрасывается как есть, не 401', async () => {
+      const outage = new Error('boom');
+      jwt.verifyAsync.mockRejectedValueOnce(outage);
+      await expect(service.refresh({ refreshToken: 'tok' })).rejects.toBe(outage);
+    });
+
+    it('нет секрета refresh — ошибка конфигурации, а не 401 «битый токен»', async () => {
+      config.get.mockImplementation(
+        (k: string) => ({ JWT_ACCESS_SECRET: 'a' })[k as 'JWT_ACCESS_SECRET'],
+      );
+      await expect(service.refresh({ refreshToken: 'tok' })).rejects.not.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(jwt.verifyAsync).not.toHaveBeenCalled();
+    });
+
+    it('токен без tv, а версия в базе уже поднята — 401', async () => {
+      jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email, exp: refreshExp });
+      prisma.user.findUnique.mockResolvedValueOnce({
+        id: user.id,
+        isActive: true,
+        tokenVersion: 1,
+      });
+      await expect(service.refresh({ refreshToken: 'tok' })).rejects.toThrow(
+        'Session is no longer valid',
+      );
+    });
+
+    it('refresh, истекающий в эту же секунду, даёт пару с нулевым остатком, а не ошибку', async () => {
+      jwt.verifyAsync.mockResolvedValueOnce({
+        sub: user.id,
+        email: user.email,
+        tv: 2,
+        exp: nowSec,
+      });
+      prisma.user.findUnique.mockResolvedValueOnce({
+        id: user.id,
+        isActive: true,
+        tokenVersion: 2,
+      });
+      prisma.userRole.findMany.mockResolvedValue([]);
+      jwt.signAsync = jest
+        .fn()
+        .mockResolvedValueOnce('a7')
+        .mockResolvedValueOnce('r7')
+        .mockResolvedValueOnce('a7-cut');
+      jwt.decode.mockReturnValueOnce({ exp: nowSec + 900 });
+
+      await service.refresh({ refreshToken: 'tok' });
+
+      expect(jwt.signAsync).toHaveBeenCalledTimes(3);
+      expect(jwt.signAsync.mock.calls[1][1]).toEqual({ secret: 'r', expiresIn: 0 });
+      expect(jwt.signAsync.mock.calls[2][1]).toEqual({ secret: 'a', expiresIn: 0 });
+    });
+  });
+
+  describe('logout (LEGACY-451)', () => {
+    afterEach(() => {
+      jest.restoreAllMocks();
+      sessionStateCache.clear();
+    });
+
+    it('поднимает версию сессий условием на версию токена и сбрасывает кэш', async () => {
+      jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email, tv: 3, exp: 1 });
+      prisma.user.updateMany.mockResolvedValueOnce({ count: 1 });
+      const invalidate = jest.spyOn(sessionStateCache, 'invalidate');
+
+      await expect(service.logout({ refreshToken: 'tok' })).resolves.toEqual({ success: true });
+
+      expect(prisma.user.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.user.updateMany).toHaveBeenCalledWith({
+        where: { id: user.id, tokenVersion: 3 },
+        data: { tokenVersion: { increment: 1 } },
+      });
+      expect(invalidate).toHaveBeenCalledTimes(1);
+      expect(invalidate).toHaveBeenCalledWith(user.id);
+    });
+
+    it('уже погашенный токен: 200, версия повторно не растёт', async () => {
+      jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email, exp: 1 });
+      prisma.user.updateMany.mockResolvedValueOnce({ count: 0 });
+      const invalidate = jest.spyOn(sessionStateCache, 'invalidate');
+
+      await expect(service.logout({ refreshToken: 'tok' })).resolves.toEqual({ success: true });
+
+      // Без `tv` — версия 0, как и на refresh.
+      expect(prisma.user.updateMany.mock.calls[0][0].where).toEqual({
+        id: user.id,
+        tokenVersion: 0,
+      });
+      expect(invalidate).not.toHaveBeenCalled();
+    });
+
+    it('битый токен — 401, база не трогается', async () => {
+      jwt.verifyAsync.mockRejectedValueOnce(new JsonWebTokenError('invalid signature'));
+      await expect(service.logout({ refreshToken: 'bad' })).rejects.toBeInstanceOf(
+        UnauthorizedException,
+      );
+      expect(prisma.user.updateMany).not.toHaveBeenCalled();
+    });
   });
 
   describe('socialLogin (CR auth-social)', () => {
@@ -520,6 +865,24 @@ describe('AuthService (unit)', () => {
     // Посадка миграции идентичности (NEXT-SESSION §5). Обязана краснеть на коде,
     // где пользователь искался по адресу почты: там этот вход выдавал сессию
     // владельцу парольного аккаунта, минуя пароль.
+    it('аккаунт найден по почте, но заблокирован: ни привязки, ни сессии (LEGACY-452)', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-new-link',
+        email: user.email,
+        emailVerified: true,
+      });
+      prisma.userIdentity.findUnique.mockResolvedValue(null);
+      prisma.user.findUnique.mockResolvedValueOnce({ ...user, isActive: false });
+
+      await expect(service.socialLogin({ provider: 'google', token: 'id-token' })).rejects.toThrow(
+        'Account is disabled',
+      );
+      expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(jwt.signAsync).not.toHaveBeenCalled();
+    });
+
     it('refuses to attach a weakly-proven provider to an existing account', async () => {
       social.verify.mockResolvedValue({
         provider: 'facebook',
@@ -584,6 +947,121 @@ describe('AuthService (unit)', () => {
       expect(prisma.user.findUnique).not.toHaveBeenCalledWith(
         expect.objectContaining({ where: { email: 'renamed@example.com' } }),
       );
+    });
+
+    it('заблокированный пользователь: ни сессии, ни привязки провайдера (LEGACY-452)', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-1',
+        email: user.email,
+        emailVerified: true,
+      });
+      prisma.userIdentity.findUnique.mockResolvedValue({ userId: user.id });
+      prisma.user.findUnique.mockResolvedValue({ ...user, isActive: false });
+
+      await expect(service.socialLogin({ provider: 'google', token: 'id-token' })).rejects.toThrow(
+        'Account is disabled',
+      );
+      expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(jwt.signAsync).not.toHaveBeenCalled();
+    });
+
+    it('версия сессий в токенах берётся из отметки входа', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-1',
+        email: user.email,
+        emailVerified: true,
+      });
+      prisma.userIdentity.findUnique.mockResolvedValue({ userId: user.id });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.userRole.findMany.mockResolvedValue([]);
+      prisma.user.update.mockResolvedValue({ tokenVersion: 7 });
+
+      await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+      expect(prisma.user.update).toHaveBeenCalledTimes(1);
+      expect(prisma.user.update).toHaveBeenCalledWith({
+        where: { id: user.id, isActive: true },
+        data: { lastLogin: now },
+        select: { tokenVersion: true },
+      });
+      expect(jwt.signAsync).toHaveBeenCalledTimes(2);
+      for (const [payload] of jwt.signAsync.mock.calls as [{ tv: number }][]) {
+        expect(payload.tv).toBe(7);
+      }
+    });
+
+    it('отметка входа раньше привязки провайдера и ролей', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-1',
+        email: user.email,
+        emailVerified: true,
+      });
+      prisma.userIdentity.findUnique.mockResolvedValue({ userId: user.id });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.userRole.findMany.mockResolvedValue([]);
+
+      await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+      const mark = prisma.user.update.mock.invocationCallOrder[0];
+      expect(mark).toBeLessThan(prisma.userIdentity.upsert.mock.invocationCallOrder[0]);
+      expect(mark).toBeLessThan(prisma.userRole.findMany.mock.invocationCallOrder[0]);
+    });
+
+    it('отметка входа и привязка провайдера пишутся одной транзакцией, а не корневым клиентом', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-1',
+        email: user.email,
+        emailVerified: true,
+      });
+      prisma.userIdentity.findUnique.mockResolvedValue({ userId: user.id });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.userRole.findMany.mockResolvedValue([]);
+      const txUpdate = jest.fn().mockResolvedValue({ tokenVersion: 5 });
+      const txUpsert = jest.fn().mockResolvedValue({});
+      // Массив — служебная транзакция базовых ролей (`ensureCoreRoles`), колбэк — вход.
+      prisma.$transaction.mockImplementation((arg: unknown) =>
+        typeof arg === 'function'
+          ? (arg as (client: unknown) => Promise<unknown>)({
+              user: { update: txUpdate },
+              userIdentity: { upsert: txUpsert },
+            })
+          : Promise.resolve(arg),
+      );
+
+      await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+      expect(txUpdate).toHaveBeenCalledTimes(1);
+      expect(txUpsert).toHaveBeenCalledTimes(1);
+      expect(prisma.user.update).not.toHaveBeenCalled();
+      expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
+      expect(txUpdate.mock.invocationCallOrder[0]).toBeLessThan(
+        txUpsert.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('блокировка между проверкой и отметкой входа: 401, токенов нет', async () => {
+      social.verify.mockResolvedValue({
+        provider: 'google',
+        providerUserId: 'g-1',
+        email: user.email,
+        emailVerified: true,
+      });
+      prisma.userIdentity.findUnique.mockResolvedValue({ userId: user.id });
+      prisma.user.findUnique.mockResolvedValue(user);
+      prisma.userRole.findMany.mockResolvedValue([]);
+      prisma.user.update.mockRejectedValueOnce(notFound());
+
+      await expect(service.socialLogin({ provider: 'google', token: 'id-token' })).rejects.toThrow(
+        'Account is disabled',
+      );
+      expect(jwt.signAsync).not.toHaveBeenCalled();
+      // Привязка заблокированному не пишется: отметка входа отказала раньше неё.
+      expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
     });
 
     // Landing 1. A rejected token must not produce a session of any kind.
@@ -707,7 +1185,7 @@ describe('AuthService (unit)', () => {
       expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
       expect(prisma.user.findUnique.mock.calls[0][0].select).toEqual({ id: true });
       expect(prisma.user.create.mock.calls[0][0].select).toEqual(ACCOUNT_USER_SELECT);
-      expect(prisma.user.update.mock.calls[0][0].select).toEqual({ id: true });
+      expect(prisma.user.update.mock.calls[0][0].select).toEqual({ tokenVersion: true });
       expect(passwordHashReads()).toBe(0);
     });
 
@@ -715,7 +1193,7 @@ describe('AuthService (unit)', () => {
       prisma.user.findUnique.mockResolvedValueOnce(user);
       (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
       prisma.userRole.findMany.mockResolvedValue([]);
-      prisma.user.update.mockResolvedValueOnce({ id: user.id });
+      prisma.user.update.mockResolvedValueOnce({ tokenVersion: 0 });
 
       const res = await service.login({ email: user.email, password: 'p' });
 
@@ -725,23 +1203,31 @@ describe('AuthService (unit)', () => {
       const loginSelect = prisma.user.findUnique.mock.calls[0][0].select;
       expect(loginSelect.passwordHash).toBe(true);
       // Белый список ответа при этом остаётся целым: хеш добавлен к нему, а не вместо него.
-      expect(loginSelect).toEqual({ ...ACCOUNT_USER_SELECT, passwordHash: true });
+      expect(loginSelect).toEqual({
+        ...ACCOUNT_USER_SELECT,
+        passwordHash: true,
+      });
       // Отметка входа хеша не просит.
-      expect(prisma.user.update.mock.calls[0][0].select).toEqual({ id: true });
+      expect(prisma.user.update.mock.calls[0][0].select).toEqual({ tokenVersion: true });
       // И наружу он не уходит.
       expect(res.user).not.toHaveProperty('passwordHash');
     });
 
-    it('refresh: чтение по идентификатору из токена идёт белым списком без хеша', async () => {
-      jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email });
+    it('refresh: чтение по идентификатору из токена берёт только состояние сессии, без хеша', async () => {
+      jwt.verifyAsync.mockResolvedValueOnce({ sub: user.id, email: user.email, exp: 2e9 });
       prisma.user.findUnique.mockResolvedValueOnce(user);
       prisma.userRole.findMany.mockResolvedValue([]);
+      jwt.decode.mockReturnValueOnce({ exp: 0 });
 
       await service.refresh({ refreshToken: 'tok' });
 
       expectEverySelect(1);
       expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
-      expect(prisma.user.findUnique.mock.calls[0][0].select).toEqual(ACCOUNT_USER_SELECT);
+      expect(prisma.user.findUnique.mock.calls[0][0].select).toEqual({
+        id: true,
+        isActive: true,
+        tokenVersion: true,
+      });
       expect(passwordHashReads()).toBe(0);
     });
 
@@ -759,21 +1245,23 @@ describe('AuthService (unit)', () => {
       // Имени и аватара нет — значит сработает ветка дополнения профиля, тот самый update,
       // чей результат возвращается обратно в `user`.
       prisma.user.findUnique.mockResolvedValueOnce({ ...user, name: null, avatarUrl: null });
+      // Отметка входа идёт раньше привязки и дополнения профиля (`markSignIn`).
       prisma.user.update
-        .mockResolvedValueOnce({ ...user, name: 'Provider Name' })
-        .mockResolvedValueOnce({ id: user.id });
+        .mockResolvedValueOnce({ tokenVersion: 0 })
+        .mockResolvedValueOnce({ ...user, name: 'Provider Name' });
       prisma.userRole.findMany.mockResolvedValue([]);
 
       const res = await service.socialLogin({ provider: 'google', token: 'id-token' });
 
-      // findUnique(по привязке) + update(профиль) + update(lastLogin)
+      // findUnique(по привязке) + update(lastLogin) + update(профиль)
       expectEverySelect(3);
       expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
       expect(prisma.user.findUnique.mock.calls[0][0].select).toEqual(ACCOUNT_USER_SELECT);
       expect(prisma.user.update).toHaveBeenCalledTimes(2);
+      expect(prisma.user.update.mock.calls[0][0].select).toEqual({ tokenVersion: true });
       // 🔴 Дополнение профиля возвращает запись в ту же переменную — здесь белый список
       // обязателен, иначе хеш приезжает обратно в очищенный объект.
-      expect(prisma.user.update.mock.calls[0][0].select).toEqual(ACCOUNT_USER_SELECT);
+      expect(prisma.user.update.mock.calls[1][0].select).toEqual(ACCOUNT_USER_SELECT);
       expect(passwordHashReads()).toBe(0);
       expect(res.user).not.toHaveProperty('passwordHash');
     });
@@ -926,9 +1414,10 @@ describe('AuthService (unit)', () => {
 
       it('ни одно чтение модели пользователя не идёт без select', () => {
         const reading = userCallsInSource().filter((call) => READING_METHODS.has(call.method));
-        // Сегодня их одиннадцать. Проверка не в числе, а в том, что у каждого есть `select`:
-        // число здесь только показывает, что выборка не опустела.
-        expect(reading.length).toBeGreaterThanOrEqual(11);
+        // Сегодня их десять (`T122`: три отметки входа сведены в одну `markSignIn`). Проверка
+        // не в числе, а в том, что у каждого есть `select`: число здесь только показывает,
+        // что выборка не опустела.
+        expect(reading.length).toBeGreaterThanOrEqual(10);
 
         // ⚠️ Свойство берётся ВЕРХНЕГО уровня, и подмена `select` на `include` ловится
         // этим же утверждением, а не отдельным: `include` тянет все скаляры вместе

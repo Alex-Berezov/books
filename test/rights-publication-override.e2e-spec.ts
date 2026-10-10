@@ -50,12 +50,14 @@ describe('Rights publication override (e2e)', () => {
 
     adminToken = (await registerOrLogin('admin-override@example.com')).token;
     await grantStaffRoles(app, 'admin-override@example.com');
-    const manager = await registerOrLogin(`manager-override-${Date.now()}@example.com`);
-    managerToken = manager.token;
+    const managerEmail = `manager-override-${Date.now()}@example.com`;
+    const manager = await registerOrLogin(managerEmail);
     await request(http())
       .post(`/users/${manager.userId}/roles/content_manager`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(201);
+    // Смена ролей гасит выданные токены (`LEGACY-451`): с новой ролью — новый вход.
+    managerToken = (await registerOrLogin(managerEmail)).token;
 
     // Книга, которую ИИ-проверка «на всякий случай» закрыла вердиктом BLOCK.
     const rights = await createBookWithRights(prisma, slug);

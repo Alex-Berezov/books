@@ -2660,7 +2660,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Logout (stateless placeholder) */
+    /** Logout: revoke every session of the refresh token owner (LEGACY-451) */
     post: operations['AuthController_logout'];
     delete?: never;
     options?: never;
@@ -17579,7 +17579,11 @@ export interface operations {
       path?: never;
       cookie?: never;
     };
-    requestBody?: never;
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RefreshDto'];
+      };
+    };
     responses: {
       200: {
         headers: {
@@ -17591,6 +17595,13 @@ export interface operations {
             success?: boolean;
           };
         };
+      };
+      /** @description Refresh token is malformed, forged or expired */
+      401: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

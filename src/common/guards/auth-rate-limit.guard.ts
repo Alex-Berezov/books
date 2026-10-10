@@ -9,7 +9,15 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { parseInternalProxyCidrs, parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
+import { unverifiedTokenSubject } from '../../shared/session/session-token';
 import { normalizeEmail } from '../../shared/validators/normalize-email.decorator';
+
+/**
+ * Потолок выходов с одного адреса в окне (`LEGACY-451`, решение арбитра 10.10.2026). Выше
+ * обычного лимита: с сайта все выходы идут с адреса сервера Next. Держит корзины по `sub`
+ * от подделки — новый `sub` даёт новую корзину пользователя, но не новый потолок адреса.
+ */
+export const LOGOUT_IP_MAX = 60;
 
 /**
  * Auth Rate Limit Guard
@@ -67,7 +75,7 @@ export class AuthRateLimitGuard implements CanActivate {
     this.refreshWindowMs =
       Number.isFinite(refreshWindow) && refreshWindow > 0 ? refreshWindow : 60_000;
 
-    // Catch-all limits for every other route under /auth (today: /social, /logout).
+    // Catch-all limits for every other route under /auth (today: /social; /logout has its own buckets).
     const defaultMax = Number(this.config.get('RATE_LIMIT_AUTH_DEFAULT_MAX'));
     const defaultWindow = Number(this.config.get('RATE_LIMIT_AUTH_DEFAULT_WINDOW_MS'));
     this.defaultMax = Number.isFinite(defaultMax) && defaultMax > 0 ? defaultMax : 10;
@@ -84,7 +92,7 @@ export class AuthRateLimitGuard implements CanActivate {
       ip: string;
       path?: string;
       originalUrl?: string;
-      body?: { email?: string };
+      body?: { email?: string; refreshToken?: unknown };
       headers?: Record<string, string | string[] | undefined>;
     }>();
 
@@ -122,8 +130,26 @@ export class AuthRateLimitGuard implements CanActivate {
       windowMs = this.refreshWindowMs;
       // Key: IP for refresh token operations
       key = `auth:refresh:${clientIp}`;
+    } else if (path.includes('/logout')) {
+      // Выход гасит все сессии пользователя (`LEGACY-451`) и с сайта идёт с сервера Next, без
+      // адреса посетителя: в общей корзине `auth:other` выходы всего сайта делили бы лимит
+      // соцвхода, и выход молча не гасил бы сессии. Две корзины подряд (решение арбитра
+      // 10.10.2026): адрес с потолком `LOGOUT_IP_MAX` и адрес плюс `sub` из тела с обычным
+      // лимитом. `sub` берётся без проверки подписи — это только ключ, подпись проверяет
+      // сервис; подделка `sub` даёт новую вторую корзину, но упирается в первую.
+      operation = 'auth';
+      maxPoints = this.defaultMax;
+      windowMs = this.defaultWindowMs;
+      key = `auth:logout:${clientIp}:${unverifiedTokenSubject(req.body?.refreshToken)}`;
+      const ipOk = await this.rateLimiter.consume(
+        `auth:logout:${clientIp}`,
+        1,
+        windowMs,
+        LOGOUT_IP_MAX,
+      );
+      if (!ipOk) this.refuse(operation, windowMs);
     } else {
-      // Every other route under /auth — today /social and /logout, tomorrow
+      // Every other route under /auth — today /social, tomorrow
       // whatever gets added. Returning `true` here meant a new auth route was
       // unlimited until someone remembered to add a branch: the default was
       // "allow", the same shape as "no robots directive → index". The default
@@ -137,20 +163,21 @@ export class AuthRateLimitGuard implements CanActivate {
     }
 
     const ok = await this.rateLimiter.consume(key, 1, windowMs, maxPoints);
-
-    if (!ok) {
-      const retryAfter = Math.ceil(windowMs / 1000);
-      throw new HttpException(
-        {
-          statusCode: HttpStatus.TOO_MANY_REQUESTS,
-          message: `Too many ${operation} attempts. Please try again later.`,
-          error: 'Too Many Requests',
-          retryAfter,
-        },
-        HttpStatus.TOO_MANY_REQUESTS,
-      );
-    }
+    if (!ok) this.refuse(operation, windowMs);
 
     return true;
+  }
+
+  private refuse(operation: string, windowMs: number): never {
+    const retryAfter = Math.ceil(windowMs / 1000);
+    throw new HttpException(
+      {
+        statusCode: HttpStatus.TOO_MANY_REQUESTS,
+        message: `Too many ${operation} attempts. Please try again later.`,
+        error: 'Too Many Requests',
+        retryAfter,
+      },
+      HttpStatus.TOO_MANY_REQUESTS,
+    );
   }
 }
