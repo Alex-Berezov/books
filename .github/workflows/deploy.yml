@@ -29,7 +29,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version to deploy (tag, branch, or commit)'
+        description: 'Version to deploy: tag or commit sha (letters, digits, . _ -; no "/")'
         required: true
         default: 'main'
       # 🔴 LEGACY-247. Вариант `staging` убран 18.08.2026. Он не переключал ничего:
@@ -63,12 +63,11 @@ on:
         type: boolean
         default: false
 
-# Global workflow permissions
+# 🔴 LEGACY-458. Глобально только чтение; запись и остальное - заданиям, которым она нужна.
+# `id-token` и `attestations` не использовал ни один шаг (подписи и аттестации образа нет),
+# а публичный репозиторий отдавал их любому заданию, включая сторонние actions.
 permissions:
   contents: read
-  packages: write
-  id-token: write
-  attestations: write
 
 # 🔴 LEGACY-245. Группа — константа, и это не небрежность. Привычное
 # `${{ github.workflow }}-${{ github.ref }}` здесь само является дефектом: у двух
@@ -175,12 +174,12 @@ jobs:
 
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0 # For semantic versioning
 
       - name: 📦 Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: yarn
@@ -309,7 +308,7 @@ jobs:
             prom/prometheus:v2.45.1 check config /cfg/prometheus.yml
 
       - name: ♻️ Cache Jest transform
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /tmp/jest_rs
           key: jest-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig.json') }}-${{ github.sha }}
@@ -402,10 +401,10 @@ jobs:
 
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: 📦 Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: yarn
@@ -419,7 +418,7 @@ jobs:
       # наборами e2e, и общий ключ давал бы гонку двух параллельных job'ов
       # за одну запись.
       - name: ♻️ Cache Jest transform
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /tmp/jest_rs
           key: jest-e2e-deploy-${{ runner.os }}-${{ hashFiles('yarn.lock', 'tsconfig.json') }}-${{ github.sha }}
@@ -475,6 +474,10 @@ jobs:
     name: 🏗️ Build Docker Image
     runs-on: ubuntu-22.04
     timeout-minutes: 45
+    # Единственное задание с записью: публикует образ в GHCR (`LEGACY-458`).
+    permissions:
+      contents: read
+      packages: write
 
     outputs:
       image-tag: ${{ steps.meta.outputs.tags }}
@@ -483,7 +486,7 @@ jobs:
 
     steps:
       - name: 📥 Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: ⬇️ Normalize repository to lowercase
         # Some actions/registries require lowercase image names. Persist as REPO_LOWER for later steps.
@@ -492,19 +495,32 @@ jobs:
 
       - name: 🔍 Extract Version
         id: version
+        # 🔴 LEGACY-458. Вход `version` приходит в shell через `env:`, а не подстановкой в текст
+        # скрипта: `$(...)` или кавычка во входе исполнялись бы на раннере, а дальше версия
+        # уезжает в heredoc на сервер. Допустимый вид проверяется после выбора ветки и до
+        # записи в выход шага: имя тега git тоже допускает `$`, `(` и `;`, а выход
+        # `steps.version.outputs.version` дальше подставляется текстом в другие шаги. Первый
+        # символ - не `-`: версия уходит аргументом `--image-tag` в `deploy_production.sh`; длина -
+        # не больше 128, потолок тега Docker.
+        env:
+          INPUT_VERSION: ${{ github.event.inputs.version }}
         run: |
           if [[ "${{ github.ref_type }}" == "tag" ]]; then
             VERSION=${GITHUB_REF#refs/tags/}
-          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
-            VERSION="${{ github.event.inputs.version }}"
+          elif [[ -n "$INPUT_VERSION" ]]; then
+            VERSION="$INPUT_VERSION"
           else
             VERSION="main-$(git rev-parse --short HEAD)"
+          fi
+          if [[ ! "$VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+            echo "Version must match ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$"
+            exit 1
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version: $VERSION"
 
       - name: 🔑 Log in to Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -541,7 +557,7 @@ jobs:
       # получает `sha-<короткий sha>`. Инвариант держит `deploy-trigger.spec.ts`.
       - name: 🏷️ Extract Metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}
           tags: |
@@ -553,11 +569,11 @@ jobs:
             type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref_type == 'tag' && !contains(github.ref_name, '-') }}
 
       - name: 🔧 Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: 🏗️ Build and Push
         id: build
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: ./Dockerfile
@@ -572,7 +588,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: 📋 Generate SBOM
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
         continue-on-error: true # Don't block deployment on SBOM errors
         with:
           image: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}:${{ steps.version.outputs.version }}
@@ -581,7 +597,7 @@ jobs:
 
       - name: 🔍 Security Scan
         id: scan
-        uses: anchore/scan-action@v3
+        uses: anchore/scan-action@3343887d815d7b07465f6fdcd395bd66508d486a # v3
         continue-on-error: true # Don't block deployment on scan errors
         with:
           image: ${{ env.REGISTRY }}/${{ env.REPO_LOWER }}:${{ steps.version.outputs.version }}
@@ -599,7 +615,7 @@ jobs:
       - name: 📤 Upload Scan Report
         if: always() && steps.scan.outputs.sarif != ''
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: vuln-scan-${{ steps.version.outputs.version }}
           path: ${{ steps.scan.outputs.sarif }}
@@ -690,16 +706,22 @@ jobs:
     # красные e2e перестали бы останавливать прод, а выглядело бы это как
     # починка красноты.
     if: ${{ !cancelled() && needs.build.result == 'success' && (needs.test.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.e2e.result == 'success' || github.event.inputs.skip_tests == 'true') && (needs.ci_gate.result == 'success' || needs.ci_gate.result == 'skipped') }}
+    # `packages: read` - токен уезжает на сервер для `docker login` и тянет образ (`LEGACY-458`).
+    permissions:
+      contents: read
+      packages: read
     environment:
       name: ${{ github.event.inputs.environment || 'production' }}
       url: https://${{ vars.PRODUCTION_DOMAIN }}
     outputs:
       # Читает job `rollback`: откат допустим только если выкат дошёл до сервера.
       server_stage_reached: ${{ steps.server_stage.outputs.reached }}
+      # Читает job `rollback` (`LEGACY-467`): ревизия сервера до этого выката.
+      previous_sha: ${{ steps.previous_revision.outputs.sha }}
 
     steps:
       - name: 📥 Checkout Deployment Scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           sparse-checkout: |
             scripts/deploy_production.sh
@@ -709,9 +731,28 @@ jobs:
           sparse-checkout-cone-mode: false
 
       - name: 🔑 Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387 # v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      # 🔴 LEGACY-458. Ключ хоста. Переменная репозитория `DEPLOY_KNOWN_HOSTS` - строки
+      # `known_hosts` боевой машины (адрес как в `PRODUCTION_SERVER`); её заводит владелец.
+      # Есть переменная - проверка строгая (`yes`), подмена маршрута к серверу краснеет.
+      # Нет - прежнее поведение (`no`) и предупреждение в прогоне: пункт остаётся открытым,
+      # а не снимается молча. `\r` срезается: значение, вставленное из терминала Windows,
+      # иначе не совпало бы ни с одним ключом.
+      - name: 🔐 Pin Server Host Key
+        env:
+          KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          if [[ -n "$KNOWN_HOSTS" ]]; then
+            printf '%s\n' "$KNOWN_HOSTS" | tr -d '\r' >> ~/.ssh/known_hosts
+            echo "HOST_KEY_CHECK=yes" >> "$GITHUB_ENV"
+          else
+            echo "::warning::DEPLOY_KNOWN_HOSTS is not set - the server host key is not verified (LEGACY-458)"
+            echo "HOST_KEY_CHECK=no" >> "$GITHUB_ENV"
+          fi
 
       - name: 📋 Prepare Deployment
         run: |
@@ -764,6 +805,24 @@ jobs:
             "Выкат начат · books · ${VERSION:-без версии}" \
             "Админка и API недоступны несколько минут." \
             "${RUN_URL}"
+
+      # 🔴 LEGACY-467. Ревизия, которая работает на сервере ДО этого выката, снимается отдельным
+      # шагом и уезжает в job `rollback`. Откат ставит образ из `.rollback_info`, а свежий файл
+      # пишет `save_current_state` лишь после бэкапа; при отказе раньше (stash, fetch, checkout,
+      # `.env.prod`, бэкап) файл остаётся от ПРОШЛОГО выката, и откат ставил бы версию старше.
+      # Откат сверяет `commit` из файла с этой ревизией и отказывает, если они не совпали.
+      # Берётся последняя строка вывода: баннер или `echo` из профиля пользователя на сервере
+      # пишут в stdout раньше. Шаг стоит ДО отметки `server_stage`: он только читает, и его отказ (ssh, ключ хоста)
+      # не должен вооружать откат (`LEGACY-227`).
+      - name: ↩️ Record previous server revision
+        id: previous_revision
+        run: |
+          sha=$(ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} 'git -C /opt/books/app/src rev-parse HEAD' | tail -n1)
+          if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Cannot read the server revision: '$sha'"
+            exit 1
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
 
       # 🔴 LEGACY-227. Отметка «до сервера дошли». Без неё условие отката
       # (`needs.deploy.result == 'failure'`) срабатывает и на отказе шагов,
@@ -818,7 +877,7 @@ jobs:
       - name: 🚀 Deploy to Server
         run: |
           # Connect to server and execute deployment
-          ssh -o StrictHostKeyChecking=no ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
+          ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
             set -euo pipefail
 
             echo "🔄 Preparing deployment environment..."
@@ -837,7 +896,22 @@ jobs:
               # Найдено ревью 18.08.2026 при закрытии `LEGACY-243`.
               DEPLOY_PREVIOUS_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
               export DEPLOY_PREVIOUS_SHA
+              # 🔴 LEGACY-467. Это значение уезжает в `.rollback_info.commit`, а откат сверяет его
+              # с `previous_sha` шага `↩️ Record previous server revision`. Чтения два, источник
+              # обязан быть один: разошлись - выкат отказывает здесь, до stash и чекаута.
+              if [[ "$DEPLOY_PREVIOUS_SHA" != "${{ steps.previous_revision.outputs.sha }}" ]]; then
+                echo "❌ Server revision ${DEPLOY_PREVIOUS_SHA:-unknown} differs from the recorded one"
+                exit 1
+              fi
               echo "↩️  Previous revision: ${DEPLOY_PREVIOUS_SHA:-unknown}"
+
+              # 🔴 LEGACY-467. Точка отката и состояние выката исключаются через
+              # `.git/info/exclude` - он не зависит от ревизии дерева. `.gitignore` этого не
+              # держит: первый выкат с правкой и любой откат на ревизию старше `T125` идут со
+              # старым `.gitignore`, и stash ниже прятал бы `.rollback_info`.
+              mkdir -p .git/info
+              grep -qxF /.rollback_info .git/info/exclude 2>/dev/null || echo /.rollback_info >> .git/info/exclude
+              grep -qxF /.deployment_state .git/info/exclude 2>/dev/null || echo /.deployment_state >> .git/info/exclude
 
               echo "📦 Stashing local changes..."
               git stash --include-untracked || true
@@ -1128,7 +1202,7 @@ jobs:
       # и сообщение об упавшем выкате не ушло бы никуда.
       - name: 📥 Checkout Notifier
         if: ${{ always() }}
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ github.event.repository.default_branch }}
           sparse-checkout: |
@@ -1321,13 +1395,32 @@ jobs:
 
     steps:
       - name: 🔑 Setup SSH Agent
-        uses: webfactory/ssh-agent@v0.9.0
+        uses: webfactory/ssh-agent@dc588b651fe13675774614f8e6a936a468676387 # v0.9.0
         with:
           ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
 
+      # 🔴 LEGACY-458. Ключ хоста. Переменная репозитория `DEPLOY_KNOWN_HOSTS` - строки
+      # `known_hosts` боевой машины (адрес как в `PRODUCTION_SERVER`); её заводит владелец.
+      # Есть переменная - проверка строгая (`yes`), подмена маршрута к серверу краснеет.
+      # Нет - прежнее поведение (`no`) и предупреждение в прогоне: пункт остаётся открытым,
+      # а не снимается молча. `\r` срезается: значение, вставленное из терминала Windows,
+      # иначе не совпало бы ни с одним ключом.
+      - name: 🔐 Pin Server Host Key
+        env:
+          KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          if [[ -n "$KNOWN_HOSTS" ]]; then
+            printf '%s\n' "$KNOWN_HOSTS" | tr -d '\r' >> ~/.ssh/known_hosts
+            echo "HOST_KEY_CHECK=yes" >> "$GITHUB_ENV"
+          else
+            echo "::warning::DEPLOY_KNOWN_HOSTS is not set - the server host key is not verified (LEGACY-458)"
+            echo "HOST_KEY_CHECK=no" >> "$GITHUB_ENV"
+          fi
+
       - name: ⏪ Rollback Deployment
         run: |
-          ssh -o StrictHostKeyChecking=no ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
+          ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
             set -euo pipefail
             
             echo "⏪ Starting emergency rollback..."
@@ -1338,6 +1431,29 @@ jobs:
             # (только `workflow_dispatch` плюс отказ выката после отметки о сервере), что
             # мёртвую строку никто не наблюдал.
             cd /opt/books/app/src
+
+            # 🔴 LEGACY-467. Точка отката должна быть записана ЭТИМ выкатом: `commit` в
+            # `.rollback_info` равен `previous_sha` - ревизии сервера до выката (шаг выката сверил с ней
+            # `DEPLOY_PREVIOUS_SHA`, которую пишет `save_current_state`). Иначе файл
+            # от прошлого выката (откат на версию старше) или его нет - отказ красным, прод не трогаем.
+            PREV_SHA="${{ needs.deploy.outputs.previous_sha }}"
+            if [[ ! "$PREV_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "❌ Previous server revision of this run is unknown - refusing to roll back"
+              exit 1
+            fi
+            if [[ ! -f ".rollback_info" ]]; then
+              echo "❌ .rollback_info not found - refusing to roll back"
+              exit 1
+            fi
+            if ! jq -e . .rollback_info >/dev/null 2>&1; then
+              echo "❌ .rollback_info is not valid JSON - refusing to roll back"
+              exit 1
+            fi
+            ROLLBACK_COMMIT=$(jq -r '.commit // empty' .rollback_info)
+            if [[ "$ROLLBACK_COMMIT" != "$PREV_SHA" ]]; then
+              echo "❌ .rollback_info belongs to another deploy (commit ${ROLLBACK_COMMIT:-none}, expected $PREV_SHA) - refusing to roll back"
+              exit 1
+            fi
 
             if [[ -f "./scripts/deploy_production.sh" ]]; then
               ./scripts/deploy_production.sh --rollback --force

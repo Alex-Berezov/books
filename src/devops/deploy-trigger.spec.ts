@@ -1,4 +1,6 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
 /**
@@ -1152,8 +1154,8 @@ describe('LEGACY-248: состав образа описывается на об
   const SBOM = '📋 Generate SBOM';
   const SCAN = '🔍 Security Scan';
   const USES: Array<[string, string]> = [
-    [SBOM, 'anchore/sbom-action@v0'],
-    [SCAN, 'anchore/scan-action@v3'],
+    [SBOM, 'anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610'],
+    [SCAN, 'anchore/scan-action@3343887d815d7b07465f6fdcd395bd66508d486a'],
   ];
 
   // 🔴 Обе стороны сверяются **одной и той же** строкой с версией. Пока теговый путь
@@ -1238,7 +1240,9 @@ describe('LEGACY-248: состав образа описывается на об
     (_file, upload, scan) => {
       // Версия равенством, а не `/^actions\/upload-artifact@/`: ровно от такой формы
       // отказались для `anchore/*` — она пропускает апгрейд на одном из путей.
-      expect(key(upload(), 'uses')).toBe('actions/upload-artifact@v4');
+      expect(key(upload(), 'uses')).toBe(
+        'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
+      );
       expect(key(upload(), 'path')).toBe('${{ steps.scan.outputs.sarif }}');
       // Шаг ссылается на `steps.scan`, значит идентификатор обязан существовать.
       expect(key(scan(), 'id')).toBe('scan');
@@ -1247,7 +1251,7 @@ describe('LEGACY-248: состав образа описывается на об
 
   /**
    * 🔴 Главный инвариант этого шага, и он не про наличие. `anchore/scan-action` выставляет
-   * `sarif` только после успешной записи отчёта, а `path` у `actions/upload-artifact@v4`
+   * `sarif` только после успешной записи отчёта, а `path` у `actions/upload-artifact` (v4)
    * читается как `required: true` и на пустой строке падает с `Input required and not
    * supplied`. Шаг с одним `if: always()` краснел бы **именно при отказе сканера** — то
    * есть ровно в том случае, ради наблюдаемости которого заведён, — и блокировал бы
@@ -1342,5 +1346,449 @@ describe('тег без зелёного CI до сервера не доход�
     expect(condition).toContain("needs.ci_gate.result == 'success'");
     expect(condition).toContain("needs.ci_gate.result == 'skipped'");
     expect(condition).not.toContain('needs.ci_gate.result != ');
+  });
+});
+
+/**
+ * Усиление конвейера выката (`LEGACY-458`, `LEGACY-467`).
+ *
+ * Оба репозитория публичные, а ключ деплоя даёт root на боевой машине (`LEGACY-464`).
+ * Держится пять вещей: actions закреплены полным SHA (тег можно переставить); права токена
+ * по умолчанию - только чтение; версия (вход `version` и имя тега) не подставляется в текст
+ * shell и проверяется по виду; проверка ключа хоста не выключена литералом; откат сверяет
+ * точку отката с ревизией этого прогона.
+ *
+ * Шаги версии, ревизии сервера, ключа хоста и проверка отката **исполняются** bash на плохом
+ * и на чистом входе: проверка по тексту пропускала бы неверную ветку (`L-017`). Разбор - общий
+ * для файла (`jobBody`, `steps`, `step`, `runBody`), второй копии нет.
+ */
+const WORKFLOW_FILES = readdirSync(WORKFLOWS_DIR).filter((name) => name.endsWith('.yml'));
+const workflowCode = (file: string): string =>
+  stripComments(readFileSync(join(WORKFLOWS_DIR, file), 'utf8'));
+const GITIGNORE = readFileSync(join(ROOT, '.gitignore'), 'utf8');
+
+interface BashRun {
+  code: number | null;
+  out: string;
+}
+
+const bash = (script: string, env: Record<string, string>): BashRun => {
+  const res = spawnSync('bash', ['-e', '-c', script], {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+  });
+  return { code: res.status, out: `${res.stdout}${res.stderr}` };
+};
+
+/** Временный каталог на время одного прогона; путь отдаётся в форме, понятной bash. */
+const withTempDir = <T>(prefix: string, fn: (dir: string) => T): T => {
+  const dir = mkdtempSync(join(tmpdir(), prefix));
+  try {
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+};
+const bashPath = (path: string): string => path.replace(/\\/g, '/');
+
+describe('LEGACY-458: конвейер выката усилен', () => {
+  it('воркфлоу найдены', () => {
+    expect(WORKFLOW_FILES).toEqual(
+      expect.arrayContaining(['ci.yml', 'deploy.yml', 'deploy-queue-watchdog.yml']),
+    );
+  });
+
+  it.each(WORKFLOW_FILES)(
+    '%s: каждый action закреплён полным SHA с версией в комментарии',
+    (file) => {
+      const raw = readFileSync(join(WORKFLOWS_DIR, file), 'utf8');
+      const uses = raw.split(/\r?\n/).filter((l) => /^\s*(-\s+)?uses:\s/.test(l));
+      expect([file, uses.length > 0]).toEqual([file, true]);
+      for (const line of uses) {
+        expect(line).toMatch(/uses:\s+[\w.-]+\/[\w./-]+@[0-9a-f]{40}\s+#\s+v\d/);
+      }
+    },
+  );
+
+  // Один action - один SHA во всех файлах: иначе на слиянии и на выкате идут разные версии.
+  it('один и тот же action закреплён одним SHA во всех воркфлоу', () => {
+    const pins = new Map<string, Set<string>>();
+    for (const file of WORKFLOW_FILES) {
+      for (const m of readFileSync(join(WORKFLOWS_DIR, file), 'utf8').matchAll(
+        /uses:\s+([\w.-]+\/[\w./-]+)@([0-9a-f]{40})/g,
+      )) {
+        pins.set(m[1], (pins.get(m[1]) ?? new Set()).add(m[2]));
+      }
+    }
+    expect(pins.size).toBeGreaterThan(0);
+    for (const [action, shas] of pins) expect([action, shas.size]).toEqual([action, 1]);
+  });
+
+  it.each(['ci.yml', 'deploy.yml'])('%s: права по умолчанию - только чтение', (file) => {
+    const top = workflowCode(file).match(/^permissions:\n((?: {2}\S.*\n)+)/m);
+    expect(top).not.toBeNull();
+    expect(top?.[1].trim()).toBe('contents: read');
+  });
+
+  // Запись одна на все воркфлоу - `packages: write` у `build`. Новое право на запись или
+  // `write-all` где угодно краснеет здесь.
+  it.each(WORKFLOW_FILES)('%s: права на запись только у публикации образа', (file) => {
+    const code = workflowCode(file);
+    expect([file, /write-all|read-all/.test(code)]).toEqual([file, false]);
+    const writes = code
+      .split('\n')
+      .filter((line) => /^\s+[a-z-]+:\s*write\s*$/.test(line))
+      .map((l) => l.trim());
+    expect([file, writes]).toEqual([file, file === 'deploy.yml' ? ['packages: write'] : []]);
+  });
+
+  it('запись пакетов - у job build, чтение - у deploy', () => {
+    expect(jobBody('build').join('\n')).toMatch(
+      /permissions:\n\s+contents: read\n\s+packages: write/,
+    );
+    expect(jobBody('deploy').join('\n')).toMatch(
+      /permissions:\n\s+contents: read\n\s+packages: read/,
+    );
+    expect(DEPLOY_CODE).not.toMatch(/id-token:|attestations:/);
+  });
+
+  // Имя тега и вход `version` - строки, которые задаёт человек. В текст shell они не
+  // подставляются ни в одном шаге; проверку вида проходит только `steps.version.outputs.version`.
+  it('ни вход version, ни имя ветки или тега не подставляются в текст shell', () => {
+    // Текст `run:` берётся от самого ключа, а не через `runBody`: однострочный `run: cmd`
+    // `runBody` не разбирает, и проверка молча прошла бы мимо него.
+    const runText = (s: Step): string => {
+      const at = s.lines.findIndex((line) => /^ {8}run:/.test(line));
+      return at === -1 ? '' : s.lines.slice(at).join('\n');
+    };
+    const job = ['build', 'deploy', 'rollback', 'notify', 'test', 'e2e', 'ci_gate'];
+    for (const name of job) {
+      for (const s of steps(jobBody(name))) {
+        expect([
+          name,
+          s.name,
+          /github\.(ref_name|head_ref|event\.inputs\.version)/.test(runText(s)),
+        ]).toEqual([name, s.name, false]);
+      }
+    }
+    expect(DEPLOY_CODE.match(/\$\{\{\s*github\.event\.inputs\.version\s*\}\}/g)).toHaveLength(1);
+    expect(DEPLOY_CODE).toMatch(/INPUT_VERSION: \$\{\{ github\.event\.inputs\.version \}\}/);
+  });
+
+  describe('шаг версии на живом прогоне', () => {
+    const script = (): string => runBody(step('build', '🔍 Extract Version'));
+
+    const run = (refType: string, ref: string, input: string): BashRun & { output: string } =>
+      withTempDir('version-step-', (dir) => {
+        const output = join(dir, 'out');
+        writeFileSync(output, '');
+        const res = bash(script().split('${{ github.ref_type }}').join(refType), {
+          GITHUB_REF: ref,
+          INPUT_VERSION: input,
+          GITHUB_OUTPUT: bashPath(output),
+        });
+        return { ...res, output: readFileSync(output, 'utf8') };
+      });
+
+    it.each([
+      ['tag', 'refs/tags/v1.0.212', '', 'version=v1.0.212'],
+      ['branch', 'refs/heads/main', 'v1.2.3-rc.1', 'version=v1.2.3-rc.1'],
+    ])('чистый вход проходит: %s %s %s', (refType, ref, input, expected) => {
+      const res = run(refType, ref, input);
+      expect([res.code, res.output.trim()]).toEqual([0, expected]);
+    });
+
+    it.each([
+      ['tag', 'refs/tags/v1$(id)', ''],
+      ['tag', 'refs/tags/v1;id', ''],
+      ['branch', 'refs/heads/main', 'v1"; id; "'],
+      ['branch', 'refs/heads/main', 'v1 2'],
+      ['branch', 'refs/heads/main', '--force'],
+      ['branch', 'refs/heads/main', `v${'1'.repeat(128)}`],
+    ])('плохой вход отказывает до записи выхода: %s %s %s', (refType, ref, input) => {
+      const res = run(refType, ref, input);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain('Version must match');
+      expect(res.output).toBe('');
+    });
+  });
+
+  describe('ключ хоста', () => {
+    const PIN = '🔐 Pin Server Host Key';
+
+    it('литерала StrictHostKeyChecking=no нет ни в одном воркфлоу', () => {
+      for (const file of WORKFLOW_FILES) {
+        expect([file, workflowCode(file).includes('StrictHostKeyChecking=no')]).toEqual([
+          file,
+          false,
+        ]);
+      }
+      expect(DEPLOY_CODE.match(/StrictHostKeyChecking=\$HOST_KEY_CHECK/g)).toHaveLength(3);
+    });
+
+    // Без шага в job `rollback` `HOST_KEY_CHECK` пуста, `ssh -o StrictHostKeyChecking=`
+    // падает, и откат не стартует ровно тогда, когда нужен. Вызов ищется по всем строкам
+    // шага, а не по разобранному `run:`: однострочный `run: ssh ...` тоже считается.
+    it.each(['deploy', 'rollback'])('в job %s ключ задаётся до первого ssh', (job) => {
+      const all = steps(jobBody(job));
+      const pin = all.findIndex((s) => s.name === PIN);
+      const firstSsh = all.findIndex((s) => /(^|[\s(|:])ssh\s/m.test(s.lines.join('\n')));
+      expect(pin).toBeGreaterThan(-1);
+      expect(firstSsh).toBeGreaterThan(pin);
+    });
+
+    it.each(['deploy', 'rollback'])(
+      'в job %s: переменная - строгая проверка, нет - прежнее поведение и предупреждение',
+      (job) => {
+        const script = runBody(step(job, PIN));
+        withTempDir('pin-', (home) => {
+          const env = join(home, 'env');
+          writeFileSync(env, '');
+          const strict = bash(script, {
+            HOME: bashPath(home),
+            GITHUB_ENV: bashPath(env),
+            // Перевод строки Windows: ключ с хвостовым `\r` не совпал бы ни с одним хостом.
+            KNOWN_HOSTS: 'host ssh-ed25519 AAAA\r\nhost2 ssh-ed25519 BBBB\r',
+          });
+          expect(strict.code).toBe(0);
+          expect(readFileSync(env, 'utf8').trim()).toBe('HOST_KEY_CHECK=yes');
+          const known = readFileSync(join(home, '.ssh', 'known_hosts'), 'utf8');
+          expect(known).toBe('host ssh-ed25519 AAAA\nhost2 ssh-ed25519 BBBB\n');
+
+          writeFileSync(env, '');
+          const loose = bash(script, {
+            HOME: bashPath(home),
+            GITHUB_ENV: bashPath(env),
+            KNOWN_HOSTS: '',
+          });
+          expect(loose.code).toBe(0);
+          expect(readFileSync(env, 'utf8').trim()).toBe('HOST_KEY_CHECK=no');
+          expect(loose.out).toContain('::warning::DEPLOY_KNOWN_HOSTS is not set');
+        });
+      },
+    );
+
+    it('переменная приходит через env, а не подстановкой в текст', () => {
+      expect(DEPLOY_CODE.match(/\$\{\{\s*vars\.DEPLOY_KNOWN_HOSTS/g)).toHaveLength(2);
+      expect(DEPLOY_CODE.match(/KNOWN_HOSTS: \$\{\{ vars\.DEPLOY_KNOWN_HOSTS \}\}/g)).toHaveLength(
+        2,
+      );
+    });
+  });
+});
+
+describe('LEGACY-467: откат идёт только по точке отката этого выката', () => {
+  const RECORD = '↩️ Record previous server revision';
+  const PREV = 'a'.repeat(40);
+  const OTHER = 'b'.repeat(40);
+
+  // Ревизия снимается ДО отметки: шаг только читает, и его отказ не должен вооружать откат
+  // (`LEGACY-227`).
+  it('ревизия сервера снимается до отметки server_stage и отдаётся откату', () => {
+    const record = indexOfStep('deploy', RECORD);
+    expect(indexOfStep('deploy', '📍 Mark server stage reached')).toBe(record + 1);
+    expect(indexOfStep('deploy', '🚀 Deploy to Server')).toBe(record + 2);
+    expect(jobBody('deploy').join('\n')).toContain(
+      'previous_sha: ${{ steps.previous_revision.outputs.sha }}',
+    );
+    expect(jobBody('rollback').join('\n')).toContain('needs.deploy.outputs.previous_sha');
+  });
+
+  describe('шаг ревизии на живом прогоне', () => {
+    // `ssh` подменяется функцией: она отвечает тем, что вернул бы сервер.
+    const run = (answer: string): BashRun & { output: string } =>
+      withTempDir('record-', (dir) => {
+        const output = join(dir, 'out');
+        writeFileSync(output, '');
+        const shim = `ssh() { printf '%s' "$SERVER_ANSWER"; }\n`;
+        // Подстановки Actions (`${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }}`) делает
+        // GitHub до shell; здесь их заменяет условный адрес, иначе bash падает на `${{`.
+        const script = runBody(step('deploy', RECORD)).replace(/\$\{\{[^}]*\}\}/g, 'host');
+        const res = bash(shim + script, {
+          SERVER_ANSWER: answer,
+          GITHUB_OUTPUT: bashPath(output),
+          HOST_KEY_CHECK: 'yes',
+        });
+        return { ...res, output: readFileSync(output, 'utf8') };
+      });
+
+    it.each([
+      ['чистый ответ', PREV],
+      // Баннер или `echo` из профиля пользователя на сервере идут в stdout раньше ревизии.
+      ['ответ с баннером', `Welcome to prod\n${PREV}`],
+    ])('%s - ревизия уходит в выход шага', (_case, answer) => {
+      const res = run(answer);
+      expect([res.code, res.output.trim()]).toEqual([0, `sha=${PREV}`]);
+    });
+
+    it.each([
+      ['пустой ответ', ''],
+      ['не репозиторий', 'fatal: not a git repository'],
+      ['короткий sha', 'abc1234'],
+    ])('%s - отказ до отметки, выход пуст', (_case, answer) => {
+      const res = run(answer);
+      expect(res.code).toBe(1);
+      expect(res.output).toBe('');
+    });
+  });
+  // Ревизия читается дважды: шагом выше (в откат) и в heredoc выката (в `.rollback_info`
+  // через `save_current_state`). Heredoc обязан сверить их и отказать до stash.
+  describe('heredoc выката сверяет свою ревизию с записанной', () => {
+    const RECORDED = '${{ steps.previous_revision.outputs.sha }}';
+
+    /** Кусок heredoc от снятия ревизии до конца сверки - в настоящем git-репозитории. */
+    const run = (recorded: string): BashRun => {
+      const lines = runBody(step('deploy', '🚀 Deploy to Server')).split('\n');
+      const from = lines.findIndex((l) => l.includes('DEPLOY_PREVIOUS_SHA=$(git rev-parse HEAD'));
+      const check = lines.findIndex(
+        (l, i) => i > from && l.includes(`"$DEPLOY_PREVIOUS_SHA" != "${RECORDED}"`),
+      );
+      const fi = lines.findIndex((l, i) => i > check && l.trim() === 'fi');
+      const stash = lines.findIndex((l) => /git stash --include-untracked/.test(l));
+      expect([from > -1, check > from, fi > check, stash > fi]).toEqual([true, true, true, true]);
+      const snippet = lines
+        .slice(from, fi + 1)
+        .join('\n')
+        .split(RECORDED)
+        .join(recorded);
+      return withTempDir('prev-sha-', (dir) =>
+        bash(
+          [
+            `cd '${bashPath(dir)}'`,
+            'git init -q .',
+            'git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init',
+            snippet,
+            'echo PASSED',
+          ].join('\n'),
+          {},
+        ),
+      );
+    };
+
+    it('та же ревизия - выкат идёт дальше', () => {
+      const res = run('$(git rev-parse HEAD)');
+      expect([res.code, res.out.includes('PASSED')]).toEqual([0, true]);
+    });
+
+    it('другая ревизия - отказ до stash', () => {
+      const res = run(PREV);
+      expect(res.code).toBe(1);
+      expect(res.out).toContain('differs from the recorded one');
+      expect(res.out).not.toContain('PASSED');
+    });
+  });
+
+  describe('проверка точки отката на живом прогоне', () => {
+    const remote = (): string => {
+      const lines = runBody(step('rollback', '⏪ Rollback Deployment')).split('\n');
+      const open = lines.findIndex((line) => /<< 'EOF'\s*$/.test(line));
+      const close = lines.findIndex((line, i) => i > open && line.trim() === 'EOF');
+      expect([open > -1, close > open]).toEqual([true, true]);
+      return lines.slice(open + 1, close).join('\n');
+    };
+
+    // `jq` на боевой машине есть (им пользуется `deploy_production.sh`), на раннере тестов -
+    // не обязательно. Подмена отвечает ровно на вызов из шага, сам вызов сверяется строкой ниже.
+    const JQ_SHIM = [
+      'jq() {',
+      '  if [[ "$1" == "-e" && "$2" == "." ]]; then',
+      '    node -e "JSON.parse(require(\'fs\').readFileSync(process.argv[1],\'utf8\'))" "$3"',
+      '    return',
+      '  fi',
+      '  [[ "$1" == "-r" && "$2" == ".commit // empty" ]] || { echo "unexpected jq call: $*"; return 2; }',
+      '  node -e "const v=JSON.parse(require(\'fs\').readFileSync(process.argv[1],\'utf8\')).commit; if (v) console.log(v)" "$3"',
+      '}',
+    ].join('\n');
+
+    const run = (prev: string, rollbackInfo: string | null): BashRun =>
+      withTempDir('rollback-', (dir) => {
+        mkdirSync(join(dir, 'scripts'));
+        writeFileSync(
+          join(dir, 'scripts', 'deploy_production.sh'),
+          '#!/bin/bash\necho ROLLED_BACK\n',
+          {
+            mode: 0o755,
+          },
+        );
+        if (rollbackInfo !== null) writeFileSync(join(dir, '.rollback_info'), rollbackInfo);
+        const body = remote()
+          .split('${{ needs.deploy.outputs.previous_sha }}')
+          .join(prev)
+          .split('cd /opt/books/app/src')
+          .join(`cd '${bashPath(dir)}'`);
+        return bash(`${JQ_SHIM}\n${body}`, {});
+      });
+
+    it('вызов jq в шаге - ровно тот, на который отвечает подмена', () => {
+      expect(remote()).toContain("ROLLBACK_COMMIT=$(jq -r '.commit // empty' .rollback_info)");
+      expect(remote()).toContain('if ! jq -e . .rollback_info >/dev/null 2>&1; then');
+    });
+
+    it('точка отката этого выката - откат идёт', () => {
+      const res = run(PREV, JSON.stringify({ commit: PREV }));
+      expect([res.code, res.out.includes('ROLLED_BACK')]).toEqual([0, true]);
+    });
+
+    it.each([
+      ['ревизия прогона неизвестна', '', JSON.stringify({ commit: '' })],
+      ['ревизия прогона не sha', 'main', JSON.stringify({ commit: 'main' })],
+      ['файла точки отката нет', PREV, null],
+      ['файл от прошлого выката', PREV, JSON.stringify({ commit: OTHER })],
+      ['в файле нет commit', PREV, JSON.stringify({ image_id: 'x' })],
+      ['файл обрезан, не JSON', PREV, '{"commit": "aaa'],
+    ])('%s - отказ красным, скрипт отката не зовётся', (_case, prev, info) => {
+      const res = run(prev, info);
+      expect(res.code).toBe(1);
+      expect(res.out).not.toContain('ROLLED_BACK');
+      expect(res.out).toContain('refusing to roll back');
+    });
+
+    it('в откате нет глушения ошибок', () => {
+      expect(jobBody('rollback').join('\n')).not.toMatch(/\|\| true|continue-on-error/);
+    });
+  });
+
+  // Живой прогон на настоящем git: исключение пишется до stash и держит файлы на месте
+  // независимо от `.gitignore` ревизии - в репозитории ниже `.gitignore` нет вовсе, как
+  // на сервере после отката на ревизию старше `T125`.
+  it('stash выката не прячет точку отката на дереве со старым .gitignore', () => {
+    const body = runBody(step('deploy', '🚀 Deploy to Server')).split('\n');
+    const exclude = (file: string): number =>
+      body.findIndex(
+        (line) =>
+          line.trim() ===
+          `grep -qxF ${file} .git/info/exclude 2>/dev/null || echo ${file} >> .git/info/exclude`,
+      );
+    const first = exclude('/.rollback_info');
+    const second = exclude('/.deployment_state');
+    const stash = body.findIndex((line) => /git stash --include-untracked/.test(line));
+    expect([first > -1, second > -1, stash > Math.max(first, second)]).toEqual([true, true, true]);
+    const snippet = [body[first], body[second], body[stash]].join('\n');
+
+    withTempDir('stash-', (dir) => {
+      const repo = bashPath(dir);
+      const setup = [
+        `cd '${repo}'`,
+        'git init -q .',
+        'git -c user.email=t@t -c user.name=t commit -q --allow-empty -m init',
+        'echo \'{"commit":"x"}\' > .rollback_info',
+        'echo state > .deployment_state',
+        'echo junk > untracked.txt',
+      ].join('\n');
+      const res = bash(`${setup}\n${snippet}\n${snippet}\ncat .git/info/exclude`, {});
+      expect(res.code).toBe(0);
+      expect(readFileSync(join(dir, '.rollback_info'), 'utf8')).toContain('"commit"');
+      expect(readFileSync(join(dir, '.deployment_state'), 'utf8')).toContain('state');
+      // Остальное по-прежнему уходит в stash, а повторный прогон не плодит строки исключения.
+      expect(() => readFileSync(join(dir, 'untracked.txt'))).toThrow();
+      const excluded = readFileSync(join(dir, '.git', 'info', 'exclude'), 'utf8');
+      expect(excluded.match(/^\/\.rollback_info$/gm)).toHaveLength(1);
+      expect(excluded.match(/^\/\.deployment_state$/gm)).toHaveLength(1);
+    });
+  });
+
+  it('файлы выката не попадают под git stash --include-untracked', () => {
+    expect(GITIGNORE).toMatch(/^\/\.rollback_info$/m);
+    expect(GITIGNORE).toMatch(/^\/\.deployment_state$/m);
   });
 });
