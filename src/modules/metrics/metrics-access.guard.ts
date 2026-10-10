@@ -1,7 +1,19 @@
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { ExecutionContext, Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuthGuard } from '@nestjs/passport';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
+
+/**
+ * Сверка предъявленного токена с `METRICS_TOKEN` за время, не зависящее от совпавшего префикса
+ * (`LEGACY-455`): `===` останавливается на первом расхождении, и время ответа подбирало бы секрет
+ * посимвольно. Сравниваются SHA-256 обеих строк — `timingSafeEqual` требует равной длины,
+ * а сравнение длин выдавало бы длину секрета.
+ */
+export function metricsTokenMatches(presented: string, expected: string): boolean {
+  const digest = (value: string) => createHash('sha256').update(value).digest();
+  return timingSafeEqual(digest(presented), digest(expected));
+}
 
 /**
  * Два независимых способа получить реестр метрик — скрейпер и человек.
@@ -44,7 +56,7 @@ export class MetricsAccessGuard extends AuthGuard('jwt') {
       typeof header === 'string' && header.startsWith('Bearer ') ? header.slice(7).trim() : '';
 
     const metricsToken = (this.config.get<string>('METRICS_TOKEN') || '').trim();
-    if (metricsToken && bearer && bearer === metricsToken) {
+    if (metricsToken && bearer && metricsTokenMatches(bearer, metricsToken)) {
       return true;
     }
 

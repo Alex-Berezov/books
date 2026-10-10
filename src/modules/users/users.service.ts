@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   NotFoundException,
   ConflictException,
@@ -28,6 +29,8 @@ import { PUBLIC_COMMENT_USER_SELECT } from '../../common/selects/public-comment-
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { rolesCache } from '../../common/roles/roles-cache';
 import { sessionStateCache } from '../../shared/session/session-state-cache';
+import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
+import { isStoragePublicUrl } from '../../shared/storage/storage-public-url';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 
 /**
@@ -213,6 +216,7 @@ export class UsersService {
     private prisma: PrismaService,
     private moderatorRoles: ModeratorRolesService,
     private adminAudit: AdminAuditService,
+    @Inject(STORAGE_SERVICE) private storage: StorageService,
   ) {}
 
   async me(userId: string): Promise<PublicUser & { roles: RoleName[] }> {
@@ -251,6 +255,21 @@ export class UsersService {
       languagePreference?: PrismaLanguage;
     },
   ): Promise<PublicUser> {
+    // Аватар — только файл из нашего хранилища (`LEGACY-455`): адрес чужого хоста грузился бы
+    // у каждого, кто видит профиль или комментарий, и отдавал бы его IP владельцу хоста. Профиль
+    // ставит сюда `publicUrl` загрузки; аватар провайдера пишется входом мимо этого метода.
+    // Уже сохранённый адрес (аватар провайдера, адрес до этого правила) принимается как есть:
+    // клиент, вернувший его вместе с другими полями, иначе терял бы всю правку профиля.
+    // `null` (`@IsOptional` его пропускает) — снятие аватара, а не адрес: проверять нечего.
+    if (typeof data.avatarUrl === 'string' && !isStoragePublicUrl(this.storage, data.avatarUrl)) {
+      const current = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { avatarUrl: true },
+      });
+      if (current?.avatarUrl !== data.avatarUrl) {
+        throw new BadRequestException('avatarUrl must point to an uploaded file');
+      }
+    }
     if (data.nickname) {
       const existing = await this.prisma.user.findFirst({
         where: {

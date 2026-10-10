@@ -40,6 +40,7 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
 
   const ADMIN_EMAIL = 'social-admin@example.com';
   const PASSWORD_ACCOUNT_EMAIL = 'password-owner@example.com';
+  const PRECLAIMED_EMAIL = 'preclaimed-victim@example.com';
 
   beforeAll(async () => {
     verified.set('google:good-google-token', {
@@ -66,6 +67,13 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
       provider: 'google',
       providerUserId: 'g-1',
       email: 'google-renamed@example.com',
+      emailVerified: true,
+    });
+    // LEGACY-454: Google подтвердил адрес, который раньше занял парольной регистрацией кто-то другой.
+    verified.set('google:victim-google-token', {
+      provider: 'google',
+      providerUserId: 'g-victim',
+      email: PRECLAIMED_EMAIL,
       emailVerified: true,
     });
     // Facebook, чей адрес совпадает с адресом уже существующего парольного аккаунта.
@@ -231,6 +239,60 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
       },
     });
     expect(identity).toBeNull();
+  });
+
+  // 🔴 LEGACY-454 на живой базе: значение журнала из новой миграции, снятие хеша условием записи
+  // и подъём версии видны только здесь — юнит-тесты держат их на моке.
+  it('первая привязка Google к чужому парольному аккаунту снимает пароль и гасит его сессии', async () => {
+    const http = () => request(app.getHttpServer());
+    const reg = await http()
+      .post('/auth/register')
+      .send({ email: PRECLAIMED_EMAIL, password: 'attacker-pass1' })
+      .expect(201);
+    const attackerAccess = reg.body.accessToken as string;
+    await http().get('/users/me').set('Authorization', `Bearer ${attackerAccess}`).expect(200);
+
+    const social = await http()
+      .post('/auth/social')
+      .send({ provider: 'google', token: 'victim-google-token' })
+      .expect(200);
+    expect(social.body.user.id).toBe(reg.body.user.id);
+
+    const row = await prisma.user.findUnique({
+      where: { id: reg.body.user.id as string },
+      select: { passwordHash: true, tokenVersion: true },
+    });
+    expect(row?.passwordHash).toBeNull();
+    expect(row?.tokenVersion).toBe(1);
+
+    const events = await prisma.adminAuditEvent.findMany({
+      where: { targetId: reg.body.user.id as string, action: 'PASSWORD_REMOVED_ON_SOCIAL_LINK' },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0].actorUserId).toBeNull();
+
+    // Сессия атакующего погашена, пароль больше не входит, а сессия Google жива.
+    await http().get('/users/me').set('Authorization', `Bearer ${attackerAccess}`).expect(401);
+    const login = await http()
+      .post('/auth/login')
+      .send({ email: PRECLAIMED_EMAIL, password: 'attacker-pass1' })
+      .expect(401);
+    expect(login.body.message).toBe('Invalid credentials');
+    await http()
+      .get('/users/me')
+      .set('Authorization', `Bearer ${social.body.accessToken as string}`)
+      .expect(200);
+
+    // Повторный вход той же личностью — по связи, без нового события.
+    await http()
+      .post('/auth/social')
+      .send({ provider: 'google', token: 'victim-google-token' })
+      .expect(200);
+    expect(
+      await prisma.adminAuditEvent.count({
+        where: { targetId: reg.body.user.id as string, action: 'PASSWORD_REMOVED_ON_SOCIAL_LINK' },
+      }),
+    ).toBe(1);
   });
 
   it('rejects a token without a provider', async () => {

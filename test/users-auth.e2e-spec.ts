@@ -4,6 +4,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { grantStaffRoles } from './helpers/staff-roles';
+import { STORAGE_SERVICE, StorageService } from '../src/shared/storage/storage.interface';
 
 describe('Users authorized e2e', () => {
   let app: INestApplication;
@@ -43,14 +44,22 @@ describe('Users authorized e2e', () => {
       .expect(200);
     expect(me.body.email).toBe(email);
 
+    // Аватар — адрес загрузки нашего хранилища (`LEGACY-455`); чужой хост отклоняется.
+    const avatarUrl = app.get<StorageService>(STORAGE_SERVICE).getPublicUrl('avatars/e2e/a.png');
+    await request(app.getHttpServer())
+      .patch('/users/me')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ avatarUrl: 'https://example.com/a.png' })
+      .expect(400);
+
     const updated = await request(app.getHttpServer())
       .patch('/users/me')
       .set('Authorization', `Bearer ${token}`)
-      .send({ name: 'Tester', avatarUrl: 'https://example.com/a.png', languagePreference: 'es' })
+      .send({ name: 'Tester', avatarUrl, languagePreference: 'es' })
       .expect(200);
 
     expect(updated.body.name).toBe('Tester');
-    expect(updated.body.avatarUrl).toBe('https://example.com/a.png');
+    expect(updated.body.avatarUrl).toBe(avatarUrl);
     expect(updated.body.languagePreference).toBe('es');
   });
 

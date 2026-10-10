@@ -18,6 +18,7 @@ import { rolesCache } from '../../common/roles/roles-cache';
 import { sessionStateCache } from '../../shared/session/session-state-cache';
 import { Role } from '../../common/decorators/roles.decorator';
 import { STAFF_ROLE_NAMES } from './users.constants';
+import type { StorageService } from '../../shared/storage/storage.interface';
 
 // Настоящий хеш, обёрнутый в jest.fn: посадка LEGACY-425 смотрит, считался ли он вообще.
 jest.mock('argon2', () => {
@@ -87,6 +88,10 @@ interface PrismaStub {
     [TransactionArg, { timeout: number; maxWait: number }?]
   >;
 }
+
+/** Публичная база загрузки: так `R2StorageService` строит адрес с префиксом ключей. */
+const STORAGE_BASE = 'https://media.example.test/uploads';
+const storageStub = { getPublicUrl: (key: string) => `${STORAGE_BASE}/${key}` };
 
 describe('UsersService (unit)', () => {
   let service: UsersService;
@@ -166,6 +171,7 @@ describe('UsersService (unit)', () => {
       prismaMock as unknown as PrismaService,
       moderatorRoles,
       adminAudit as unknown as AdminAuditService,
+      storageStub as unknown as StorageService,
     );
 
     // Кэш ролей общий на процесс (`LEGACY-112`) — гасить его надо на весь файл,
@@ -227,16 +233,70 @@ describe('UsersService (unit)', () => {
   });
 
   it('updateMe: updates allowed fields and returns public user', async () => {
-    const updated = { ...baseUser, name: 'Jane', avatarUrl: 'a.png' } as User;
+    const avatarUrl = `${STORAGE_BASE}/avatars/u1/a.png`;
+    const updated = { ...baseUser, name: 'Jane', avatarUrl } as User;
     prismaMock.user.update.mockResolvedValueOnce(updated);
-    const res = await service.updateMe('u1', { name: 'Jane', avatarUrl: 'a.png' });
+    const res = await service.updateMe('u1', { name: 'Jane', avatarUrl });
     expect(prismaMock.user.update).toHaveBeenCalledWith({
       where: { id: 'u1' },
-      data: { name: 'Jane', avatarUrl: 'a.png' },
+      data: { name: 'Jane', avatarUrl },
       select: ACCOUNT_USER_SELECT,
     });
     expect(res.name).toBe('Jane');
     expect((res as { passwordHash?: string }).passwordHash).toBeUndefined();
+  });
+
+  describe('updateMe: аватар только из нашего хранилища (LEGACY-455)', () => {
+    it.each([
+      ['чужой хост', 'https://tracker.example.com/pixel.png'],
+      ['наш хост префиксом чужого', 'https://media.example.test.evil.com/uploads/a.png'],
+      ['учётка в адресе', 'https://media.example.test@evil.com/uploads/a.png'],
+      ['наш хост, путь мимо базы', 'https://media.example.test/other/a.png'],
+      ['соседний префикс', 'https://media.example.test/uploads-other/a.png'],
+      ['другая схема', 'http://media.example.test/uploads/a.png'],
+      ['сама база без файла', `${STORAGE_BASE}/`],
+    ])('%s — 400, профиль не пишется', async (_name, avatarUrl) => {
+      await expect(service.updateMe('u1', { avatarUrl })).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
+      expect(prismaMock.user.update).not.toHaveBeenCalled();
+    });
+
+    it('уже сохранённый внешний аватар (провайдера) принимается как есть', async () => {
+      const avatarUrl = 'https://lh3.googleusercontent.com/a/photo';
+      prismaMock.user.findUnique.mockResolvedValueOnce({ avatarUrl });
+      prismaMock.user.update.mockResolvedValueOnce({ ...baseUser, avatarUrl } as User);
+      await service.updateMe('u1', { name: 'Jane', avatarUrl });
+      expect(prismaMock.user.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('сохранён внешний аватар A, прислан внешний B — 400, чтение текущего узкое', async () => {
+      prismaMock.user.findUnique.mockResolvedValueOnce({
+        avatarUrl: 'https://lh3.googleusercontent.com/a/photo',
+      });
+      await expect(
+        service.updateMe('u1', { avatarUrl: 'https://tracker.example.com/pixel.png' }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prismaMock.user.findUnique).toHaveBeenCalledTimes(1);
+      expect(prismaMock.user.findUnique).toHaveBeenCalledWith({
+        where: { id: 'u1' },
+        select: { avatarUrl: true },
+      });
+      expect(prismaMock.user.update).not.toHaveBeenCalled();
+    });
+
+    it('avatarUrl: null — снятие аватара, как до правила', async () => {
+      prismaMock.user.update.mockResolvedValueOnce({ ...baseUser, avatarUrl: null } as User);
+      await service.updateMe('u1', { avatarUrl: null as unknown as string });
+      expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
+      expect(prismaMock.user.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('без аватара в теле проверки нет — остальные поля пишутся', async () => {
+      prismaMock.user.update.mockResolvedValueOnce({ ...baseUser, name: 'Jane' } as User);
+      await service.updateMe('u1', { name: 'Jane' });
+      expect(prismaMock.user.update).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('deleteById: NotFound when user missing initially', async () => {

@@ -40,7 +40,7 @@ interface PrismaStub {
  * запись тем же `tx` от записи корневым клиентом (урок `T20`, `LEGACY-015`).
  */
 interface TxStub {
-  user: { create: jest.Mock; update: jest.Mock };
+  user: { create: jest.Mock; update: jest.Mock; updateMany: jest.Mock };
   role: { findMany: jest.Mock };
   userRole: { createMany: jest.Mock };
   userIdentity: { upsert: jest.Mock };
@@ -95,7 +95,8 @@ describe('AuthService (unit)', () => {
         create: jest.fn(),
         // Отметка входа отдаёт версию сессий на момент подписи (`markSignIn`).
         update: jest.fn().mockResolvedValue({ tokenVersion: 0 }),
-        updateMany: jest.fn(),
+        // Снятие пароля при первой привязке (`LEGACY-454`): по умолчанию пароля нет — снимать нечего.
+        updateMany: jest.fn().mockResolvedValue({ count: 0 }),
       },
       userRole: { upsert: jest.fn(), findMany: jest.fn() },
       // Привязка личности провайдера. По умолчанию её нет — так выглядит первый
@@ -115,6 +116,7 @@ describe('AuthService (unit)', () => {
       user: {
         create: jest.fn((args: unknown) => prisma.user.create(args) as Promise<unknown>),
         update: jest.fn((args: unknown) => prisma.user.update(args) as Promise<unknown>),
+        updateMany: jest.fn((args: unknown) => prisma.user.updateMany(args) as Promise<unknown>),
       },
       userIdentity: {
         upsert: jest.fn((args: unknown) => prisma.userIdentity.upsert(args) as Promise<unknown>),
@@ -428,6 +430,58 @@ describe('AuthService (unit)', () => {
     );
   });
 
+  // 🔴 LEGACY-455: без сверки по фиктивному хешу отказ «нет такого адреса» приходил без argon2,
+  // то есть на порядок быстрее отказа «неверный пароль», и время ответа выдавало занятые адреса.
+  it.each([
+    ['аккаунта нет', null],
+    ['у аккаунта нет пароля (вход только провайдером)', { ...user, passwordHash: null }],
+  ])('login: %s — argon2 всё равно считается, ответ тот же', async (_name, found) => {
+    prisma.user.findUnique.mockResolvedValueOnce(found);
+    (argon2.hash as jest.Mock).mockResolvedValueOnce('$argon2id$dummy');
+    (argon2.verify as jest.Mock).mockClear().mockResolvedValueOnce(false);
+
+    await expect(service.login({ email: 'x@x.com', password: 'guess' })).rejects.toThrow(
+      new UnauthorizedException('Invalid credentials'),
+    );
+    expect(argon2.verify).toHaveBeenCalledTimes(1);
+    expect(argon2.verify).toHaveBeenNthCalledWith(1, '$argon2id$dummy', 'guess');
+  });
+
+  it('login: отказ хеширования фиктивного хеша не запоминается — следующий вход снова 401', async () => {
+    (argon2.hash as jest.Mock)
+      .mockClear()
+      .mockRejectedValueOnce(new Error('argon2 out of memory'))
+      .mockResolvedValueOnce('$argon2id$dummy');
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(false);
+    prisma.user.findUnique.mockResolvedValue(null);
+
+    await expect(service.login({ email: 'x@x.com', password: 'guess' })).rejects.toThrow(
+      'argon2 out of memory',
+    );
+    await expect(service.login({ email: 'x@x.com', password: 'guess' })).rejects.toThrow(
+      new UnauthorizedException('Invalid credentials'),
+    );
+    expect(argon2.hash).toHaveBeenCalledTimes(2);
+  });
+
+  it('onModuleInit считает фиктивный хеш заранее: первый неудачный вход хеша не ждёт', async () => {
+    (argon2.hash as jest.Mock).mockClear().mockResolvedValueOnce('$argon2id$dummy');
+    service.onModuleInit();
+    expect(argon2.hash).toHaveBeenCalledTimes(1);
+    prisma.user.findUnique.mockResolvedValueOnce(null);
+    await service.login({ email: 'x@x.com', password: 'guess' }).catch(() => undefined);
+    expect(argon2.hash).toHaveBeenCalledTimes(1);
+  });
+
+  it('login: фиктивный хеш считается один раз на сервис, а не на каждую попытку', async () => {
+    (argon2.hash as jest.Mock).mockClear().mockResolvedValueOnce('$argon2id$dummy');
+    prisma.user.findUnique.mockResolvedValue(null);
+    for (let i = 0; i < 3; i += 1) {
+      await service.login({ email: 'x@x.com', password: 'guess' }).catch(() => undefined);
+    }
+    expect(argon2.hash).toHaveBeenCalledTimes(1);
+  });
+
   it('login: Unauthorized for wrong password', async () => {
     prisma.user.findUnique.mockResolvedValueOnce(user);
     (argon2.verify as jest.Mock).mockResolvedValueOnce(false);
@@ -525,9 +579,10 @@ describe('AuthService (unit)', () => {
     await service.login({ email: user.email, password: 'p' });
 
     expect(prisma.user.update).toHaveBeenCalledTimes(1);
-    // Условие записи — живая строка: заблокированной отметка не пишется вовсе.
+    // Условие записи — живая строка с тем же хешем, что сверялся: заблокированной или
+    // сменившей пароль отметка не пишется вовсе (`LEGACY-452`, `LEGACY-454`).
     expect(prisma.user.update.mock.calls[0][0]).toEqual({
-      where: { id: user.id, isActive: true },
+      where: { id: user.id, isActive: true, passwordHash: user.passwordHash },
       data: { lastLogin: now },
       select: { tokenVersion: true },
     });
@@ -542,10 +597,30 @@ describe('AuthService (unit)', () => {
     (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
     prisma.userRole.findMany.mockResolvedValue([]);
     prisma.user.update.mockRejectedValueOnce(notFound());
+    // Перечитка причины отказа: строка заблокирована.
+    prisma.user.findUnique.mockResolvedValueOnce({ isActive: false });
 
     await expect(service.login({ email: user.email, password: 'p' })).rejects.toThrow(
       'Account is disabled',
     );
+    expect(jwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  // 🔴 LEGACY-454: атакующий сверил свой пароль, а за время `argon2.verify` первая привязка
+  // Google сняла его и подняла версию. Без условия на хеш отметка входа прочла бы новую `tv`,
+  // и атакующий получил бы живую сессию в уже защищённом аккаунте.
+  it('login: пароль снят за время сверки — 401 Invalid credentials, токенов нет', async () => {
+    prisma.user.findUnique.mockResolvedValueOnce(user);
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
+    prisma.user.update.mockRejectedValueOnce(notFound());
+    prisma.user.findUnique.mockResolvedValueOnce({ isActive: true });
+
+    await expect(service.login({ email: user.email, password: 'p' })).rejects.toThrow(
+      new UnauthorizedException('Invalid credentials'),
+    );
+    expect(prisma.user.update.mock.calls[0][0]).toMatchObject({
+      where: { passwordHash: user.passwordHash },
+    });
     expect(jwt.signAsync).not.toHaveBeenCalled();
   });
 
@@ -892,9 +967,10 @@ describe('AuthService (unit)', () => {
       });
       prisma.user.findUnique.mockResolvedValue({ ...user, email: 'password-owner@example.com' });
 
+      // Текст общий с отказом пароля (`LEGACY-455`): отдельный называл занятый адрес.
       await expect(
         service.socialLogin({ provider: 'facebook', token: 'fb-access-token' }),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
+      ).rejects.toThrow(new UnauthorizedException('Invalid credentials'));
 
       expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
     });
@@ -917,6 +993,108 @@ describe('AuthService (unit)', () => {
       expect(res.user.id).toBe(user.id);
       expect(prisma.user.create).not.toHaveBeenCalled();
       expect(prisma.userIdentity.upsert).toHaveBeenCalled();
+    });
+
+    describe('предзахват аккаунта (LEGACY-454)', () => {
+      const google = {
+        provider: 'google',
+        providerUserId: 'g-victim',
+        email: user.email,
+        emailVerified: true,
+      };
+
+      beforeEach(() => {
+        sessionStateCache.clear();
+        social.verify.mockResolvedValue(google);
+        prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
+      });
+
+      it('первая привязка к аккаунту с паролем: пароль снят, версия поднята, событие — тем же tx', async () => {
+        prisma.user.findUnique.mockResolvedValue(user);
+        prisma.user.updateMany.mockResolvedValueOnce({ count: 1 });
+        // Версия после подъёма — её и несут токены.
+        prisma.user.update.mockResolvedValue({ tokenVersion: 1 });
+        const invalidate = jest.spyOn(sessionStateCache, 'invalidate');
+
+        await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+        expect(tx.user.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.user.updateMany).toHaveBeenCalledWith({
+          where: { id: user.id, passwordHash: { not: null } },
+          data: { passwordHash: null, tokenVersion: { increment: 1 } },
+        });
+        // До отметки входа: та читает уже поднятую версию.
+        expect(tx.user.updateMany.mock.invocationCallOrder[0]).toBeLessThan(
+          tx.user.update.mock.invocationCallOrder[0],
+        );
+        expect(adminAudit.record).toHaveBeenCalledTimes(1);
+        expect(adminAudit.record).toHaveBeenCalledWith(tx, {
+          action: AdminAuditAction.PASSWORD_REMOVED_ON_SOCIAL_LINK,
+          targetType: AdminAuditTargetType.USER,
+          targetId: user.id,
+          actorUserId: null,
+        });
+        // Один сброс и после фиксации: сброс внутри транзакции дал бы чтению в окне вернуть в кэш
+        // старую версию.
+        expect(invalidate).toHaveBeenCalledTimes(1);
+        expect(invalidate).toHaveBeenCalledWith(user.id);
+        expect(invalidate.mock.invocationCallOrder[0]).toBeGreaterThan(
+          prisma.$transaction.mock.invocationCallOrder[1],
+        );
+        expect(jwt.signAsync.mock.calls[0][0]).toMatchObject({ tv: 1 });
+        invalidate.mockRestore();
+      });
+
+      it('аккаунт без пароля: снимать нечего — ни события, ни сброса кэша', async () => {
+        prisma.user.findUnique.mockResolvedValue({ ...user, passwordHash: null });
+        const invalidate = jest.spyOn(sessionStateCache, 'invalidate');
+
+        await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+        expect(tx.user.updateMany).toHaveBeenCalledTimes(1);
+        expect(adminAudit.record).not.toHaveBeenCalled();
+        expect(invalidate).not.toHaveBeenCalled();
+        invalidate.mockRestore();
+      });
+
+      it('привязка уже есть: пароль не трогается', async () => {
+        prisma.userIdentity.findUnique.mockResolvedValue({ userId: user.id });
+        prisma.user.findUnique.mockResolvedValue(user);
+
+        await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+        expect(adminAudit.record).not.toHaveBeenCalled();
+      });
+
+      it('новый аккаунт через провайдера: снимать нечего, запись не идёт', async () => {
+        prisma.user.findUnique.mockResolvedValue(null);
+        prisma.user.create.mockResolvedValue({ ...user, passwordHash: null });
+        prisma.role.findUnique.mockResolvedValue({ id: 1, name: RoleName.user });
+
+        await service.socialLogin({ provider: 'google', token: 'id-token' });
+
+        expect(tx.user.updateMany).not.toHaveBeenCalled();
+      });
+
+      it('отказ журнала роняет вход: событие пишется тем же tx, токенов и сброса кэша нет', async () => {
+        prisma.user.findUnique.mockResolvedValue(user);
+        prisma.user.updateMany.mockResolvedValueOnce({ count: 1 });
+        adminAudit.record.mockRejectedValueOnce(new Error('audit down'));
+        const invalidate = jest.spyOn(sessionStateCache, 'invalidate');
+
+        await expect(
+          service.socialLogin({ provider: 'google', token: 'id-token' }),
+        ).rejects.toThrow('audit down');
+        // Откат делает база; здесь — что снятие пароля и событие идут одним `tx`, и отказ события
+        // роняет весь вход, а не оставляет снятый пароль без записи.
+        expect(adminAudit.record.mock.calls[0][0]).toBe(tx);
+        expect(tx.user.updateMany).toHaveBeenCalledTimes(1);
+        expect(prisma.user.updateMany.mock.calls).toHaveLength(1);
+        expect(jwt.signAsync).not.toHaveBeenCalled();
+        expect(invalidate).not.toHaveBeenCalled();
+        invalidate.mockRestore();
+      });
     });
 
     // Личность, а не адрес: при найденной привязке адрес провайдера вообще не

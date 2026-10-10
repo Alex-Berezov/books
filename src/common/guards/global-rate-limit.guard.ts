@@ -15,6 +15,11 @@ import {
   parseTrustedProxyCidrs,
 } from '../net/client-ip';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
+import { PrismaService } from '../../prisma/prisma.service';
+import { readRolesCacheTtlMs } from '../roles/roles-cache';
+import { hasModeratorRole } from '../roles/moderator-roles.service';
+import { readSessionState } from '../../shared/session/session-state-reader';
+import { isSessionAlive, type SessionTokenClaims } from '../../shared/session/session-token';
 
 @Injectable()
 export class GlobalRateLimitGuard implements CanActivate {
@@ -22,12 +27,15 @@ export class GlobalRateLimitGuard implements CanActivate {
   private readonly maxPoints: number;
   private readonly trustedCidrs: string[];
   private readonly internalCidrs: string[];
+  private readonly ttlMs: number;
 
   constructor(
     private readonly config: ConfigService,
     @Inject(RATE_LIMITER) private readonly rateLimiter: RateLimiter,
     private readonly jwtService: JwtService,
+    private readonly prisma: PrismaService,
   ) {
+    this.ttlMs = readRolesCacheTtlMs(this.config.get<string>('ROLES_CACHE_TTL_MS'));
     const rawWindow = this.config.get<string>('RATE_LIMIT_GLOBAL_WINDOW_MS');
     const rawMax = this.config.get<string>('RATE_LIMIT_GLOBAL_MAX');
     const windowParsed = rawWindow ? Number(rawWindow) : NaN;
@@ -36,6 +44,27 @@ export class GlobalRateLimitGuard implements CanActivate {
     this.maxPoints = Number.isFinite(maxParsed) && maxParsed > 0 ? maxParsed : 100;
     this.trustedCidrs = parseTrustedProxyCidrs(this.config.get<string>('TRUSTED_PROXY_CIDRS'));
     this.internalCidrs = parseInternalProxyCidrs(this.config.get<string>('INTERNAL_PROXY_CIDRS'));
+  }
+
+  /**
+   * Сбой проверки — не обход и не отказ: токен, который не удалось сверить (подпись, нет секрета,
+   * база не ответила), считается в лимит как анонимный запрос. Иначе сбой базы ронял бы 500
+   * каждый запрос модератора на любом маршруте, в том числе публичном.
+   */
+  private async isLiveModeratorToken(authHeader: string | undefined): Promise<boolean> {
+    if (typeof authHeader !== 'string' || !authHeader.startsWith('Bearer ')) return false;
+    const token = authHeader.split(' ')[1];
+    try {
+      const secret = requireJwtAccessSecret((key) => this.config.get<string>(key));
+      const payload = this.jwtService.verify<SessionTokenClaims & { roles?: unknown }>(token, {
+        secret,
+      });
+      const roles = new Set(Array.isArray(payload.roles) ? payload.roles.map(String) : []);
+      if (!hasModeratorRole(roles)) return false;
+      return isSessionAlive(await readSessionState(this.prisma, payload.sub, this.ttlMs), payload);
+    } catch {
+      return false;
+    }
   }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -49,25 +78,6 @@ export class GlobalRateLimitGuard implements CanActivate {
       headers: Record<string, string | undefined>;
     }>();
     const path = req.path || req.originalUrl || '';
-
-    // Check for admin token to bypass rate limit
-    const authHeader = req.headers.authorization;
-    if (authHeader && typeof authHeader === 'string' && authHeader.startsWith('Bearer ')) {
-      const token = authHeader.split(' ')[1];
-      try {
-        const secret = requireJwtAccessSecret((key) => this.config.get<string>(key));
-        const payload = this.jwtService.verify<{ roles?: string[] }>(token, { secret });
-        if (
-          payload.roles &&
-          Array.isArray(payload.roles) &&
-          (payload.roles.includes('admin') || payload.roles.includes('content_manager'))
-        ) {
-          return true;
-        }
-      } catch {
-        // Ignore invalid tokens
-      }
-    }
 
     // Skip health and swagger endpoints.
     //
@@ -94,6 +104,12 @@ export class GlobalRateLimitGuard implements CanActivate {
     // мешало бы. Запросы фронта, которые **сообщают** посетителя (вход в аккаунт),
     // сюда не попадают и считаются как обычно.
     if (client.internalWithoutVisitor) return true;
+
+    // Модератор обходит лимит — но только живой сессией (`LEGACY-453`): подписи мало, погашенный
+    // токен (выход, пароль, роли, блокировка) иначе оставался без лимита до конца своего срока
+    // на маршрутах, которые `JwtStrategy` не проходят. Сверка та же, что у неё (`LEGACY-451`, `452`).
+    // После дешёвых пропусков: проверке нужна база, а health и рендер страниц её не ждут.
+    if (await this.isLiveModeratorToken(req.headers.authorization)) return true;
 
     const key = `global:${client.ip}`;
     const ok = await this.rateLimiter.consume(key, 1, this.windowMs, this.maxPoints);

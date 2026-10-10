@@ -1,6 +1,7 @@
-import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
+import { Injectable, OnModuleInit, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { JsonWebTokenError, JwtService } from '@nestjs/jwt';
 import * as argon2 from 'argon2';
+import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -76,6 +77,12 @@ const LOGIN_USER_SELECT = {
 /** Refresh-токен после проверки подписи: поля сессии и срок, секунды. */
 type RefreshTokenPayload = SessionTokenClaims & { exp: number };
 
+/**
+ * Отказ неверному паролю, отсутствующему аккаунту и соцвходу к чужому адресу — один текст на все
+ * пути (`LEGACY-455`): разные тексты называли бы, какой адрес занят.
+ */
+const INVALID_CREDENTIALS_MESSAGE = 'Invalid credentials';
+
 /** Отказ заблокированному пользователю на входе любым путём (`LEGACY-452`). */
 const ACCOUNT_DISABLED_MESSAGE = 'Account is disabled';
 
@@ -97,7 +104,15 @@ export const ENV_BOOTSTRAP_AUDIT_SOURCE = 'env_bootstrap';
 const REGISTRATION_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit {
+  /**
+   * Хеш случайной строки с параметрами argon2 по умолчанию — теми же, что у настоящих хешей
+   * (`register`). Считается один раз на процесс — при старте (`onModuleInit`), а если там не
+   * вышло, первым неудачным входом (`LEGACY-455`); совпасть с ним пароль не может, и результат
+   * сверки не читается.
+   */
+  private dummyPasswordHash?: Promise<string>;
+
   constructor(
     private prisma: PrismaService,
     private jwt: JwtService,
@@ -105,6 +120,15 @@ export class AuthService {
     private social: SocialIdentityService,
     private adminAudit: AdminAuditService,
   ) {}
+
+  /**
+   * Фиктивный хеш считается при старте, а не первым неудачным входом: тот иначе платил бы хеш
+   * и сверку разом и по времени отличался от остальных. Отказ здесь не роняет старт — хеш
+   * досчитается на входе.
+   */
+  onModuleInit(): void {
+    void this.dummyHash().catch(() => undefined);
+  }
 
   private secret(name: string): string {
     return requireJwtSecret(name, (key) => this.config.get<string>(key));
@@ -218,6 +242,8 @@ export class AuthService {
         })
       : null;
 
+    // Первая привязка провайдера к аккаунту, найденному по почте (а не по сохранённой связи).
+    let isLinkByEmail = false;
     if (!user) {
       const byEmail = await this.prisma.user.findUnique({
         where: { email },
@@ -228,11 +254,11 @@ export class AuthService {
         // Провайдер подтвердил, что владелец токена — это он сам, но не то, что
         // адрес принадлежит ему. Привязка здесь означала бы вход в чужой аккаунт
         // по совпадению строки.
-        throw new UnauthorizedException(
-          'This e-mail already belongs to an account and the provider does not prove ownership of the address',
-        );
+        // Сообщение общее с отказом пароля (`LEGACY-455`): отдельный текст называл занятый адрес.
+        throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
       }
 
+      isLinkByEmail = byEmail !== null;
       user = byEmail ?? (await this.createSocialUser(email, identity, languagePreference));
     }
 
@@ -245,7 +271,10 @@ export class AuthService {
 
     // Отметка входа, привязка и дополнение профиля — одной транзакцией: отказ отметки
     // (блокировка в окне) не оставляет привязки, а сбой привязки — отметки входа без входа.
-    const { tokenVersion, profile } = await this.prisma.$transaction(async (tx) => {
+    const signIn = await this.prisma.$transaction(async (tx) => {
+      // До отметки входа: та читает версию сессий уже после её подъёма.
+      const isPasswordDropped =
+        isLinkByEmail && (await this.dropPasswordOnFirstLink(tx, signedInUser.id));
       const version = await this.markSignIn(signedInUser.id, tx);
       // upsert, а не create: два одновременных первых входа одной личности иначе
       // разошлись бы по уникальному индексу, и один из них упал бы с 500.
@@ -281,14 +310,52 @@ export class AuthService {
               select: ACCOUNT_USER_SELECT,
             })
           : signedInUser;
-      return { tokenVersion: version, profile: updated };
+      return { tokenVersion: version, profile: updated, isPasswordDropped };
     }, REGISTRATION_TX_OPTIONS);
+    const { tokenVersion, profile, isPasswordDropped } = signIn;
     user = profile;
+    // После фиксации, как в `logout`: сброс до неё дал бы чтению в окне вернуть в кэш старую версию.
+    if (isPasswordDropped) sessionStateCache.invalidate(user.id);
 
     const roles = await this.computeRoles(user);
     const tokens = await this.signTokens(user.id, user.email, roles, tokenVersion);
 
     return { user: { ...this.publicUser(user), roles }, ...tokens };
+  }
+
+  /**
+   * Предзахват аккаунта (`LEGACY-454`, решение арбитра 10.10.2026, вариант «б»): регистрация
+   * паролем адрес не доказывает, и чужой `victim@gmail.com` с паролем атакующего жертва иначе
+   * получала бы входом через Google — а атакующий продолжал бы входить в него паролем.
+   *
+   * Сюда приходит только первая привязка к аккаунту, найденному по почте, и только от
+   * провайдера, доказавшего адрес (неподтверждённый получает 401 выше). Пароль снимается,
+   * версия сессий растёт — гаснут все выданные сессии, в том числе по паролю, — и пишется событие
+   * журнала.
+   * Аккаунт без пароля не трогается: снимать нечего, и сессий, выданных не провайдером, у него нет.
+   *
+   * ⚠️ Законный владелец того же адреса теряет вход паролем: сброса пароля нет, вход остаётся
+   * через провайдера, доказавшего адрес. Это цена решения, а не ошибка.
+   *
+   * `updateMany`, а не чтение хеша: `passwordHash` во всём файле читает только вход
+   * (`LEGACY-190`), а условие `not: null` в записи отвечает на вопрос «был ли пароль» без чтения.
+   */
+  private async dropPasswordOnFirstLink(
+    tx: Prisma.TransactionClient,
+    userId: string,
+  ): Promise<boolean> {
+    const { count } = await tx.user.updateMany({
+      where: { id: userId, passwordHash: { not: null } },
+      data: { passwordHash: null, tokenVersion: { increment: 1 } },
+    });
+    if (count === 0) return false;
+    await this.adminAudit.record(tx, {
+      action: AdminAuditAction.PASSWORD_REMOVED_ON_SOCIAL_LINK,
+      targetType: AdminAuditTargetType.USER,
+      targetId: userId,
+      actorUserId: null,
+    });
+    return true;
   }
 
   /** Адреса из env-списка через запятую, в нижнем регистре; пустое значение — пустой список. */
@@ -433,21 +500,41 @@ export class AuthService {
       where: { email: dto.email },
       select: LOGIN_USER_SELECT,
     });
-    if (!user) throw new UnauthorizedException('Invalid credentials');
-
-    if (!user.passwordHash) throw new UnauthorizedException('Invalid credentials');
+    if (!user?.passwordHash) {
+      // Нет аккаунта или у него нет пароля — argon2 всё равно считается (`LEGACY-455`): по времени
+      // ответа иначе было видно, какие адреса заняты.
+      await this.verifyAgainstDummyHash(dto.password);
+      throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
+    }
 
     const valid = await argon2.verify(user.passwordHash, dto.password);
-    if (!valid) throw new UnauthorizedException('Invalid credentials');
+    if (!valid) throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
     // После сверки пароля: о блокировке узнаёт только тот, кто знает пароль (`LEGACY-452`).
     if (!user.isActive) throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
 
-    const tokenVersion = await this.markSignIn(user.id);
+    // Условием записи — тот самый хеш, что сверялся (`LEGACY-454`): пароль, снятый привязкой
+    // провайдера (или сменённый) за время `argon2.verify`, иначе выдал бы сессию с уже поднятой `tv`.
+    const tokenVersion = await this.markSignIn(user.id, this.prisma, user.passwordHash);
     const roles = await this.computeRoles(user);
     const tokens = await this.signTokens(user.id, user.email, roles, tokenVersion);
 
     // Include roles in login response
     return { user: { ...this.publicUser(user), roles }, ...tokens };
+  }
+
+  private async verifyAgainstDummyHash(password: string): Promise<void> {
+    await argon2.verify(await this.dummyHash(), password);
+  }
+
+  private dummyHash(): Promise<string> {
+    // Отказ хеширования не запоминается: иначе каждый вход на чужой адрес был бы 500 до рестарта.
+    this.dummyPasswordHash ??= Promise.resolve(argon2.hash(randomBytes(32).toString('hex'))).catch(
+      (error: unknown) => {
+        this.dummyPasswordHash = undefined;
+        throw error;
+      },
+    );
+    return this.dummyPasswordHash;
   }
 
   /**
@@ -502,22 +589,39 @@ export class AuthService {
    * роли, прочитанные позже версии, не старше её — токен с новой `tv` и старыми ролями
    * не выдаётся.
    * Заблокированная строка под условие `isActive: true` не попадает: `P2025` — 401, и `lastLogin`
-   * ей не пишется.
+   * ей не пишется. `verifiedPasswordHash` — вход паролем: строка, чей хеш с момента сверки
+   * сменился или снят, тоже не попадает, и отказ тот же, что у неверного пароля.
    */
   private async markSignIn(
     userId: string,
     client: Prisma.TransactionClient | PrismaService = this.prisma,
+    verifiedPasswordHash?: string,
   ): Promise<number> {
     try {
       const { tokenVersion } = await client.user.update({
-        where: { id: userId, isActive: true },
+        where: {
+          id: userId,
+          isActive: true,
+          ...(verifiedPasswordHash === undefined ? {} : { passwordHash: verifiedPasswordHash }),
+        },
         data: { lastLogin: new Date() },
         select: { tokenVersion: true },
       });
       return tokenVersion;
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
-        throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
+        if (verifiedPasswordHash === undefined) {
+          throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
+        }
+        // Под условие не попали две причины — блокировка или смена хеша; пароль сверен, так что
+        // о блокировке сказать можно (`LEGACY-452`), а снятый пароль — то же, что неверный.
+        const row = await client.user.findUnique({
+          where: { id: userId },
+          select: { isActive: true },
+        });
+        throw new UnauthorizedException(
+          row?.isActive === false ? ACCOUNT_DISABLED_MESSAGE : INVALID_CREDENTIALS_MESSAGE,
+        );
       }
       throw error;
     }

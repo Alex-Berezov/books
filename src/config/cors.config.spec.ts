@@ -1,5 +1,8 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import cors from 'cors';
+import express from 'express';
+import request from 'supertest';
 import { CORS_ALLOWED_HEADERS, CORS_EXPOSED_HEADERS, getCorsConfig } from './cors.config';
 
 /**
@@ -136,5 +139,49 @@ describe('CORS: копия списка заголовков в конфиге C
 
     const inCaddy = line[1].split(',').map((name) => name.trim());
     expect([...inCaddy].sort()).toEqual([...CORS_ALLOWED_HEADERS].sort());
+  });
+});
+
+/**
+ * `LEGACY-455`: чужой Origin получал 500 — ошибка из `cors` без `status` у обработчика Express
+ * означает сбой сервера, и каждый запрос с чужой страницы шумел в метриках как авария.
+ * Отказ остаётся отказом (403), а не пропуском без заголовков: простой кросс-доменный запрос
+ * до ручки доходить не должен.
+ */
+describe('CORS: чужой Origin', () => {
+  const originalOrigin = process.env.CORS_ORIGIN;
+
+  afterEach(() => {
+    if (originalOrigin === undefined) delete process.env.CORS_ORIGIN;
+    else process.env.CORS_ORIGIN = originalOrigin;
+  });
+
+  function app() {
+    process.env.CORS_ORIGIN = 'https://bibliaris.com';
+    const reached = jest.fn();
+    const server = express();
+    server.use(cors(getCorsConfig()));
+    server.post('/views', (_req, res) => {
+      reached();
+      res.json({ ok: true });
+    });
+    return { server, reached };
+  }
+
+  it('403, а не 500, и ручка не выполняется', async () => {
+    const { server, reached } = app();
+    const res = await request(server).post('/views').set('Origin', 'https://evil.example');
+    expect(res.status).toBe(403);
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+    expect(reached).not.toHaveBeenCalled();
+  });
+
+  it('свой Origin и запрос без Origin проходят', async () => {
+    const { server, reached } = app();
+    const own = await request(server).post('/views').set('Origin', 'https://bibliaris.com');
+    expect(own.status).toBe(200);
+    expect(own.headers['access-control-allow-origin']).toBe('https://bibliaris.com');
+    await request(server).post('/views').expect(200);
+    expect(reached).toHaveBeenCalledTimes(2);
   });
 });

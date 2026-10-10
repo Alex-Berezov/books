@@ -3,6 +3,15 @@ import type { RoleName } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /**
+ * Правило «модератор = `admin` или `content_manager`» — одно на весь код (`LEGACY-111`): по набору
+ * имён ролей, без похода в базу. Зовут его `isModerator` и обход глобального лимита по claim
+ * `roles` живого токена (`GlobalRateLimitGuard`, `LEGACY-453`).
+ */
+export function hasModeratorRole(roles: ReadonlySet<string>): boolean {
+  return roles.has('admin') || roles.has('content_manager');
+}
+
+/**
  * «Может ли этот пользователь видеть то, что скрыто от посетителя».
  *
  * 🔴 Источник роли ровно один — связи `UserRole` в базе, тот же, что читает
@@ -22,8 +31,7 @@ export class ModeratorRolesService {
   constructor(private readonly prisma: PrismaService) {}
 
   async isModerator(actor?: { userId: string; email: string }): Promise<boolean> {
-    const roles = await this.rolesOf(actor);
-    return roles.has('admin') || roles.has('content_manager');
+    return hasModeratorRole(await this.rolesOf(actor));
   }
 
   /** Строго `admin`: для метрик и прочего, где content_manager недостаточно. */

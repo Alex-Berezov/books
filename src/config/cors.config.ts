@@ -99,7 +99,7 @@ export function getCorsConfig(): CorsOptions {
         callback(null, true);
       } else {
         console.warn(`[CORS] Blocked request from origin: ${origin}`);
-        callback(new Error('Not allowed by CORS'));
+        callback(corsRefusal());
       }
     },
     credentials: allowCredentials,
@@ -108,6 +108,19 @@ export function getCorsConfig(): CorsOptions {
     exposedHeaders: CORS_EXPOSED_HEADERS,
     maxAge: 86400, // 24 hours - cache preflight requests
   };
+}
+
+/**
+ * Отказ чужому Origin — 403, а не 500 (`LEGACY-455`). Ошибку из `cors` разбирает обработчик Express
+ * (`finalhandler`) по полю `status`; без него каждый запрос с чужой страницы был 500 и шумел
+ * в метриках и алертах как сбой сервера.
+ *
+ * ⚠️ Ошибка, а не `callback(null, false)`: `false` лишь не ставит CORS-заголовки, а запрос
+ * выполняется. Простой кросс-доменный запрос (без предварительного) тогда доходил бы до ручки,
+ * хотя ответ браузер и не отдал бы странице; отказ останавливает его до маршрута, как прежде.
+ */
+function corsRefusal(): Error & { status: number } {
+  return Object.assign(new Error('Not allowed by CORS'), { status: 403 });
 }
 
 /**

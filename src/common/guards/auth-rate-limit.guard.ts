@@ -7,7 +7,12 @@ import {
   Injectable,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { parseInternalProxyCidrs, parseTrustedProxyCidrs, resolveClientIp } from '../net/client-ip';
+import { isIPv6 } from 'node:net';
+import {
+  describeClientIp,
+  parseInternalProxyCidrs,
+  parseTrustedProxyCidrs,
+} from '../net/client-ip';
 import { RATE_LIMITER, RateLimiter } from '../../shared/rate-limit/rate-limit.interface';
 import { unverifiedTokenSubject } from '../../shared/session/session-token';
 import { normalizeEmail } from '../../shared/validators/normalize-email.decorator';
@@ -18,6 +23,51 @@ import { normalizeEmail } from '../../shared/validators/normalize-email.decorato
  * от подделки — новый `sub` даёт новую корзину пользователя, но не новый потолок адреса.
  */
 export const LOGOUT_IP_MAX = 60;
+
+/**
+ * Потолок попыток входа с одного адреса по всем почтам в окне входа — в узких корзинах
+ * `ip + email` (`LEGACY-453`). Узкая корзина держит перебор паролей одного аккаунта, но не перебор
+ * многих аккаунтов одним паролем: каждый новый адрес почты получал свою. Выше узкой — за одним
+ * адресом бывает несколько человек (офис, NAT оператора). Множитель, а не число: при своём
+ * `RATE_LIMIT_LOGIN_MAX` потолок адреса иначе оказался бы строже узкой корзины.
+ */
+export const LOGIN_IP_BUCKETS = 4;
+
+/**
+ * Корзина аккаунта по всем адресам в окне входа — против распределённого перебора (`LEGACY-453`,
+ * решение арбитра 11.10.2026), в узких корзинах.
+ *
+ * ⚠️ Мягкая намеренно: её можно выбрать чужими запросами и запереть вход владельцу. Поэтому окно
+ * то же, что у узкой корзины `ip + email`, а потолок — шесть таких корзин: один адрес даёт не
+ * больше двух узких корзин за окно (окна фиксированные и сдвинуты), то есть с одного адреса её
+ * не выбрать. Множитель, а не число — по той же причине: при своём `RATE_LIMIT_LOGIN_MAX` число
+ * снова выбиралось бы одним адресом. Цена при умолчаниях: распределённый перебор — до 30 попыток
+ * в минуту на аккаунт (~43 тыс. в сутки); шесть и более адресов держат вход паролем закрытым,
+ * пока шлют запросы, и блокировка снимается через окно после остановки.
+ */
+export const LOGIN_ACCOUNT_BUCKETS = 6;
+
+/**
+ * Адрес как ключ корзин входа: IPv6 — по сети /64, а не по адресу (`LEGACY-453`). Провайдеры
+ * и хостеры раздают клиенту целую /64, и счёт по точному адресу давал бы каждому запросу из неё
+ * свежие корзины — ни потолок адреса, ни «с одного адреса аккаунт не запереть» не держались бы.
+ * IPv4 и всё, что не разбирается как IPv6, — как есть.
+ */
+export function loginLimitSubject(ip: string): string {
+  if (!isIPv6(ip)) return ip;
+  const mapped = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mapped) return mapped[1];
+  const [head, tail = ''] = ip.split('::');
+  const left = head ? head.split(':') : [];
+  const right = ip.includes('::') && tail ? tail.split(':') : [];
+  const groups = ip.includes('::')
+    ? [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right]
+    : left;
+  return `${groups
+    .slice(0, 4)
+    .map((g) => parseInt(g, 16).toString(16))
+    .join(':')}::/64`;
+}
 
 /**
  * Auth Rate Limit Guard
@@ -104,7 +154,8 @@ export class AuthRateLimitGuard implements CanActivate {
     // Тот же адрес, что и у глобального лимитера: за Cloudflare `req.ip` — это узел
     // CF, и без этой замены пять попыток входа делили бы все посетители одного PoP.
     // Чужие неудачные входы блокировали бы вход человеку, который ничего не делал.
-    const clientIp = resolveClientIp(req, this.trustedCidrs, this.internalCidrs);
+    const client = describeClientIp(req, this.trustedCidrs, this.internalCidrs);
+    const clientIp = client.ip;
 
     // Determine operation type and apply matching limits
     let operation: 'login' | 'register' | 'refresh' | 'auth';
@@ -116,8 +167,30 @@ export class AuthRateLimitGuard implements CanActivate {
       operation = 'login';
       maxPoints = this.loginMax;
       windowMs = this.loginWindowMs;
-      // Key: IP + email (if present) for finer brute-force detection
-      key = email ? `auth:login:${clientIp}:${email}` : `auth:login:${clientIp}`;
+      const subject = loginLimitSubject(clientIp);
+      // Три корзины по порядку от узкой к широкой (`LEGACY-453`); отказ узкой не тратит широкие —
+      // иначе один адрес, упёршийся в свою корзину, продолжал бы выбирать корзину аккаунта.
+      key = email ? `auth:login:${subject}:${email}` : `auth:login:${subject}`;
+      await this.consumeOrRefuse(key, windowMs, maxPoints, operation);
+      // Вход с сервера Next без адреса посетителя — это все посетители сразу (`LEGACY-064`):
+      // общая корзина адреса заперла бы вход всему сайту. Узкая и аккаунта остаются.
+      if (!client.internalWithoutVisitor) {
+        await this.consumeOrRefuse(
+          `auth:login-ip:${subject}`,
+          windowMs,
+          maxPoints * LOGIN_IP_BUCKETS,
+          operation,
+        );
+      }
+      if (email) {
+        await this.consumeOrRefuse(
+          `auth:login-account:${email}`,
+          windowMs,
+          maxPoints * LOGIN_ACCOUNT_BUCKETS,
+          operation,
+        );
+      }
+      return true;
     } else if (path.includes('/register')) {
       operation = 'register';
       maxPoints = this.registerMax;
@@ -166,6 +239,17 @@ export class AuthRateLimitGuard implements CanActivate {
     if (!ok) this.refuse(operation, windowMs);
 
     return true;
+  }
+
+  private async consumeOrRefuse(
+    key: string,
+    windowMs: number,
+    maxPoints: number,
+    operation: string,
+  ): Promise<void> {
+    if (!(await this.rateLimiter.consume(key, 1, windowMs, maxPoints))) {
+      this.refuse(operation, windowMs);
+    }
   }
 
   private refuse(operation: string, windowMs: number): never {

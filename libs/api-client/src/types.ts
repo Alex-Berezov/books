@@ -4404,7 +4404,8 @@ export interface components {
       | 'PERSON_DELETED'
       | 'PAGE_DELETED'
       | 'PAGE_PUBLISHED'
-      | 'PAGE_UNPUBLISHED';
+      | 'PAGE_UNPUBLISHED'
+      | 'PASSWORD_REMOVED_ON_SOCIAL_LINK';
     AdminAuditEventResponseDto: {
       action: components['schemas']['AdminAuditAction'];
       /**

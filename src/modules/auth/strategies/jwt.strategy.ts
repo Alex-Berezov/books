@@ -5,7 +5,7 @@ import { ConfigService } from '@nestjs/config';
 import { requireJwtAccessSecret } from '../../../common/config/jwt-secrets';
 import { readRolesCacheTtlMs } from '../../../common/roles/roles-cache';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { sessionStateCache, type SessionState } from '../../../shared/session/session-state-cache';
+import { readSessionState } from '../../../shared/session/session-state-reader';
 import {
   isSessionAlive,
   SESSION_REVOKED_MESSAGE,
@@ -35,25 +35,9 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
    * и такие токены живут до своего срока, пока версию не поднимут.
    */
   async validate(payload: SessionTokenClaims) {
-    if (!isSessionAlive(await this.stateOf(payload.sub), payload)) {
+    if (!isSessionAlive(await readSessionState(this.prisma, payload.sub, this.ttlMs), payload)) {
       throw new UnauthorizedException(SESSION_REVOKED_MESSAGE);
     }
     return { userId: payload.sub, email: payload.email };
-  }
-
-  private async stateOf(userId: string): Promise<SessionState | null> {
-    const now = Date.now();
-    const cached = sessionStateCache.get(userId, now);
-    if (cached) return cached;
-
-    const readGeneration = sessionStateCache.beginRead();
-    const state = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { isActive: true, tokenVersion: true },
-    });
-    // Отсутствие пользователя не кэшируется: запись появится только у живой строки.
-    if (!state) return null;
-    sessionStateCache.set(userId, state, now + this.ttlMs, now, readGeneration);
-    return state;
   }
 }

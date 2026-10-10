@@ -29,8 +29,8 @@ const EXPECTED: Record<string, { count: number; why: string }> = {
     why: 'bumpTokenVersion (assignRole, revokeRole), update: пароль или блокировка, update: смена набора ролей',
   },
   'modules/auth/auth.service.ts': {
-    count: 1,
-    why: 'logout: updateMany с условием на версию токена',
+    count: 2,
+    why: 'logout: updateMany с условием на версию токена; dropPasswordOnFirstLink: снятие пароля при первой привязке провайдера (LEGACY-454)',
   },
 };
 
