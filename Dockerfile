@@ -2,11 +2,12 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 RUN apk add --no-cache bash openssl
 COPY package.json yarn.lock ./
-# NOTE: Temporarily removing --frozen-lockfile due to lockfile drift. For reproducible builds,
-# regenerate and commit a correct yarn.lock, then restore the flag.
-RUN yarn install
+# LEGACY-457: --frozen-lockfile вернулся (дрейф yarn.lock устранён, `yarn install --frozen-lockfile`
+# проходит на текущем lock). Сборка не должна молча менять версии зависимостей.
+RUN yarn install --frozen-lockfile
 COPY . .
-RUN yarn prisma:generate || echo "Prisma generate failed, continuing..."
+# LEGACY-457: провал генерации клиента роняет сборку здесь, а не глушится до невнятной ошибки `yarn build`.
+RUN yarn prisma:generate
 RUN yarn build
 # LEGACY-100. Чистка мёртвого веса стоит здесь, в builder-стадии, а НЕ в runner после
 # `COPY --from=builder /app/node_modules`. Удаление отдельным слоем поверх готового COPY
@@ -44,11 +45,9 @@ FROM node:22-alpine AS runner
 ENV NODE_ENV=production
 WORKDIR /app
 COPY package.json yarn.lock ./
-# NOTE: Previously we re-ran `yarn install --frozen-lockfile --production=true` here.
-# The build failed because `yarn.lock` is out of sync with `package.json`, causing
-# Yarn to request a lockfile update which `--frozen-lockfile` forbids.
-# For a fast unblock in prod we copy the already installed modules from the builder stage.
-# This includes devDependencies.
+# node_modules копируется из builder-стадии целиком, вместе с devDependencies.
+# Отдельного `yarn install` здесь нет не из-за lock-файла (с LEGACY-457 builder ставит
+# зависимости с `--frozen-lockfile`), а по причине ниже.
 #
 # 🔴 Урезание до production-only здесь не годится (LEGACY-100, проверено и отвергнуто):
 # `prisma db seed` зовёт `ts-node ./prisma/seed.ts` (LEGACY-294), а ts-node требует

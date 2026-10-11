@@ -220,6 +220,29 @@ describe('DevOps: Docker artifacts', () => {
     expect(content).toContain('**/*.spec.ts');
   });
 
+  it('.dockerignore исключает .env и .env.* (LEGACY-457)', () => {
+    const lines = readFileSync(join(root, '.dockerignore'), 'utf8')
+      .split(/\r?\n/)
+      .map((l) => l.trim());
+    expect(lines).toContain('.env');
+    expect(lines).toContain('.env.*');
+    expect(lines).toContain('**/.env');
+    expect(lines).toContain('**/.env.*');
+    // Исключение вида `!.env.prod` вернуло бы файл в контекст сборки.
+    expect(lines.filter((l) => /^!.*\.env/.test(l))).toEqual([]);
+  });
+
+  it('builder ставит зависимости с --frozen-lockfile (LEGACY-457)', () => {
+    const dockerfile = stripComments(readFileSync(join(root, 'Dockerfile'), 'utf8'));
+    expect(dockerfile).toMatch(/^RUN yarn install --frozen-lockfile\s*$/m);
+  });
+
+  it('провал prisma:generate не глушится (LEGACY-457)', () => {
+    const dockerfile = stripComments(readFileSync(join(root, 'Dockerfile'), 'utf8'));
+    expect(dockerfile).toMatch(/^RUN yarn prisma:generate\s*$/m);
+    expect(dockerfile).not.toMatch(/prisma:generate[^\n]*\|\|/);
+  });
+
   it('entrypoint script exists and starts app', () => {
     const entry = join(root, 'scripts', 'docker-entrypoint.sh');
     expect(existsSync(entry)).toBe(true);

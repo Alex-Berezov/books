@@ -8,6 +8,11 @@ yarn-error.log*
 yarn-debug.log*
 
 .git
+# LEGACY-457: боевой env не должен попадать в контекст сборки и кэш builder
+.env
+.env.*
+**/.env
+**/.env.*
 .gitignore
 .vscode
 .husky
