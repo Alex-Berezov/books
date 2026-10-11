@@ -43,9 +43,12 @@ describe('probeDuration (real ffprobe)', () => {
     hits = [];
     server = createServer((req, res) => {
       hits.push(req.url ?? '');
-      if (req.url === '/upload.mp3') {
+      if (req.url === '/upload.mp3' || req.url === '/upload.m3u8') {
         // Плейлист, загруженный под видом аудио: сегмент указывает на «внутренний» адрес.
-        res.setHeader('Content-Type', 'audio/mpeg');
+        res.setHeader(
+          'Content-Type',
+          req.url === '/upload.m3u8' ? 'application/vnd.apple.mpegurl' : 'audio/mpeg',
+        );
         res.end(
           [
             '#EXTM3U',
@@ -80,10 +83,15 @@ describe('probeDuration (real ffprobe)', () => {
     await expect(probeDuration(file)).resolves.toEqual({ durationSec: 2 });
   });
 
-  it('does not follow a playlist served from storage: only the upload itself is requested', async () => {
-    await expect(probeDuration(`${origin}/upload.mp3`)).resolves.toEqual({ durationSec: null });
-    expect(hits).toEqual(['/upload.mp3']);
-  });
+  // Под `.mp3`/`audio/mpeg` новые сборки ffprobe отказываются узнавать hls сами; под `.m3u8` и типом
+  // плейлиста его узнаёт любая сборка — тогда ссылку из плейлиста держит только белый список.
+  it.each(['/upload.mp3', '/upload.m3u8'])(
+    'does not follow a playlist served from storage as %s: only the file itself is requested',
+    async (path) => {
+      await expect(probeDuration(`${origin}${path}`)).resolves.toEqual({ durationSec: null });
+      expect(hits).toEqual([path]);
+    },
+  );
 
   /**
    * Белый список демультиплексоров не должен отрезать ни один разрешённый тип аудио
@@ -128,8 +136,31 @@ describe('probeDuration (real ffprobe)', () => {
     expect(res.stderr).not.toMatch(/not on whitelist/);
   });
 
+  // Имя `.m3u8`: так плейлист узнаёт любая сборка ffprobe. Под `.mp3` новые сборки отказываются
+  // распознавать hls ещё до белого списка («Not detecting m3u8/hls with non standard extension»),
+  // старые — доходят до него; проверяется сам список, а не эвристика конкретной версии.
+  // Реальный ключ загрузки — с расширением аудио: плейлист под `.mp3` отбивается либо эвристикой
+  // расширения (новые сборки), либо белым списком (старые); принять он не должен ни там, ни там.
+  it('a playlist disguised as .mp3 is refused on any ffprobe build', () => {
+    const file = join(dir, 'disguised.mp3');
+    writeFileSync(
+      file,
+      [
+        '#EXTM3U',
+        '#EXT-X-TARGETDURATION:10',
+        '#EXTINF:10,',
+        'http://127.0.0.1:9/x.ts',
+        '#EXT-X-ENDLIST',
+        '',
+      ].join('\n'),
+    );
+    const res = spawnSync(ffprobePath, ffprobeArgs(file), { encoding: 'utf8' });
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toMatch(/Format not on whitelist|non standard extension/);
+  });
+
   it('a playlist is refused by the format whitelist', () => {
-    const file = join(dir, 'list.mp3');
+    const file = join(dir, 'list.m3u8');
     writeFileSync(
       file,
       [
