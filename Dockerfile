@@ -57,7 +57,7 @@ COPY package.json yarn.lock ./
 # `src/devops/dockerfiles.spec.ts` ("не урезает зависимости до production").
 # Мёртвый вес снимается в builder-стадии, до этого COPY, а не после него - см. там же,
 # почему удаление поверх готового слоя веса не снимает.
-	RUN apk add --no-cache bash openssl
+RUN apk add --no-cache bash openssl
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 # LEGACY-100: node_modules скопирован целиком строкой выше - @prisma, .prisma
@@ -92,6 +92,11 @@ COPY --from=builder /app/tsconfig.json ./tsconfig.json
 ENV PATH="${PATH}:/app/node_modules/.bin"
 COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
-RUN mkdir -p var/uploads
+# LEGACY-457: процесс не root. Каталоги локального драйвера создаются здесь и отдаются `node`:
+# под `node` в `/app/var` (владелец root) их не создать, а локальный драйвер включается и при
+# НЕзаданном `STORAGE_DRIVER` (так образ запускает конвейер фронта). Заполненный именованный
+# том прода `chown` образа не перенимает - entrypoint проверяет запись и падает понятной ошибкой.
+RUN mkdir -p var/uploads var/rights-files && chown -R node:node var
+USER node
 EXPOSE 5000
 CMD ["/usr/local/bin/docker-entrypoint.sh"]

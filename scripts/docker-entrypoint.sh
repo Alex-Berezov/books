@@ -44,6 +44,22 @@ if [[ "${DATABASE_URL:-}" == postgres* || "${DATABASE_URL:-}" == postgresql* ]];
   done
 fi
 
+# LEGACY-457: процесс работает не от root. Локальный драйвер хранилища (STORAGE_DRIVER не r2,
+# пусто - тоже local) пишет на диск, поэтому каталоги должны быть доступны на запись: иначе
+# первая загрузка упадёт EACCES посреди работы. Заполненный том, созданный под root, надо
+# отдать uid 1000 снаружи (chown -R), образ его владельца не меняет. Проверяется только верхний
+# уровень каталога: вложенные каталоги под root эта проверка не видит, поэтому chown - рекурсивный.
+storage_driver=$(printf '%s' "${STORAGE_DRIVER:-local}" | tr '[:upper:]' '[:lower:]')
+if [ "$storage_driver" != "r2" ]; then
+  for dir in "${LOCAL_UPLOADS_DIR:-./var/uploads}" "${RIGHTS_FILES_LOCAL_DIR:-./var/rights-files}"; do
+    if ! mkdir -p "$dir" 2>/dev/null || ! probe=$(mktemp "$dir/.write-check.XXXXXX" 2>/dev/null); then
+      echo "[entrypoint] ERROR: directory '$dir' is not writable for uid $(id -u) (STORAGE_DRIVER='${STORAGE_DRIVER:-}'). Give the volume to uid 1000 recursively (chown -R 1000:1000) or set STORAGE_DRIVER=r2." >&2
+      exit 1
+    fi
+    rm -f "$probe"
+  done
+fi
+
 # Run prisma migrate deploy if prisma CLI exists
 if [ -x node_modules/.bin/prisma ]; then
   echo "[entrypoint] Running prisma migrate deploy..."

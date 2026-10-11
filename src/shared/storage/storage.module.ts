@@ -4,6 +4,8 @@ import { R2StorageService } from './r2.storage';
 import { STORAGE_SERVICE } from './storage.interface';
 
 function storageFactory(): LocalStorageService | R2StorageService {
+  // LEGACY-457: копия этого выбора - `scripts/docker-entrypoint.sh` (проверка записи); менять вместе,
+  // сверку держит `src/devops/dockerfiles.spec.ts`.
   const driver = (process.env.STORAGE_DRIVER || 'local').toLowerCase();
   if (driver === 'r2') {
     Logger.log('Storage driver: R2 (Cloudflare)', 'StorageModule');

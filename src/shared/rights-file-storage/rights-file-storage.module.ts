@@ -16,6 +16,8 @@ import { RightsFileStorageService } from './rights-file-storage.service';
  * на стороне CDN — это требование деплоя, записанное в ADR-015.
  */
 function rightsFileStorageFactory(): LocalStorageService | R2StorageService {
+  // LEGACY-457: копия этого выбора - `scripts/docker-entrypoint.sh` (проверка записи); менять вместе,
+  // сверку держит `src/devops/dockerfiles.spec.ts`.
   const driver = (process.env.STORAGE_DRIVER || 'local').toLowerCase();
   if (driver === 'r2') {
     const prefix = resolveR2Prefix();

@@ -1,4 +1,15 @@
-import { readFileSync, existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /**
@@ -241,6 +252,134 @@ describe('DevOps: Docker artifacts', () => {
     const dockerfile = stripComments(readFileSync(join(root, 'Dockerfile'), 'utf8'));
     expect(dockerfile).toMatch(/^RUN yarn prisma:generate\s*$/m);
     expect(dockerfile).not.toMatch(/prisma:generate[^\n]*\|\|/);
+  });
+
+  it('runner работает от node, каталоги хранилища созданы и отданы ему (LEGACY-457)', () => {
+    const dockerfile = stripComments(readFileSync(join(root, 'Dockerfile'), 'utf8'));
+    const runnerStart = dockerfile.lastIndexOf('FROM node:22-alpine AS runner');
+    expect(runnerStart).toBeGreaterThanOrEqual(0);
+    const runner = dockerfile.slice(runnerStart);
+    expect(runner).toMatch(
+      /^RUN mkdir -p var\/uploads var\/rights-files && chown -R node:node var\s*$/m,
+    );
+    const userAt = runner.search(/^USER node\s*$/m);
+    expect(userAt).toBeGreaterThanOrEqual(0);
+    // USER после chown и после всех RUN: иначе apk add / chmod упадут не от root.
+    expect(runner.lastIndexOf('RUN ')).toBeLessThan(userAt);
+    expect(runner).not.toMatch(/^USER (root|0)\b/m);
+    // После USER - только EXPOSE и CMD: любой RUN/COPY/ENV после него шёл бы не от root.
+    const tail = runner
+      .slice(userAt)
+      .split('\n')
+      .slice(1)
+      .map((line) => line.trim())
+      .filter(Boolean);
+    expect(tail.every((line) => /^(EXPOSE|CMD) /.test(line))).toBe(true);
+  });
+
+  describe('entrypoint: проверка записи в каталоги локального хранилища (LEGACY-457)', () => {
+    const entry = join(root, 'scripts', 'docker-entrypoint.sh');
+    const STORAGE_VARS = [
+      'STORAGE_DRIVER',
+      'LOCAL_UPLOADS_DIR',
+      'RIGHTS_FILES_LOCAL_DIR',
+      'DATABASE_URL',
+    ];
+    const created: string[] = [];
+    afterAll(() => created.forEach((dir) => rmSync(dir, { recursive: true, force: true })));
+
+    // Рабочий каталог без dist/main.js: прошедшая проверка доходит до сообщения о нём.
+    // `failMktemp` кладёт в начало PATH `mktemp`, который всегда отказывает: так исполняется
+    // ветка «каталог есть, а записи в него нет» (том под root) независимо от того, под кем идёт тест.
+    function run(env: Record<string, string>, opts: { failMktemp?: boolean } = {}) {
+      const cwd = mkdtempSync(join(tmpdir(), 'entrypoint-'));
+      created.push(cwd);
+      const blocker = join(cwd, 'blocker');
+      writeFileSync(blocker, 'file');
+      const base = Object.fromEntries(
+        Object.entries(process.env).filter(([name]) => !STORAGE_VARS.includes(name)),
+      );
+      let path = process.env.PATH ?? '';
+      if (opts.failMktemp) {
+        const shim = join(cwd, 'shim');
+        mkdirSync(shim);
+        writeFileSync(join(shim, 'mktemp'), '#!/bin/sh\nexit 1\n');
+        chmodSync(join(shim, 'mktemp'), 0o755);
+        path = `${shim}${process.platform === 'win32' ? ';' : ':'}${path}`;
+      }
+      const resolved = Object.fromEntries(
+        Object.entries(env).map(([name, value]) => [
+          name,
+          value.replace('{blocker}', blocker).replace('{cwd}', cwd),
+        ]),
+      );
+      const r = spawnSync('bash', [entry], {
+        cwd,
+        env: { ...base, PATH: path, ...resolved },
+        encoding: 'utf8',
+      });
+      return { ...r, cwd };
+    }
+
+    it('local и пустой драйвер: каталог не создаётся - отказ с понятной ошибкой', () => {
+      for (const driver of ['local', '', 'LOCAL']) {
+        const r = run({ STORAGE_DRIVER: driver, LOCAL_UPLOADS_DIR: '{blocker}/uploads' });
+        expect(r.status).toBe(1);
+        expect(r.stderr).toContain('is not writable');
+        expect(r.stderr).toContain('blocker/uploads');
+      }
+    });
+
+    it('каталог есть, а записи в него нет (том под root) - отказ', () => {
+      const r = run({ STORAGE_DRIVER: 'local' }, { failMktemp: true });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain("directory './var/uploads' is not writable");
+    });
+
+    it('каталог файлов прав тоже проверяется', () => {
+      const r = run({ LOCAL_UPLOADS_DIR: '{cwd}/up', RIGHTS_FILES_LOCAL_DIR: '{blocker}/rights' });
+      expect(r.status).toBe(1);
+      expect(r.stderr).toContain('blocker/rights');
+    });
+
+    it('пишущиеся каталоги (в том числе умолчания) проверку проходят и пробных файлов не оставляют', () => {
+      const r = run({ STORAGE_DRIVER: 'local' });
+      expect(r.stderr).not.toContain('is not writable');
+      expect(r.stderr).toContain('dist/main.js not found');
+      expect(readdirSync(join(r.cwd, 'var', 'uploads'))).toEqual([]);
+      expect(readdirSync(join(r.cwd, 'var', 'rights-files'))).toEqual([]);
+    });
+
+    it('r2 (в любом регистре): каталоги не проверяются', () => {
+      for (const driver of ['r2', 'R2']) {
+        const r = run(
+          { STORAGE_DRIVER: driver, LOCAL_UPLOADS_DIR: '{blocker}/uploads' },
+          { failMktemp: true },
+        );
+        expect(r.stderr).not.toContain('is not writable');
+        expect(r.stderr).toContain('dist/main.js not found');
+      }
+    });
+
+    it('выбор драйвера и умолчания совпадают с фабриками приложения', () => {
+      const script = readFileSync(entry, 'utf8');
+      const src = (relPath: string) => readFileSync(join(root, 'src', 'shared', relPath), 'utf8');
+      const factory = "(process.env.STORAGE_DRIVER || 'local').toLowerCase()";
+      expect(src('storage/storage.module.ts')).toContain(factory);
+      expect(src('rights-file-storage/rights-file-storage.module.ts')).toContain(factory);
+      expect(src('storage/storage.module.ts')).toContain("driver === 'r2'");
+      expect(src('rights-file-storage/rights-file-storage.module.ts')).toContain("driver === 'r2'");
+      expect(script).toContain('${STORAGE_DRIVER:-local}');
+      expect(script).toContain('[ "$storage_driver" != "r2" ]');
+      expect(src('storage/local.storage.ts')).toContain(
+        "process.env.LOCAL_UPLOADS_DIR || './var/uploads'",
+      );
+      expect(script).toContain('${LOCAL_UPLOADS_DIR:-./var/uploads}');
+      expect(src('rights-file-storage/rights-file-storage.module.ts')).toContain(
+        "process.env.RIGHTS_FILES_LOCAL_DIR || './var/rights-files'",
+      );
+      expect(script).toContain('${RIGHTS_FILES_LOCAL_DIR:-./var/rights-files}');
+    });
   });
 
   it('entrypoint script exists and starts app', () => {

@@ -15,7 +15,8 @@ export class LocalStorageService implements StorageService {
    *   the whole of `LOCAL_UPLOADS_DIR`, so a separate directory is the only local-mode barrier.
    */
   constructor(baseDirOverride?: string) {
-    // Defaults match TASKS.md suggestions
+    // Defaults match TASKS.md suggestions. LEGACY-457: the default is copied into
+    // `scripts/docker-entrypoint.sh` (write check); `src/devops/dockerfiles.spec.ts` keeps them in sync.
     const configured = baseDirOverride || process.env.LOCAL_UPLOADS_DIR || './var/uploads';
     this.baseDir = resolve(configured);
     // Default to 5000 to match dev server port; can be overridden via env
