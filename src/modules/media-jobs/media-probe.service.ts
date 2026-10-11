@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Queue } from 'bullmq';
 import { PrismaService } from '../../prisma/prisma.service';
 import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
-import { probeDuration } from './ffprobe.util';
+import { isRemoteProbeInput, probeDuration } from './ffprobe.util';
 
 export const MEDIA_PROBE_QUEUE = Symbol('MEDIA_PROBE_QUEUE');
 export const MEDIA_PROBE_WORKER = Symbol('MEDIA_PROBE_WORKER');
@@ -98,13 +98,14 @@ export class MediaProbeService {
     if (typeof storage.getLocalPath === 'function') {
       probeInput = storage.getLocalPath(asset.key);
     }
-    if (
-      !probeInput &&
-      asset.url &&
-      (asset.url.startsWith('http://') || asset.url.startsWith('https://'))
-    ) {
-      this.logger.warn(`Remote storage without local path, probing by public URL: ${asset.url}`);
-      probeInput = asset.url;
+    if (!probeInput) {
+      // Адрес строится из ключа, а не берётся из `asset.url`: тот прежде приходил от клиента
+      // (`POST /media/confirm`), и строки, записанные до `LEGACY-461`, могут указывать куда угодно.
+      const publicUrl = storage.getPublicUrl(asset.key);
+      if (isRemoteProbeInput(publicUrl)) {
+        this.logger.warn(`Remote storage without local path, probing by public URL: ${publicUrl}`);
+        probeInput = publicUrl;
+      }
     }
     if (!probeInput) {
       this.probeJobsSkipped += 1;

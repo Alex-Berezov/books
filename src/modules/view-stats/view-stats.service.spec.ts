@@ -1,11 +1,12 @@
 import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { ViewStatsService } from './view-stats.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import type { CacheService } from '../../shared/cache/cache.interface';
-import { ViewSource } from '@prisma/client';
+import { PublicationStatus, ViewSource } from '@prisma/client';
 
 interface PrismaStub {
-  bookVersion: { findUnique: jest.Mock };
+  bookVersion: { findFirst: jest.Mock };
   viewStat: { create: jest.Mock };
   $queryRaw: jest.Mock;
 }
@@ -25,7 +26,7 @@ describe('ViewStatsService (unit)', () => {
   beforeEach(() => {
     jest.useFakeTimers().setSystemTime(new Date('2025-01-01T00:00:00Z'));
     prisma = {
-      bookVersion: { findUnique: jest.fn() },
+      bookVersion: { findFirst: jest.fn() },
       viewStat: { create: jest.fn() },
       $queryRaw: jest.fn(),
     };
@@ -42,30 +43,41 @@ describe('ViewStatsService (unit)', () => {
   afterEach(() => jest.useRealTimers());
 
   it('create: validates version existence', async () => {
-    prisma.bookVersion.findUnique.mockResolvedValueOnce(null);
+    prisma.bookVersion.findFirst.mockResolvedValueOnce(null);
     await expect(
       service.create('u1', { bookVersionId: versionId, source: ViewSource.text }),
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('create: rejects future timestamp and invalid date', async () => {
-    prisma.bookVersion.findUnique.mockResolvedValueOnce({ id: versionId });
+  it('create: looks up only a published version (LEGACY-462)', async () => {
+    prisma.bookVersion.findFirst.mockResolvedValueOnce(null);
     await expect(
-      service.create(null, {
-        bookVersionId: versionId,
-        source: ViewSource.text,
-        timestamp: new Date(Date.now() + 60_000).toISOString(),
+      service.create(null, { bookVersionId: versionId, source: ViewSource.text }),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(1);
+    expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: versionId, status: PublicationStatus.published },
       }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+    );
+    expect(prisma.viewStat.create).not.toHaveBeenCalled();
+  });
 
-    prisma.bookVersion.findUnique.mockResolvedValueOnce({ id: versionId });
-    await expect(
-      service.create(null, { bookVersionId: versionId, source: ViewSource.text, timestamp: 'bad' }),
-    ).rejects.toBeInstanceOf(BadRequestException);
+  it('create: stores server time, not a client date (LEGACY-462)', async () => {
+    prisma.bookVersion.findFirst.mockResolvedValueOnce({ id: versionId });
+    prisma.viewStat.create.mockResolvedValueOnce({ id: 'vs1' });
+    await service.create(null, {
+      bookVersionId: versionId,
+      source: ViewSource.text,
+      // Поле снято из DTO; клиент мимо валидации всё равно не задаёт дату.
+      ...({ timestamp: '2020-01-01T00:00:00Z' } as object),
+    });
+    const [{ data }] = prisma.viewStat.create.mock.calls[0] as [{ data: { timestamp: Date } }];
+    expect(data.timestamp.toISOString()).toBe('2025-01-01T00:00:00.000Z');
   });
 
   it('create: ok stores view', async () => {
-    prisma.bookVersion.findUnique.mockResolvedValueOnce({ id: versionId });
+    prisma.bookVersion.findFirst.mockResolvedValueOnce({ id: versionId });
     prisma.viewStat.create.mockResolvedValueOnce({ id: 'vs1' });
     const res = await service.create('u1', { bookVersionId: versionId, source: ViewSource.text });
     expect(res).toEqual({ success: true });
@@ -98,6 +110,9 @@ describe('ViewStatsService (unit)', () => {
     ]);
     const res = await service.top({ period: 'month', limit: 10 });
     expect(res.items[0].bookVersionId).toBe('v1');
+    // Только опубликованные версии (LEGACY-462): поведение проверяет e2e, здесь — что условие в запросе.
+    const [stmt] = prisma.$queryRaw.mock.calls[0] as [Prisma.Sql];
+    expect(stmt.sql).toContain(`bv.status = 'published'::"PublicationStatus"`);
     expect(res.totalVersions).toBe(2);
     expect(cache.set).toHaveBeenCalled();
   });

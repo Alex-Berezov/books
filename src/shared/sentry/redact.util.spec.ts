@@ -136,7 +136,7 @@ describe('redactKeys', () => {
 
   describe('двоичное значение', () => {
     it('двоичное значение целиком отдаётся размером, а не побайтовым разбором', () => {
-      // `POST /uploads/direct` кладёт в `req.body` `Buffer` до 210 МБ. Потолок
+      // `POST /uploads/direct` кладёт в `req.body` `Buffer` в сотни МБ. Потолок
       // на 20 элементов сюда не достаёт: `Array.isArray(Buffer)` ложно.
       expect(redactKeys(Buffer.alloc(4096, 7))).toBe('[Binary: 4096 bytes]');
     });

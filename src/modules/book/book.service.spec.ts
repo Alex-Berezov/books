@@ -935,7 +935,7 @@ describe('BookService.getOverview', () => {
       // Значение уходит параметром, а не склейкой в текст запроса.
       expect(countSql).not.toContain('hamlet');
       const whereSql = countCall[1] as { values: unknown[] };
-      expect(whereSql.values).toEqual(expect.arrayContaining(['hamlet']));
+      expect(whereSql.values).toEqual(expect.arrayContaining(['%hamlet%']));
     });
 
     it('returns empty items when no books match', async () => {

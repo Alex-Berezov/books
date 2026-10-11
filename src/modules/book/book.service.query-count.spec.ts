@@ -507,7 +507,7 @@ describe('LEGACY-128: сортировка по популярности счи�
     // Значение уходит параметром, а не склейкой в текст запроса.
     expect(sql).not.toContain('tolstoy');
     const whereSql = pageCall[1] as { values: unknown[] };
-    expect(whereSql.values).toEqual(expect.arrayContaining(['tolstoy']));
+    expect(whereSql.values).toEqual(expect.arrayContaining(['%tolstoy%']));
   });
 
   /**
@@ -623,7 +623,7 @@ describe('LEGACY-254/255: ветка каталога по дате', () => {
     // Значение уходит параметром, а не склейкой в текст запроса.
     expect(sql).not.toContain('tolstoy');
     const whereSql = pageCall[1] as { values: unknown[] };
-    expect(whereSql.values).toEqual(expect.arrayContaining(['tolstoy']));
+    expect(whereSql.values).toEqual(expect.arrayContaining(['%tolstoy%']));
   });
 
   /**

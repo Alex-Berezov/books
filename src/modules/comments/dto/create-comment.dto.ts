@@ -1,8 +1,21 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsUUID, MinLength, IsInt, Min, Max } from 'class-validator';
+import {
+  IsOptional,
+  IsString,
+  IsUUID,
+  MinLength,
+  MaxLength,
+  IsInt,
+  Min,
+  Max,
+} from 'class-validator';
 import { Xor } from '../../../shared/validators/xor.decorator';
 import { ExactlyOne } from '../../../shared/validators/exactly-one.decorator';
-import { msgExactlyOne, msgExactlyOneOf } from '../../../shared/constants/validation';
+import {
+  COMMENT_TEXT_MAX_LENGTH,
+  msgExactlyOne,
+  msgExactlyOneOf,
+} from '../../../shared/constants/validation';
 
 export class CreateCommentDto {
   // Internal validator anchor to enforce exactly-one among target fields
@@ -40,9 +53,10 @@ export class CreateCommentDto {
   @IsUUID()
   parentId?: string;
 
-  @ApiProperty({ description: 'Comment text' })
+  @ApiProperty({ description: 'Comment text', maxLength: COMMENT_TEXT_MAX_LENGTH })
   @IsString()
   @MinLength(1)
+  @MaxLength(COMMENT_TEXT_MAX_LENGTH)
   text!: string;
 
   @ApiPropertyOptional({ description: 'Book rating score (1-5)', minimum: 1, maximum: 5 })

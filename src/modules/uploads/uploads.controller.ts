@@ -99,7 +99,7 @@ export class UploadsController {
     const typedReq = req as Request & { user?: { userId: string } };
     const userId = typedReq.user?.userId;
     if (!userId) throw new UnauthorizedException();
-    // express.raw middleware attaches Buffer as req.body in our config; fallback to empty buffer
+    // `DirectUploadBodyMiddleware` (LEGACY-459) attaches the raw Buffer as req.body; fallback to empty buffer
     const buf = (req.body as Buffer) || Buffer.from([]);
     const contentType = req.headers['content-type'] || 'application/octet-stream';
     return this.uploads.directUpload(token, buf, String(contentType), String(userId));

@@ -1,5 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException, Inject } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, PublicationStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CACHE_SERVICE, CacheService } from '../../shared/cache/cache.interface';
 import { CreateViewDto } from './dto/create-view.dto';
@@ -20,22 +20,21 @@ export class ViewStatsService {
   ) {}
 
   async create(userId: string | null, dto: CreateViewDto): Promise<{ success: true }> {
-    // Validate version exists
-    const version = await this.prisma.bookVersion.findUnique({ where: { id: dto.bookVersionId } });
+    // Только опубликованная версия (`LEGACY-462`): черновик для анонима не существует — тот же 404,
+    // что и на чужой id, иначе ручка подтверждала бы id черновиков.
+    const version = await this.prisma.bookVersion.findFirst({
+      where: { id: dto.bookVersionId, status: PublicationStatus.published },
+      select: { id: true },
+    });
     if (!version) throw new NotFoundException('Book version not found');
 
-    // Validate timestamp
-    const ts = dto.timestamp ? new Date(dto.timestamp) : new Date();
-    if (Number.isNaN(ts.getTime())) throw new BadRequestException('Invalid timestamp');
-    if (ts.getTime() > Date.now())
-      throw new BadRequestException('timestamp cannot be in the future');
-
+    // Время — серверное: клиентская дата позволяла дописывать просмотры в любой прошлый день.
     await this.prisma.viewStat.create({
       data: {
         bookVersionId: dto.bookVersionId,
         userId: userId ?? null,
         source: dto.source,
-        timestamp: ts,
+        timestamp: new Date(),
       },
     });
     return { success: true } as const;
@@ -109,15 +108,19 @@ export class ViewStatsService {
     const limit = q.limit ?? 10;
     const { from, to } = this.calcRange(q.period);
     const clauses: Prisma.Sql[] = [Prisma.sql`1=1`];
-    if (q.source) clauses.push(Prisma.sql`AND "source" = ${q.source}`);
-    if (from) clauses.push(Prisma.sql`AND "timestamp" >= ${from}`);
-    if (to) clauses.push(Prisma.sql`AND "timestamp" <= ${to}`);
+    if (q.source) clauses.push(Prisma.sql`AND vs."source" = ${q.source}`);
+    if (from) clauses.push(Prisma.sql`AND vs."timestamp" >= ${from}`);
+    if (to) clauses.push(Prisma.sql`AND vs."timestamp" <= ${to}`);
 
+    // Только опубликованные версии (`LEGACY-462`): ручка публичная, а просмотры черновиков,
+    // записанные до правки, иначе выдавали бы их id.
     const stmt2 = Prisma.sql`
-      SELECT "bookVersionId", COUNT(*)::int as count
-      FROM "ViewStat"
+      SELECT vs."bookVersionId", COUNT(*)::int as count
+      FROM "ViewStat" vs
+      JOIN "BookVersion" bv ON bv.id = vs."bookVersionId"
+        AND bv.status = 'published'::"PublicationStatus"
       WHERE ${Prisma.join(clauses, ' ')}
-      GROUP BY "bookVersionId"
+      GROUP BY vs."bookVersionId"
       ORDER BY COUNT(*) DESC
       LIMIT ${Number(limit)}
     `;

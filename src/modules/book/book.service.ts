@@ -16,6 +16,7 @@ import { UpdateBookDto } from './dto/update-book.dto';
 import { BookCardDto } from './dto/book-card.dto';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 import {
   parseRelatedSlugs,
   type WithParsedRelatedSlugs,
@@ -1000,8 +1001,10 @@ export class BookService {
       );
     }
     if (q) {
+      // `%` и `_` в запросе — символы, а не подстановки (`LEGACY-462`): «100%» иначе совпал бы со всем.
+      const pattern = `%${escapeLikeWildcards(q)}%`;
       conditions.push(
-        Prisma.sql`(bv.title ILIKE '%' || ${q} || '%' OR bv.author ILIKE '%' || ${q} || '%')`,
+        Prisma.sql`(bv.title ILIKE ${pattern} ESCAPE '\\' OR bv.author ILIKE ${pattern} ESCAPE '\\')`,
       );
     }
     const whereSql = Prisma.join(conditions, ' AND ');

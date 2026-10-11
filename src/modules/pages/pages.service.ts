@@ -22,6 +22,7 @@ import {
 } from '../../shared/prisma/prisma-error.util';
 import { deleteSeoIfUnreferenced, seoOwnersCount } from '../../shared/seo/seo-orphan.util';
 import { assertChangedSlugLength, suggestedSlugCandidate } from '../../shared/validators/slug';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 /**
  * Точная форма, которую реально возвращает Prisma с `include: { seo: true }` — используется как
@@ -31,16 +32,6 @@ import { assertChangedSlugLength, suggestedSlugCandidate } from '../../shared/va
  * а Prisma отдаёт `JsonValue`.
  */
 type PageWithSeo = Prisma.PageGetPayload<{ include: { seo: true } }>;
-
-/**
- * `%` и `_` в запросе пользователя — это символы, а не подстановки; та же
- * причина и то же экранирование, что в `author.service.ts` (там оно называется
- * так же и не переиспользовано специально — сравнение с общим местом не входило
- * в границы `LEGACY-371`).
- */
-function escapeLikeWildcards(term: string): string {
-  return term.replace(/([\\%_])/g, '\\$1');
-}
 
 /**
  * Границы транзакции смены видимости (`LEGACY-015`, пачка `T21`). Те же цифры, что

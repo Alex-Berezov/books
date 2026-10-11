@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsOptional, IsInt, Min, Max, IsBoolean, IsString, IsIn } from 'class-validator';
 import { Type, Transform } from 'class-transformer';
+import { SEARCH_QUERY_MAX_LENGTH } from '../../../shared/constants/validation';
 
 /**
  * Потолок карточной выдачи. Одно число на три места: `@Max` этой DTO, второй рубеж
@@ -77,11 +78,16 @@ export class BookCardsQueryDto {
   type?: string;
 
   @ApiProperty({
-    description: 'Search query by title or author (case-insensitive contains).',
+    description: `Search query by title or author (case-insensitive contains). Longer than ${SEARCH_QUERY_MAX_LENGTH} characters is cut to ${SEARCH_QUERY_MAX_LENGTH}.`,
     example: 'hamlet',
     required: false,
   })
   @IsOptional()
   @IsString()
+  // Обрезка, а не 400 (`LEGACY-462`): страница каталога фронта зовёт ручку с `q` из адреса без
+  // перехвата, и длинная вставка в поиск роняла бы её страницей ошибки вместо выдачи.
+  @Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.slice(0, SEARCH_QUERY_MAX_LENGTH) : value,
+  )
   q?: string;
 }

@@ -1,6 +1,7 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Language as PrismaLanguage } from '@prisma/client';
-import { IsIn, IsOptional, IsString, Matches, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { USER_NAME_MAX_LENGTH } from '../../../shared/constants/validation';
 import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 /**
@@ -9,10 +10,11 @@ import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.
  * полей и правила проверки не менялись.
  */
 export class UpdateMeDto {
-  @ApiPropertyOptional({ minLength: 2, example: 'John Doe' })
+  @ApiPropertyOptional({ minLength: 2, maxLength: USER_NAME_MAX_LENGTH, example: 'John Doe' })
   @IsOptional()
   @IsString()
   @MinLength(2)
+  @MaxLength(USER_NAME_MAX_LENGTH)
   name?: string;
 
   @ApiPropertyOptional({

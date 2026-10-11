@@ -1,8 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsIn, IsNotEmpty, IsOptional, IsString, MinLength } from 'class-validator';
+import {
+  IsEmail,
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+  MinLength,
+} from 'class-validator';
 import { Language as PrismaLanguage } from '@prisma/client';
 import { SOCIAL_PROVIDERS, type SocialProvider } from '../providers/social-identity.service';
 import { NormalizeEmail } from '../../../shared/validators/normalize-email.decorator';
+import { USER_NAME_MAX_LENGTH } from '../../../shared/constants/validation';
 
 export class RegisterDto {
   @ApiProperty({ example: 'user@example.com' })
@@ -15,9 +24,11 @@ export class RegisterDto {
   @MinLength(8)
   password!: string;
 
-  @ApiPropertyOptional({ example: 'John Doe' })
+  @ApiPropertyOptional({ example: 'John Doe', maxLength: USER_NAME_MAX_LENGTH })
   @IsOptional()
   @IsString()
+  // Тот же потолок, что у `PATCH /users/me` (`LEGACY-462`): регистрация — второй путь записи `User.name`.
+  @MaxLength(USER_NAME_MAX_LENGTH)
   name?: string;
 
   @ApiPropertyOptional({ enum: PrismaLanguage })

@@ -7541,8 +7541,6 @@ export interface components {
       /** Format: uuid */
       bookVersionId: string;
       source: components['schemas']['ViewSource'];
-      /** @description ISO date-time, must be <= now() */
-      timestamp?: string;
     };
     CreateViewResponseDto: {
       /** @example true */
@@ -20413,7 +20411,7 @@ export interface operations {
         sort?: 'popular' | 'new';
         /** @description Filter by content type. "audio" = has audio chapters, "text" = has text chapters. */
         type?: 'audio' | 'text';
-        /** @description Search query by title or author (case-insensitive contains). */
+        /** @description Search query by title or author (case-insensitive contains). Longer than 200 characters is cut to 200. */
         q?: string;
       };
       header?: never;
@@ -20647,7 +20645,7 @@ export interface operations {
         sort?: 'popular' | 'new';
         /** @description Filter by content type. "audio" = has audio chapters, "text" = has text chapters. */
         type?: 'audio' | 'text';
-        /** @description Search query by title or author (case-insensitive contains). */
+        /** @description Search query by title or author (case-insensitive contains). Longer than 200 characters is cut to 200. */
         q?: string;
       };
       header?: never;
@@ -20849,7 +20847,7 @@ export interface operations {
         sort?: 'popular' | 'new';
         /** @description Filter by content type. "audio" = has audio chapters, "text" = has text chapters. */
         type?: 'audio' | 'text';
-        /** @description Search query by title or author (case-insensitive contains). */
+        /** @description Search query by title or author (case-insensitive contains). Longer than 200 characters is cut to 200. */
         q?: string;
       };
       header?: never;

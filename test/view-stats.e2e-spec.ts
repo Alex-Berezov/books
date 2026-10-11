@@ -10,6 +10,7 @@ describe('ViewStats e2e', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let versionId: string;
+  let draftVersionId: string;
   let userAccess: string;
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
@@ -34,9 +35,27 @@ describe('ViewStats e2e', () => {
         coverImageUrl: 'https://example.com/c.jpg',
         type: 'text',
         isFree: true,
+        status: 'published',
       },
     });
     versionId = version.id;
+
+    // Черновик — для анонима его нет (LEGACY-462): ни записи просмотра, ни строки в топе.
+    const draftBook = await createBookFixture(prisma, `book-views-draft-${Date.now()}`);
+    const draft = await prisma.bookVersion.create({
+      data: {
+        bookId: draftBook.id,
+        language: 'en',
+        title: 'Draft',
+        author: 'A',
+        description: 'D',
+        coverImageUrl: 'https://example.com/c.jpg',
+        type: 'text',
+        isFree: true,
+        status: 'draft',
+      },
+    });
+    draftVersionId = draft.id;
 
     const email = `user_${Date.now()}@example.com`;
     const password = 'password123';
@@ -81,17 +100,51 @@ describe('ViewStats e2e', () => {
       .expect(400);
   });
 
+  it('POST /views 404 on a draft version (LEGACY-462)', async () => {
+    await request(http())
+      .post('/views')
+      .send({ bookVersionId: draftVersionId, source: 'text' })
+      .expect(404);
+    await expect(prisma.viewStat.count({ where: { bookVersionId: draftVersionId } })).resolves.toBe(
+      0,
+    );
+  });
+
+  it('POST /views rejects a client timestamp: the time is the server one (LEGACY-462)', async () => {
+    await request(http())
+      .post('/views')
+      .send({ bookVersionId: versionId, source: 'text', timestamp: '2020-01-01T00:00:00Z' })
+      .expect(400);
+  });
+
+  it('GET /views/top lists only published versions (LEGACY-462)', async () => {
+    // Просмотры черновика, записанные до правки, — прямо в таблицу: через ручку их больше не записать.
+    await prisma.viewStat.createMany({
+      data: Array.from({ length: 50 }, () => ({
+        bookVersionId: draftVersionId,
+        source: 'text' as const,
+        timestamp: new Date(),
+      })),
+    });
+    const top = await request(http())
+      .get('/views/top')
+      .query({ period: 'week', limit: 50 })
+      .expect(200);
+    const ids = (top.body.items as { bookVersionId: string }[]).map((i) => i.bookVersionId);
+    expect(ids).not.toContain(draftVersionId);
+  });
+
   it('Aggregate and Top', async () => {
-    // Create some historical views across days
+    // Исторические просмотры по дням — прямо в таблицу: `POST /views` пишет только текущее время.
     const now = new Date();
-    const day1 = new Date(now.getTime() - 2 * 24 * 3600 * 1000).toISOString();
-    const day2 = new Date(now.getTime() - 1 * 24 * 3600 * 1000).toISOString();
-    await request(http())
-      .post('/views')
-      .send({ bookVersionId: versionId, source: 'text', timestamp: day1 });
-    await request(http())
-      .post('/views')
-      .send({ bookVersionId: versionId, source: 'text', timestamp: day2 });
+    const day1 = new Date(now.getTime() - 2 * 24 * 3600 * 1000);
+    const day2 = new Date(now.getTime() - 1 * 24 * 3600 * 1000);
+    await prisma.viewStat.createMany({
+      data: [
+        { bookVersionId: versionId, source: 'text', timestamp: day1 },
+        { bookVersionId: versionId, source: 'text', timestamp: day2 },
+      ],
+    });
 
     const agg = await request(http())
       .get('/views/aggregate')

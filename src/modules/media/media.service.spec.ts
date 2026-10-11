@@ -49,7 +49,41 @@ describe('MediaService (unit)', () => {
   });
 
   describe('confirm', () => {
-    it('creates new asset when not exists; uses storage url if not provided', async () => {
+    // LEGACY-461: клиентский `url` уходил в `MediaAsset.url`, а оттуда в ffprobe.
+    it('re-confirming an existing key overwrites a stored client url with the storage url', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue({
+        id: 'id-1',
+        key: 'audio/k.mp3',
+        url: 'http://169.254.169.254/latest/meta-data/',
+        isDeleted: false,
+      });
+      prisma.mediaAsset.update.mockResolvedValue({ id: 'id-1' });
+      storage.getPublicUrl.mockReturnValue('https://media.example.com/audio/k.mp3');
+
+      await service.confirm(
+        { key: 'audio/k.mp3', url: 'http://169.254.169.254/latest/meta-data/' },
+        'user-1',
+      );
+
+      const updateArg = prisma.mediaAsset.update.mock.calls[0][0] as { data: { url: string } };
+      expect(updateArg.data.url).toBe('https://media.example.com/audio/k.mp3');
+    });
+
+    it('ignores a client url and stores the storage url built from the key', async () => {
+      prisma.mediaAsset.findUnique.mockResolvedValue(null);
+      prisma.mediaAsset.create.mockResolvedValue({ id: '1' });
+      storage.getPublicUrl.mockReturnValue('https://media.example.com/audio/k.mp3');
+
+      await service.confirm(
+        { key: 'audio/k.mp3', url: 'http://169.254.169.254/latest/meta-data/' },
+        'user-1',
+      );
+
+      const createArg = prisma.mediaAsset.create.mock.calls[0][0] as { data: { url: string } };
+      expect(createArg.data.url).toBe('https://media.example.com/audio/k.mp3');
+    });
+
+    it('creates new asset when not exists; url comes from storage by key', async () => {
       prisma.mediaAsset.findUnique.mockResolvedValue(null);
       const created = { id: '1', key: 'k', url: 'http://u/static/k' };
       prisma.mediaAsset.create.mockResolvedValue(created);
@@ -111,11 +145,11 @@ describe('MediaService (unit)', () => {
       expect(data).toMatchObject({ isDeleted: false, deletedAt: null });
     });
 
-    it('throws for invalid url (not http)', async () => {
-      storage.getPublicUrl.mockReturnValue('http://u/static/k');
-      await expect(service.confirm({ key: 'k', url: 'ftp://nope' }, 'u')).rejects.toBeInstanceOf(
-        BadRequestException,
-      );
+    it('throws when the storage url is not http (client url plays no part)', async () => {
+      storage.getPublicUrl.mockReturnValue('ftp://nope/k');
+      await expect(
+        service.confirm({ key: 'k', url: 'http://u/static/k' }, 'u'),
+      ).rejects.toBeInstanceOf(BadRequestException);
     });
 
     it('handles unique constraint (P2002) by returning found asset', async () => {

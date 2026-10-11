@@ -501,8 +501,8 @@ function getContainer(value: unknown): unknown[] | Record<string, unknown> | und
  * 🔴 Двоичное тело внутрь редактора не пускается вовсе.
  *
  * На `POST /uploads/direct` тело разбирается сырым `express.raw` с любым типом
- * содержимого, то есть `req.body` там — `Buffer` размером
- * до `UPLOADS_MAX_AUDIO_MB + 10` (по умолчанию 210 МБ).
+ * содержимого (`DirectUploadBodyMiddleware`, `LEGACY-459`), то есть `req.body` там —
+ * `Buffer` размером до заявленного при presign `size` +10 % (аудио — до ~220 МБ).
  * `Array.isArray(Buffer)` ложно, а `isPlainObject` истинно, поэтому редактор
  * разворачивал бы его в объект «ключ на байт» — сотни миллионов ключей, собираемых
  * внутри обработчика исключения, и потолок `MAX_REDACT_ARRAY_ITEMS` сюда не достаёт.

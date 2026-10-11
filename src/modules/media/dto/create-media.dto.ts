@@ -22,6 +22,8 @@ export class ConfirmMediaDto {
   })
   // `IsUrl` без обязательной схемы пускал `javascript:1/alert(1)//` (`LEGACY-447`); сервис
   // и раньше отбивал адрес не с `http` (`media.service.ts`), так что форма входа та же.
+  // ⚠️ Сервис значение не использует: адрес строится из `key` (`LEGACY-461`). Поле оставлено
+  // обязательным, чтобы не менять контракт — фронт шлёт сюда тот же `getPublicUrl(key)`.
   @IsAbsoluteHttpUrl()
   url!: string;
 

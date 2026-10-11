@@ -40,6 +40,9 @@ function isUploadKey(key: string): boolean {
   );
 }
 
+/** Допуск тела прямой загрузки сверх заявленного при presign размера: +10 %. */
+const DIRECT_UPLOAD_SIZE_TOLERANCE = 1.1;
+
 @Injectable()
 export class UploadsService {
   private readonly logger = new Logger(UploadsService.name);
@@ -88,6 +91,16 @@ export class UploadsService {
     };
   }
 
+  /**
+   * Потолок тела `POST /uploads/direct` по живому токену — для разбора тела до гвардов
+   * (`DirectUploadBodyMiddleware`, `LEGACY-459`); `undefined` — токена нет или он истёк.
+   * Токен не расходуется.
+   */
+  async directUploadBodyLimit(token: string): Promise<number | undefined> {
+    const data = await this.cache.get<{ size: number }>(this.tokenKey(token));
+    return data ? Math.floor(data.size * DIRECT_UPLOAD_SIZE_TOLERANCE) : undefined;
+  }
+
   async directUpload(token: string, body: Buffer, contentType: string, userId: string) {
     const cacheKey = this.tokenKey(token);
     const data = await this.cache.get<{
@@ -99,7 +112,7 @@ export class UploadsService {
     if (!data) throw new UnauthorizedException('Invalid or expired token');
     if (data.userId !== userId) throw new UnauthorizedException('Token not for this user');
     if (contentType !== data.contentType) throw new BadRequestException('Content-Type mismatch');
-    if (body.length > data.size * 1.1)
+    if (body.length > data.size * DIRECT_UPLOAD_SIZE_TOLERANCE)
       throw new BadRequestException('Body larger than announced size');
 
     await this.storage.save(data.key, body, { contentType });

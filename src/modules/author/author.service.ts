@@ -45,21 +45,8 @@ import {
 } from './author-index.util';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { suggestedSlugCandidate } from '../../shared/validators/slug';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 import { seoDtoToData } from '../seo/utils/seo-dto-to-data.util';
-
-/**
- * `%` и `_` в запросе пользователя — это символы, а не подстановки: поиск «100%»
- * иначе совпал бы со всеми именами разом. Обратная косая — escape-символ `LIKE`
- * в Postgres по умолчанию, поэтому экранируется и она сама.
- *
- * Одно место на оба поиска — административный (`list`, объектный фильтр Prisma
- * `contains`) и публичный (`buildPublicAuthorConditions`, сырой `Prisma.sql`
- * с явным `ESCAPE`). Слои SQL у них разные, а правило экранирования одно, и
- * поправленное в одном месте из двух оно разошлось бы молча.
- */
-function escapeLikeWildcards(term: string): string {
-  return term.replace(/([\\%_])/g, '\\$1');
-}
 
 /**
  * Первая буква имени, посчитанная в SQL: сняли краевые пробелы, свернули

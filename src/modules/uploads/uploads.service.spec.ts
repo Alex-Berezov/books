@@ -8,6 +8,7 @@ import {
 } from '@nestjs/common';
 import type { Readable } from 'node:stream';
 import { UploadsService } from './uploads.service';
+import { InMemoryCacheService } from '../../shared/cache/inmemory.cache';
 import { UploadType } from './dto/presign.dto';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { deleteMediaObject } from '../media/media-delete';
@@ -49,6 +50,25 @@ describe('UploadsService (unit)', () => {
       prisma as unknown as PrismaService,
     );
     deleteObject.mockResolvedValue({ storageDeleted: true });
+  });
+
+  // LEGACY-459: потолок тела до гвардов берётся по токену presign — на настоящем кэше, чтобы
+  // переименование поля записи или ключа токена краснело здесь, а не 401 на каждой загрузке в проде.
+  describe('directUploadBodyLimit', () => {
+    it('gives the announced size +10 % for a token issued by presign, without spending it', async () => {
+      const real = new UploadsService(
+        new InMemoryCacheService(),
+        storage as unknown as StorageService,
+        prisma as unknown as PrismaService,
+      );
+      const { token } = await real.presign(
+        { type: UploadType.cover, contentType: 'image/jpeg', size: 1000 },
+        'user-1',
+      );
+      await expect(real.directUploadBodyLimit(token)).resolves.toBe(1100);
+      await expect(real.directUploadBodyLimit(token)).resolves.toBe(1100);
+      await expect(real.directUploadBodyLimit('unknown')).resolves.toBeUndefined();
+    });
   });
 
   describe('presign', () => {

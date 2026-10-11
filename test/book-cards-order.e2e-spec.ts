@@ -5,6 +5,7 @@ import { BookType, Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { createBookFixture } from './helpers/book-fixture';
+import { SEARCH_QUERY_MAX_LENGTH } from '../src/shared/constants/validation';
 
 /**
  * Порядок выдачи `GET /:lang/books/cards` на настоящем Postgres.
@@ -124,6 +125,45 @@ describe('Book cards: sort order (LEGACY-253, LEGACY-254) e2e', () => {
       `${marker}-older`,
       `${marker}-undated`,
     ]);
+  });
+
+  // LEGACY-462: `_` и `%` в `q` — символы. Без экранирования `_` совпал бы с пробелом в «<marker> newer».
+  it('поиск q: подстановки LIKE в запросе — буквальные символы', async () => {
+    const underscore = await cards(`?q=${marker}_newer`);
+    expect(underscore.items).toEqual([]);
+
+    const percent = await cards(`?q=${encodeURIComponent(`${marker}%newer`)}`);
+    expect(percent.items).toEqual([]);
+
+    const plain = await cards(`?q=${encodeURIComponent(`${marker} newer`)}`);
+    expect(plain.items.map((item) => item.slug)).toEqual([`${marker}-newer`]);
+  });
+
+  it('поиск q: длиннее потолка обрезается до потолка и находит книгу по первым символам (LEGACY-462)', async () => {
+    // Своя метка: книга не должна попадать в выдачу по `marker` в соседних тестах.
+    const own = `lng${Date.now()}`;
+    // Название ровно на потолок: без обрезки хвост запроса сверх потолка не совпал бы ни с чем.
+    const longTitle = `${own} `.padEnd(SEARCH_QUERY_MAX_LENGTH, 'x');
+    const book = await createBookFixture(prisma, own);
+    bookIds.push(book.id);
+    await prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: Language.ru,
+        title: longTitle,
+        author: 'e2e author',
+        description: 'e2e',
+        coverImageUrl: 'https://example.invalid/cover.png',
+        type: BookType.text,
+        isFree: true,
+        status: 'published',
+        publishedAt: new Date('2026-01-02T00:00:00Z'),
+        slug: own,
+      },
+    });
+
+    const res = await cards(`?q=${encodeURIComponent(`${longTitle}${'z'.repeat(300)}`)}`);
+    expect(res.items.map((item) => item.slug)).toEqual([own]);
   });
 
   /**

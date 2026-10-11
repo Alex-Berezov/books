@@ -1,5 +1,5 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEnum, IsISO8601, IsOptional, IsUUID } from 'class-validator';
+import { ApiProperty } from '@nestjs/swagger';
+import { IsEnum, IsUUID } from 'class-validator';
 import { ViewSource } from '@prisma/client';
 
 export class CreateViewDto {
@@ -10,9 +10,4 @@ export class CreateViewDto {
   @ApiProperty({ enum: ViewSource, enumName: 'ViewSource' })
   @IsEnum(ViewSource)
   source!: ViewSource;
-
-  @ApiPropertyOptional({ description: 'ISO date-time, must be <= now()' })
-  @IsOptional()
-  @IsISO8601()
-  timestamp?: string;
 }

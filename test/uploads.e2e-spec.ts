@@ -105,6 +105,43 @@ describe('Uploads e2e (local driver)', () => {
     await app.close();
   });
 
+  /**
+   * `LEGACY-459`: тело `POST /uploads/direct` читается только по живому upload-токену — на настоящем
+   * `AppModule` (`DirectUploadBodyMiddleware` из `UploadsModule`), без префикса `api`, как весь набор.
+   */
+  it('direct: 401 for an anonymous request without an upload token', async () => {
+    await request(app.getHttpServer())
+      .post('/uploads/direct')
+      .set('content-type', 'image/png')
+      .send(Buffer.alloc(1024))
+      .expect(401);
+  });
+
+  it('direct: 401 with an unknown upload token, even with a valid Bearer', async () => {
+    await request(app.getHttpServer())
+      .post('/uploads/direct')
+      .set('Authorization', `Bearer ${token}`)
+      .set('x-upload-token', '00000000-0000-4000-8000-000000000000')
+      .set('content-type', 'image/png')
+      .send(Buffer.alloc(16))
+      .expect(401);
+  });
+
+  it('direct: 413 when the body exceeds the announced size +10 %', async () => {
+    const pres = await request(app.getHttpServer())
+      .post('/uploads/presign')
+      .set('Authorization', `Bearer ${token}`)
+      .send({ type: 'cover', contentType: 'image/png', size: 10 })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/uploads/direct')
+      .set('Authorization', `Bearer ${token}`)
+      .set('x-upload-token', pres.body.token)
+      .set('content-type', 'image/png')
+      .send(Buffer.alloc(12))
+      .expect(413);
+  });
+
   it('presign -> direct -> confirm -> GET /static', async () => {
     // presign image
     const pres = await request(app.getHttpServer())

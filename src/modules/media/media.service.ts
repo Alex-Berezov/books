@@ -45,9 +45,9 @@ export class MediaService {
 
   async confirm(dto: ConfirmMediaDto, userId: string) {
     if (!dto.key) throw new BadRequestException('key is required');
-    // fill url from storage if not provided correctly
-    const resolvedUrl = this.storage.getPublicUrl(dto.key);
-    const url = dto.url || resolvedUrl;
+    // Адрес — только из ключа: `dto.url` клиента не принимается (`LEGACY-461`). Он уходил
+    // в `MediaAsset.url`, а оттуда в ffprobe — проба ходила сервером по любому адресу.
+    const url = this.storage.getPublicUrl(dto.key);
     if (!url.startsWith('http')) throw new BadRequestException('Invalid url');
 
     const afterCommit = async (assetId: string) => {

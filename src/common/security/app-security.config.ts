@@ -10,7 +10,6 @@ import { defaultCacheControl } from '../middleware/default-cache-control.middlew
  * - Helmet with safe defaults (CSP disabled in non-prod to not break Swagger)
  * - CORS configured via getCorsConfig() from cors.config.ts
  * - Body parsers: JSON and URL-encoded with 1mb limits by default
- * - Raw body for local direct uploads (110mb)
  * - Static files for local uploads mapped to /static
  */
 export function configureSecurity(app: INestApplication): void {
@@ -54,9 +53,6 @@ export function configureSecurity(app: INestApplication): void {
   const urlencodedLimit = process.env.BODY_LIMIT_URLENCODED || '1mb';
   app.use(express.json({ limit: jsonLimit }));
   app.use(express.urlencoded({ limit: urlencodedLimit, extended: true }));
-
-  // Raw body middleware for direct uploads (local driver)
-  const audioLimitMb = Number(process.env.UPLOADS_MAX_AUDIO_MB || 200);
-  const rawLimit = `${audioLimitMb + 10}mb`;
-  app.use('/api/uploads/direct', express.raw({ type: '*/*', limit: rawLimit }));
+  // Raw body for direct uploads is parsed by `DirectUploadBodyMiddleware` in `UploadsModule`, only with a live
+  // upload token (LEGACY-459).
 }

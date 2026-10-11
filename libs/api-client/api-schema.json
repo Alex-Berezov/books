@@ -7484,6 +7484,7 @@
           },
           "text": {
             "description": "Comment text",
+            "maxLength": 5000,
             "type": "string"
           }
         },
@@ -8755,10 +8756,6 @@
                 "$ref": "#/components/schemas/ViewSource"
               }
             ]
-          },
-          "timestamp": {
-            "description": "ISO date-time, must be <= now()",
-            "type": "string"
           }
         },
         "required": [
@@ -15384,6 +15381,7 @@
           },
           "name": {
             "example": "John Doe",
+            "maxLength": 100,
             "type": "string"
           },
           "password": {
@@ -22741,6 +22739,7 @@
           },
           "text": {
             "description": "Updated text",
+            "maxLength": 5000,
             "type": "string"
           }
         },
@@ -22933,6 +22932,7 @@
           },
           "name": {
             "example": "John Doe",
+            "maxLength": 100,
             "minLength": 2,
             "type": "string"
           },
@@ -39615,7 +39615,7 @@
             }
           },
           {
-            "description": "Search query by title or author (case-insensitive contains).",
+            "description": "Search query by title or author (case-insensitive contains). Longer than 200 characters is cut to 200.",
             "in": "query",
             "name": "q",
             "required": false,
@@ -40248,7 +40248,7 @@
             }
           },
           {
-            "description": "Search query by title or author (case-insensitive contains).",
+            "description": "Search query by title or author (case-insensitive contains). Longer than 200 characters is cut to 200.",
             "in": "query",
             "name": "q",
             "required": false,
@@ -40757,7 +40757,7 @@
             }
           },
           {
-            "description": "Search query by title or author (case-insensitive contains).",
+            "description": "Search query by title or author (case-insensitive contains). Longer than 200 characters is cut to 200.",
             "in": "query",
             "name": "q",
             "required": false,
