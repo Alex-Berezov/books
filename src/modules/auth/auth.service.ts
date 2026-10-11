@@ -86,6 +86,21 @@ const INVALID_CREDENTIALS_MESSAGE = 'Invalid credentials';
 /** Отказ заблокированному пользователю на входе любым путём (`LEGACY-452`). */
 const ACCOUNT_DISABLED_MESSAGE = 'Account is disabled';
 
+/**
+ * Машинный признак блокировки в теле 401 (`LEGACY-466`): фронт различает его по `code`, а не по
+ * тексту, и показывает заблокированному свою фразу вместо «неверный пароль». Остальные 401 кода
+ * не несут — кроме блокировки отказ входа ничем не различается (`LEGACY-455`).
+ */
+const ACCOUNT_DISABLED_CODE = 'ACCOUNT_DISABLED';
+
+const accountDisabled = (): UnauthorizedException =>
+  new UnauthorizedException({
+    statusCode: 401,
+    message: ACCOUNT_DISABLED_MESSAGE,
+    error: 'Unauthorized',
+    code: ACCOUNT_DISABLED_CODE,
+  });
+
 type AuthSession = {
   user: PublicUser & { roles: RoleName[] };
   accessToken: string;
@@ -266,7 +281,7 @@ export class AuthService implements OnModuleInit {
     // не открывает ни сессии, ни новой привязки (`LEGACY-452`). Снимок строки отсекает
     // блокировку сразу, а отметка входа (`markSignIn`, условием записи) — и блокировку,
     // пришедшую после чтения.
-    if (!user.isActive) throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
+    if (!user.isActive) throw accountDisabled();
     const signedInUser = user;
 
     // Отметка входа, привязка и дополнение профиля — одной транзакцией: отказ отметки
@@ -510,7 +525,7 @@ export class AuthService implements OnModuleInit {
     const valid = await argon2.verify(user.passwordHash, dto.password);
     if (!valid) throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
     // После сверки пароля: о блокировке узнаёт только тот, кто знает пароль (`LEGACY-452`).
-    if (!user.isActive) throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
+    if (!user.isActive) throw accountDisabled();
 
     // Условием записи — тот самый хеш, что сверялся (`LEGACY-454`): пароль, снятый привязкой
     // провайдера (или сменённый) за время `argon2.verify`, иначе выдал бы сессию с уже поднятой `tv`.
@@ -553,7 +568,7 @@ export class AuthService implements OnModuleInit {
       select: { id: true, isActive: true, tokenVersion: true },
     });
     if (!user) throw new UnauthorizedException('User not found');
-    if (!user.isActive) throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
+    if (!user.isActive) throw accountDisabled();
     if (!isSessionAlive(user, payload)) throw new UnauthorizedException(SESSION_REVOKED_MESSAGE);
 
     const roles = await this.computeRoles(user);
@@ -611,7 +626,7 @@ export class AuthService implements OnModuleInit {
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
         if (verifiedPasswordHash === undefined) {
-          throw new UnauthorizedException(ACCOUNT_DISABLED_MESSAGE);
+          throw accountDisabled();
         }
         // Под условие не попали две причины — блокировка или смена хеша; пароль сверен, так что
         // о блокировке сказать можно (`LEGACY-452`), а снятый пароль — то же, что неверный.
@@ -619,9 +634,9 @@ export class AuthService implements OnModuleInit {
           where: { id: userId },
           select: { isActive: true },
         });
-        throw new UnauthorizedException(
-          row?.isActive === false ? ACCOUNT_DISABLED_MESSAGE : INVALID_CREDENTIALS_MESSAGE,
-        );
+        throw row?.isActive === false
+          ? accountDisabled()
+          : new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
       }
       throw error;
     }

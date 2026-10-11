@@ -569,6 +569,26 @@ describe('AuthService (unit)', () => {
     expect(jwt.signAsync).not.toHaveBeenCalled();
   });
 
+  it('login: блокировка несёт код ACCOUNT_DISABLED, неверный пароль — нет (LEGACY-466)', async () => {
+    prisma.user.findUnique.mockResolvedValueOnce({ ...user, isActive: false });
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
+    const blocked = await service
+      .login({ email: user.email, password: 'p' })
+      .catch((e: UnauthorizedException) => e);
+    expect(blocked).toBeInstanceOf(UnauthorizedException);
+    expect((blocked as UnauthorizedException).getResponse()).toMatchObject({
+      statusCode: 401,
+      code: 'ACCOUNT_DISABLED',
+    });
+
+    prisma.user.findUnique.mockResolvedValueOnce({ ...user, isActive: true });
+    (argon2.verify as jest.Mock).mockResolvedValueOnce(false);
+    const wrong = await service
+      .login({ email: user.email, password: 'p' })
+      .catch((e: UnauthorizedException) => e);
+    expect((wrong as UnauthorizedException).getResponse()).not.toHaveProperty('code');
+  });
+
   it('login: версия сессий — из отметки входа после сверки пароля, а не из чтения до неё', async () => {
     // Чтение по почте видит версию 1, за время argon2 админ сменил пароль — версия 2.
     prisma.user.findUnique.mockResolvedValueOnce({ ...user, tokenVersion: 1 });
@@ -604,6 +624,24 @@ describe('AuthService (unit)', () => {
       'Account is disabled',
     );
     expect(jwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('login: гонка с блокировкой несёт код ACCOUNT_DISABLED, гонка со сменой хеша — нет (LEGACY-466)', async () => {
+    const race = async (row: { isActive: boolean }) => {
+      prisma.user.findUnique.mockResolvedValueOnce(user);
+      (argon2.verify as jest.Mock).mockResolvedValueOnce(true);
+      prisma.userRole.findMany.mockResolvedValue([]);
+      prisma.user.update.mockRejectedValueOnce(notFound());
+      prisma.user.findUnique.mockResolvedValueOnce(row);
+      const error = await service
+        .login({ email: user.email, password: 'p' })
+        .catch((e: UnauthorizedException) => e);
+      expect(error).toBeInstanceOf(UnauthorizedException);
+      return (error as UnauthorizedException).getResponse();
+    };
+
+    expect(await race({ isActive: false })).toMatchObject({ code: 'ACCOUNT_DISABLED' });
+    expect(await race({ isActive: true })).not.toHaveProperty('code');
   });
 
   // 🔴 LEGACY-454: атакующий сверил свой пароль, а за время `argon2.verify` первая привязка
@@ -758,7 +796,15 @@ describe('AuthService (unit)', () => {
         isActive: false,
         tokenVersion: 0,
       });
-      await expect(service.refresh({ refreshToken: 'tok' })).rejects.toThrow('Account is disabled');
+      const error = await service
+        .refresh({ refreshToken: 'tok' })
+        .catch((e: UnauthorizedException) => e);
+      expect(error).toBeInstanceOf(UnauthorizedException);
+      // LEGACY-466: фронт отличает блокировку от конца сессии только по коду.
+      expect((error as UnauthorizedException).getResponse()).toMatchObject({
+        message: 'Account is disabled',
+        code: 'ACCOUNT_DISABLED',
+      });
       expect(jwt.signAsync).not.toHaveBeenCalled();
     });
 
@@ -950,9 +996,14 @@ describe('AuthService (unit)', () => {
       prisma.userIdentity.findUnique.mockResolvedValue(null);
       prisma.user.findUnique.mockResolvedValueOnce({ ...user, isActive: false });
 
-      await expect(service.socialLogin({ provider: 'google', token: 'id-token' })).rejects.toThrow(
-        'Account is disabled',
-      );
+      const error = await service
+        .socialLogin({ provider: 'google', token: 'id-token' })
+        .catch((e: UnauthorizedException) => e);
+      expect(error).toBeInstanceOf(UnauthorizedException);
+      expect((error as UnauthorizedException).getResponse()).toMatchObject({
+        message: 'Account is disabled',
+        code: 'ACCOUNT_DISABLED',
+      });
       expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
       expect(prisma.user.update).not.toHaveBeenCalled();
       expect(jwt.signAsync).not.toHaveBeenCalled();
@@ -1234,9 +1285,14 @@ describe('AuthService (unit)', () => {
       prisma.userRole.findMany.mockResolvedValue([]);
       prisma.user.update.mockRejectedValueOnce(notFound());
 
-      await expect(service.socialLogin({ provider: 'google', token: 'id-token' })).rejects.toThrow(
-        'Account is disabled',
-      );
+      const error = await service
+        .socialLogin({ provider: 'google', token: 'id-token' })
+        .catch((e: UnauthorizedException) => e);
+      expect(error).toBeInstanceOf(UnauthorizedException);
+      expect((error as UnauthorizedException).getResponse()).toMatchObject({
+        message: 'Account is disabled',
+        code: 'ACCOUNT_DISABLED',
+      });
       expect(jwt.signAsync).not.toHaveBeenCalled();
       // Привязка заблокированному не пишется: отметка входа отказала раньше неё.
       expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();

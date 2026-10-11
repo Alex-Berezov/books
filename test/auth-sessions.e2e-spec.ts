@@ -224,15 +224,24 @@ describe('Сессии: отзыв и блокировка (LEGACY-451, LEGACY-4
     await adminPatch(u.id, { isActive: false });
 
     await me(u.accessToken).expect(401);
-    await refresh(u.refreshToken).expect(401);
+    const blockedRefresh = await refresh(u.refreshToken).expect(401);
+    expect(blockedRefresh.body.code).toBe('ACCOUNT_DISABLED');
     const login = await request(http()).post('/auth/login').send({ email: u.email, password });
     expect(login.status).toBe(401);
     expect(login.body.message).toBe('Account is disabled');
+    expect(login.body.code).toBe('ACCOUNT_DISABLED');
+    // Неверный пароль того же человека кода не несёт: блокировка видна только знающему пароль (LEGACY-455).
+    const wrong = await request(http())
+      .post('/auth/login')
+      .send({ email: u.email, password: `${password}-wrong` });
+    expect(wrong.status).toBe(401);
+    expect(wrong.body.code).toBeUndefined();
     const social = await request(http())
       .post('/auth/social')
       .send({ provider: 'google', token: 'blocked-token' });
     expect(social.status).toBe(401);
     expect(social.body.message).toBe('Account is disabled');
+    expect(social.body.code).toBe('ACCOUNT_DISABLED');
 
     // Разблокировка возвращает вход, но не старые токены: версия уже поднята.
     await adminPatch(u.id, { isActive: true });
