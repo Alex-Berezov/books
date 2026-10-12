@@ -3,7 +3,16 @@ import { ConfigService } from '@nestjs/config';
 import { MetricsService } from '../metrics/metrics.service';
 import { GeoCountrySourceHealthDto, GeoCountrySourceStatus } from './dto/geo-block.dto';
 
-export type GeoRequestHeaders = Record<string, string | string[] | undefined>;
+/**
+ * LEGACY-465. The visitor country sent by our own front (`X-Visitor-Country`), already verified by
+ * `VisitorCountryMiddleware` against the source address. The key is a symbol: it cannot arrive
+ * over the wire, so the header itself is never read here.
+ */
+export const TRUSTED_VISITOR_COUNTRY = Symbol('trustedVisitorCountry');
+
+export type GeoRequestHeaders = Record<string, string | string[] | undefined> & {
+  [TRUSTED_VISITOR_COUNTRY]?: string;
+};
 
 /** Below this many observations an all-unknown streak is not yet evidence of an outage. */
 const MIN_SAMPLES_FOR_OUTAGE = 20;
@@ -29,7 +38,9 @@ export class GeoIpCountryService {
    * reach the origin and nothing else (LEGACY-077), so Cloudflare overwrites the header on every
    * request that gets here. Drop those rules or add a second entry point and this method starts
    * believing whatever the client typed, silently — a header is just a string to types and tests.
-   * Never add a header no proxy in front of the origin overwrites.
+   * Never add a header no proxy in front of the origin overwrites. The one exception is the
+   * visitor country from our own front (LEGACY-465, `TRUSTED_VISITOR_COUNTRY`): the front's proxy
+   * overwrites it, and it is trusted only from `INTERNAL_PROXY_CIDRS`.
    *
    * LEGACY-208, closed 12.09.2026. Two environment keys used to switch client-supplied country
    * headers on: `ENABLE_GEO_TEST_HEADERS` for `x-geo-country` and `ENABLE_X_COUNTRY_CODE_HEADER`
@@ -47,6 +58,15 @@ export class GeoIpCountryService {
     if (canUseGeoTestHeader) {
       const testCountry = this.normalize(this.getHeader(headers, 'x-geo-country'));
       if (testCountry) return this.record('x-geo-country', testCountry, allowDebugHeader);
+    }
+
+    // LEGACY-465. Behind our own front `cf-ipcountry` is the front server's country, so a verified
+    // visitor country wins even when empty or invalid — no fallback to Cloudflare. A deliberate
+    // exception to the rule above: our proxy overwrites this header, and VisitorCountryMiddleware
+    // strips it from any other source.
+    if (TRUSTED_VISITOR_COUNTRY in headers) {
+      const visitorCountry = this.normalize(headers[TRUSTED_VISITOR_COUNTRY]);
+      return this.record('x-visitor-country', visitorCountry, allowDebugHeader);
     }
 
     const cloudflareCountry = this.normalize(this.getHeader(headers, 'cf-ipcountry'));
@@ -102,8 +122,9 @@ export class GeoIpCountryService {
   ): string | null {
     if (isDebugLookup) return countryCode;
 
-    // A country always arrives together with the header that carried it: the two resolving call
-    // sites pass both, the third passes neither. The `header &&` half of the condition
+    // A country always arrives together with the header that carried it: the resolving call
+    // sites pass both, the last one passes neither. The `x-visitor-country` branch may pass the
+    // header with no country — an unknown, counted as one. The `header &&` half of the condition
     // states that invariant instead of papering over it with a `'unknown'` label value that
     // no traffic can ever produce — a series like that only misleads whoever queries it.
     if (countryCode && header) {

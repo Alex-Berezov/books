@@ -1,6 +1,6 @@
 import { readFileSync } from 'fs';
 import * as ts from 'typescript';
-import { VISITOR_IP_HEADER } from '../net/client-ip';
+import { VISITOR_COUNTRY_HEADER, VISITOR_IP_HEADER } from '../net/client-ip';
 import {
   NEST_COMMON,
   NEST_SWAGGER,
@@ -113,6 +113,9 @@ const FORBIDDEN_HEADERS = [
   'cookie',
   'cf-ipcountry',
   'x-geo-country',
+  // Страна посетителя от нашего фронта (`LEGACY-465`, `VISITOR_COUNTRY_HEADER`): верится
+  // от `INTERNAL_PROXY_CIDRS` и побеждает `cf-ipcountry`.
+  VISITOR_COUNTRY_HEADER,
   // Адрес клиента — тот же вход, что `@Ip()` ниже: страна по IP (`LEGACY-174`).
   // `src/common/net/client-ip.ts` читает `cf-connecting-ip` и `x-visitor-ip`
   // (`VISITOR_IP_HEADER`); `x-forwarded-for` — то, из чего Express собирает

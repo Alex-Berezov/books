@@ -1,7 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { MetricsService } from '../metrics/metrics.service';
 import { GeoCountrySourceStatus } from './dto/geo-block.dto';
-import { GeoIpCountryService } from './geo-ip-country.service';
+import { GeoIpCountryService, TRUSTED_VISITOR_COUNTRY } from './geo-ip-country.service';
 
 /**
  * LEGACY-206: a real `MetricsService`, not a `jest.fn()` mock. A mock would only confirm the
@@ -117,6 +117,67 @@ describe('GeoIpCountryService', () => {
 
     expect(off.resolveCountry({ 'x-country-code': 'us' })).toBeNull();
     expect(on.resolveCountry({ 'x-country-code': 'us' })).toBeNull();
+  });
+
+  // LEGACY-465. The trusted key is set only by `VisitorCountryMiddleware`; the header itself is
+  // never read here, so a client typing it gets the Cloudflare country as before.
+  describe('visitor country from the front (LEGACY-465)', () => {
+    it('never reads the X-Visitor-Country header itself', () => {
+      const { service } = createService({ NODE_ENV: 'production' });
+
+      expect(service.resolveCountry({ 'x-visitor-country': 'DE', 'cf-ipcountry': 'US' })).toBe(
+        'US',
+      );
+    });
+
+    it('takes the trusted visitor country over cf-ipcountry', () => {
+      const { service } = createService({ NODE_ENV: 'production' });
+
+      expect(
+        service.resolveCountry({ 'cf-ipcountry': 'US', [TRUSTED_VISITOR_COUNTRY]: 'de' }),
+      ).toBe('DE');
+    });
+
+    it.each(['', 'XX', 'invalid'])(
+      'does not fall back to cf-ipcountry when the trusted value is %p',
+      (value) => {
+        const { service } = createService({ NODE_ENV: 'production' });
+
+        expect(
+          service.resolveCountry({ 'cf-ipcountry': 'US', [TRUSTED_VISITOR_COUNTRY]: value }),
+        ).toBeNull();
+      },
+    );
+
+    it('lets the test and debug header win over the trusted country', () => {
+      const inTests = createService({ NODE_ENV: 'test' }).service;
+      expect(
+        inTests.resolveCountry({ 'x-geo-country': 'gb', [TRUSTED_VISITOR_COUNTRY]: 'de' }),
+      ).toBe('GB');
+
+      const { service, metrics } = createService({ NODE_ENV: 'production' });
+      expect(
+        service.resolveCountry({ 'x-geo-country': 'gb', [TRUSTED_VISITOR_COUNTRY]: 'de' }, true),
+      ).toBe('GB');
+      expect(service.resolveCountry({ [TRUSTED_VISITOR_COUNTRY]: 'de' }, true)).toBe('DE');
+      return expect(
+        metrics.getCounterValue('geo_country_resolved_total', { header: 'x-visitor-country' }),
+      ).resolves.toBeNull();
+    });
+
+    it('counts the trusted country under its own header label', async () => {
+      const { service, metrics } = createService({ NODE_ENV: 'production' });
+
+      service.resolveCountry({ [TRUSTED_VISITOR_COUNTRY]: 'DE' });
+      service.resolveCountry({ [TRUSTED_VISITOR_COUNTRY]: 'XX' });
+
+      expect(
+        await metrics.getCounterValue('geo_country_resolved_total', {
+          header: 'x-visitor-country',
+        }),
+      ).toBe(1);
+      expect(await metrics.getCounterValue('geo_country_unknown_total')).toBe(1);
+    });
   });
 
   describe('country source health (WP-1.2а)', () => {

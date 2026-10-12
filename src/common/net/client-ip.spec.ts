@@ -1,6 +1,7 @@
 import {
   DEFAULT_TRUSTED_PROXY_CIDRS,
   describeClientIp,
+  isFromInternalProxy,
   isTrustedProxy,
   parseTrustedProxyCidrs,
   resetClientIpWarning,
@@ -180,6 +181,50 @@ describe('describeClientIp — отличить рендер страницы о
       INTERNAL,
     );
     expect(d.internalWithoutVisitor).toBe(false);
+  });
+});
+
+/**
+ * LEGACY-465. Та же цепочка доверия решает и о `X-Visitor-IP`, и о `X-Visitor-Country`:
+ * сосед — Cloudflare, `CF-Connecting-IP` — адрес фронта из `INTERNAL_PROXY_CIDRS`.
+ */
+describe('isFromInternalProxy', () => {
+  const FRONT = '10.0.0.5';
+  const internal = [`${FRONT}/32`];
+
+  it('recognises the front behind Cloudflare', () => {
+    expect(
+      isFromInternalProxy(
+        { ip: CF_PEER, headers: { 'cf-connecting-ip': ` ${FRONT} ` } },
+        DEFAULT_TRUSTED_PROXY_CIDRS,
+        internal,
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    ['an empty internal list', { ip: CF_PEER, cf: FRONT }, []],
+    ['a peer outside Cloudflare', { ip: STRANGER, cf: FRONT }, internal],
+    ['a visitor address', { ip: CF_PEER, cf: '198.51.100.42' }, internal],
+    ['a malformed address', { ip: CF_PEER, cf: 'front' }, internal],
+    ['no CF-Connecting-IP', { ip: CF_PEER, cf: undefined }, internal],
+  ])('says no for %s', (_name, { ip, cf }, internalCidrs) => {
+    expect(
+      isFromInternalProxy(
+        { ip, headers: { 'cf-connecting-ip': cf } },
+        DEFAULT_TRUSTED_PROXY_CIDRS,
+        internalCidrs,
+      ),
+    ).toBe(false);
+  });
+
+  it('agrees with resolveClientIp on the front', () => {
+    const req = {
+      ip: CF_PEER,
+      headers: { 'cf-connecting-ip': FRONT, 'x-visitor-ip': '198.51.100.9' },
+    };
+    expect(isFromInternalProxy(req, DEFAULT_TRUSTED_PROXY_CIDRS, internal)).toBe(true);
+    expect(resolveClientIp(req, DEFAULT_TRUSTED_PROXY_CIDRS, internal)).toBe('198.51.100.9');
   });
 });
 

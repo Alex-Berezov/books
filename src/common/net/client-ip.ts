@@ -62,6 +62,16 @@ export const DEFAULT_TRUSTED_PROXY_CIDRS = [
  */
 export const VISITOR_IP_HEADER = 'x-visitor-ip';
 
+/**
+ * Заголовок, которым наш собственный фронт сообщает **страну** посетителя (`LEGACY-465`).
+ *
+ * Серверный прокси фронта (`app/api/backend/[...path]`) ходит в API через тот же Cloudflare,
+ * и `cf-ipcountry` там — страна сервера фронта. Верится заголовок только тогда, когда
+ * запрос пришёл от адреса из `INTERNAL_PROXY_CIDRS` (`isFromInternalProxy`); проверку держит
+ * `VisitorCountryMiddleware` в модуле гео-блока.
+ */
+export const VISITOR_COUNTRY_HEADER = 'x-visitor-country';
+
 export interface ClientIpRequest {
   ip?: string;
   headers?: Record<string, string | string[] | undefined>;
@@ -212,7 +222,9 @@ export function resolveClientIp(
 
   // Запрос пришёл от нашего же фронта — значит за ним стоит настоящий посетитель,
   // и адрес фронта в качестве ключа объединил бы весь сайт в одну корзину.
-  if (internalCidrs.length > 0 && isTrustedProxy(trimmed, internalCidrs)) {
+  // Та же проверка, что решает о доверии `X-Visitor-Country` (`isFromInternalProxy`): одна цепочка
+  // на оба заголовка фронта, чтобы лимитер и гео-блок узнавали фронт одинаково.
+  if (isFromInternalProxy(req, cidrs, internalCidrs)) {
     const visitor = headerValue(req, VISITOR_IP_HEADER)?.trim();
     if (visitor && (isIPv4(visitor) || isIPv6(visitor))) return visitor;
     // Заголовка нет — фронт ещё не выкачен или запрос не от посетителя (плановая
@@ -220,4 +232,21 @@ export function resolveClientIp(
   }
 
   return trimmed;
+}
+
+/**
+ * Запрос пришёл от нашего собственного фронта: сосед — Cloudflare, а `CF-Connecting-IP` —
+ * адрес из `internalCidrs`. Та же цепочка, что у третьей ступени `resolveClientIp`, но без
+ * отката на более грубый адрес: здесь ответ «нет» — это отказ верить заголовку, а не
+ * деградация счёта. Пустой `internalCidrs` — всегда «нет».
+ */
+export function isFromInternalProxy(
+  req: ClientIpRequest,
+  cidrs: string[],
+  internalCidrs: string[],
+): boolean {
+  if (internalCidrs.length === 0) return false;
+  if (!isTrustedProxy(req.ip, cidrs)) return false;
+  const candidate = headerValue(req, 'cf-connecting-ip')?.trim();
+  return isTrustedProxy(candidate, internalCidrs);
 }

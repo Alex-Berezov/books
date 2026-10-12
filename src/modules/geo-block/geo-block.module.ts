@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { MetricsRegistryModule } from '../metrics/metrics-registry.module';
 import { RightsClaimsModule } from '../rights-claims/rights-claims.module';
 import { RightsClearanceModule } from '../rights-clearance/rights-clearance.module';
@@ -7,6 +7,7 @@ import { GeoBlockController } from './geo-block.controller';
 import { GeoBlockRuleService } from './geo-block-rule.service';
 import { GeoCountrySourceController } from './geo-country-source.controller';
 import { GeoIpCountryService } from './geo-ip-country.service';
+import { VisitorCountryMiddleware } from './visitor-country.middleware';
 
 @Module({
   // LEGACY-206: the module is imported instead of declaring a second provider — a local
@@ -22,4 +23,9 @@ import { GeoIpCountryService } from './geo-ip-country.service';
   providers: [GeoBlockRuleService, GeoIpCountryService],
   exports: [GeoBlockRuleService, GeoIpCountryService],
 })
-export class GeoBlockModule {}
+export class GeoBlockModule implements NestModule {
+  // LEGACY-465: `X-Visitor-Country` is stripped on every route and trusted only from our front.
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(VisitorCountryMiddleware).forRoutes('{*path}');
+  }
+}
