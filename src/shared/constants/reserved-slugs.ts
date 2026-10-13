@@ -8,7 +8,9 @@
  * page with no address at all. Uniqueness checks do not see this: the collision
  * is with a route, not with a row.
  *
- * ⚠️ The list mirrors the directories under `books-front/app/[lang]/`. The two
+ * ⚠️ The list covers every directory under `books-front/app/[lang]/`, plus names
+ * that outlived their route (`versions`) and names reserved ahead of theirs
+ * (`about`, `contact`, `cookies`, `editorial-policy`, F01). The two
  * live in different repositories and are kept in step by hand — the same
  * arrangement as `SUPPORTED_LANGS`. What guards it is `yarn check:reserved-slugs`
  * in the frontend: it fails when a route exists that this list does not mention.
@@ -26,6 +28,7 @@
  */
 export const RESERVED_SLUGS = [
   '403',
+  'about',
   'audiobooks',
   'auth',
   'author',
@@ -37,7 +40,10 @@ export const RESERVED_SLUGS = [
   'category',
   'collection',
   'collections',
+  'contact',
+  'cookies',
   'deletion',
+  'editorial-policy',
   'genre',
   'genres',
   'listen',

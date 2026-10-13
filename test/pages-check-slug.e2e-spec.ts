@@ -272,6 +272,35 @@ describe('Pages: Check Slug (e2e)', () => {
       expect(response.body.suggestedSlug).toBe('catalog-2');
     });
 
+    it.each(['about', 'contact', 'cookies', 'editorial-policy'])(
+      'reports the trust-page slug %s as reserved (F01-2)',
+      async (slug) => {
+        const response = await request(app.getHttpServer())
+          .get('/admin/pages/check-slug')
+          .query({ slug, lang: 'en' })
+          .set('Authorization', `Bearer ${adminToken}`)
+          .expect(200);
+
+        expect(response.body.reserved).toBe(true);
+        expect(response.body.exists).toBe(false);
+        expect(response.body.suggestedSlug).toBe(`${slug}-2`);
+      },
+    );
+
+    it.each(['about', 'contact', 'cookies', 'editorial-policy'])(
+      'refuses to create a page under the trust-page slug %s (F01-2)',
+      async (slug) => {
+        await request(app.getHttpServer())
+          .post('/admin/en/pages')
+          .set('Authorization', `Bearer ${adminToken}`)
+          .send({ slug, title: slug, type: 'generic', content: 'Test content' })
+          .expect(400);
+
+        const written = await prisma.page.findFirst({ where: { slug, language: 'en' } });
+        expect(written).toBeNull();
+      },
+    );
+
     it('refuses to create a page under a reserved slug', async () => {
       await request(app.getHttpServer())
         .post('/admin/en/pages')

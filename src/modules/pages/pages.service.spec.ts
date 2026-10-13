@@ -467,7 +467,7 @@ describe('PagesService (unit)', () => {
 
       await service.create(
         {
-          slug: 'about',
+          slug: 'about-us',
           title: 'About',
           type: 'generic',
           content: '',
@@ -496,7 +496,7 @@ describe('PagesService (unit)', () => {
       await expect(
         service.create(
           {
-            slug: 'about',
+            slug: 'about-us',
             title: 'About',
             type: 'generic',
             content: '',
@@ -513,7 +513,7 @@ describe('PagesService (unit)', () => {
       await expect(
         service.create(
           {
-            slug: 'about',
+            slug: 'about-us',
             title: 'About',
             type: 'generic',
             content: '',
@@ -531,7 +531,7 @@ describe('PagesService (unit)', () => {
       await expect(
         service.create(
           {
-            slug: 'about',
+            slug: 'about-us',
             title: 'About',
             type: 'generic',
             content: '',
