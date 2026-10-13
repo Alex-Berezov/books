@@ -1,5 +1,6 @@
 import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { BookService } from './book.service';
+import { translatorsSelect } from './book-translators';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorService } from '../author/author.service';
@@ -199,6 +200,7 @@ describe('BookService.getOverview', () => {
         type: BookType.text,
         isFree: true,
         seoId: 1,
+        contributors: [],
         _count: { chapters: 5, audioChapters: 0, summaries: 1 },
       },
       {
@@ -207,6 +209,7 @@ describe('BookService.getOverview', () => {
         type: BookType.audio,
         isFree: false,
         seoId: 2,
+        contributors: [],
         _count: { chapters: 0, audioChapters: 3, summaries: 0 },
       },
       {
@@ -215,6 +218,7 @@ describe('BookService.getOverview', () => {
         type: BookType.referral,
         isFree: true,
         seoId: null,
+        contributors: [],
         _count: { chapters: 0, audioChapters: 0, summaries: 0 },
       },
     ]);
@@ -245,6 +249,49 @@ describe('BookService.getOverview', () => {
   });
 
   /**
+   * F01-5. Переводчики идут в том же `findMany`, что и версии (без N+1), а в ответ уходит
+   * только `translators: [{ name }]`: сырые `contributors` и их поля наружу не едут.
+   */
+  describe('переводчики версии (F01-5)', () => {
+    it('сворачивает contributors в translators и не отдаёт сырой список', async () => {
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'slug-1' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-ru',
+          language: Language.ru,
+          type: BookType.text,
+          isFree: true,
+          seoId: null,
+          slug: 'slug-1',
+          contributors: [
+            {
+              person: {
+                canonicalName: 'Constance Garnett',
+                translations: [{ displayName: 'Констанс Гарнетт' }],
+              },
+            },
+          ],
+          _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+        },
+      ]);
+
+      // Язык запроса (`en`) отличен от языка версии (`ru`): выборка обязана идти по языку запроса.
+      const res = await service.getOverview('slug-1', Language.en);
+
+      expect(res.versions[0].translators).toEqual([{ name: 'Констанс Гарнетт' }]);
+      expect(res.versions[0]).not.toHaveProperty('contributors');
+      const versionCalls = prisma.bookVersion.findMany.mock.calls.filter(
+        ([args]) => (args as { select?: { contributors?: unknown } }).select?.contributors,
+      );
+      expect(versionCalls).toHaveLength(1);
+      // В базу уходит выборка переводчиков на языке запроса: роль, порядок и лимит - из неё.
+      expect(
+        (versionCalls[0][0] as { select: { contributors: unknown } }).select.contributors,
+      ).toEqual(translatorsSelect(Language.en));
+    });
+  });
+
+  /**
    * 🔴 LEGACY-006. Публичный адрес автора обзор книги не отдавал вовсе, и фронт
    * собирал его слагификацией отображаемого имени. Слаг бывает транслитерацией:
    * «Сунь-цзы» лежит под `sun-czy`, а из имени получалось бы другое — ссылка
@@ -266,6 +313,7 @@ describe('BookService.getOverview', () => {
           seoId: null,
           author: 'Сунь-цзы',
           authorId,
+          contributors: [],
           _count: { chapters: 5, audioChapters: 0, summaries: 0 },
         },
         ...extraVersions,
@@ -323,6 +371,7 @@ describe('BookService.getOverview', () => {
           seoId: null,
           author: 'Sun Tzu',
           authorId: 'author-1',
+          contributors: [],
           _count: { chapters: 3, audioChapters: 0, summaries: 0 },
         },
       ]);
@@ -367,6 +416,7 @@ describe('BookService.getOverview', () => {
           slug: 'slug-1',
           author: 'Сунь-цзы',
           authorId: 'author-1',
+          contributors: [],
           _count: { chapters: 0, audioChapters: 0, summaries: 0 },
         },
         {
@@ -378,6 +428,7 @@ describe('BookService.getOverview', () => {
           slug: 'slug-1',
           author: 'Sun Tzu',
           authorId: 'author-1',
+          contributors: [],
           _count: { chapters: 7, audioChapters: 0, summaries: 0 },
         },
       ]);
@@ -416,6 +467,7 @@ describe('BookService.getOverview', () => {
           slug: 'slug-1',
           author: 'Sun Tzu',
           authorId: 'author-1',
+          contributors: [],
           _count: { chapters: 4, audioChapters: 0, summaries: 0 },
         },
       ]);
@@ -480,6 +532,7 @@ describe('BookService.getOverview', () => {
         type: BookType.text,
         isFree: true,
         seoId: 1,
+        contributors: [],
         _count: { chapters: 3, audioChapters: 0, summaries: 1 },
       },
       {
@@ -488,6 +541,7 @@ describe('BookService.getOverview', () => {
         type: BookType.text,
         isFree: true,
         seoId: 2,
+        contributors: [],
         _count: { chapters: 4, audioChapters: 0, summaries: 1 },
       },
     ]);
@@ -525,6 +579,7 @@ describe('BookService.getOverview', () => {
         type: BookType.text,
         isFree: true,
         seoId: 1,
+        contributors: [],
         _count: { chapters: 3, audioChapters: 0, summaries: 0 },
       },
       {
@@ -534,6 +589,7 @@ describe('BookService.getOverview', () => {
         type: BookType.text,
         isFree: true,
         seoId: 2,
+        contributors: [],
         _count: { chapters: 3, audioChapters: 0, summaries: 0 },
       },
     ]);
@@ -574,6 +630,7 @@ describe('BookService.getOverview', () => {
         type: BookType.text,
         isFree: true,
         seoId: 1,
+        contributors: [],
         _count: { chapters: 1, audioChapters: 0, summaries: 0 },
       },
     ]);
@@ -617,6 +674,7 @@ describe('BookService.getOverview', () => {
         type: BookType.text,
         isFree: true,
         seoId: 1,
+        contributors: [],
         _count: { chapters: 1, audioChapters: 0, summaries: 0 },
       },
     ]);
@@ -654,6 +712,7 @@ describe('BookService.getOverview', () => {
         type: BookType.text,
         isFree: true,
         seoId: 1,
+        contributors: [],
         _count: { chapters: 1, audioChapters: 0, summaries: 0 },
       },
     ]);
@@ -687,6 +746,7 @@ describe('BookService.getOverview', () => {
         type: BookType.text,
         isFree: true,
         seoId: null,
+        contributors: [],
         _count: { chapters: 1, audioChapters: 0, summaries: 0 },
       },
     ]);
@@ -769,6 +829,7 @@ describe('BookService.getOverview', () => {
               language: Language.en,
               type: BookType.text,
               status: 'published',
+              contributors: [],
               _count: { chapters: 5, audioChapters: 2, summaries: 1 },
             },
           ],
@@ -798,6 +859,7 @@ describe('BookService.getOverview', () => {
               language: Language.en,
               type: BookType.text,
               status: 'draft',
+              contributors: [],
               _count: { chapters: 5, audioChapters: 2, summaries: 1 },
             },
             {
@@ -805,6 +867,7 @@ describe('BookService.getOverview', () => {
               language: Language.es,
               type: BookType.referral,
               status: 'published',
+              contributors: [],
               _count: { chapters: 0, audioChapters: 0, summaries: 0 },
             },
           ],
@@ -990,6 +1053,7 @@ describe('BookService.getOverview', () => {
       coverImageUrl: '',
       type: BookType.text,
       publishedAt,
+      contributors: [],
       _count: { chapters: 1, audioChapters: 0 },
       categories: [],
     });
@@ -1956,6 +2020,7 @@ describe('BookService: выдача тега (LEGACY-417, T74)', () => {
           type: BookType.text,
           isFree: true,
           seoId: null,
+          contributors: [],
           _count: { chapters: 1, audioChapters: 0, summaries: 0 },
         },
       ]);
@@ -1985,6 +2050,7 @@ describe('BookService: выдача тега (LEGACY-417, T74)', () => {
           isFree: true,
           seoId: null,
           primaryCategoryId: 'c9',
+          contributors: [],
           _count: { chapters: 1, audioChapters: 0, summaries: 0 },
         },
       ]);
@@ -2024,6 +2090,7 @@ describe('BookService: выдача тега (LEGACY-417, T74)', () => {
           type: BookType.text,
           isFree: true,
           seoId: null,
+          contributors: [],
           _count: { chapters: 1, audioChapters: 0, summaries: 0 },
         },
       ]);

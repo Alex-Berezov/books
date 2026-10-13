@@ -2646,6 +2646,18 @@
         ],
         "type": "object"
       },
+      "BookOverviewTranslatorDto": {
+        "properties": {
+          "name": {
+            "example": "Constance Garnett",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
       "BookOverviewVersionDto": {
         "properties": {
           "_count": {
@@ -2826,6 +2838,13 @@
           "title": {
             "type": "string"
           },
+          "translators": {
+            "description": "Translators of the book text (role `TRANSLATOR`), at most 10, in display order. Name on the request language (`:lang`), `Person.canonicalName` when that translation is missing; duplicate names are dropped. Empty array when none.",
+            "items": {
+              "$ref": "#/components/schemas/BookOverviewTranslatorDto"
+            },
+            "type": "array"
+          },
           "type": {
             "enum": [
               "text",
@@ -2853,7 +2872,8 @@
           "createdAt",
           "updatedAt",
           "_count",
-          "coverUrl"
+          "coverUrl",
+          "translators"
         ],
         "type": "object"
       },

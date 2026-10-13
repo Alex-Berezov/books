@@ -17,6 +17,7 @@ import { BookCardDto } from './dto/book-card.dto';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
+import { mapTranslators, translatorsSelect } from './book-translators';
 import {
   parseRelatedSlugs,
   type WithParsedRelatedSlugs,
@@ -401,6 +402,8 @@ export class BookService {
       orderBy: { language: 'asc' },
       select: {
         ...PUBLIC_BOOK_VERSION_OVERVIEW_SELECT,
+        // F01-5: переводчики - отдельной выборкой, не в белом списке (`book-translators.ts`).
+        contributors: translatorsSelect(lang),
         _count: {
           select: {
             chapters: true,
@@ -711,10 +714,12 @@ export class BookService {
       primaryCategory,
       // Что выбрано, то и отдано: `versions` собран по белому списку и вычитать
       // из него ничего не нужно (`LEGACY-090`).
-      versions: versions.map((v) => ({
+      versions: versions.map(({ contributors, ...v }) => ({
         ...v,
         coverUrl: v.coverImageUrl, // compatibility alias
         authorSlug: authorSlugOf(v),
+        // F01-5: сырые `contributors` вычитаются здесь и в ответ не уходят, только имена.
+        translators: mapTranslators(contributors),
       })),
       createdAt: book?.createdAt || new Date(),
       updatedAt: book?.updatedAt || new Date(),

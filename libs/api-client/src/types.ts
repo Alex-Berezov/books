@@ -5168,6 +5168,10 @@ export interface components {
       sortOrder: number;
       translations: components['schemas']['TagTranslationDto'][];
     };
+    BookOverviewTranslatorDto: {
+      /** @example Constance Garnett */
+      name: string;
+    };
     BookOverviewVersionDto: {
       _count: components['schemas']['BookVersionContentCountDto'];
       /**
@@ -5254,6 +5258,8 @@ export interface components {
        */
       themes?: string[] | null;
       title: string;
+      /** @description Translators of the book text (role `TRANSLATOR`), at most 10, in display order. Name on the request language (`:lang`), `Person.canonicalName` when that translation is missing; duplicate names are dropped. Empty array when none. */
+      translators: components['schemas']['BookOverviewTranslatorDto'][];
       /** @enum {string} */
       type: 'text' | 'audio' | 'referral';
       /** Format: date-time */

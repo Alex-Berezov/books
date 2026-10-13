@@ -130,6 +130,8 @@ describe('Book Overview (e2e)', () => {
     // seo.main populated from text version
     expect(res1.body.seo.main.metaTitle).toBe('SEO Main EN');
     expect(res1.body.hasSummary).toBe(true);
+    // F01-5: без переводчиков поле есть и пустое, а не null.
+    expect(res1.body.versions[0].translators).toEqual([]);
 
     // Now publish audio and re-check
     await request(http())
@@ -143,5 +145,92 @@ describe('Book Overview (e2e)', () => {
     expect(res2.body.versionIds.audio).toBe(versionAudioId);
     // lang=es prefers ES for audio SEO
     expect(res2.body.seo.listen.metaTitle).toBe('SEO Audio ES');
+  });
+
+  it('F01-5: отдаёт переводчиков версии только именем и только роли TRANSLATOR', async () => {
+    const slug = `overview-tr-${Date.now()}`;
+    const bookWithRights = await createBookWithRights(prisma, slug);
+    const createdPersonIds: string[] = [];
+    try {
+      const created = await request(http())
+        .post(`/books/${bookWithRights.book.id}/versions`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          language: Language.ru,
+          title: 'Книга',
+          author: 'Автор',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/cover.jpg',
+          type: BookType.text,
+          isFree: true,
+        })
+        .expect(201);
+      const versionId = (created.body as { id: string }).id;
+      await request(http())
+        .put(`/versions/${versionId}/summary`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ summary: 'Short summary' })
+        .expect(200);
+
+      const mkPerson = async (canonicalName: string, ruName?: string) => {
+        const person = await prisma.person.create({
+          data: {
+            canonicalName,
+            translations: ruName
+              ? {
+                  create: {
+                    language: Language.ru,
+                    slug: `${slug}-${createdPersonIds.length}`,
+                    displayName: ruName,
+                  },
+                }
+              : undefined,
+          },
+        });
+        createdPersonIds.push(person.id);
+        return person.id;
+      };
+      const second = await mkPerson('Second Translator');
+      const first = await mkPerson('Constance Garnett', 'Констанс Гарнетт');
+      const editor = await mkPerson('An Editor');
+      await prisma.bookVersionContributor.createMany({
+        data: [
+          {
+            bookVersionId: versionId,
+            personId: second,
+            role: 'TRANSLATOR',
+            displayOrder: 2,
+            contributionNoteRu: 'не для публики',
+          },
+          {
+            bookVersionId: versionId,
+            personId: first,
+            role: 'TRANSLATOR',
+            displayOrder: 1,
+            creditedName: 'Credited As',
+          },
+          { bookVersionId: versionId, personId: editor, role: 'EDITOR', displayOrder: 0 },
+        ],
+      });
+      await markBookRightsFreshForTests(prisma, bookWithRights.book.id, rightsContentHashService);
+      await request(http())
+        .patch(`/versions/${versionId}/publish`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+
+      const res = await request(http()).get(`/ru/books/${slug}/overview`).expect(200);
+      const version = (res.body.versions as Record<string, unknown>[])[0];
+      expect(version.translators).toEqual([
+        { name: 'Констанс Гарнетт' },
+        { name: 'Second Translator' },
+      ]);
+      expect(version).not.toHaveProperty('contributors');
+      expect(JSON.stringify(res.body)).not.toContain('не для публики');
+      expect(JSON.stringify(res.body)).not.toContain('Credited As');
+    } finally {
+      // Персоны чистятся первыми: упадёт уборка книги - они всё равно не останутся в общей базе e2e.
+      await prisma.person.deleteMany({ where: { id: { in: createdPersonIds } } });
+      await cleanupBookWithRights(prisma, slug);
+    }
   });
 });

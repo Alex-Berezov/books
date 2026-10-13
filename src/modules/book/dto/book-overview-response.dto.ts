@@ -22,6 +22,12 @@ import {
  * one route and one caller now.
  */
 
+/** Translator of the book text: the display name only (F01-5). */
+export class BookOverviewTranslatorDto {
+  @ApiProperty({ type: String, example: 'Constance Garnett' })
+  name!: string;
+}
+
 /**
  * A published version on the book page: the `PUBLIC_BOOK_VERSION_OVERVIEW_SELECT`
  * whitelist (`src/common/selects/public-book.select.ts`) — the card whitelist plus the
@@ -125,6 +131,14 @@ export class BookOverviewVersionDto extends PublicBookVersionDto {
 
   @ApiProperty({ type: String, description: 'Compatibility alias of `coverImageUrl`' })
   coverUrl!: string;
+
+  @ApiProperty({
+    type: BookOverviewTranslatorDto,
+    isArray: true,
+    description:
+      'Translators of the book text (role `TRANSLATOR`), at most 10, in display order. Name on the request language (`:lang`), `Person.canonicalName` when that translation is missing; duplicate names are dropped. Empty array when none.',
+  })
+  translators!: BookOverviewTranslatorDto[];
 }
 
 /** `Category` with its translations plus the live per-language book count. */

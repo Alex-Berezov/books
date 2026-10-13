@@ -118,6 +118,7 @@ describe('LEGACY-124: findAll берёт рейтинги одним групп�
         id: `v${i}`,
         status: 'published',
         type: BookType.text,
+        contributors: [],
         _count: { chapters: 3, audioChapters: 0, summaries: 0 },
       },
     ],
@@ -190,6 +191,7 @@ describe('LEGACY-126: getOverview собирает seo одной выборко
           type: BookType.text,
           isFree: true,
           slug: 'slug-1',
+          contributors: [],
           _count: { chapters: 5, audioChapters: 0, summaries: 1 },
         },
         {
@@ -198,6 +200,7 @@ describe('LEGACY-126: getOverview собирает seo одной выборко
           type: BookType.audio,
           isFree: false,
           slug: 'slug-1',
+          contributors: [],
           _count: { chapters: 0, audioChapters: 4, summaries: 1 },
         },
       ])
@@ -254,6 +257,7 @@ describe('LEGACY-126: реферальная книга не теряет seo.ma
           type: BookType.referral,
           isFree: true,
           slug: 'ref-1',
+          contributors: [],
           _count: { chapters: 0, audioChapters: 0, summaries: 0 },
         },
       ])
@@ -290,6 +294,7 @@ describe('LEGACY-126: реферальная книга не теряет seo.ma
           type: BookType.text,
           isFree: true,
           slug: 'slug-3',
+          contributors: [],
           _count: { chapters: 2, audioChapters: 0, summaries: 1 },
         },
       ])
@@ -317,6 +322,7 @@ describe('LEGACY-127: читалка не тянет всю модель вер�
           type: BookType.text,
           isFree: true,
           slug: 'slug-1',
+          contributors: [],
           _count: { chapters: 5, audioChapters: 0, summaries: 0 },
         },
       ])
@@ -366,6 +372,7 @@ describe('LEGACY-127: прогресс из аудиоверсии в читал
           type: BookType.text,
           isFree: true,
           slug: 'slug-1',
+          contributors: [],
           _count: { chapters: 5, audioChapters: 0, summaries: 0 },
         },
       ])
@@ -412,6 +419,7 @@ describe('LEGACY-128: сортировка по популярности счи�
         coverImageUrl: '',
         type: BookType.text,
         publishedAt: new Date('2026-01-01T00:00:00Z'),
+        contributors: [],
         _count: { chapters: 1, audioChapters: 0 },
         categories: [],
       })),
@@ -568,6 +576,7 @@ describe('LEGACY-254/255: ветка каталога по дате', () => {
         coverImageUrl: '',
         type: BookType.text,
         publishedAt: new Date('2026-01-01T00:00:00Z'),
+        contributors: [],
         _count: { chapters: 1, audioChapters: 0 },
         categories: [],
       })),
