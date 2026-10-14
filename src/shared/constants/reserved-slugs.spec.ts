@@ -9,10 +9,10 @@ describe('reserved slugs', () => {
     }
   });
 
-  it('claims the trust-page slugs ahead of their routes (F01-2)', () => {
-    // Reserved before the pages exist: a name without a route is harmless, a
-    // route without a name hides any CMS page saved under it.
-    for (const slug of ['about', 'contact', 'cookies', 'editorial-policy']) {
+  it('claims the trust-page and legal-page slugs (F01-2, F01-6)', () => {
+    // A name without a route is harmless, a route without a name hides any CMS
+    // page saved under it; the frontend guard cannot see a name deleted here.
+    for (const slug of ['about', 'contact', 'cookies', 'editorial-policy', 'legal-notice']) {
       expect(isReservedSlug(slug)).toBe(true);
     }
   });

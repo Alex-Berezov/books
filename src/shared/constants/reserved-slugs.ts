@@ -10,7 +10,8 @@
  *
  * ⚠️ The list covers every directory under `books-front/app/[lang]/`, plus names
  * that outlived their route (`versions`) and names reserved ahead of theirs
- * (`about`, `contact`, `cookies`, `editorial-policy`, F01). The two
+ * (`about`, `contact`, `cookies`, `editorial-policy`, F01-2; `legal-notice`,
+ * F01-6, reserved together with its route). The two
  * live in different repositories and are kept in step by hand — the same
  * arrangement as `SUPPORTED_LANGS`. What guards it is `yarn check:reserved-slugs`
  * in the frontend: it fails when a route exists that this list does not mention.
@@ -46,6 +47,7 @@ export const RESERVED_SLUGS = [
   'editorial-policy',
   'genre',
   'genres',
+  'legal-notice',
   'listen',
   'new-releases',
   'popular-books',
