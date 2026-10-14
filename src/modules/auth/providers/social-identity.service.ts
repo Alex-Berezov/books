@@ -3,9 +3,9 @@ import { ConfigService } from '@nestjs/config';
 import { OAuth2Client } from 'google-auth-library';
 import type { TokenPayload } from 'google-auth-library';
 
-export type SocialProvider = 'google' | 'facebook';
+export type SocialProvider = 'google';
 
-export const SOCIAL_PROVIDERS: readonly SocialProvider[] = ['google', 'facebook'];
+export const SOCIAL_PROVIDERS: readonly SocialProvider[] = ['google'];
 
 /** Identity as the *provider* states it. Never assembled from the request body. */
 export interface SocialIdentity {
@@ -17,9 +17,8 @@ export interface SocialIdentity {
    *
    * 🔴 Не косметика: от этого флага зависит, можно ли привязать личность к **уже
    * существующему** аккаунту с тем же адресом. Google даёт `email_verified` в
-   * подписанном токене; Facebook эквивалента не имеет — `debug_token` доказывает
-   * владение аккаунтом Facebook, а email приходит вторым вызовом и ничем не
-   * подтверждён. Поле обязательное, чтобы новый провайдер не получил доступ к
+   * подписанном токене; у другого провайдера адрес может оказаться просто полем
+   * профиля без подтверждения. Поле обязательное, чтобы новый провайдер не получил доступ к
    * чужим аккаунтам по умолчанию просто потому, что автор о нём не подумал.
    */
   emailVerified: boolean;
@@ -27,37 +26,14 @@ export interface SocialIdentity {
   avatarUrl?: string;
 }
 
-interface FacebookDebugToken {
-  data?: {
-    is_valid?: boolean;
-    app_id?: string;
-    user_id?: string;
-  };
-}
-
-interface FacebookMe {
-  id?: string;
-  email?: string;
-  name?: string;
-  picture?: { data?: { url?: string } };
-}
-
-const GRAPH_BASE = 'https://graph.facebook.com';
-const GRAPH_TIMEOUT_MS = 5_000;
-
 /**
  * Proves who the caller is by asking the provider, not by trusting the body.
  *
- * The two providers need different mechanics: Google issues an OIDC id_token
- * that is verified locally against its JWKS, Facebook issues an OAuth2 access
- * token that only Facebook itself can judge.
- *
- * Both mechanics share one trap: "the token is genuine" is not "the token is
- * ours". A Google id_token minted for any other Google client carries a valid
- * Google signature, and a Facebook token minted for any other Facebook app
- * comes back `is_valid: true`. The audience checks below (`audience` /
- * `app_id`) are what make the difference, and they are the reason landings 4g
- * and 4f exist.
+ * Google issues an OIDC id_token that is verified locally against its JWKS.
+ * The trap: "the token is genuine" is not "the token is ours". A Google
+ * id_token minted for any other Google client carries a valid Google
+ * signature; the explicit `audience` check below is what makes the
+ * difference, and it is the reason landing 4g exists.
  */
 @Injectable()
 export class SocialIdentityService {
@@ -66,7 +42,16 @@ export class SocialIdentityService {
   constructor(private readonly config: ConfigService) {}
 
   async verify(provider: SocialProvider, token: string): Promise<SocialIdentity> {
-    return provider === 'google' ? this.verifyGoogle(token) : this.verifyFacebook(token);
+    switch (provider) {
+      case 'google':
+        return this.verifyGoogle(token);
+      default: {
+        // Провайдер вне перечня сюда не доходит: его отбивает DTO. Вызов мимо DTO получает
+        // отказ, а не `undefined` вместо личности.
+        const unsupported: never = provider;
+        throw new UnauthorizedException(`Unsupported provider: ${String(unsupported)}`);
+      }
+    }
   }
 
   private async verifyGoogle(token: string): Promise<SocialIdentity> {
@@ -110,90 +95,5 @@ export class SocialIdentityService {
       name: payload.name ?? undefined,
       avatarUrl: payload.picture ?? undefined,
     };
-  }
-
-  private async verifyFacebook(token: string): Promise<SocialIdentity> {
-    const appId = this.config.get<string>('AUTH_FACEBOOK_ID')?.trim();
-    const appSecret = this.config.get<string>('AUTH_FACEBOOK_SECRET')?.trim();
-    if (!appId || !appSecret) {
-      throw new ServiceUnavailableException('Facebook sign-in is not configured on this server');
-    }
-
-    const debug = await this.graph<FacebookDebugToken>('debug_token', {
-      input_token: token,
-      access_token: `${appId}|${appSecret}`,
-    });
-
-    const data = debug.data;
-    if (data?.is_valid !== true) {
-      throw new UnauthorizedException('Facebook token is not valid');
-    }
-    if (data.app_id !== appId) {
-      // `is_valid` only says the token is real. Anyone can register their own
-      // Facebook application and get real tokens from it.
-      throw new UnauthorizedException('Facebook token was issued for another application');
-    }
-    if (!data.user_id) {
-      throw new UnauthorizedException('Facebook token carries no subject');
-    }
-
-    // debug_token returns the user id but never the e-mail — hence a second call.
-    const me = await this.graph<FacebookMe>('me', {
-      fields: 'id,email,name,picture.type(large)',
-      access_token: token,
-    });
-
-    if (me.id !== data.user_id) {
-      throw new UnauthorizedException('Facebook identity does not match the inspected token');
-    }
-
-    const email = me.email?.trim().toLowerCase();
-    if (!email) {
-      // Facebook accounts can exist without an e-mail (phone signup, or the
-      // `email` scope was declined). Refuse rather than create an account with
-      // a blank address that would later collide with every other such user.
-      throw new UnauthorizedException(
-        'Facebook account has no e-mail address available; sign in with e-mail instead',
-      );
-    }
-
-    return {
-      provider: 'facebook',
-      providerUserId: data.user_id,
-      email,
-      // У Graph нет эквивалента `email_verified`: `debug_token` доказывает владение
-      // аккаунтом Facebook, а адрес — просто поле профиля. Поэтому такой вход не
-      // может присвоить уже существующий аккаунт с тем же адресом.
-      emailVerified: false,
-      name: me.name ?? undefined,
-      avatarUrl: me.picture?.data?.url ?? undefined,
-    };
-  }
-
-  private async graph<T>(path: string, params: Record<string, string>): Promise<T> {
-    const url = new URL(`${GRAPH_BASE}/${path}`);
-    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
-
-    let response: Response;
-    try {
-      response = await fetch(url, { signal: AbortSignal.timeout(GRAPH_TIMEOUT_MS) });
-    } catch {
-      throw new ServiceUnavailableException('Facebook could not be reached to verify the token');
-    }
-
-    if (!response.ok) {
-      // 4xx is Facebook judging the token; 5xx is Facebook being unavailable.
-      // Only the first one is the caller's fault.
-      if (response.status >= 500) {
-        throw new ServiceUnavailableException('Facebook could not verify the token right now');
-      }
-      throw new UnauthorizedException('Facebook token is not valid');
-    }
-
-    try {
-      return (await response.json()) as T;
-    } catch {
-      throw new ServiceUnavailableException('Facebook returned an unreadable response');
-    }
   }
 }

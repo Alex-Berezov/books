@@ -62,18 +62,14 @@ export class RefreshDto {
  * session for it (LEGACY-070). They are gone, not merely ignored: a field that
  * is still accepted is a field a future change can start trusting again. All
  * three now come out of the verified provider response.
- *
- * `token` is deliberately named for neither mechanic. Facebook has no OIDC
- * id_token — NextAuth leaves `account.id_token` undefined there and only
- * `account.access_token` exists.
  */
 export class SocialLoginDto {
   @ApiProperty({ enum: SOCIAL_PROVIDERS })
   @IsIn(SOCIAL_PROVIDERS as unknown as string[])
   provider!: SocialProvider;
 
-  /** google: `id_token`; facebook: `access_token`. */
-  @ApiProperty({ description: 'google: id_token; facebook: access_token' })
+  /** google: `id_token`. */
+  @ApiProperty({ description: 'google: id_token' })
   @IsString()
   @IsNotEmpty()
   token!: string;

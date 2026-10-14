@@ -15,9 +15,9 @@ import type {
 /**
  * Control landings for CR auth-social, step 3.
  *
- * The provider itself is stubbed: Google's JWKS and Facebook's Graph API are
- * network services, and a landing that depends on them tests the network. What
- * each provider accepts is pinned in social-identity.service.spec.ts; what is
+ * The provider itself is stubbed: Google's JWKS is a network service, and a
+ * landing that depends on it tests the network. What the provider accepts is
+ * pinned in social-identity.service.spec.ts; what is
  * pinned here is that the route uses the *verified answer* and nothing else.
  *
  * Landing 1 is now in its full CR form: no provider token, no session at all.
@@ -50,12 +50,6 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
       emailVerified: true,
       name: 'Google Real',
     });
-    verified.set('facebook:good-facebook-token', {
-      provider: 'facebook',
-      providerUserId: 'fb-1',
-      email: 'facebook-real@example.com',
-      emailVerified: false,
-    });
     verified.set('google:admin-google-token', {
       provider: 'google',
       providerUserId: 'g-admin',
@@ -76,10 +70,12 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
       email: PRECLAIMED_EMAIL,
       emailVerified: true,
     });
-    // Facebook, чей адрес совпадает с адресом уже существующего парольного аккаунта.
-    verified.set('facebook:squatting-facebook-token', {
-      provider: 'facebook',
-      providerUserId: 'fb-squatter',
+    // Личность с неподтверждённым адресом, совпадающим с адресом уже существующего
+    // парольного аккаунта. Настоящий Google такой не отдаёт (отказ раньше, в
+    // `verifyGoogle`) — заглушка держит границу `emailVerified` для любого провайдера.
+    verified.set('google:squatting-unverified-token', {
+      provider: 'google',
+      providerUserId: 'g-squatter',
       email: PASSWORD_ACCOUNT_EMAIL,
       emailVerified: false,
     });
@@ -125,7 +121,7 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
     await app.close();
   });
 
-  // Landing 1g / 1f: a token the provider refuses buys nothing.
+  // Landing 1g: a token the provider refuses buys nothing.
   it('landing 1g: a rejected Google token yields no session', async () => {
     const res = await request(app.getHttpServer())
       .post('/auth/social')
@@ -135,14 +131,18 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
     expect(res.body.accessToken).toBeUndefined();
   });
 
-  it('landing 1f: a rejected Facebook token yields no session', async () => {
-    await request(app.getHttpServer())
+  // Google — единственный провайдер входа: любой другой отбивается валидацией тела,
+  // до проверки токена.
+  it('an unsupported provider is refused by validation', async () => {
+    const res = await request(app.getHttpServer())
       .post('/auth/social')
-      .send({ provider: 'facebook', token: 'garbage' })
-      .expect(401);
+      .send({ provider: 'facebook', token: 'any-token' })
+      .expect(400);
+
+    expect(res.body.accessToken).toBeUndefined();
   });
 
-  // Landing 2g / 2f — the most telling one. It separates "we started verifying
+  // Landing 2g — the most telling one. It separates "we started verifying
   // the token" from "we started verifying the token but still read the e-mail
   // out of the body", which would leave the hole exactly where it was.
   it('landing 2g: the session belongs to the token holder', async () => {
@@ -153,15 +153,6 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
 
     expect(res.body.user.email).toBe('google-real@example.com');
     expect(res.body.user.roles).toEqual([RoleName.user]);
-  });
-
-  it('landing 2f: the same holds for Facebook', async () => {
-    const res = await request(app.getHttpServer())
-      .post('/auth/social')
-      .send({ provider: 'facebook', token: 'good-facebook-token' })
-      .expect(200);
-
-    expect(res.body.user.email).toBe('facebook-real@example.com');
   });
 
   // Landing 1/3 in full form: naming an account buys nothing at all any more.
@@ -224,18 +215,17 @@ describe('POST /auth/social (CR auth-social, step 3)', () => {
       .send({ email: PASSWORD_ACCOUNT_EMAIL, password: 'password123' })
       .expect(201);
 
-    // Facebook доказал владение аккаунтом Facebook, но не адресом: эквивалента
-    // `email_verified` у Graph нет. Совпадение адреса — не доказательство.
+    // Провайдер не подтвердил владение адресом: совпадение адреса — не доказательство.
     const res = await request(app.getHttpServer())
       .post('/auth/social')
-      .send({ provider: 'facebook', token: 'squatting-facebook-token' })
+      .send({ provider: 'google', token: 'squatting-unverified-token' })
       .expect(401);
 
     expect(res.body.accessToken).toBeUndefined();
 
     const identity = await prisma.userIdentity.findUnique({
       where: {
-        provider_providerUserId: { provider: 'facebook', providerUserId: 'fb-squatter' },
+        provider_providerUserId: { provider: 'google', providerUserId: 'g-squatter' },
       },
     });
     expect(identity).toBeNull();

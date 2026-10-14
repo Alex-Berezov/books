@@ -959,30 +959,6 @@ describe('AuthService (unit)', () => {
       expect(res.user.email).toBe('real@example.com');
     });
 
-    it('landing 2f: the same holds for facebook — a new account is created for a new identity', async () => {
-      social.verify.mockResolvedValue({
-        provider: 'facebook',
-        providerUserId: 'fb-1',
-        email: 'fbreal@example.com',
-        emailVerified: false,
-      });
-      // Ни привязки, ни аккаунта с таким адресом: присваивать нечего.
-      prisma.user.findUnique.mockResolvedValue(null);
-      prisma.user.create.mockResolvedValue({ ...user, email: 'fbreal@example.com' });
-      prisma.role.findUnique.mockResolvedValue({ id: 1, name: RoleName.user });
-      prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
-      prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
-
-      await service.socialLogin({ provider: 'facebook', token: 'fb-access-token' });
-
-      expect(social.verify).toHaveBeenCalledWith('facebook', 'fb-access-token');
-      expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
-      expect(prisma.user.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({ where: { email: 'fbreal@example.com' } }),
-      );
-      expect(prisma.userIdentity.upsert).toHaveBeenCalled();
-    });
-
     // Посадка миграции идентичности (NEXT-SESSION §5). Обязана краснеть на коде,
     // где пользователь искался по адресу почты: там этот вход выдавал сессию
     // владельцу парольного аккаунта, минуя пароль.
@@ -1009,19 +985,23 @@ describe('AuthService (unit)', () => {
       expect(jwt.signAsync).not.toHaveBeenCalled();
     });
 
+    // Граница держится на флаге `emailVerified`, а не на имени провайдера: личность
+    // с неподтверждённым адресом не присваивает чужой аккаунт. Google такой личности
+    // сегодня не отдаёт (`verifyGoogle` отказывает раньше) — тест держит ветку на случай
+    // провайдера без подтверждения адреса, ради которого поле и сделано обязательным.
     it('refuses to attach a weakly-proven provider to an existing account', async () => {
       social.verify.mockResolvedValue({
-        provider: 'facebook',
-        providerUserId: 'fb-squatter',
+        provider: 'google',
+        providerUserId: 'g-squatter',
         email: 'password-owner@example.com',
         emailVerified: false,
       });
       prisma.user.findUnique.mockResolvedValue({ ...user, email: 'password-owner@example.com' });
 
       // Текст общий с отказом пароля (`LEGACY-455`): отдельный называл занятый адрес.
-      await expect(
-        service.socialLogin({ provider: 'facebook', token: 'fb-access-token' }),
-      ).rejects.toThrow(new UnauthorizedException('Invalid credentials'));
+      await expect(service.socialLogin({ provider: 'google', token: 'id-token' })).rejects.toThrow(
+        new UnauthorizedException('Invalid credentials'),
+      );
 
       expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
     });

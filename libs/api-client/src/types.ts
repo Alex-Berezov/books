@@ -2711,7 +2711,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Login or Register via OAuth (Google, Facebook) */
+    /** Login or Register via OAuth (Google) */
     post: operations['AuthController_socialLogin'];
     delete?: never;
     options?: never;
@@ -11217,8 +11217,8 @@ export interface components {
       /** @enum {string} */
       languagePreference?: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       /** @enum {string} */
-      provider: 'google' | 'facebook';
-      /** @description google: id_token; facebook: access_token */
+      provider: 'google';
+      /** @description google: id_token */
       token: string;
     };
     SourceEditionDto: {

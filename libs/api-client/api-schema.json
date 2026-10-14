@@ -20661,13 +20661,12 @@
           },
           "provider": {
             "enum": [
-              "google",
-              "facebook"
+              "google"
             ],
             "type": "string"
           },
           "token": {
-            "description": "google: id_token; facebook: access_token",
+            "description": "google: id_token",
             "type": "string"
           }
         },
@@ -34614,7 +34613,7 @@
             "description": ""
           }
         },
-        "summary": "Login or Register via OAuth (Google, Facebook)",
+        "summary": "Login or Register via OAuth (Google)",
         "tags": [
           "auth"
         ]

@@ -32,7 +32,7 @@ export class AuthController {
     return this.auth.login(dto);
   }
 
-  @ApiOperation({ summary: 'Login or Register via OAuth (Google, Facebook)' })
+  @ApiOperation({ summary: 'Login or Register via OAuth (Google)' })
   @ApiOkResponse({ type: AuthResponse })
   @HttpCode(HttpStatus.OK)
   @Post('social')
