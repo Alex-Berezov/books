@@ -14,6 +14,13 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { BookCardDto } from './dto/book-card.dto';
+import {
+  BOOK_CARD_SELECT,
+  type BookCardRating,
+  type BookCardRow,
+  loadBookCardRatings,
+  toBookCardDto,
+} from './book-card';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PaginationDto } from '../../shared/dto/pagination.dto';
 import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
@@ -185,7 +192,10 @@ export class BookService {
     // Рейтинги одним групповым запросом на страницу, а не агрегатом на книгу
     // (`LEGACY-124`): при `limit=100` это было 100 обращений к базе поверх одного
     // `findMany`, и `Promise.all` их только маскировал.
-    const ratingsMap = await this.getRatingsForBooks(books.map((b) => b.id));
+    const ratingsMap = await loadBookCardRatings(
+      this.prisma,
+      books.map((b) => b.id),
+    );
 
     const data = books.map((book) => {
       const rating = ratingsMap.get(book.id)?.avg ?? null;
@@ -834,7 +844,7 @@ export class BookService {
 
     const sameAuthorVersions = await this.prisma.bookVersion.findMany({
       where: sameAuthorWhere,
-      select: this.bookCardSelect(),
+      select: BOOK_CARD_SELECT,
       orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
       take: sameAuthorTake,
     });
@@ -856,7 +866,7 @@ export class BookService {
           },
         },
         select: {
-          bookVersion: { select: this.bookCardSelect() },
+          bookVersion: { select: BOOK_CARD_SELECT },
           categoryId: true,
         },
       });
@@ -895,7 +905,7 @@ export class BookService {
           language: lang,
           status: 'published',
         },
-        select: this.bookCardSelect(),
+        select: BOOK_CARD_SELECT,
         // Order by publishedAt as a baseline; final rating-based sort below
         orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
         take: remainingSlots,
@@ -910,7 +920,7 @@ export class BookService {
         ...fallbackCandidates.map((v) => v.bookId),
       ]),
     );
-    const ratingsMap = await this.getRatingsForBooks(candidateBookIds);
+    const ratingsMap = await loadBookCardRatings(this.prisma, candidateBookIds);
 
     // Sort similar by matched DESC, rating DESC, publishedAt DESC, id ASC (stable)
     const similarSorted = similarCandidates
@@ -1112,10 +1122,12 @@ export class BookService {
   }
 
   /**
-   * Compact paginated list of published book cards for an author (author page fallback).
+   * Compact paginated list of published book cards for an author (author page "load more").
    *
-   * `authorSlug` is resolved to a stable `authorId` via AuthorTranslation.slug, then
-   * filtered by BookVersion.authorId. NOT by localized author display name.
+   * `authorSlug` is resolved to a stable `authorId` via AuthorTranslation.slug (requested
+   * language first, then `en`). Набор, порядок и форма карточек — общие со страницей автора:
+   * `AuthorService.getPublishedBookCards` (решение арбитра 14.10.2026, `F02 | F02-1`), иначе
+   * догрузка отдавала бы другой набор книг в другом порядке, чем первая порция страницы.
    */
   async findCardsByAuthor(
     authorSlug: string,
@@ -1130,40 +1142,20 @@ export class BookService {
     const effectiveLimit = Math.min(Math.max(limit, 1), BOOK_CARDS_MAX_LIMIT);
     const skip = (effectivePage - 1) * effectiveLimit;
 
-    // Resolve authorId from slug (prefer requested lang, fallback en)
-    const authorTranslation = await this.prisma.authorTranslation.findFirst({
-      where: {
-        slug: authorSlug,
-        language: { in: [lang, Language.en] },
-      },
-      select: { authorId: true, language: true },
-      orderBy: [{ language: 'asc' }],
-    });
-
-    if (!authorTranslation) {
+    const author = await this.authors.resolvePublicAuthorRef(authorSlug, lang);
+    if (!author) {
       return paginated([], { page: effectivePage, limit: effectiveLimit, total: 0 });
     }
 
-    const authorId = authorTranslation.authorId;
-
-    const versions = await this.prisma.bookVersion.findMany({
-      where: { authorId, language: lang, status: 'published' },
-      select: { id: true, bookId: true },
-      distinct: ['bookId'],
+    const { entries, total } = await this.authors.getPublishedBookCards(author, lang, {
       skip,
       take: effectiveLimit,
-      orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
     });
-
-    const total = (
-      await this.prisma.bookVersion.groupBy({
-        by: ['bookId'],
-        where: { authorId, language: lang, status: 'published' },
-      })
-    ).length;
-
-    const bookIds = versions.map((v) => v.bookId);
-    return this.buildCardsResponse(bookIds, lang, effectivePage, effectiveLimit, total);
+    // Год первой публикации нужен только странице автора; в общей карточке его нет.
+    return paginated(
+      entries.map((e) => e.card),
+      { page: effectivePage, limit: effectiveLimit, total },
+    );
   }
 
   /**
@@ -1474,7 +1466,8 @@ export class BookService {
 
   /**
    * Build a BookCardDto[] response from a set of bookIds for a language.
-   * Shared by findCards / findCardsByAuthor / findCardsByCategory / findCardsByTag.
+   * Shared by findCards / findCardsByCategory / findCardsByTag; the author shelf goes through
+   * `AuthorService.getPublishedBookCards` (F02-1).
    */
   private async buildCardsResponse(
     bookIds: string[],
@@ -1488,7 +1481,7 @@ export class BookService {
     // Fetch one localized published version per book (the first by publishedAt desc)
     const versions = await this.prisma.bookVersion.findMany({
       where: { bookId: { in: bookIds }, language: lang, status: 'published' },
-      select: this.bookCardSelect(),
+      select: BOOK_CARD_SELECT,
       orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
     });
 
@@ -1501,7 +1494,7 @@ export class BookService {
       .map((id) => byBookId.get(id))
       .filter((v): v is (typeof versions)[number] => !!v);
 
-    const ratingsMap = await this.getRatingsForBooks(bookIds);
+    const ratingsMap = await loadBookCardRatings(this.prisma, bookIds);
     const authorIds = Array.from(
       new Set(ordered.map((v) => v.authorId).filter((id): id is string => !!id)),
     );
@@ -1518,25 +1511,6 @@ export class BookService {
   }
 
   /**
-   * Prisma `select` for a compact BookCard row (only fields used by BookCard).
-   */
-  private bookCardSelect() {
-    return {
-      id: true,
-      bookId: true,
-      slug: true,
-      title: true,
-      author: true,
-      authorId: true,
-      coverImageUrl: true,
-      type: true,
-      publishedAt: true,
-      _count: { select: { chapters: true, audioChapters: true } },
-      categories: { select: { categoryId: true } },
-    } as const satisfies Prisma.BookVersionSelect;
-  }
-
-  /**
    * Comparator: newest first, undated last. ⚠️ Звать `(a, b)` — перестановка аргументов
    * переворачивает и порядок дат, и место записей без даты (`LEGACY-253`).
    */
@@ -1547,60 +1521,17 @@ export class BookService {
     return b.getTime() - a.getTime();
   }
 
-  private async getRatingsForBooks(
-    bookIds: string[],
-  ): Promise<Map<string, { avg: number | null; count: number }>> {
-    if (bookIds.length === 0) return new Map();
-    const groups = await this.prisma.bookRating.groupBy({
-      by: ['bookId'],
-      where: { bookId: { in: bookIds } },
-      _avg: { score: true },
-      _count: { score: true },
-    });
-    const map = new Map<string, { avg: number | null; count: number }>();
-    for (const g of groups) {
-      map.set(g.bookId, { avg: g._avg.score ?? null, count: g._count.score });
-    }
-    return map;
-  }
-
   private toBookCardDto(
-    version: {
-      id: string;
-      bookId: string;
-      slug: string | null;
-      title: string;
-      author: string;
-      authorId: string | null;
-      coverImageUrl: string | null;
-      type: BookType;
-      publishedAt: Date | null;
-      _count: { chapters: number; audioChapters: number };
-      categories: { categoryId: string }[];
-    },
-    ratingsMap: Map<string, { avg: number | null; count: number }>,
+    version: BookCardRow,
+    ratingsMap: Map<string, BookCardRating>,
     authorSlugMap: Map<string, string>,
     lang: Language,
   ): BookCardDto {
-    const rating = ratingsMap.get(version.bookId);
-    const hasText = version._count.chapters > 0 || version.type === BookType.text;
-    const hasAudio = version._count.audioChapters > 0;
-    return {
-      id: version.bookId,
-      slug: version.slug ?? version.id,
-      title: version.title,
-      author: version.author,
-      authorSlug: version.authorId
-        ? (authorSlugMap.get(authorSlugKey(version.authorId, lang)) ?? null)
-        : null,
-      coverImageUrl: version.coverImageUrl,
-      rating: rating?.avg ?? null,
-      ratingsCount: rating?.count ?? 0,
-      hasText,
-      hasAudio,
-      publishedAt: version.publishedAt ? version.publishedAt.toISOString() : null,
-      categoryIds: version.categories.map((c) => c.categoryId),
-    };
+    return toBookCardDto(
+      version,
+      ratingsMap.get(version.bookId),
+      version.authorId ? (authorSlugMap.get(authorSlugKey(version.authorId, lang)) ?? null) : null,
+    );
   }
 
   async update(id: string, data: UpdateBookDto) {

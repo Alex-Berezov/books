@@ -1,7 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { BookType, Language, PublicationStatus } from '@prisma/client';
+import { Language } from '@prisma/client';
 import { AuthorFaqDto, AuthorQuoteDto } from '../../author/dto/author-translation.dto';
 import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
+import { BookCardDto } from '../../book/dto/book-card.dto';
 
 /**
  * Response DTO — Swagger only, no `class-validator` (`STYLE_GUIDE.md` §7).
@@ -11,72 +12,52 @@ import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
  * `AuthorTranslation` and its author, so nothing here mirrors a Prisma model wholesale.
  */
 
-/** A neighbouring author linked from `similarSlugs`, resolved in the requested language. */
+/**
+ * A neighbouring author from `similarSlugs`. The slug is looked up in any language and
+ * resolved to the same author's translation in the requested language (F02, T3).
+ */
 export class PublicSimilarAuthorDto {
   @ApiProperty({ type: String })
   name!: string;
 
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Slug in the requested language; `null` when the author has no translation in it ' +
+      '(show the name as plain text, without a link)',
+  })
+  slug!: string | null;
+}
+
+/** One translation of the author, for `hreflang`. */
+export class PublicAuthorAlternateDto {
+  @ApiProperty({ enum: Language })
+  lang!: Language;
+
   @ApiProperty({ type: String })
   slug!: string;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'Published books in this language > 0 — the same rule the author sitemap uses; ' +
+      'only indexable languages go into `hreflang`',
+  })
+  indexable!: boolean;
 }
 
 /**
- * The single-element `versions` array each book of the author page carries.
- *
- * ⚠️ It always holds exactly one entry — the version the row was built from — and
- * exists so the frontend book card can read the same path it reads elsewhere.
+ * One published book of this author in the requested language: the shared book card
+ * (`BookCardDto`, the same shape `/:lang/authors/:slug/books/cards` serves) plus the year.
  */
-export class PublicAuthorBookVersionDto {
-  @ApiProperty({ enum: Language })
-  language!: Language;
-
-  @ApiProperty({ enum: PublicationStatus })
-  status!: PublicationStatus;
-
-  @ApiProperty({ enum: BookType })
-  type!: BookType;
-
-  @ApiProperty({ type: String })
-  coverImageUrl!: string;
-
-  @ApiProperty({ type: String, description: 'Compatibility alias of `coverImageUrl`' })
-  coverUrl!: string;
-}
-
-/** One published book of this author in the requested language. */
-export class PublicAuthorBookDto {
-  @ApiProperty({ type: String, description: '`BookVersion.id` of the matched version' })
-  id!: string;
-
-  @ApiProperty({ type: String, description: 'Canonical `Book.id`' })
-  bookId!: string;
-
-  @ApiProperty({ type: String, description: '`BookVersion.slug`, falling back to `Book.slug`' })
-  slug!: string;
-
-  @ApiProperty({ type: String })
-  title!: string;
-
-  @ApiProperty({ type: String })
-  author!: string;
-
-  @ApiProperty({ type: String })
-  coverImageUrl!: string;
-
-  @ApiProperty({ type: String, description: 'Compatibility alias of `coverImageUrl`' })
-  coverUrl!: string;
-
-  @ApiProperty({ enum: BookType })
-  type!: BookType;
-
-  @ApiProperty({ type: Boolean })
-  isFree!: boolean;
-
-  @ApiPropertyOptional({ type: Number, description: 'Average rating (0-5)', nullable: true })
-  rating!: number | null;
-
-  @ApiProperty({ type: PublicAuthorBookVersionDto, isArray: true })
-  versions!: PublicAuthorBookVersionDto[];
+export class PublicAuthorBookDto extends BookCardDto {
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description: '`BookVersion.firstPublishedYear`; books are ordered by it, undated last',
+  })
+  firstPublishedYear!: number | null;
 }
 
 /** Response of `GET /:lang/authors/:slug`. */
@@ -117,9 +98,22 @@ export class PublicAuthorDetailResponseDto {
   @ApiPropertyOptional({ type: SeoResponseDto, nullable: true })
   seo!: SeoResponseDto | null;
 
+  @ApiProperty({ type: PublicAuthorAlternateDto, isArray: true })
+  alternates!: PublicAuthorAlternateDto[];
+
   @ApiProperty({ type: PublicSimilarAuthorDto, isArray: true })
   similarAuthors!: PublicSimilarAuthorDto[];
 
-  @ApiProperty({ type: PublicAuthorBookDto, isArray: true })
+  @ApiProperty({
+    type: Number,
+    description: 'Published books of the author in this language; counted separately from `books`',
+  })
+  booksTotal!: number;
+
+  @ApiProperty({
+    type: PublicAuthorBookDto,
+    isArray: true,
+    description: 'Ordered by `firstPublishedYear` asc (undated last), then title',
+  })
   books!: PublicAuthorBookDto[];
 }

@@ -38,6 +38,7 @@ interface PrismaStub {
   };
   bookVersion: {
     findMany: jest.Mock;
+    count: jest.Mock;
   };
   bookRating: {
     aggregate: jest.Mock;
@@ -76,6 +77,7 @@ const createPrismaStub = (): PrismaStub => {
     },
     bookVersion: {
       findMany: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
     },
     bookRating: {
       aggregate: jest.fn(),
@@ -898,6 +900,385 @@ describe('AuthorService', () => {
   });
 
   describe('getPublicBySlug', () => {
+    /** Строка `BookVersion` в форме `BOOK_CARD_SELECT` + год (`book-card.ts`). */
+    function cardRow(over: Record<string, unknown> = {}) {
+      return {
+        id: 'v1',
+        bookId: 'b1',
+        slug: 'picture-of-dorian-gray',
+        title: 'The Picture of Dorian Gray',
+        author: 'Oscar Wilde',
+        authorId: null,
+        coverImageUrl: 'cover.jpg',
+        type: 'text',
+        publishedAt: null,
+        _count: { chapters: 3, audioChapters: 0 },
+        categories: [],
+        firstPublishedYear: 1890,
+        book: { slug: 'dorian-gray' },
+        ...over,
+      };
+    }
+
+    const wildeTranslation = (over: Record<string, unknown> = {}) => ({
+      id: 'trans1',
+      authorId: 'auth1',
+      slug: 'oskar-uajld',
+      language: Language.ru,
+      name: 'Оскар Уайльд',
+      biography: 'Bio text',
+      quotes: [],
+      faq: [],
+      similarSlugs: [],
+      seo: null,
+      author: { id: 'auth1', birthDate: null, deathDate: null },
+      ...over,
+    });
+
+    beforeEach(() => {
+      prisma.authorTranslation.findMany.mockResolvedValue([]);
+      prisma.bookVersion.findMany.mockResolvedValue([]);
+    });
+
+    /**
+     * F02-1: форма книги — карточка (`BOOK_CARD_SELECT` → `toBookCardDto`) плюс год, и ничего
+     * сверх. Сравнивается **полный** набор ключей: проверка одного поля пропустила бы возврат
+     * `include` с правовыми полями версии.
+     */
+    it('книга автора — ровно поля карточки и год, без полей версии', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+      prisma.bookVersion.findMany.mockResolvedValue([
+        cardRow({ authorId: 'auth1', _count: { chapters: 0, audioChapters: 2 }, type: 'audio' }),
+      ]);
+      prisma.bookVersion.count.mockResolvedValue(1);
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      expect(Object.keys(result.books[0]).sort()).toEqual(
+        [
+          'author',
+          'authorSlug',
+          'categoryIds',
+          'coverImageUrl',
+          'firstPublishedYear',
+          'hasAudio',
+          'hasText',
+          'id',
+          'publishedAt',
+          'rating',
+          'ratingsCount',
+          'slug',
+          'title',
+        ].sort(),
+      );
+      expect(result.books[0]).toMatchObject({ id: 'b1', hasAudio: true, firstPublishedYear: 1890 });
+      const [args] = prisma.bookVersion.findMany.mock.calls[0] as [
+        { select: Record<string, unknown>; include?: unknown },
+      ];
+      expect(args.include).toBeUndefined();
+      expect(Object.keys(args.select).sort()).toEqual(
+        [
+          '_count',
+          'author',
+          'authorId',
+          'book',
+          'bookId',
+          'categories',
+          'coverImageUrl',
+          'firstPublishedYear',
+          'id',
+          'publishedAt',
+          'slug',
+          'title',
+          'type',
+        ].sort(),
+      );
+    });
+
+    it('набор книг — authorId или имя перевода, порядок по году, без года в конце', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+
+      await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      const [args] = prisma.bookVersion.findMany.mock.calls[0] as [
+        { where: Record<string, unknown>; orderBy: unknown },
+      ];
+      expect(args.where).toEqual({
+        language: Language.ru,
+        status: 'published',
+        OR: [{ authorId: 'auth1' }, { author: 'Оскар Уайльд' }],
+      });
+      expect(args.orderBy).toEqual([
+        { firstPublishedYear: { sort: 'asc', nulls: 'last' } },
+        { title: 'asc' },
+        { id: 'asc' },
+      ]);
+      expect(prisma.bookVersion.count).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.count).toHaveBeenCalledWith({ where: args.where });
+    });
+
+    // Предохранитель выборки (решение арбитра 14.10.2026, уточнение C): список ограничен,
+    // счёт — нет. Без `take` публичная ручка снова тянула бы все строки в память.
+    it('список ограничен предохранителем 500, а booksTotal им не режется', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+      prisma.bookVersion.count.mockResolvedValue(600);
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      const [args] = prisma.bookVersion.findMany.mock.calls[0] as [{ take: number }];
+      expect(args.take).toBe(500);
+      expect(result.booksTotal).toBe(600);
+    });
+
+    // Версия без своего слага ведёт на слаг книги: `getOverview` по id версии не ищет.
+    it('карточка без слага версии берёт слаг книги, а не id версии', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+      prisma.bookVersion.findMany.mockResolvedValue([cardRow({ slug: null })]);
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      expect(result.books[0].slug).toBe('dorian-gray');
+    });
+
+    // Ссылка карточки на автора: книга с `authorId` — слаг этого автора на языке страницы,
+    // книга без `authorId` попала по имени — слаг автора страницы.
+    it('authorSlug карточки — по authorId книги, а у книги по имени — слаг автора страницы', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+      prisma.bookVersion.findMany.mockResolvedValue([
+        cardRow({ bookId: 'b1', authorId: 'other' }),
+        cardRow({ id: 'v2', bookId: 'b2', authorId: null }),
+      ]);
+      prisma.authorTranslation.findMany.mockResolvedValue([
+        { authorId: 'auth1', language: Language.ru, slug: 'oskar-uajld' },
+        { authorId: 'other', language: Language.ru, slug: 'drugoj' },
+        { authorId: 'other', language: Language.en, slug: 'other-en' },
+      ]);
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      expect(result.books.map((b) => b.authorSlug)).toEqual(['drugoj', 'oskar-uajld']);
+    });
+
+    it('booksTotal — отдельный счёт, а не длина массива', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+      prisma.bookVersion.findMany.mockResolvedValue([cardRow()]);
+      prisma.bookVersion.count.mockResolvedValue(7);
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      expect(result.books).toHaveLength(1);
+      expect(result.booksTotal).toBe(7);
+    });
+
+    it('alternates — переводы автора с индексируемостью по числу книг на языке', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+      prisma.$queryRaw.mockImplementation((strings: unknown) => {
+        const sql = Array.isArray(strings) ? strings.join('?') : '';
+        if (sql.includes('"booksCount"') && sql.includes('LEFT JOIN "BookVersion"')) {
+          return Promise.resolve([
+            { lang: Language.en, slug: 'oscar-wilde', booksCount: 3 },
+            { lang: Language.ru, slug: 'oskar-uajld', booksCount: 0 },
+          ]);
+        }
+        return Promise.resolve([]);
+      });
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      expect(result.alternates).toEqual([
+        { lang: Language.en, slug: 'oscar-wilde', indexable: true },
+        { lang: Language.ru, slug: 'oskar-uajld', indexable: false },
+      ]);
+      // Запрос — по автору страницы, а не по переводу или чужому id.
+      const call = prisma.$queryRaw.mock.calls.find(([strings]) =>
+        (Array.isArray(strings) ? strings.join('?') : '').includes('LEFT JOIN "BookVersion"'),
+      );
+      expect(call?.slice(1)).toContain('auth1');
+    });
+
+    describe('похожие авторы (T3)', () => {
+      /** Условие языка заглушки: нет условия, равенство или `{ in: [...] }`. */
+      const languageAllows = (cond: unknown, language: Language): boolean => {
+        if (cond === undefined) return true;
+        if (typeof cond === 'object' && cond !== null && 'in' in cond) {
+          return (cond as { in: unknown[] }).in.includes(language);
+        }
+        return cond === language;
+      };
+
+      /** Заглушка счёта книг похожих авторов на языке страницы: линкуемы `linkable`. */
+      const linkableAuthors = (linkable: string[]) =>
+        prisma.$queryRaw.mockImplementation((strings: unknown) => {
+          const sql = Array.isArray(strings) ? strings.join('?') : '';
+          return Promise.resolve(
+            sql.includes('JOIN "BookVersion"') && sql.includes('"authorId" IN')
+              ? linkable.map((authorId) => ({ authorId }))
+              : [],
+          );
+        });
+
+      it('слаг другого языка находит автора и отдаёт его перевод на языке страницы', async () => {
+        prisma.authorTranslation.findFirst.mockResolvedValue(
+          wildeTranslation({ similarSlugs: ['bernard-shaw'] }),
+        );
+        prisma.authorTranslation.findMany.mockImplementation(
+          (args: { where: { slug?: unknown; authorId?: unknown; language?: unknown } }) => {
+            if (args.where.slug) {
+              // Заглушка исполняет фильтр языка, если он задан: иначе возврат поиска
+              // «только на языке страницы» прошёл бы незамеченным.
+              const shaw = {
+                authorId: 'shaw',
+                language: Language.en,
+                slug: 'bernard-shaw',
+                name: 'Bernard Shaw',
+              };
+              return Promise.resolve(
+                languageAllows(args.where.language, shaw.language) ? [shaw] : [],
+              );
+            }
+            if (args.where.language === Language.ru) {
+              return Promise.resolve([
+                { authorId: 'shaw', slug: 'bernard-shou', name: 'Бернард Шоу' },
+              ]);
+            }
+            return Promise.resolve([]);
+          },
+        );
+
+        linkableAuthors(['shaw']);
+
+        const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+        expect(result.similarAuthors).toEqual([{ name: 'Бернард Шоу', slug: 'bernard-shou' }]);
+      });
+
+      // «Ссылка = карта сайта = robots»: страница автора без книг на языке закрыта `noindex`.
+      it('учитывает не больше 20 слагов из similarSlugs', async () => {
+        const many = Array.from({ length: 30 }, (_, i) => `slug-${i}`);
+        prisma.authorTranslation.findFirst.mockResolvedValue(
+          wildeTranslation({ similarSlugs: many }),
+        );
+
+        await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+        const [args] = prisma.authorTranslation.findMany.mock.calls[0] as [
+          { where: { slug: { in: string[] } } },
+        ];
+        expect(args.where.slug.in).toEqual(many.slice(0, 20));
+      });
+
+      it('перевод без опубликованных книг на языке страницы — имя без ссылки', async () => {
+        prisma.authorTranslation.findFirst.mockResolvedValue(
+          wildeTranslation({ similarSlugs: ['bernard-shou'] }),
+        );
+        prisma.authorTranslation.findMany.mockImplementation(
+          (args: { where: { slug?: unknown } }) =>
+            Promise.resolve(
+              args.where.slug
+                ? [
+                    {
+                      authorId: 'shaw',
+                      language: Language.ru,
+                      slug: 'bernard-shou',
+                      name: 'Бернард Шоу',
+                    },
+                  ]
+                : [{ authorId: 'shaw', slug: 'bernard-shou', name: 'Бернард Шоу' }],
+            ),
+        );
+        linkableAuthors([]);
+
+        const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+        expect(result.similarAuthors).toEqual([{ name: 'Бернард Шоу', slug: null }]);
+      });
+
+      it('сам автор страницы не попадает, два слага одного автора — одна запись, порядок слагов', async () => {
+        prisma.authorTranslation.findFirst.mockResolvedValue(
+          wildeTranslation({
+            similarSlugs: ['oscar-wilde', 'chekhov', 'bernard-shaw', 'bernard-shou'],
+          }),
+        );
+        prisma.authorTranslation.findMany.mockImplementation(
+          (args: { where: { slug?: unknown } }) =>
+            Promise.resolve(
+              args.where.slug
+                ? [
+                    {
+                      authorId: 'auth1',
+                      language: Language.en,
+                      slug: 'oscar-wilde',
+                      name: 'Oscar Wilde',
+                    },
+                    {
+                      authorId: 'shaw',
+                      language: Language.en,
+                      slug: 'bernard-shaw',
+                      name: 'Bernard Shaw',
+                    },
+                    {
+                      authorId: 'shaw',
+                      language: Language.ru,
+                      slug: 'bernard-shou',
+                      name: 'Бернард Шоу',
+                    },
+                    { authorId: 'chekhov', language: Language.ru, slug: 'chekhov', name: 'Чехов' },
+                  ]
+                : [
+                    { authorId: 'shaw', slug: 'bernard-shou', name: 'Бернард Шоу' },
+                    { authorId: 'chekhov', slug: 'chekhov', name: 'Чехов' },
+                  ],
+            ),
+        );
+        linkableAuthors(['shaw', 'chekhov']);
+
+        const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+        expect(result.similarAuthors).toEqual([
+          { name: 'Чехов', slug: 'chekhov' },
+          { name: 'Бернард Шоу', slug: 'bernard-shou' },
+        ]);
+        // Счёт книг — по языку страницы и ровно по найденным авторам.
+        const linkCall = prisma.$queryRaw.mock.calls.find(([strings]) =>
+          (Array.isArray(strings) ? strings.join('?') : '').includes('"authorId" IN'),
+        );
+        // Параметры шаблона: `PUBLISHED_BOOKS_JOIN`, язык, `Prisma.join(authorIds)`.
+        const params = (linkCall ?? []) as unknown[];
+        expect(params[2]).toBe(Language.ru);
+        expect((params[3] as { values: unknown[] }).values).toEqual(['shaw', 'chekhov']);
+        // Пара `(language, slug)` — по уникальному индексу, а не полный проход по слагу.
+        const [args] = prisma.authorTranslation.findMany.mock.calls[0] as [
+          { where: { language: { in: string[] } } },
+        ];
+        expect(args.where.language.in.sort()).toEqual(Object.values(Language).sort());
+      });
+
+      it('без перевода на языке страницы — имя без слага; ненайденный слаг пропускается', async () => {
+        prisma.authorTranslation.findFirst.mockResolvedValue(
+          wildeTranslation({ similarSlugs: ['nobody', 'bernard-shaw'] }),
+        );
+        prisma.authorTranslation.findMany.mockImplementation(
+          (args: { where: { slug?: unknown } }) =>
+            Promise.resolve(
+              args.where.slug
+                ? [
+                    {
+                      authorId: 'shaw',
+                      language: Language.en,
+                      slug: 'bernard-shaw',
+                      name: 'Bernard Shaw',
+                    },
+                  ]
+                : [],
+            ),
+        );
+
+        const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+        expect(result.similarAuthors).toEqual([{ name: 'Bernard Shaw', slug: null }]);
+      });
+    });
+
     it('returns author public view data with translated books', async () => {
       prisma.authorTranslation.findFirst.mockResolvedValue({
         id: 'trans1',
@@ -916,29 +1297,18 @@ describe('AuthorService', () => {
         },
       });
 
-      prisma.bookVersion.findMany.mockResolvedValue([
-        {
-          id: 'v1',
-          bookId: 'b1',
-          slug: 'picture-of-dorian-gray',
-          title: 'The Picture of Dorian Gray',
-          author: 'Oscar Wilde',
-          coverImageUrl: 'cover.jpg',
-          type: 'text',
-          isFree: true,
-          language: Language.en,
-          status: 'published',
-          book: { id: 'b1', slug: 'dorian-gray' },
-        },
-      ]);
+      prisma.bookVersion.findMany.mockResolvedValue([cardRow({ bookId: 'b1', authorId: 'auth1' })]);
 
-      prisma.bookRating.groupBy.mockResolvedValue([{ bookId: 'b1', _avg: { score: 4.5 } }]);
+      prisma.bookRating.groupBy.mockResolvedValue([
+        { bookId: 'b1', _avg: { score: 4.5 }, _count: { score: 2 } },
+      ]);
 
       const result = await service.getPublicBySlug('oscar-wilde', Language.en);
       expect(result.name).toBe('Oscar Wilde');
       expect(result.books).toHaveLength(1);
       expect(result.books[0].title).toBe('The Picture of Dorian Gray');
       expect(result.books[0].rating).toBe(4.5);
+      expect(result.books[0].ratingsCount).toBe(2);
     });
 
     it('throws NotFoundException if no translation is found by slug', async () => {
@@ -958,19 +1328,9 @@ describe('AuthorService', () => {
      * посажен на `findAll`.
      */
     describe('число запросов за рейтингами (LEGACY-216)', () => {
-      const twentyVersions = Array.from({ length: 20 }, (_, i) => ({
-        id: `v${i}`,
-        bookId: `b${i}`,
-        slug: `book-${i}`,
-        title: `Book ${i}`,
-        author: 'Oscar Wilde',
-        coverImageUrl: 'cover.jpg',
-        type: 'text',
-        isFree: true,
-        language: Language.en,
-        status: 'published',
-        book: { id: `b${i}`, slug: `book-${i}` },
-      }));
+      const twentyVersions = Array.from({ length: 20 }, (_, i) =>
+        cardRow({ id: `v${i}`, bookId: `b${i}`, slug: `book-${i}`, title: `Book ${i}` }),
+      );
 
       beforeEach(() => {
         prisma.authorTranslation.findFirst.mockResolvedValue({

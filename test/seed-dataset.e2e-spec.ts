@@ -135,17 +135,38 @@ describe('Seeded dataset (e2e)', () => {
   /**
    * 🔴 Внешний ключ `BookVersion.authorId`, а не только совпадение имён.
    *
-   * Карточки книг автора идут строго по ключу: `BookService.findCardsByAuthor` фильтрует
-   * `where: { authorId, language, status: 'published' }` и запасного пути по имени
-   * не имеет — в отличие от буквенного указателя, который сводит автора с книгой ещё
-   * и по `bv.author = t.name`. Поэтому потерянный `authorId` оставил бы указатель
-   * зелёным, а страницу автора — пустой: `LEGACY-294` вернулся бы наполовину и молча.
+   * С F02-1 карточки автора, как и указатель, сводят автора с книгой по `authorId`
+   * **или** по имени (решение арбитра 14.10.2026, `F02 | F02-1`): иначе авторы, связанные
+   * с книгами только по имени, получили бы ноль книг и `noindex`. Поэтому непустой ответ
+   * сам по себе ключ больше не стережёт — сид кладёт `author`, дословно равный имени
+   * перевода. Здесь у версии на время проверки имя заменяется чужим: найтись она может
+   * только по ключу, и потерянный `authorId` из сида (`LEGACY-294`) краснит этот тест.
    */
   it('книги автора находятся по внешнему ключу, а не по совпадению имени', async () => {
-    const res = await get('/ru/authors/dzhoan-rouling/books/cards?limit=24').expect(200);
-    const body = res.body as { items: unknown[] };
+    const translation = await prisma.authorTranslation.findFirstOrThrow({
+      where: { slug: 'dzhoan-rouling', language: 'ru' },
+      select: { authorId: true },
+    });
+    const version = await prisma.bookVersion.findFirstOrThrow({
+      where: { authorId: translation.authorId, language: 'ru', status: 'published' },
+      select: { id: true, bookId: true, author: true },
+    });
 
-    expect(body.items.length).toBeGreaterThan(0);
+    await prisma.bookVersion.update({
+      where: { id: version.id },
+      data: { author: 'Имя, которого нет у автора' },
+    });
+    try {
+      const res = await get('/ru/authors/dzhoan-rouling/books/cards?limit=24').expect(200);
+      const body = res.body as { items: Array<{ id: string }> };
+
+      expect(body.items.map((i) => i.id)).toContain(version.bookId);
+    } finally {
+      await prisma.bookVersion.update({
+        where: { id: version.id },
+        data: { author: version.author },
+      });
+    }
   });
 
   /**

@@ -36,7 +36,8 @@ export class BookCardDto {
 
   @ApiProperty({
     description:
-      'Stable author slug for the author page link. null when authorId is null (legacy data).',
+      'Stable author slug for the author page link. null when authorId is null (legacy data); ' +
+      "on the author shelf a book matched by the author name carries that author's own slug.",
     type: String,
     example: 'william-shakespeare',
     nullable: true,

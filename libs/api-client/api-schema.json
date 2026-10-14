@@ -1678,7 +1678,7 @@
             "type": "string"
           },
           "authorSlug": {
-            "description": "Stable author slug for the author page link. null when authorId is null (legacy data).",
+            "description": "Stable author slug for the author page link. null when authorId is null (legacy data); on the author shelf a book matched by the author name carries that author's own slug.",
             "example": "william-shakespeare",
             "nullable": true,
             "type": "string"
@@ -12638,80 +12638,13 @@
         ],
         "type": "object"
       },
-      "PublicAuthorBookDto": {
+      "PublicAuthorAlternateDto": {
         "properties": {
-          "author": {
-            "type": "string"
-          },
-          "bookId": {
-            "description": "Canonical `Book.id`",
-            "type": "string"
-          },
-          "coverImageUrl": {
-            "type": "string"
-          },
-          "coverUrl": {
-            "description": "Compatibility alias of `coverImageUrl`",
-            "type": "string"
-          },
-          "id": {
-            "description": "`BookVersion.id` of the matched version",
-            "type": "string"
-          },
-          "isFree": {
+          "indexable": {
+            "description": "Published books in this language > 0 — the same rule the author sitemap uses; only indexable languages go into `hreflang`",
             "type": "boolean"
           },
-          "rating": {
-            "description": "Average rating (0-5)",
-            "nullable": true,
-            "type": "number"
-          },
-          "slug": {
-            "description": "`BookVersion.slug`, falling back to `Book.slug`",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          },
-          "type": {
-            "enum": [
-              "text",
-              "audio",
-              "referral"
-            ],
-            "type": "string"
-          },
-          "versions": {
-            "items": {
-              "$ref": "#/components/schemas/PublicAuthorBookVersionDto"
-            },
-            "type": "array"
-          }
-        },
-        "required": [
-          "id",
-          "bookId",
-          "slug",
-          "title",
-          "author",
-          "coverImageUrl",
-          "coverUrl",
-          "type",
-          "isFree",
-          "versions"
-        ],
-        "type": "object"
-      },
-      "PublicAuthorBookVersionDto": {
-        "properties": {
-          "coverImageUrl": {
-            "type": "string"
-          },
-          "coverUrl": {
-            "description": "Compatibility alias of `coverImageUrl`",
-            "type": "string"
-          },
-          "language": {
+          "lang": {
             "enum": [
               "en",
               "es",
@@ -12721,33 +12654,120 @@
             ],
             "type": "string"
           },
-          "status": {
-            "enum": [
-              "draft",
-              "published"
-            ],
-            "type": "string"
-          },
-          "type": {
-            "enum": [
-              "text",
-              "audio",
-              "referral"
-            ],
+          "slug": {
             "type": "string"
           }
         },
         "required": [
-          "language",
-          "status",
-          "type",
+          "lang",
+          "slug",
+          "indexable"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorBookDto": {
+        "properties": {
+          "author": {
+            "description": "Localized display author name",
+            "example": "William Shakespeare",
+            "type": "string"
+          },
+          "authorSlug": {
+            "description": "Stable author slug for the author page link. null when authorId is null (legacy data); on the author shelf a book matched by the author name carries that author's own slug.",
+            "example": "william-shakespeare",
+            "nullable": true,
+            "type": "string"
+          },
+          "categoryIds": {
+            "description": "Stable category IDs attached to this book version (for homepage category-based filtering).",
+            "example": [
+              "b176b984-e62e-4d50-9f76-873ab0925956"
+            ],
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "coverImageUrl": {
+            "description": "Localized cover image URL",
+            "example": "https://api.bibliaris.com/covers/...png",
+            "nullable": true,
+            "type": "string"
+          },
+          "firstPublishedYear": {
+            "description": "`BookVersion.firstPublishedYear`; books are ordered by it, undated last",
+            "nullable": true,
+            "type": "number"
+          },
+          "hasAudio": {
+            "description": "Whether a published audio version exists for this language",
+            "example": false,
+            "type": "boolean"
+          },
+          "hasText": {
+            "description": "Whether a published text version exists for this language",
+            "example": true,
+            "type": "boolean"
+          },
+          "id": {
+            "description": "Canonical Book.id (bookId)",
+            "example": "4a23a1fe-b335-4f0d-98fa-a65d187821fe",
+            "type": "string"
+          },
+          "publishedAt": {
+            "description": "ISO date the language version was published (BookVersion.publishedAt). null if unpublished.",
+            "example": "2026-07-01T00:00:00.000Z",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "rating": {
+            "description": "Average rating (0-5)",
+            "example": 4.5,
+            "nullable": true,
+            "type": "number"
+          },
+          "ratingsCount": {
+            "description": "Number of ratings",
+            "example": 12,
+            "type": "number"
+          },
+          "slug": {
+            "description": "BookVersion.slug for the requested language",
+            "example": "hamlet",
+            "type": "string"
+          },
+          "title": {
+            "description": "Localized title",
+            "example": "Hamlet",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "author",
+          "authorSlug",
           "coverImageUrl",
-          "coverUrl"
+          "rating",
+          "ratingsCount",
+          "hasText",
+          "hasAudio",
+          "publishedAt",
+          "categoryIds",
+          "firstPublishedYear"
         ],
         "type": "object"
       },
       "PublicAuthorDetailResponseDto": {
         "properties": {
+          "alternates": {
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorAlternateDto"
+            },
+            "type": "array"
+          },
           "biography": {
             "nullable": true,
             "type": "string"
@@ -12758,10 +12778,15 @@
             "type": "string"
           },
           "books": {
+            "description": "Ordered by `firstPublishedYear` asc (undated last), then title",
             "items": {
               "$ref": "#/components/schemas/PublicAuthorBookDto"
             },
             "type": "array"
+          },
+          "booksTotal": {
+            "description": "Published books of the author in this language; counted separately from `books`",
+            "type": "number"
           },
           "deathDate": {
             "description": "YYYY-MM-DD",
@@ -12827,7 +12852,9 @@
           "name",
           "quotes",
           "faq",
+          "alternates",
           "similarAuthors",
+          "booksTotal",
           "books"
         ],
         "type": "object"
@@ -13627,6 +13654,8 @@
             "type": "string"
           },
           "slug": {
+            "description": "Slug in the requested language; `null` when the author has no translation in it (show the name as plain text, without a link)",
+            "nullable": true,
             "type": "string"
           }
         },

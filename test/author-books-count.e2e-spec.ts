@@ -131,6 +131,77 @@ describe('Authors: books count (e2e)', () => {
     expect(findAuthor(res.body, withBookId)?.booksCount).toBe(1);
   });
 
+  // 🔴 F02-1: страница автора и догрузка `/books/cards` — один набор книг и один счёт
+  // (решение арбитра 14.10.2026). Книга здесь связана только именем: до F02-1 деталь её
+  // видела, а догрузка — нет, и счётчик страницы расходился со списком.
+  it('serves the same books on the author page and in its cards, with one total', async () => {
+    const server = httpServerOf(app);
+    const detail = await request(server).get(`/ru/authors/${prefix}-with-ru`).expect(200);
+    const cards = await request(server)
+      .get(`/ru/authors/${prefix}-with-ru/books/cards`)
+      .expect(200);
+
+    const detailBody = detail.body as {
+      booksTotal: number;
+      books: Array<{ id: string }>;
+      alternates: Array<{ lang: string; slug: string; indexable: boolean }>;
+    };
+    const cardsBody = cards.body as { items: Array<{ id: string }>; pagination: { total: number } };
+
+    expect(detailBody.books.map((b) => b.id)).toEqual([bookId]);
+    expect(cardsBody.items.map((b) => b.id)).toEqual([bookId]);
+    expect(detailBody.booksTotal).toBe(cardsBody.pagination.total);
+    expect(detailBody.alternates).toEqual([
+      { lang: 'en', slug: `${prefix}-with-en`, indexable: true },
+      { lang: 'ru', slug: `${prefix}-with-ru`, indexable: true },
+    ]);
+  });
+
+  // 🔴 F02-1: сырой SQL ручки автора на настоящей базе — `alternates` с закрытым языком и
+  // похожие авторы по слагу любого языка (ссылка — только на страницу с книгами на языке).
+  it('marks a translation without books as not indexable and resolves similar authors', async () => {
+    const server = httpServerOf(app);
+    await prisma.authorTranslation.updateMany({
+      where: { authorId: emptyId, language: Language.en },
+      data: { similarSlugs: [`${prefix}-with-ru`] },
+    });
+    await prisma.authorTranslation.updateMany({
+      where: { authorId: withBookId, language: Language.ru },
+      // Свой английский слаг — это сам автор страницы: в блок не попадает.
+      data: { similarSlugs: [`${prefix}-empty-en`, `${prefix}-with-en`, `${prefix}-nobody`] },
+    });
+
+    const empty = await request(server).get(`/en/authors/${prefix}-empty-en`).expect(200);
+    const emptyBody = empty.body as {
+      booksTotal: number;
+      alternates: Array<{ lang: string; slug: string; indexable: boolean }>;
+      similarAuthors: Array<{ name: string; slug: string | null }>;
+    };
+    expect(emptyBody.booksTotal).toBe(0);
+    expect(emptyBody.alternates).toEqual([
+      { lang: 'en', slug: `${prefix}-empty-en`, indexable: false },
+    ]);
+    // Слаг русский, страница английская: ссылка на английский перевод, у него есть книга.
+    expect(emptyBody.similarAuthors).toEqual([{ name: withBookEn, slug: `${prefix}-with-en` }]);
+
+    const withBook = await request(server).get(`/ru/authors/${prefix}-with-ru`).expect(200);
+    // У автора без книг нет перевода на `ru` — имя без ссылки; ненайденный слаг пропущен.
+    expect((withBook.body as { similarAuthors: unknown }).similarAuthors).toEqual([
+      { name: `Empty ${stamp}`, slug: null },
+    ]);
+
+    // Перевод на `en` у автора без книг есть, но книг на `en` нет — страница закрыта noindex,
+    // ссылки на неё нет: имя текстом.
+    await prisma.authorTranslation.updateMany({
+      where: { authorId: withBookId, language: Language.en },
+      data: { similarSlugs: [`${prefix}-empty-en`] },
+    });
+    const withBookEnPage = await request(server).get(`/en/authors/${prefix}-with-en`).expect(200);
+    expect((withBookEnPage.body as { similarAuthors: unknown }).similarAuthors).toEqual([
+      { name: `Empty ${stamp}`, slug: null },
+    ]);
+  });
+
   // 🔴 Контроль от противоположной ошибки: «считать хоть что-нибудь» — не решение.
   // Автор без книг обязан остаться нулём, иначе noindex не сработает никогда.
   it('leaves an author without books at zero', async () => {

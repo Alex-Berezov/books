@@ -47,6 +47,8 @@ import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { suggestedSlugCandidate } from '../../shared/validators/slug';
 import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 import { seoDtoToData } from '../seo/utils/seo-dto-to-data.util';
+import { BOOK_CARD_SELECT, loadBookCardRatings, toBookCardDto } from '../book/book-card';
+import { BookCardDto } from '../book/dto/book-card.dto';
 
 /**
  * Первая буква имени, посчитанная в SQL: сняли краевые пробелы, свернули
@@ -149,6 +151,17 @@ export function authorSlugKey(authorId: string, language: Language): string {
 
 /** Сколько кандидатов `<slug>-N` проверяет один запрос подсказки (LEGACY-370). */
 const SLUG_SUGGESTION_BATCH = 20;
+
+/**
+ * Предохранитель выборки книг страницы автора: до F02-3 страница отдаёт все книги
+ * без порции (решение арбитра 14.10.2026, `F02 | F02-1`), но безлимитный `findMany`
+ * в публичной ручке запрещён. Порог выше любого автора каталога; `booksTotal`
+ * считается отдельно и предохранителем не режется.
+ */
+const AUTHOR_PAGE_BOOKS_CAP = 500;
+
+/** Сколько слагов из `similarSlugs` разрешает страница автора: блок — ряд имён, не каталог. */
+const SIMILAR_AUTHORS_MAX = 20;
 
 /**
  * Границы транзакции удаления автора (`LEGACY-015`, пачка `T21`). Те же цифры, что
@@ -301,33 +314,6 @@ export class AuthorService {
     `;
 
     return new Map(rows.map((r) => [r.authorId, r.booksCount]));
-  }
-
-  /**
-   * Средние оценки книг одним запросом вместо запроса на книгу (`LEGACY-216`).
-   *
-   * Ключ карты - `bookId`, а не идентификатор версии: оценка ставится книге,
-   * и все её языковые версии делят одну.
-   *
-   * Снятия дублей здесь нет намеренно. Единственный вызывающий, `getPublicBySlug`,
-   * берёт версии одного языка, а `@@unique([bookId, language])` на `BookVersion`
-   * не даёт двум строкам одного языка нести один `bookId`. Дедупликация была бы
-   * веткой, в которую нельзя попасть, и тестом, который её не проверяет: набор
-   * с повтором `bookId` этот запрос вернуть не может.
-   *
-   * Пустой список отсекается до похода в базу: `groupBy` с `in: []` вернул бы
-   * пустой ответ той же ценой, а страница автора без книг - обычный случай.
-   */
-  private async getAverageRatingsForBooks(bookIds: string[]): Promise<Map<string, number | null>> {
-    if (bookIds.length === 0) return new Map();
-
-    const groups = await this.prisma.bookRating.groupBy({
-      by: ['bookId'],
-      where: { bookId: { in: bookIds } },
-      _avg: { score: true },
-    });
-
-    return new Map(groups.map((g) => [g.bookId, g._avg.score ?? null]));
   }
 
   /**
@@ -983,39 +969,18 @@ export class AuthorService {
 
     const quotes = (translation.quotes as unknown as AuthorQuote[]) || [];
     const faq = (translation.faq as unknown as AuthorFaq[]) || [];
-    let similarAuthors: { name: string; slug: string }[] = [];
     const similarSlugs = (translation.similarSlugs as unknown as string[]) || [];
-    if (similarSlugs.length > 0) {
-      const dbSimilar = await this.prisma.authorTranslation.findMany({
-        where: { slug: { in: similarSlugs }, language },
-        select: { name: true, slug: true },
-      });
-      similarAuthors = dbSimilar.map((sa) => ({
-        slug: sa.slug,
-        name: sa.name,
-      }));
-    }
 
-    // Get books by this author
-    // Fallback: match by authorId OR by string match of author's name
-    const bookVersions = await this.prisma.bookVersion.findMany({
-      where: {
-        language,
-        status: 'published',
-        OR: [{ authorId: author.id }, { author: translation.name }],
-      },
-      include: {
-        book: {
-          select: {
-            id: true,
-            slug: true,
-          },
-        },
-      },
-      orderBy: { publishedAt: 'desc' },
-    });
-
-    const ratings = await this.getAverageRatingsForBooks(bookVersions.map((bv) => bv.bookId));
+    // Все книги, без порции: «Показать все» появится только в F02-3, а до неё порция
+    // спрятала бы часть книг со страницы. `booksTotal` — отдельный счёт по тому же условию,
+    // чтобы контракт был готов к порции (решение арбитра 14.10.2026, `F02 | F02-1`).
+    const [{ entries, total }, alternates, similarAuthors] = await Promise.all([
+      this.getPublishedBookCards({ id: author.id, name: translation.name }, language, {
+        take: AUTHOR_PAGE_BOOKS_CAP,
+      }),
+      this.getPublicAlternates(author.id),
+      this.resolveSimilarAuthors(similarSlugs, language, author.id),
+    ]);
 
     return {
       id: author.id,
@@ -1030,29 +995,217 @@ export class AuthorService {
       quotes,
       faq,
       seo: translation.seo,
+      alternates,
       similarAuthors,
-      books: bookVersions.map((bv) => ({
-        id: bv.id,
-        bookId: bv.bookId,
-        slug: bv.slug || bv.book.slug,
-        title: bv.title,
-        author: bv.author,
-        coverImageUrl: bv.coverImageUrl,
-        coverUrl: bv.coverImageUrl,
-        type: bv.type,
-        isFree: bv.isFree,
-        rating: ratings.get(bv.bookId) ?? null,
-        versions: [
-          {
-            language: bv.language,
-            status: bv.status,
-            type: bv.type,
-            coverImageUrl: bv.coverImageUrl,
-            coverUrl: bv.coverImageUrl,
-          },
-        ],
-      })),
+      booksTotal: total,
+      books: entries.map((e) => ({ ...e.card, firstPublishedYear: e.firstPublishedYear })),
     };
+  }
+
+  /**
+   * Автор по публичному слагу: сначала язык запроса, затем `en` — как искала догрузка
+   * `/books/cards` до F02-1. Имя — перевода на языке запроса: по нему связаны книги,
+   * у которых `authorId` пуст (`PUBLISHED_BOOKS_JOIN`); перевода нет — только `authorId`.
+   */
+  async resolvePublicAuthorRef(
+    slug: string,
+    language: Language,
+  ): Promise<{ id: string; name: string | null } | null> {
+    const hits = await this.prisma.authorTranslation.findMany({
+      where: { slug, language: { in: [language, Language.en] } },
+      select: { authorId: true, language: true, name: true },
+    });
+    const hit = hits.find((h) => h.language === language) ?? hits[0];
+    if (!hit) return null;
+    if (hit.language === language) return { id: hit.authorId, name: hit.name };
+
+    const own = await this.prisma.authorTranslation.findFirst({
+      where: { authorId: hit.authorId, language },
+      select: { name: true },
+    });
+    return { id: hit.authorId, name: own?.name ?? null };
+  }
+
+  /**
+   * Опубликованные книги автора на языке — **один источник** для страницы автора и для
+   * `/books/cards` автора: условие, порядок, форма карточки и счёт (решение арбитра
+   * 14.10.2026, `F02 | F02-1`). Разойдись они — догрузка отдала бы не те книги или
+   * не в том порядке, а счётчик в шапке разошёлся бы со списком.
+   *
+   * Условие — `authorId` **или** имя перевода, как у хаба и карты сайта
+   * (`PUBLISHED_BOOKS_JOIN`): только по `authorId` авторы, связанные с книгами лишь
+   * по имени, получили бы ноль книг и `noindex`. Порядок — по году первой публикации,
+   * книги без года в конце, затем название и `id` (стабильная пагинация).
+   * `@@unique([bookId, language])` у `BookVersion` — одна строка на книгу, счёт строк
+   * равен счёту книг.
+   */
+  async getPublishedBookCards(
+    author: { id: string; name: string | null },
+    language: Language,
+    window: { skip?: number; take: number },
+  ): Promise<{
+    entries: Array<{ card: BookCardDto; firstPublishedYear: number | null }>;
+    total: number;
+  }> {
+    const where: Prisma.BookVersionWhereInput = {
+      language,
+      status: 'published',
+      OR: author.name
+        ? [{ authorId: author.id }, { author: author.name }]
+        : [{ authorId: author.id }],
+    };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.bookVersion.findMany({
+        where,
+        select: { ...BOOK_CARD_SELECT, firstPublishedYear: true, book: { select: { slug: true } } },
+        orderBy: [
+          { firstPublishedYear: { sort: 'asc', nulls: 'last' } },
+          { title: 'asc' },
+          { id: 'asc' },
+        ],
+        skip: window.skip,
+        take: window.take,
+      }),
+      this.prisma.bookVersion.count({ where }),
+    ]);
+
+    const linkedAuthorIds = rows.map((r) => r.authorId).filter((id): id is string => id !== null);
+    const [ratings, slugs] = await Promise.all([
+      loadBookCardRatings(
+        this.prisma,
+        rows.map((r) => r.bookId),
+      ),
+      this.getSlugsByAuthorIds(
+        Array.from(new Set([author.id, ...linkedAuthorIds])).map((authorId) => ({
+          authorId,
+          language,
+        })),
+      ),
+    ]);
+    const ownSlug = slugs.get(authorSlugKey(author.id, language)) ?? null;
+
+    return {
+      entries: rows.map((r) => ({
+        card: {
+          // Книга без `authorId` попала сюда по имени этого автора — ссылка на него же.
+          ...toBookCardDto(
+            r,
+            ratings.get(r.bookId),
+            r.authorId ? (slugs.get(authorSlugKey(r.authorId, language)) ?? null) : ownSlug,
+          ),
+          // Версия без своего слага ведёт на слаг книги, как страница автора до F02-1:
+          // `getOverview` ищет по `BookVersion.slug` и `Book.slug`, а не по id версии,
+          // и запасной `row.id` общей карточки дал бы здесь ссылку в 404.
+          slug: r.slug || r.book.slug,
+        },
+        firstPublishedYear: r.firstPublishedYear,
+      })),
+      total,
+    };
+  }
+
+  /**
+   * Переводы автора для `hreflang`: язык, слаг и индексируемость. Индексируемость —
+   * по тому же правилу, что у карты сайта (`isAuthorLinkable` на фронте поверх
+   * `booksCount` списка): опубликованных книг на языке перевода больше нуля, счёт —
+   * через `PUBLISHED_BOOKS_JOIN`, как у списка.
+   */
+  private async getPublicAlternates(
+    authorId: string,
+  ): Promise<Array<{ lang: Language; slug: string; indexable: boolean }>> {
+    const rows = await this.prisma.$queryRaw<
+      Array<{ lang: Language; slug: string; booksCount: number }>
+    >`
+      SELECT t.language AS "lang", t.slug AS "slug", COUNT(DISTINCT bv."bookId")::int AS "booksCount"
+      FROM "AuthorTranslation" t
+      LEFT JOIN "BookVersion" bv ${PUBLISHED_BOOKS_JOIN}
+      WHERE t."authorId" = ${authorId}
+      GROUP BY t.language, t.slug
+      ORDER BY t.language
+    `;
+    return rows.map((r) => ({ lang: r.lang, slug: r.slug, indexable: r.booksCount > 0 }));
+  }
+
+  /**
+   * Похожие авторы по слагам из `similarSlugs` — слаг ищется на любом языке, а ссылка
+   * ведёт на перевод того же автора **на языке страницы** (`tech.md` F02, T3). Раньше слаг
+   * искался только на языке страницы, и английские слаги на русской странице давали
+   * пустой блок.
+   *
+   * Автор нашёлся, но перевода на язык страницы нет — имя без ссылки (`slug: null`):
+   * адреса на этом языке у него нет. Перевод есть, но опубликованных книг на этом языке
+   * нет — тоже имя без ссылки: его страница закрыта `noindex` и в карту сайта не входит. Слаг не нашёлся вовсе — пропуск: показать нечего,
+   * кроме самого слага. Порядок — как в `similarSlugs`; один автор — один раз; сам
+   * автор страницы в свой блок не попадает.
+   */
+  private async resolveSimilarAuthors(
+    slugs: string[],
+    language: Language,
+    selfAuthorId: string,
+  ): Promise<Array<{ name: string; slug: string | null }>> {
+    if (slugs.length === 0) return [];
+    // Предохранитель на длину списка из админки и пара `(language, slug)` в условии: уникальный
+    // индекс `@@unique([language, slug])` начинается с языка, и без него поиск шёл бы мимо индекса.
+    const wanted = slugs.slice(0, SIMILAR_AUTHORS_MAX);
+
+    const matches = await this.prisma.authorTranslation.findMany({
+      where: { language: { in: Object.values(Language) }, slug: { in: wanted } },
+      select: { authorId: true, language: true, slug: true, name: true },
+      // Слаг свободен в каждом языке отдельно: без порядка запасной выбор «первое совпадение»
+      // менялся бы от запроса к запросу.
+      orderBy: [{ language: 'asc' }, { authorId: 'asc' }],
+    });
+    const authorIds = Array.from(new Set(matches.map((m) => m.authorId)));
+    const own =
+      authorIds.length === 0
+        ? []
+        : await this.prisma.authorTranslation.findMany({
+            where: { authorId: { in: authorIds }, language },
+            select: { authorId: true, slug: true, name: true },
+          });
+    const ownByAuthor = new Map(own.map((o) => [o.authorId, o]));
+    const linkable = await this.authorsWithPublishedBooks(
+      own.map((o) => o.authorId),
+      language,
+    );
+
+    const seen = new Set<string>([selfAuthorId]);
+    const result: Array<{ name: string; slug: string | null }> = [];
+    for (const slug of wanted) {
+      const candidates = matches.filter((m) => m.slug === slug);
+      const hit = candidates.find((m) => m.language === language) ?? candidates[0];
+      if (!hit || seen.has(hit.authorId)) continue;
+      seen.add(hit.authorId);
+      const inLang = ownByAuthor.get(hit.authorId);
+      if (!inLang) {
+        result.push({ name: hit.name, slug: null });
+      } else {
+        // Ссылка — только на индексируемую страницу: автор без опубликованных книг на языке
+        // страницы отдаёт `noindex` и в карту сайта не входит («ссылка = карта сайта = robots»).
+        result.push({ name: inLang.name, slug: linkable.has(hit.authorId) ? inLang.slug : null });
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Кто из авторов линкуем на языке — опубликованных книг на нём больше нуля, счёт тот же,
+   * что у списка и карты сайта (`PUBLISHED_BOOKS_JOIN`).
+   */
+  private async authorsWithPublishedBooks(
+    authorIds: string[],
+    language: Language,
+  ): Promise<Set<string>> {
+    if (authorIds.length === 0) return new Set();
+    const rows = await this.prisma.$queryRaw<Array<{ authorId: string }>>`
+      SELECT t."authorId" AS "authorId"
+      FROM "AuthorTranslation" t
+      JOIN "BookVersion" bv ${PUBLISHED_BOOKS_JOIN}
+      WHERE t.language = ${language}::"Language" AND t."authorId" IN (${Prisma.join(authorIds)})
+      GROUP BY t."authorId"
+    `;
+    return new Set(rows.map((r) => r.authorId));
   }
 
   /**

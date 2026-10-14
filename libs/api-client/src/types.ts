@@ -4870,7 +4870,7 @@ export interface components {
        */
       author: string;
       /**
-       * @description Stable author slug for the author page link. null when authorId is null (legacy data).
+       * @description Stable author slug for the author page link. null when authorId is null (legacy data); on the author shelf a book matched by the author name carries that author's own slug.
        * @example william-shakespeare
        */
       authorSlug: string | null;
@@ -8817,41 +8817,89 @@ export interface components {
       /** @description Всегда `true`: задача поставлена в очередь */
       ok: boolean;
     };
-    PublicAuthorBookDto: {
-      author: string;
-      /** @description Canonical `Book.id` */
-      bookId: string;
-      coverImageUrl: string;
-      /** @description Compatibility alias of `coverImageUrl` */
-      coverUrl: string;
-      /** @description `BookVersion.id` of the matched version */
-      id: string;
-      isFree: boolean;
-      /** @description Average rating (0-5) */
-      rating?: number | null;
-      /** @description `BookVersion.slug`, falling back to `Book.slug` */
+    PublicAuthorAlternateDto: {
+      /** @description Published books in this language > 0 — the same rule the author sitemap uses; only indexable languages go into `hreflang` */
+      indexable: boolean;
+      /** @enum {string} */
+      lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       slug: string;
-      title: string;
-      /** @enum {string} */
-      type: 'text' | 'audio' | 'referral';
-      versions: components['schemas']['PublicAuthorBookVersionDto'][];
     };
-    PublicAuthorBookVersionDto: {
-      coverImageUrl: string;
-      /** @description Compatibility alias of `coverImageUrl` */
-      coverUrl: string;
-      /** @enum {string} */
-      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
-      /** @enum {string} */
-      status: 'draft' | 'published';
-      /** @enum {string} */
-      type: 'text' | 'audio' | 'referral';
+    PublicAuthorBookDto: {
+      /**
+       * @description Localized display author name
+       * @example William Shakespeare
+       */
+      author: string;
+      /**
+       * @description Stable author slug for the author page link. null when authorId is null (legacy data); on the author shelf a book matched by the author name carries that author's own slug.
+       * @example william-shakespeare
+       */
+      authorSlug: string | null;
+      /**
+       * @description Stable category IDs attached to this book version (for homepage category-based filtering).
+       * @example [
+       *       "b176b984-e62e-4d50-9f76-873ab0925956"
+       *     ]
+       */
+      categoryIds: string[];
+      /**
+       * @description Localized cover image URL
+       * @example https://api.bibliaris.com/covers/...png
+       */
+      coverImageUrl: string | null;
+      /** @description `BookVersion.firstPublishedYear`; books are ordered by it, undated last */
+      firstPublishedYear: number | null;
+      /**
+       * @description Whether a published audio version exists for this language
+       * @example false
+       */
+      hasAudio: boolean;
+      /**
+       * @description Whether a published text version exists for this language
+       * @example true
+       */
+      hasText: boolean;
+      /**
+       * @description Canonical Book.id (bookId)
+       * @example 4a23a1fe-b335-4f0d-98fa-a65d187821fe
+       */
+      id: string;
+      /**
+       * Format: date-time
+       * @description ISO date the language version was published (BookVersion.publishedAt). null if unpublished.
+       * @example 2026-07-01T00:00:00.000Z
+       */
+      publishedAt: string | null;
+      /**
+       * @description Average rating (0-5)
+       * @example 4.5
+       */
+      rating: number | null;
+      /**
+       * @description Number of ratings
+       * @example 12
+       */
+      ratingsCount: number;
+      /**
+       * @description BookVersion.slug for the requested language
+       * @example hamlet
+       */
+      slug: string;
+      /**
+       * @description Localized title
+       * @example Hamlet
+       */
+      title: string;
     };
     PublicAuthorDetailResponseDto: {
+      alternates: components['schemas']['PublicAuthorAlternateDto'][];
       biography?: string | null;
       /** @description YYYY-MM-DD */
       birthDate?: string | null;
+      /** @description Ordered by `firstPublishedYear` asc (undated last), then title */
       books: components['schemas']['PublicAuthorBookDto'][];
+      /** @description Published books of the author in this language; counted separately from `books` */
+      booksTotal: number;
       /** @description YYYY-MM-DD */
       deathDate?: string | null;
       /** @description Empty array when unset */
@@ -9083,7 +9131,8 @@ export interface components {
     };
     PublicSimilarAuthorDto: {
       name: string;
-      slug: string;
+      /** @description Slug in the requested language; `null` when the author has no translation in it (show the name as plain text, without a link) */
+      slug: string | null;
     };
     PublicTagBookVersionDto: {
       author: string;
