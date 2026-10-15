@@ -181,13 +181,22 @@ describe('Authors: books count (e2e)', () => {
     expect(emptyBody.alternates).toEqual([
       { lang: 'en', slug: `${prefix}-empty-en`, indexable: false },
     ]);
+    // С F02-2 похожий автор несёт портрет и даты (у тестовых авторов их нет).
     // Слаг русский, страница английская: ссылка на английский перевод, у него есть книга.
-    expect(emptyBody.similarAuthors).toEqual([{ name: withBookEn, slug: `${prefix}-with-en` }]);
+    expect(emptyBody.similarAuthors).toEqual([
+      {
+        name: withBookEn,
+        slug: `${prefix}-with-en`,
+        photoUrl: null,
+        birthDate: null,
+        deathDate: null,
+      },
+    ]);
 
     const withBook = await request(server).get(`/ru/authors/${prefix}-with-ru`).expect(200);
     // У автора без книг нет перевода на `ru` — имя без ссылки; ненайденный слаг пропущен.
     expect((withBook.body as { similarAuthors: unknown }).similarAuthors).toEqual([
-      { name: `Empty ${stamp}`, slug: null },
+      { name: `Empty ${stamp}`, slug: null, photoUrl: null, birthDate: null, deathDate: null },
     ]);
 
     // Перевод на `en` у автора без книг есть, но книг на `en` нет — страница закрыта noindex,
@@ -198,7 +207,7 @@ describe('Authors: books count (e2e)', () => {
     });
     const withBookEnPage = await request(server).get(`/en/authors/${prefix}-with-en`).expect(200);
     expect((withBookEnPage.body as { similarAuthors: unknown }).similarAuthors).toEqual([
-      { name: `Empty ${stamp}`, slug: null },
+      { name: `Empty ${stamp}`, slug: null, photoUrl: null, birthDate: null, deathDate: null },
     ]);
   });
 

@@ -131,6 +131,26 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/authors/{id}/prompt-inputs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /**
+     * Prompt inputs for the author data prompt (F02-2)
+     * @description The author, its published books per language (same set and order as the author page) and every author of the site with a slug per language — for the «Prompt inputs» button.
+     */
+    get: operations['AuthorController_promptInputs'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/background-jobs': {
     parameters: {
       query?: never;
@@ -4448,6 +4468,9 @@ export interface components {
       id: string;
       /** @description Name of the picked translation, empty string if there is none */
       name: string;
+      /** @description Full name in the native script */
+      nativeName: string | null;
+      photoCredit: components['schemas']['AuthorPhotoCreditDto'] | null;
       photoUrl: string | null;
       /** @description Slug of the picked translation, empty string if there is none */
       slug: string;
@@ -4721,17 +4744,107 @@ export interface components {
        */
       roles: ('user' | 'admin' | 'content_manager' | 'lawyer')[];
     };
+    AuthorAdaptationDto: {
+      basedOn?: string | null;
+      bookSlug?: string | null;
+      /** @enum {string} */
+      kind: 'film' | 'series' | 'animation' | 'play' | 'opera' | 'other';
+      title: string;
+      year?: number | null;
+    };
+    AuthorAwardDto: {
+      name: string;
+      nomination?: boolean | null;
+      year?: number | null;
+    };
+    AuthorFactsDto: {
+      birthPlace?: string | null;
+      deathPlace?: string | null;
+      /** @enum {string|null} */
+      gender?: 'male' | 'female' | null;
+      genres?: string[];
+      languages?: string[];
+      movements?: string[];
+      nationality?: string | null;
+      occupations?: string[];
+      pseudonyms?: string[];
+    };
     AuthorFaqDto: {
       /** @description Answer text */
       answer: string;
       /** @description Question text */
       question: string;
     };
+    AuthorFunFactDto: {
+      /** @description Source title; a fact without a source is rejected */
+      sourceTitle: string;
+      /** @description Absolute http(s) URL of the source */
+      sourceUrl: string;
+      text: string;
+    };
+    AuthorInfluenceRefDto: {
+      authorSlug?: string | null;
+      name: string;
+    };
+    AuthorInfluencesDto: {
+      influenced?: components['schemas']['AuthorInfluenceRefDto'][];
+      influencedBy?: components['schemas']['AuthorInfluenceRefDto'][];
+    };
     AuthorLetterCountDto: {
       count: number;
       letter: string;
     };
+    AuthorNotableWorkDto: {
+      bookSlug?: string | null;
+      title: string;
+      year?: number | null;
+    };
+    AuthorPhotoCreditDto: {
+      /** @description Author of the photo */
+      author: string;
+      /** @description License name, e.g. "CC BY-SA 4.0" or "Public domain" */
+      license: string;
+      licenseUrl?: string | null;
+      sourceUrl?: string | null;
+    };
+    AuthorPromptBookDto: {
+      firstPublishedYear: number | null;
+      hasAudio: boolean;
+      slug: string;
+      title: string;
+    };
+    AuthorPromptBooksDto: {
+      /** @description Same set and order as the author page */
+      items: components['schemas']['AuthorPromptBookDto'][];
+      /** @enum {string} */
+      lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Published books in this language; > items.length when cut */
+      total: number;
+    };
+    AuthorPromptInputsResponseDto: {
+      authors: components['schemas']['AuthorPromptSiteAuthorDto'][];
+      /** @description The author list hit the row cap and is incomplete */
+      authorsTruncated: boolean;
+      birthDate: string | null;
+      books: components['schemas']['AuthorPromptBooksDto'][];
+      deathDate: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @description This author per language */
+      names: components['schemas']['AuthorPromptNameDto'][];
+    };
+    AuthorPromptNameDto: {
+      /** @enum {string} */
+      lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      name: string;
+      slug: string;
+    };
+    AuthorPromptSiteAuthorDto: {
+      names: components['schemas']['AuthorPromptNameDto'][];
+    };
     AuthorQuoteDto: {
+      /** @description Slug of the book on the site the quote is from (F02-2); `null`/empty — none */
+      bookSlug?: string | null;
       /** @description Source of the quote */
       source?: string;
       /** @description Text of the quote */
@@ -4746,21 +4859,71 @@ export interface components {
       deathDate: string | null;
       /** Format: uuid */
       id: string;
+      /** @description Full name in the native script */
+      nativeName: string | null;
       /** Format: uuid */
       personId: string | null;
+      photoCredit: components['schemas']['AuthorPhotoCreditDto'] | null;
       translations: components['schemas']['AuthorTranslationResponseDto'][];
       /** Format: date-time */
       updatedAt: string;
     };
+    AuthorSaveResponseDto: {
+      /** @example 1854-10-16 */
+      birthDate: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** @example 1900-11-30 */
+      deathDate: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @description Full name in the native script */
+      nativeName: string | null;
+      /** Format: uuid */
+      personId: string | null;
+      photoCredit: components['schemas']['AuthorPhotoCreditDto'] | null;
+      translations: components['schemas']['AuthorTranslationResponseDto'][];
+      /** Format: date-time */
+      updatedAt: string;
+      /** @description Slugs of books or authors in the data the page will show without a link. `null` — the check itself failed (not "all found") */
+      warnings: components['schemas']['AuthorSlugWarningDto'][] | null;
+    };
+    AuthorSlugWarningDto: {
+      /** @enum {string} */
+      lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @example startHere[0].bookSlug */
+      path: string;
+      slug: string;
+    };
+    AuthorSourceDto: {
+      title: string;
+      /** @description Absolute http(s) URL */
+      url: string;
+    };
+    AuthorStartHereDto: {
+      bookSlug: string;
+      reason: string;
+    };
+    AuthorTimelineEventDto: {
+      bookSlug?: string | null;
+      text: string;
+      year: number;
+    };
     AuthorTranslationDto: {
+      adaptations?: components['schemas']['AuthorAdaptationDto'][] | null;
+      awards?: components['schemas']['AuthorAwardDto'][] | null;
       /** @description Biography of the author in this language */
       biography?: string;
+      facts?: components['schemas']['AuthorFactsDto'] | null;
       /** @description FAQ array */
       faq?: components['schemas']['AuthorFaqDto'][];
+      funFacts?: components['schemas']['AuthorFunFactDto'][] | null;
+      influences?: components['schemas']['AuthorInfluencesDto'] | null;
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       /** @description Name of the author in this language */
       name: string;
+      notableWorks?: components['schemas']['AuthorNotableWorkDto'][] | null;
       /**
        * @description Author photo URL for this language
        * @example https://example.com/author.jpg
@@ -4777,6 +4940,10 @@ export interface components {
        * @example oscar-wilde
        */
       slug: string;
+      sources?: components['schemas']['AuthorSourceDto'][] | null;
+      startHere?: components['schemas']['AuthorStartHereDto'][] | null;
+      tagline?: string | null;
+      timeline?: components['schemas']['AuthorTimelineEventDto'][] | null;
       /**
        * @description Wikidata URL for this language
        * @example https://www.wikidata.org/wiki/Q30875
@@ -4789,21 +4956,36 @@ export interface components {
       wikipediaUrl?: string;
     };
     AuthorTranslationResponseDto: {
+      adaptations: components['schemas']['AuthorAdaptationDto'][] | null;
       /** Format: uuid */
       authorId: string;
+      awards: components['schemas']['AuthorAwardDto'][] | null;
       biography: string | null;
+      facts: components['schemas']['AuthorFactsDto'] | null;
       faq: components['schemas']['AuthorFaqDto'][] | null;
+      funFacts: components['schemas']['AuthorFunFactDto'][] | null;
       /** Format: uuid */
       id: string;
+      influences: components['schemas']['AuthorInfluencesDto'] | null;
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       name: string;
+      notableWorks: components['schemas']['AuthorNotableWorkDto'][] | null;
       photoUrl: string | null;
       quotes: components['schemas']['AuthorQuoteDto'][] | null;
       seo: components['schemas']['AuthorTranslationSeoResponseDto'] | null;
       seoId: number | null;
       similarSlugs: string[] | null;
       slug: string;
+      sources: components['schemas']['AuthorSourceDto'][] | null;
+      startHere: components['schemas']['AuthorStartHereDto'][] | null;
+      tagline: string | null;
+      timeline: components['schemas']['AuthorTimelineEventDto'][] | null;
+      /**
+       * Format: date-time
+       * @description Last change of this translation content; kept when a save leaves it as is
+       */
+      updatedAt: string;
       wikidataUrl: string | null;
       wikipediaUrl: string | null;
     };
@@ -6491,6 +6673,13 @@ export interface components {
        * @example 1900-11-30
        */
       deathDate?: string;
+      /**
+       * @description Full name in the native language and script (F02-2); `null`/empty — none
+       * @example Лев Николаевич Толстой
+       */
+      nativeName?: string | null;
+      /** @description Portrait credit, one for all languages (F02-2); `null` — none */
+      photoCredit?: components['schemas']['AuthorPhotoCreditDto'] | null;
       /**
        * @description Author unique slug (optional for creation compatibility)
        * @example oscar-wilde
@@ -8817,12 +9006,26 @@ export interface components {
       /** @description Всегда `true`: задача поставлена в очередь */
       ok: boolean;
     };
+    PublicAuthorAdaptationDto: {
+      basedOn?: string;
+      book: components['schemas']['PublicAuthorPageBookDto'] | null;
+      bookSlug?: string;
+      /** @enum {string} */
+      kind: 'film' | 'series' | 'animation' | 'play' | 'opera' | 'other';
+      title: string;
+      year?: number;
+    };
     PublicAuthorAlternateDto: {
       /** @description Published books in this language > 0 — the same rule the author sitemap uses; only indexable languages go into `hreflang` */
       indexable: boolean;
       /** @enum {string} */
       lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       slug: string;
+    };
+    PublicAuthorAwardDto: {
+      name: string;
+      nomination?: boolean;
+      year?: number;
     };
     PublicAuthorBookDto: {
       /**
@@ -8892,7 +9095,11 @@ export interface components {
       title: string;
     };
     PublicAuthorDetailResponseDto: {
+      /** @description By year asc, undated last (F02-2) */
+      adaptations: components['schemas']['PublicAuthorAdaptationDto'][];
       alternates: components['schemas']['PublicAuthorAlternateDto'][];
+      /** @description By year asc, undated last (F02-2) */
+      awards: components['schemas']['PublicAuthorAwardDto'][];
       biography?: string | null;
       /** @description YYYY-MM-DD */
       birthDate?: string | null;
@@ -8902,20 +9109,72 @@ export interface components {
       booksTotal: number;
       /** @description YYYY-MM-DD */
       deathDate?: string | null;
+      /** @description F02-2 */
+      facts: components['schemas']['PublicAuthorFactsDto'] | null;
       /** @description Empty array when unset */
       faq: components['schemas']['AuthorFaqDto'][];
+      /** @description F02-2 */
+      funFacts: components['schemas']['PublicAuthorFunFactDto'][];
       /** @description Canonical `Author.id` */
       id: string;
+      /** @description F02-2 */
+      influences: components['schemas']['PublicAuthorInfluencesDto'] | null;
       name: string;
+      /** @description Full name in the native language and script (F02-2) */
+      nativeName: string | null;
+      /** @description By year asc, undated last; empty array when unset (F02-2) */
+      notableWorks: components['schemas']['PublicAuthorNotableWorkDto'][];
+      /** @description F02-2 */
+      photoCredit: components['schemas']['PublicAuthorPhotoCreditDto'] | null;
       photoUrl?: string | null;
-      /** @description Empty array when unset */
-      quotes: components['schemas']['AuthorQuoteDto'][];
+      /** @description Empty array when unset; `book` resolved from `bookSlug` (F02-2) */
+      quotes: components['schemas']['PublicAuthorQuoteDto'][];
       seo?: components['schemas']['SeoResponseDto'] | null;
       similarAuthors: components['schemas']['PublicSimilarAuthorDto'][];
       /** @description Slug of the matched translation */
       slug: string;
+      /** @description F02-2 */
+      sources: components['schemas']['PublicAuthorSourceDto'][];
+      /** @description Reading order as entered; books not on the site are dropped (F02-2) */
+      startHere: components['schemas']['PublicAuthorStartHereDto'][];
+      /** @description Who this is, one line (F02-2) */
+      tagline: string | null;
+      /** @description By year asc (F02-2) */
+      timeline: components['schemas']['PublicAuthorTimelineEventDto'][];
+      /**
+       * Format: date-time
+       * @description Last change of this translation content (F02-2)
+       */
+      updatedAt: string;
       wikidataUrl?: string | null;
       wikipediaUrl?: string | null;
+    };
+    PublicAuthorFactsDto: {
+      birthPlace?: string;
+      deathPlace?: string;
+      /** @enum {string} */
+      gender?: 'male' | 'female';
+      genres?: string[];
+      languages?: string[];
+      movements?: string[];
+      nationality?: string;
+      occupations?: string[];
+      pseudonyms?: string[];
+    };
+    PublicAuthorFunFactDto: {
+      sourceTitle: string;
+      sourceUrl: string;
+      text: string;
+    };
+    PublicAuthorInfluenceRefDto: {
+      /** @description `null` when the author is not on the site, has no translation in this language or no published books in it (the page would be `noindex`) */
+      author: components['schemas']['PublicAuthorPageAuthorLinkDto'] | null;
+      authorSlug?: string;
+      name: string;
+    };
+    PublicAuthorInfluencesDto: {
+      influenced: components['schemas']['PublicAuthorInfluenceRefDto'][];
+      influencedBy: components['schemas']['PublicAuthorInfluenceRefDto'][];
     };
     PublicAuthorListItemDto: {
       audioCount: number;
@@ -8928,6 +9187,50 @@ export interface components {
       shortBio?: string | null;
       slug: string;
       translations: components['schemas']['PublicAuthorTranslationDto'][];
+    };
+    PublicAuthorNotableWorkDto: {
+      book: components['schemas']['PublicAuthorPageBookDto'] | null;
+      bookSlug?: string;
+      title: string;
+      year?: number;
+    };
+    PublicAuthorPageAuthorLinkDto: {
+      name: string;
+      slug: string;
+    };
+    PublicAuthorPageBookDto: {
+      coverUrl: string;
+      /** @description Slug of the published version in this language */
+      slug: string;
+      title: string;
+    };
+    PublicAuthorPhotoCreditDto: {
+      author: string;
+      license: string;
+      licenseUrl?: string;
+      sourceUrl?: string;
+    };
+    PublicAuthorQuoteDto: {
+      book: components['schemas']['PublicAuthorPageBookDto'] | null;
+      bookSlug?: string;
+      source?: string;
+      text: string;
+    };
+    PublicAuthorSourceDto: {
+      title: string;
+      url: string;
+    };
+    PublicAuthorStartHereDto: {
+      /** @description Always resolved: entries whose book is not on the site are dropped */
+      book: components['schemas']['PublicAuthorPageBookDto'];
+      bookSlug: string;
+      reason: string;
+    };
+    PublicAuthorTimelineEventDto: {
+      book: components['schemas']['PublicAuthorPageBookDto'] | null;
+      bookSlug?: string;
+      text: string;
+      year: number;
     };
     PublicAuthorTranslationDto: {
       /** @enum {string} */
@@ -9130,8 +9433,14 @@ export interface components {
       updatedAt: string;
     };
     PublicSimilarAuthorDto: {
+      /** @description YYYY-MM-DD or YYYY */
+      birthDate: string | null;
+      /** @description YYYY-MM-DD or YYYY */
+      deathDate: string | null;
       name: string;
-      /** @description Slug in the requested language; `null` when the author has no translation in it (show the name as plain text, without a link) */
+      /** @description Portrait URL (F02-2) */
+      photoUrl: string | null;
+      /** @description Slug in the requested language; `null` in two cases — the author has no translation in it, or has one but no published books in it (the page is `noindex` and not in the sitemap). Either way show the name as plain text, without a link */
       slug: string | null;
     };
     PublicTagBookVersionDto: {
@@ -11801,6 +12110,13 @@ export interface components {
        */
       deathDate?: string;
       /**
+       * @description Full name in the native language and script (F02-2); `null`/empty — none
+       * @example Лев Николаевич Толстой
+       */
+      nativeName?: string | null;
+      /** @description Portrait credit, one for all languages (F02-2); `null` — none */
+      photoCredit?: components['schemas']['AuthorPhotoCreditDto'] | null;
+      /**
        * @description Author unique slug (optional for creation compatibility)
        * @example oscar-wilde
        */
@@ -12924,7 +13240,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AuthorResponseDto'];
+          'application/json': components['schemas']['AuthorSaveResponseDto'];
         };
       };
     };
@@ -13005,7 +13321,7 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AuthorResponseDto'];
+          'application/json': components['schemas']['AuthorSaveResponseDto'];
         };
       };
     };
@@ -13047,6 +13363,35 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['AuthorResponseDto'];
+        };
+      };
+      /** @description Author not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  AuthorController_promptInputs: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        /** @description Author id */
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AuthorPromptInputsResponseDto'];
         };
       };
       /** @description Author not found */

@@ -470,7 +470,7 @@ export class PublicController {
     return this.authors.getPublicBySlug(slug, pathLang);
   }
 
-  // Compact paginated book cards for an author (author page fallback) — filters by stable authorId
+  // Compact paginated book cards for an author (author page fallback) — filters by authorId or the author name
   @Get('authors/:slug/books/cards')
   @ApiOperation({ summary: 'Compact paginated book cards for an author (author page fallback)' })
   @ApiOkResponse({ type: PagedBookCardsDto })

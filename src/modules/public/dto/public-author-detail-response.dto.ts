@@ -1,6 +1,19 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
-import { AuthorFaqDto, AuthorQuoteDto } from '../../author/dto/author-translation.dto';
+import { AuthorFaqDto } from '../../author/dto/author-translation.dto';
+import {
+  PublicAuthorAdaptationDto,
+  PublicAuthorAwardDto,
+  PublicAuthorFactsDto,
+  PublicAuthorFunFactDto,
+  PublicAuthorInfluencesDto,
+  PublicAuthorNotableWorkDto,
+  PublicAuthorPhotoCreditDto,
+  PublicAuthorQuoteDto,
+  PublicAuthorSourceDto,
+  PublicAuthorStartHereDto,
+  PublicAuthorTimelineEventDto,
+} from './public-author-page-blocks.dto';
 import { SeoResponseDto } from '../../seo/dto/seo-response.dto';
 import { BookCardDto } from '../../book/dto/book-card.dto';
 
@@ -24,10 +37,20 @@ export class PublicSimilarAuthorDto {
     type: String,
     nullable: true,
     description:
-      'Slug in the requested language; `null` when the author has no translation in it ' +
-      '(show the name as plain text, without a link)',
+      'Slug in the requested language; `null` in two cases — the author has no translation ' +
+      'in it, or has one but no published books in it (the page is `noindex` and not in the ' +
+      'sitemap). Either way show the name as plain text, without a link',
   })
   slug!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, description: 'Portrait URL (F02-2)' })
+  photoUrl!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, description: 'YYYY-MM-DD or YYYY' })
+  birthDate!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, description: 'YYYY-MM-DD or YYYY' })
+  deathDate!: string | null;
 }
 
 /** One translation of the author, for `hreflang`. */
@@ -83,17 +106,88 @@ export class PublicAuthorDetailResponseDto {
   @ApiPropertyOptional({ type: String, nullable: true })
   photoUrl!: string | null;
 
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Full name in the native language and script (F02-2)',
+  })
+  nativeName!: string | null;
+
+  @ApiProperty({ type: PublicAuthorPhotoCreditDto, nullable: true, description: 'F02-2' })
+  photoCredit!: PublicAuthorPhotoCreditDto | null;
+
   @ApiProperty({ type: String })
   name!: string;
+
+  @ApiProperty({ type: String, nullable: true, description: 'Who this is, one line (F02-2)' })
+  tagline!: string | null;
 
   @ApiPropertyOptional({ type: String, nullable: true })
   biography!: string | null;
 
-  @ApiProperty({ type: AuthorQuoteDto, isArray: true, description: 'Empty array when unset' })
-  quotes!: AuthorQuoteDto[];
+  @ApiProperty({ type: PublicAuthorFactsDto, nullable: true, description: 'F02-2' })
+  facts!: PublicAuthorFactsDto | null;
+
+  @ApiProperty({
+    type: PublicAuthorNotableWorkDto,
+    isArray: true,
+    description: 'By year asc, undated last; empty array when unset (F02-2)',
+  })
+  notableWorks!: PublicAuthorNotableWorkDto[];
+
+  @ApiProperty({
+    type: PublicAuthorStartHereDto,
+    isArray: true,
+    description: 'Reading order as entered; books not on the site are dropped (F02-2)',
+  })
+  startHere!: PublicAuthorStartHereDto[];
+
+  @ApiProperty({
+    type: PublicAuthorTimelineEventDto,
+    isArray: true,
+    description: 'By year asc (F02-2)',
+  })
+  timeline!: PublicAuthorTimelineEventDto[];
+
+  @ApiProperty({ type: PublicAuthorInfluencesDto, nullable: true, description: 'F02-2' })
+  influences!: PublicAuthorInfluencesDto | null;
+
+  @ApiProperty({
+    type: PublicAuthorAwardDto,
+    isArray: true,
+    description: 'By year asc, undated last (F02-2)',
+  })
+  awards!: PublicAuthorAwardDto[];
+
+  @ApiProperty({
+    type: PublicAuthorAdaptationDto,
+    isArray: true,
+    description: 'By year asc, undated last (F02-2)',
+  })
+  adaptations!: PublicAuthorAdaptationDto[];
+
+  @ApiProperty({ type: PublicAuthorFunFactDto, isArray: true, description: 'F02-2' })
+  funFacts!: PublicAuthorFunFactDto[];
+
+  @ApiProperty({ type: PublicAuthorSourceDto, isArray: true, description: 'F02-2' })
+  sources!: PublicAuthorSourceDto[];
+
+  @ApiProperty({
+    type: PublicAuthorQuoteDto,
+    isArray: true,
+    description: 'Empty array when unset; `book` resolved from `bookSlug` (F02-2)',
+  })
+  quotes!: PublicAuthorQuoteDto[];
 
   @ApiProperty({ type: AuthorFaqDto, isArray: true, description: 'Empty array when unset' })
   faq!: AuthorFaqDto[];
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    description: 'Last change of this translation content (F02-2)',
+  })
+  updatedAt!: Date;
 
   @ApiPropertyOptional({ type: SeoResponseDto, nullable: true })
   seo!: SeoResponseDto | null;

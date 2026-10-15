@@ -12,10 +12,7 @@ import { CreateAuthorDto } from './dto/create-author.dto';
 import { UpdateAuthorDto } from './dto/update-author.dto';
 import { AdminAuditAction, AdminAuditTargetType, Language, Prisma } from '@prisma/client';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
-import {
-  AuthorQuoteDto as AuthorQuote,
-  AuthorFaqDto as AuthorFaq,
-} from './dto/author-translation.dto';
+import type { AuthorPhotoCreditDto as AuthorPhotoCredit } from './dto/author-page-blocks.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import {
   paginated,
@@ -49,6 +46,31 @@ import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 import { seoDtoToData } from '../seo/utils/seo-dto-to-data.util';
 import { BOOK_CARD_SELECT, loadBookCardRatings, toBookCardDto } from '../book/book-card';
 import { BookCardDto } from '../book/dto/book-card.dto';
+import {
+  AdminAuthorRow,
+  AuthorPageBookRef,
+  AuthorPageSlugRef,
+  AuthorRef,
+  AuthorSlugWarning,
+  PublicSimilarAuthor,
+  canonicalJson,
+  collectSlugRefs,
+  compactBlock,
+  readStoredBlocks,
+  sortByYear,
+  StoredAuthorPageBlocks,
+  keepAbsentBlocks,
+  AUTHOR_PAGE_BLOCK_KEYS,
+  SLUG_REF_BLOCK_KEYS,
+  type SlugRefBlockKey,
+  storedBlocksToData,
+  toAdminAuthor,
+  toAdminTranslation,
+  toJsonColumn,
+  toStoredBlocks,
+} from './author-page-data';
+import { AuthorFaqDto as AuthorFaq, type AuthorTranslationDto } from './dto/author-translation.dto';
+import type { UpdateSeoDto } from '../seo/dto/update-seo.dto';
 
 /**
  * Первая буква имени, посчитанная в SQL: сняли краевые пробелы, свернули
@@ -164,6 +186,18 @@ const AUTHOR_PAGE_BOOKS_CAP = 500;
 const SIMILAR_AUTHORS_MAX = 20;
 
 /**
+ * Предохранитель на число слагов книг или авторов, которые разрешаются за одну страницу
+ * автора (F02-2): блоки ограничены DTO, кроме цитат — их число DTO не ограничивает.
+ */
+const AUTHOR_PAGE_REFS_MAX = 100;
+
+/**
+ * Предохранитель списка авторов во «Вводных для промпта» — строк переводов, не авторов
+ * (`books/CLAUDE.md`: выборка в память — с пределом). Упёрлись — ответ говорит об обрезке.
+ */
+const PROMPT_INPUT_AUTHOR_ROWS_CAP = 10_000;
+
+/**
  * Границы транзакции удаления автора (`LEGACY-015`, пачка `T21`). Те же цифры, что
  * у персоны, страницы и книги: расхождение здесь значило бы, что один и тот же отказ
  * базы ведёт себя по-разному в зависимости от того, что именно удаляют.
@@ -179,6 +213,43 @@ const SIMILAR_AUTHORS_MAX = 20;
 const AUTHOR_DELETE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 // Правка ждёт замка строки (`LEGACY-320`): дефолтных 5 с на ожидание не хватит (`L-020`).
 const AUTHOR_UPDATE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
+/** Поля SEO, которые пишет форма автора: по ним и сравнивается содержимое перевода. */
+const SEO_CONTENT_KEYS = Object.keys(seoDtoToData({} as UpdateSeoDto));
+
+/** Поля перевода, смена которых двигает его `updatedAt` (решение арбитра 15.10.2026, `F02 | F02-2`). */
+const TRANSLATION_CONTENT_KEYS = [
+  'slug',
+  'name',
+  'biography',
+  'wikidataUrl',
+  'wikipediaUrl',
+  'photoUrl',
+  'faq',
+  'similarSlugs',
+  'quotes',
+  // Блоки F02-2 — тем же списком, что пишет запись: новый блок попадает в сравнение сам.
+  ...AUTHOR_PAGE_BLOCK_KEYS,
+] as const satisfies ReadonlyArray<keyof AuthorTranslationDto>;
+
+/**
+ * Ключ содержимого перевода: одинаковый ключ у старой строки и у пришедшей — перевод
+ * не менялся, и `AuthorService.update`, пересоздавая его, переносит прежнюю дату.
+ * Порядок ключей в JSON и `undefined` против `null` различием не считаются.
+ */
+function translationContentKey(
+  translation: Partial<Record<(typeof TRANSLATION_CONTENT_KEYS)[number], unknown>>,
+  seo: Record<string, unknown> | null,
+): string {
+  const content: Record<string, unknown> = {};
+  // Хранимый вид обеих сторон: `[]`, `{}`, `''` и `null` — одно «нет значения», строки без краёв.
+  // Иначе старая строка с `quotes: []` против записи `null` считалась бы правкой (решение арбитра В1).
+  for (const key of TRANSLATION_CONTENT_KEYS) content[key] = compactBlock(translation[key]);
+  content.seo = seo
+    ? compactBlock(Object.fromEntries(SEO_CONTENT_KEYS.map((k) => [k, seo[k]])))
+    : null;
+  return canonicalJson(content);
+}
 
 @Injectable()
 export class AuthorService {
@@ -344,10 +415,12 @@ export class AuthorService {
       name: mainTrans?.name || '',
       birthDate: author.birthDate,
       deathDate: author.deathDate,
+      nativeName: author.nativeName,
+      photoCredit: author.photoCredit as unknown as AuthorPhotoCredit | null,
       wikidataUrl: mainTrans?.wikidataUrl || null,
       wikipediaUrl: mainTrans?.wikipediaUrl || null,
       photoUrl: mainTrans?.photoUrl || null,
-      translations: author.translations,
+      translations: author.translations.map(toAdminTranslation),
       booksCount,
     };
   }
@@ -643,11 +716,14 @@ export class AuthorService {
       }
     }
 
+    let created: AdminAuthorRow;
     try {
-      return await this.prisma.author.create({
+      created = await this.prisma.author.create({
         data: {
           birthDate: dto.birthDate,
           deathDate: dto.deathDate,
+          nativeName: compactBlock(dto.nativeName) as string | null,
+          photoCredit: toJsonColumn(compactBlock(dto.photoCredit)),
           translations: {
             create: dto.translations.map((t) => ({
               language: t.language,
@@ -657,7 +733,7 @@ export class AuthorService {
               wikidataUrl: t.wikidataUrl,
               wikipediaUrl: t.wikipediaUrl,
               photoUrl: t.photoUrl || syncedPhotoUrl,
-              quotes: t.quotes as unknown as Prisma.InputJsonValue,
+              ...storedBlocksToData(toStoredBlocks(t)),
               faq: t.faq as unknown as Prisma.InputJsonValue,
               similarSlugs: t.similarSlugs as unknown as Prisma.InputJsonValue,
               seo: t.seo
@@ -677,6 +753,9 @@ export class AuthorService {
     } catch (error) {
       throw this.internalFailure('Failed to create author', error);
     }
+    // После фиксации записи: предупреждения о ненайденных слагах сохранение не отменяют
+    // (решение арбитра 15.10.2026, `F02 | F02-2`).
+    return { ...toAdminAuthor(created), warnings: await this.computeSlugWarnings(created.id) };
   }
 
   async update(id: string, dto: UpdateAuthorDto) {
@@ -711,8 +790,9 @@ export class AuthorService {
       }
     }
 
+    let updated: AdminAuthorRow | null;
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      updated = await this.prisma.$transaction(async (tx) => {
         // 🔴 `LEGACY-320`: строка автора запирается первым оператором, до чтения
         // старых слагов переводов. `tx.author.update` ниже замка не даёт: при пустых
         // `birthDate`/`deathDate` Prisma не шлёт `UPDATE` вовсе, и встречная правка
@@ -731,6 +811,15 @@ export class AuthorService {
           data: {
             birthDate: dto.birthDate,
             deathDate: dto.deathDate,
+            // Не пришло — не трогаем; пришло `null` или пустое — очищаем (T5).
+            nativeName:
+              dto.nativeName === undefined
+                ? undefined
+                : (compactBlock(dto.nativeName) as string | null),
+            photoCredit:
+              dto.photoCredit === undefined
+                ? undefined
+                : toJsonColumn(compactBlock(dto.photoCredit)),
           },
         });
 
@@ -743,8 +832,12 @@ export class AuthorService {
             // здесь удаляются и создаются заново, поэтому старый адрес исчезает в том
             // же deleteMany, где появляется новый. Не прочитать его сейчас — значит
             // потерять безвозвратно: сравнивать после удаления будет уже не с чем.
-            select: { seoId: true, photoUrl: true, language: true, slug: true },
+            //
+            // Содержимое и `updatedAt` читаются ради даты перевода (решение арбитра 15.10.2026,
+            // `F02 | F02-2`): перевод, чьё содержимое не изменилось, сохраняет прежнюю дату.
+            include: { seo: true },
           });
+          const oldByLanguage = new Map(oldTranslations.map((t) => [t.language, t]));
           const seoIdsToDelete = oldTranslations
             .map((t) => t.seoId)
             .filter((sid): sid is number => sid !== null);
@@ -789,6 +882,17 @@ export class AuthorService {
 
           // Re-create translations
           for (const t of dto.translations) {
+            const old = oldByLanguage.get(t.language);
+            // T5: блока нет в теле — прежнее значение остаётся (старая вкладка админки,
+            // скрипт); очищает только явный `null` или пустое значение.
+            const blocks = keepAbsentBlocks(toStoredBlocks(t), t, old);
+            const photoUrl = t.photoUrl || finalPhoto;
+            const unchanged =
+              old !== undefined &&
+              translationContentKey(
+                { ...t, ...blocks, photoUrl },
+                t.seo ? seoDtoToData(t.seo) : null,
+              ) === translationContentKey(old, old.seo);
             await tx.authorTranslation.create({
               data: {
                 author: { connect: { id } },
@@ -798,8 +902,9 @@ export class AuthorService {
                 biography: t.biography,
                 wikidataUrl: t.wikidataUrl,
                 wikipediaUrl: t.wikipediaUrl,
-                photoUrl: t.photoUrl || finalPhoto,
-                quotes: t.quotes as unknown as Prisma.InputJsonValue,
+                photoUrl,
+                ...storedBlocksToData(blocks),
+                updatedAt: unchanged ? old.updatedAt : new Date(),
                 faq: t.faq as unknown as Prisma.InputJsonValue,
                 similarSlugs: t.similarSlugs as unknown as Prisma.InputJsonValue,
                 seo: t.seo
@@ -824,6 +929,7 @@ export class AuthorService {
     } catch (error) {
       throw this.internalFailure('Failed to update author', error);
     }
+    return updated && { ...toAdminAuthor(updated), warnings: await this.computeSlugWarnings(id) };
   }
 
   /**
@@ -905,10 +1011,12 @@ export class AuthorService {
 
         const include = { translations: { include: { seo: true } } };
         if (locked[0].personId !== null) {
-          return tx.author.update({ where: { id }, data: { personId: null }, include });
+          return toAdminAuthor(
+            await tx.author.update({ where: { id }, data: { personId: null }, include }),
+          );
         }
 
-        return tx.author.findUniqueOrThrow({ where: { id }, include });
+        return toAdminAuthor(await tx.author.findUniqueOrThrow({ where: { id }, include }));
       }, AUTHOR_UPDATE_TX_OPTIONS);
     } catch (error) {
       throw this.internalFailure('Failed to unlink author from person', error);
@@ -967,38 +1075,162 @@ export class AuthorService {
 
     const author = translation.author;
 
-    const quotes = (translation.quotes as unknown as AuthorQuote[]) || [];
     const faq = (translation.faq as unknown as AuthorFaq[]) || [];
     const similarSlugs = (translation.similarSlugs as unknown as string[]) || [];
+    const blocks = readStoredBlocks(translation);
 
     // Все книги, без порции: «Показать все» появится только в F02-3, а до неё порция
     // спрятала бы часть книг со страницы. `booksTotal` — отдельный счёт по тому же условию,
     // чтобы контракт был готов к порции (решение арбитра 14.10.2026, `F02 | F02-1`).
-    const [{ entries, total }, alternates, similarAuthors] = await Promise.all([
-      this.getPublishedBookCards({ id: author.id, name: translation.name }, language, {
-        take: AUTHOR_PAGE_BOOKS_CAP,
-      }),
-      this.getPublicAlternates(author.id),
-      this.resolveSimilarAuthors(similarSlugs, language, author.id),
-    ]);
+    const [{ entries, total }, alternates, { books: bookRefs, authors: authorRefs }] =
+      await Promise.all([
+        this.getPublishedBookCards({ id: author.id, name: translation.name }, language, {
+          take: AUTHOR_PAGE_BOOKS_CAP,
+        }),
+        this.getPublicAlternates(author.id),
+        this.resolvePageRefs(blocks, similarSlugs, language),
+      ]);
+    const similarAuthors = this.toSimilarAuthors(similarSlugs, author.id, authorRefs);
+    const book = (slug: string | null | undefined) => (slug ? (bookRefs.get(slug) ?? null) : null);
+    const authorLink = (slug: string | null | undefined) => {
+      const hit = slug ? authorRefs.get(slug) : undefined;
+      // Ссылка на самого автора страницы в «Влияниях» — не ссылка.
+      return hit?.slug && hit.authorId !== author.id ? { slug: hit.slug, name: hit.name } : null;
+    };
 
     return {
       id: author.id,
       slug: translation.slug,
       birthDate: author.birthDate,
       deathDate: author.deathDate,
+      nativeName: author.nativeName,
+      photoCredit: author.photoCredit as unknown as AuthorPhotoCredit | null,
       wikidataUrl: translation.wikidataUrl,
       wikipediaUrl: translation.wikipediaUrl,
       photoUrl: translation.photoUrl,
       name: translation.name,
+      tagline: blocks.tagline,
       biography: translation.biography,
-      quotes,
+      facts: blocks.facts,
+      notableWorks: sortByYear(blocks.notableWorks ?? []).map((w) => ({
+        ...w,
+        book: book(w.bookSlug),
+      })),
+      // Не найденная на сайте книга из «С чего начать» отбрасывается: блок советует только
+      // то, что можно открыть (`tech.md` §4).
+      startHere: (blocks.startHere ?? []).flatMap((item) => {
+        const card = book(item.bookSlug);
+        return card ? [{ ...item, book: card }] : [];
+      }),
+      timeline: sortByYear(blocks.timeline ?? []).map((e) => ({ ...e, book: book(e.bookSlug) })),
+      influences: blocks.influences
+        ? {
+            influencedBy: (blocks.influences.influencedBy ?? []).map((r) => ({
+              ...r,
+              author: authorLink(r.authorSlug),
+            })),
+            influenced: (blocks.influences.influenced ?? []).map((r) => ({
+              ...r,
+              author: authorLink(r.authorSlug),
+            })),
+          }
+        : null,
+      awards: sortByYear(blocks.awards ?? []),
+      adaptations: sortByYear(blocks.adaptations ?? []).map((a) => ({
+        ...a,
+        book: book(a.bookSlug),
+      })),
+      funFacts: blocks.funFacts ?? [],
+      sources: blocks.sources ?? [],
+      quotes: (blocks.quotes ?? []).map((q) => ({ ...q, book: book(q.bookSlug) })),
       faq,
+      updatedAt: translation.updatedAt,
       seo: translation.seo,
       alternates,
       similarAuthors,
       booksTotal: total,
       books: entries.map((e) => ({ ...e.card, firstPublishedYear: e.firstPublishedYear })),
+    };
+  }
+
+  /**
+   * «Вводные для промпта» (решение арбитра 15.10.2026, `F02 | F02-2`): автор, его опубликованные
+   * книги по языкам — тем же источником, что и страница (`getPublishedBookCards`: набор, порядок,
+   * `hasAudio`), — и все авторы сайта со слагами по языкам, только `select` нужных полей.
+   */
+  async getPromptInputs(id: string) {
+    const author = await this.prisma.author.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        birthDate: true,
+        deathDate: true,
+        translations: {
+          select: { language: true, name: true, slug: true },
+          orderBy: { language: 'asc' },
+        },
+      },
+    });
+    if (!author) {
+      throw new NotFoundException(`Author with ID '${id}' not found`);
+    }
+
+    const [books, rows] = await Promise.all([
+      Promise.all(
+        // Все пять языков, а не только переведённые: промпт заполняет все пять, и без списка
+        // книг на языке модель не получит его слагов. Перевода нет — книги только по `authorId`.
+        Object.values(Language).map(async (language) => {
+          const own = author.translations.find((t) => t.language === language);
+          const { entries, total } = await this.getPublishedBookCards(
+            { id: author.id, name: own?.name ?? null },
+            language,
+            { take: AUTHOR_PAGE_BOOKS_CAP },
+          );
+          return {
+            lang: language,
+            items: entries.map((e) => ({
+              title: e.card.title,
+              slug: e.card.slug,
+              firstPublishedYear: e.firstPublishedYear,
+              hasAudio: e.card.hasAudio,
+            })),
+            total,
+          };
+        }),
+      ),
+      this.prisma.authorTranslation.findMany({
+        select: { authorId: true, language: true, name: true, slug: true },
+        orderBy: [{ authorId: 'asc' }, { language: 'asc' }],
+        take: PROMPT_INPUT_AUTHOR_ROWS_CAP + 1,
+      }),
+    ]);
+
+    const authorsTruncated = rows.length > PROMPT_INPUT_AUTHOR_ROWS_CAP;
+    let kept = rows.slice(0, PROMPT_INPUT_AUTHOR_ROWS_CAP);
+    if (authorsTruncated) {
+      // Предел мог разрезать последнего автора по языкам — неполного автора не отдаём.
+      const lastId = kept[kept.length - 1].authorId;
+      kept = kept.filter((r) => r.authorId !== lastId);
+    }
+    const byAuthor = new Map<string, Array<{ lang: Language; name: string; slug: string }>>();
+    for (const r of kept) {
+      const names = byAuthor.get(r.authorId) ?? [];
+      names.push({ lang: r.language, name: r.name, slug: r.slug });
+      byAuthor.set(r.authorId, names);
+    }
+    const sortName = (names: Array<{ lang: Language; name: string }>) =>
+      (names.find((n) => n.lang === Language.en) ?? names[0]).name;
+
+    return {
+      id: author.id,
+      birthDate: author.birthDate,
+      deathDate: author.deathDate,
+      names: author.translations.map((t) => ({ lang: t.language, name: t.name, slug: t.slug })),
+      books,
+      authors: Array.from(byAuthor.values())
+        .sort((a, b) => sortName(a).localeCompare(sortName(b), 'en'))
+        .map((names) => ({ names })),
+      authorsTruncated,
     };
   }
 
@@ -1139,19 +1371,86 @@ export class AuthorService {
    * кроме самого слага. Порядок — как в `similarSlugs`; один автор — один раз; сам
    * автор страницы в свой блок не попадает.
    */
-  private async resolveSimilarAuthors(
+  private toSimilarAuthors(
+    slugs: string[],
+    selfAuthorId: string,
+    resolved: Map<string, AuthorRef>,
+  ): PublicSimilarAuthor[] {
+    const wanted = slugs.slice(0, SIMILAR_AUTHORS_MAX);
+    const seen = new Set<string>([selfAuthorId]);
+    const result: PublicSimilarAuthor[] = [];
+    for (const slug of wanted) {
+      const hit = resolved.get(slug);
+      if (!hit || seen.has(hit.authorId)) continue;
+      seen.add(hit.authorId);
+      result.push({
+        name: hit.name,
+        slug: hit.slug,
+        photoUrl: hit.photoUrl,
+        birthDate: hit.birthDate,
+        deathDate: hit.deathDate,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * Все ссылки из данных страницы на одном языке — **один путь** для публичной ручки и для
+   * предупреждений сохранения (решение арбитра В4): тот же сбор слагов, тот же срез похожих
+   * авторов, те же разрешители. Две копии этой цепочки уже расходились на срезах.
+   * Книги — два запроса, авторы (похожие и влияния вместе) — три, на любое число слагов.
+   */
+  private async resolvePageRefs(
+    blocks: StoredAuthorPageBlocks,
+    similarSlugs: string[],
+    language: Language,
+  ): Promise<{
+    refs: AuthorPageSlugRef[];
+    books: Map<string, AuthorPageBookRef>;
+    authors: Map<string, AuthorRef>;
+  }> {
+    const refs = collectSlugRefs(blocks, similarSlugs.slice(0, SIMILAR_AUTHORS_MAX));
+    const [books, authors] = await Promise.all([
+      this.resolveBookRefs(
+        refs.filter((r) => r.kind === 'book').map((r) => r.slug),
+        language,
+      ),
+      this.resolveAuthorRefs(
+        refs.filter((r) => r.kind === 'author').map((r) => r.slug),
+        language,
+      ),
+    ]);
+    return { refs, books, authors };
+  }
+
+  /**
+   * Авторы по слагам из данных страницы — `similarSlugs` и `influences[].authorSlug` — одним
+   * разрешителем (`tech.md` F02, T2/T3): слаг ищется на любом языке, ссылка ведёт на перевод
+   * того же автора **на языке страницы**. Три запроса на любое число слагов (без N+1).
+   *
+   * Перевода на языке страницы нет — имя найденного перевода и `slug: null`: адреса на этом
+   * языке нет. Перевод есть, но опубликованных книг на языке нет — тоже `slug: null`: страница
+   * закрыта `noindex` и в карту сайта не входит («ссылка = карта сайта = robots»). Слаг
+   * не нашёлся вовсе — в результате его нет.
+   */
+  private async resolveAuthorRefs(
     slugs: string[],
     language: Language,
-    selfAuthorId: string,
-  ): Promise<Array<{ name: string; slug: string | null }>> {
-    if (slugs.length === 0) return [];
-    // Предохранитель на длину списка из админки и пара `(language, slug)` в условии: уникальный
-    // индекс `@@unique([language, slug])` начинается с языка, и без него поиск шёл бы мимо индекса.
-    const wanted = slugs.slice(0, SIMILAR_AUTHORS_MAX);
-
+  ): Promise<Map<string, AuthorRef>> {
+    const wanted = Array.from(new Set(slugs)).slice(0, AUTHOR_PAGE_REFS_MAX);
+    if (wanted.length === 0) return new Map();
+    // Пара `(language, slug)` в условии: уникальный индекс `@@unique([language, slug])`
+    // начинается с языка, и без него поиск шёл бы мимо индекса.
     const matches = await this.prisma.authorTranslation.findMany({
       where: { language: { in: Object.values(Language) }, slug: { in: wanted } },
-      select: { authorId: true, language: true, slug: true, name: true },
+      select: {
+        authorId: true,
+        language: true,
+        slug: true,
+        name: true,
+        photoUrl: true,
+        author: { select: { birthDate: true, deathDate: true } },
+      },
       // Слаг свободен в каждом языке отдельно: без порядка запасной выбор «первое совпадение»
       // менялся бы от запроса к запросу.
       orderBy: [{ language: 'asc' }, { authorId: 'asc' }],
@@ -1162,7 +1461,7 @@ export class AuthorService {
         ? []
         : await this.prisma.authorTranslation.findMany({
             where: { authorId: { in: authorIds }, language },
-            select: { authorId: true, slug: true, name: true },
+            select: { authorId: true, slug: true, name: true, photoUrl: true },
           });
     const ownByAuthor = new Map(own.map((o) => [o.authorId, o]));
     const linkable = await this.authorsWithPublishedBooks(
@@ -1170,23 +1469,138 @@ export class AuthorService {
       language,
     );
 
-    const seen = new Set<string>([selfAuthorId]);
-    const result: Array<{ name: string; slug: string | null }> = [];
+    const result = new Map<string, AuthorRef>();
     for (const slug of wanted) {
       const candidates = matches.filter((m) => m.slug === slug);
       const hit = candidates.find((m) => m.language === language) ?? candidates[0];
-      if (!hit || seen.has(hit.authorId)) continue;
-      seen.add(hit.authorId);
+      if (!hit) continue;
       const inLang = ownByAuthor.get(hit.authorId);
-      if (!inLang) {
-        result.push({ name: hit.name, slug: null });
-      } else {
-        // Ссылка — только на индексируемую страницу: автор без опубликованных книг на языке
-        // страницы отдаёт `noindex` и в карту сайта не входит («ссылка = карта сайта = robots»).
-        result.push({ name: inLang.name, slug: linkable.has(hit.authorId) ? inLang.slug : null });
-      }
+      result.set(slug, {
+        authorId: hit.authorId,
+        name: inLang?.name ?? hit.name,
+        slug: inLang && linkable.has(hit.authorId) ? inLang.slug : null,
+        photoUrl: inLang?.photoUrl ?? hit.photoUrl,
+        birthDate: hit.author.birthDate,
+        deathDate: hit.author.deathDate,
+      });
     }
     return result;
+  }
+
+  /**
+   * Книги по слагам из данных страницы (`tech.md` F02, T2/T3): слаг ищется как слаг версии
+   * на любом языке или как слаг книги; карточка — опубликованной версии **той же книги на
+   * языке страницы**. Версии на языке нет или она не опубликована — слага в результате нет
+   * (страница покажет название без ссылки). Два запроса на любое число слагов.
+   */
+  private async resolveBookRefs(
+    slugs: string[],
+    language: Language,
+  ): Promise<Map<string, AuthorPageBookRef>> {
+    const wanted = Array.from(new Set(slugs)).slice(0, AUTHOR_PAGE_REFS_MAX);
+    if (wanted.length === 0) return new Map();
+    const matches = await this.prisma.bookVersion.findMany({
+      // Язык в паре со слагом — по уникальному индексу `@@unique([language, slug])`: без него
+      // левая половина `OR` шла бы полным проходом по `BookVersion` (`LEGACY-272`).
+      where: {
+        OR: [
+          {
+            language: { in: Object.values(Language) },
+            slug: { in: wanted },
+            status: 'published',
+          },
+          { book: { slug: { in: wanted } } },
+        ],
+      },
+      select: {
+        bookId: true,
+        language: true,
+        slug: true,
+        status: true,
+        book: { select: { slug: true } },
+      },
+      orderBy: [{ language: 'asc' }, { id: 'asc' }],
+      // Слаг версии уникален в языке, слаг книги — глобально: на слаг не больше версии
+      // на каждый язык по каждому из двух путей.
+      take: wanted.length * Object.values(Language).length * 2,
+    });
+    const bookIdBySlug = new Map<string, string>();
+    for (const slug of wanted) {
+      // Порядок — как у адреса книги (`BookService.getOverview`): опубликованная версия с этим
+      // слагом на языке страницы, затем опубликованная на любом языке, затем `Book.slug`.
+      // Черновик слаг не занимает: иначе ссылка вела бы не туда, куда открывается адрес.
+      const byVersion = matches.filter((m) => m.slug === slug && m.status === 'published');
+      const hit =
+        byVersion.find((m) => m.language === language) ??
+        byVersion[0] ??
+        matches.find((m) => m.book.slug === slug);
+      if (hit) bookIdBySlug.set(slug, hit.bookId);
+    }
+    const bookIds = Array.from(new Set(bookIdBySlug.values()));
+    if (bookIds.length === 0) return new Map();
+
+    const versions = await this.prisma.bookVersion.findMany({
+      where: { bookId: { in: bookIds }, language, status: 'published' },
+      select: {
+        bookId: true,
+        slug: true,
+        title: true,
+        coverImageUrl: true,
+        book: { select: { slug: true } },
+      },
+    });
+    const cardByBook = new Map(
+      versions.map((v) => [
+        v.bookId,
+        // Версия без своего слага ведёт на слаг книги — как карточки книг автора (F02-1).
+        { slug: v.slug || v.book.slug, title: v.title, coverUrl: v.coverImageUrl },
+      ]),
+    );
+    const result = new Map<string, AuthorPageBookRef>();
+    for (const [slug, bookId] of bookIdBySlug) {
+      const card = cardByBook.get(bookId);
+      if (card) result.set(slug, card);
+    }
+    return result;
+  }
+
+  /**
+   * Предупреждения сохранения (решение арбитра 15.10.2026, `F02 | F02-2`): слаги книг
+   * и авторов в данных автора, которые страница покажет без ссылки. Считает тем же
+   * разрешителем, что и публичная ручка, по каждому языку; сохранение не отклоняет.
+   * Сбой подсчёта — `null`, а не `[]`: пустой список значил бы «всё найдено».
+   */
+  private async computeSlugWarnings(authorId: string): Promise<AuthorSlugWarning[] | null> {
+    try {
+      const translations = await this.prisma.authorTranslation.findMany({
+        where: { authorId },
+        select: {
+          language: true,
+          similarSlugs: true,
+          // Блоки со слагами — тем же списком, что читает `collectSlugRefs`.
+          ...Object.fromEntries(SLUG_REF_BLOCK_KEYS.map((key) => [key, true])),
+        } as Prisma.AuthorTranslationSelect &
+          Record<SlugRefBlockKey | 'language' | 'similarSlugs', true>,
+        orderBy: { language: 'asc' },
+      });
+      const perLanguage = await Promise.all(
+        translations.map(async (t) => {
+          const { refs, books, authors } = await this.resolvePageRefs(
+            readStoredBlocks(t),
+            (t.similarSlugs as unknown as string[] | null) ?? [],
+            t.language,
+          );
+          return refs
+            .filter((r) => (r.kind === 'book' ? !books.has(r.slug) : !authors.get(r.slug)?.slug))
+            .map((r) => ({ lang: t.language, path: r.path, slug: r.slug }));
+        }),
+      );
+      return perLanguage.flat();
+    } catch (error) {
+      const cause = error instanceof Error ? error : new Error(AuthorService.describeCause(error));
+      this.logger.warn(`Failed to compute author slug warnings: ${cause.message}`);
+      return null;
+    }
   }
 
   /**

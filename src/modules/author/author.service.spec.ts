@@ -381,7 +381,7 @@ describe('AuthorService', () => {
 
   describe('update', () => {
     it('пишет вложенный seo всеми колонками UpdateSeoDto (LEGACY-401, T75)', async () => {
-      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1', translations: [] });
       prisma.authorTranslation.findFirst.mockResolvedValue(null);
       prisma.author.update.mockResolvedValue({ id: 'auth1' });
       prisma.authorTranslation.findMany.mockResolvedValue([]);
@@ -414,7 +414,7 @@ describe('AuthorService', () => {
     });
 
     it('updates author successfully', async () => {
-      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' }); // findUnique check in service
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1', translations: [] }); // findUnique check in service
       prisma.authorTranslation.findFirst.mockResolvedValue(null);
       prisma.author.update.mockResolvedValue({ id: 'auth1' });
       prisma.authorTranslation.findMany.mockResolvedValue([]);
@@ -432,7 +432,7 @@ describe('AuthorService', () => {
      * старых слагов; транзакция — с явными границами (`L-020`), замок ждёт соседа.
      */
     it('запирает строку автора первым оператором, транзакция с явными границами', async () => {
-      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1', translations: [] });
       prisma.authorTranslation.findFirst.mockResolvedValue(null);
       prisma.authorTranslation.findMany.mockResolvedValue([]);
       const order: string[] = [];
@@ -455,7 +455,7 @@ describe('AuthorService', () => {
     });
 
     it('автор удалён в окне до замка — 404 без записи и без редиректа', async () => {
-      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1', translations: [] });
       prisma.authorTranslation.findFirst.mockResolvedValue(null);
       prisma.$queryRaw.mockResolvedValueOnce([]);
 
@@ -486,7 +486,7 @@ describe('AuthorService', () => {
      * Красное означает, что редирект автора завели в обход решения.
      */
     it('LEGACY-085: выпавший из dto язык не получает редиректа, переименованный получает', async () => {
-      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1', translations: [] });
       prisma.authorTranslation.findFirst.mockResolvedValue(null);
       prisma.author.update.mockResolvedValue({ id: 'auth1' });
       prisma.authorTranslation.findMany.mockResolvedValue([
@@ -526,7 +526,7 @@ describe('AuthorService', () => {
       const driverText =
         'Invalid `prisma.authorTranslation.create()` invocation: Unique constraint failed on the fields: (`slug`)';
       const original = new Error(driverText);
-      prisma.author.findUnique.mockResolvedValue({ id: 'auth1' });
+      prisma.author.findUnique.mockResolvedValue({ id: 'auth1', translations: [] });
       prisma.authorTranslation.findFirst.mockResolvedValue(null);
       prisma.$transaction.mockRejectedValueOnce(original);
       const logged = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
@@ -1131,6 +1131,8 @@ describe('AuthorService', () => {
                 language: Language.en,
                 slug: 'bernard-shaw',
                 name: 'Bernard Shaw',
+                photoUrl: null,
+                author: { birthDate: '1856', deathDate: null },
               };
               return Promise.resolve(
                 languageAllows(args.where.language, shaw.language) ? [shaw] : [],
@@ -1138,7 +1140,12 @@ describe('AuthorService', () => {
             }
             if (args.where.language === Language.ru) {
               return Promise.resolve([
-                { authorId: 'shaw', slug: 'bernard-shou', name: 'Бернард Шоу' },
+                {
+                  authorId: 'shaw',
+                  slug: 'bernard-shou',
+                  name: 'Бернард Шоу',
+                  photoUrl: 'https://e.org/shaw.jpg',
+                },
               ]);
             }
             return Promise.resolve([]);
@@ -1149,7 +1156,15 @@ describe('AuthorService', () => {
 
         const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
 
-        expect(result.similarAuthors).toEqual([{ name: 'Бернард Шоу', slug: 'bernard-shou' }]);
+        expect(result.similarAuthors).toEqual([
+          {
+            name: 'Бернард Шоу',
+            slug: 'bernard-shou',
+            photoUrl: 'https://e.org/shaw.jpg',
+            birthDate: '1856',
+            deathDate: null,
+          },
+        ]);
       });
 
       // «Ссылка = карта сайта = robots»: страница автора без книг на языке закрыта `noindex`.
@@ -1181,16 +1196,33 @@ describe('AuthorService', () => {
                       language: Language.ru,
                       slug: 'bernard-shou',
                       name: 'Бернард Шоу',
+                      photoUrl: null,
+                      author: { birthDate: '1856', deathDate: null },
                     },
                   ]
-                : [{ authorId: 'shaw', slug: 'bernard-shou', name: 'Бернард Шоу' }],
+                : [
+                    {
+                      authorId: 'shaw',
+                      slug: 'bernard-shou',
+                      name: 'Бернард Шоу',
+                      photoUrl: 'https://e.org/shaw.jpg',
+                    },
+                  ],
             ),
         );
         linkableAuthors([]);
 
         const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
 
-        expect(result.similarAuthors).toEqual([{ name: 'Бернард Шоу', slug: null }]);
+        expect(result.similarAuthors).toEqual([
+          {
+            name: 'Бернард Шоу',
+            slug: null,
+            photoUrl: 'https://e.org/shaw.jpg',
+            birthDate: '1856',
+            deathDate: null,
+          },
+        ]);
       });
 
       it('сам автор страницы не попадает, два слага одного автора — одна запись, порядок слагов', async () => {
@@ -1209,24 +1241,47 @@ describe('AuthorService', () => {
                       language: Language.en,
                       slug: 'oscar-wilde',
                       name: 'Oscar Wilde',
+                      photoUrl: null,
+                      author: { birthDate: '1856', deathDate: null },
                     },
                     {
                       authorId: 'shaw',
                       language: Language.en,
                       slug: 'bernard-shaw',
                       name: 'Bernard Shaw',
+                      photoUrl: null,
+                      author: { birthDate: '1856', deathDate: null },
                     },
                     {
                       authorId: 'shaw',
                       language: Language.ru,
                       slug: 'bernard-shou',
                       name: 'Бернард Шоу',
+                      photoUrl: null,
+                      author: { birthDate: '1856', deathDate: null },
                     },
-                    { authorId: 'chekhov', language: Language.ru, slug: 'chekhov', name: 'Чехов' },
+                    {
+                      authorId: 'chekhov',
+                      language: Language.ru,
+                      slug: 'chekhov',
+                      name: 'Чехов',
+                      photoUrl: null,
+                      author: { birthDate: '1856', deathDate: null },
+                    },
                   ]
                 : [
-                    { authorId: 'shaw', slug: 'bernard-shou', name: 'Бернард Шоу' },
-                    { authorId: 'chekhov', slug: 'chekhov', name: 'Чехов' },
+                    {
+                      authorId: 'shaw',
+                      slug: 'bernard-shou',
+                      name: 'Бернард Шоу',
+                      photoUrl: 'https://e.org/shaw.jpg',
+                    },
+                    {
+                      authorId: 'chekhov',
+                      slug: 'chekhov',
+                      name: 'Чехов',
+                      photoUrl: 'https://e.org/chekhov.jpg',
+                    },
                   ],
             ),
         );
@@ -1235,8 +1290,20 @@ describe('AuthorService', () => {
         const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
 
         expect(result.similarAuthors).toEqual([
-          { name: 'Чехов', slug: 'chekhov' },
-          { name: 'Бернард Шоу', slug: 'bernard-shou' },
+          {
+            name: 'Чехов',
+            slug: 'chekhov',
+            photoUrl: 'https://e.org/chekhov.jpg',
+            birthDate: '1856',
+            deathDate: null,
+          },
+          {
+            name: 'Бернард Шоу',
+            slug: 'bernard-shou',
+            photoUrl: 'https://e.org/shaw.jpg',
+            birthDate: '1856',
+            deathDate: null,
+          },
         ]);
         // Счёт книг — по языку страницы и ровно по найденным авторам.
         const linkCall = prisma.$queryRaw.mock.calls.find(([strings]) =>
@@ -1267,6 +1334,8 @@ describe('AuthorService', () => {
                       language: Language.en,
                       slug: 'bernard-shaw',
                       name: 'Bernard Shaw',
+                      photoUrl: null,
+                      author: { birthDate: '1856', deathDate: null },
                     },
                   ]
                 : [],
@@ -1275,7 +1344,9 @@ describe('AuthorService', () => {
 
         const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
 
-        expect(result.similarAuthors).toEqual([{ name: 'Bernard Shaw', slug: null }]);
+        expect(result.similarAuthors).toEqual([
+          { name: 'Bernard Shaw', slug: null, photoUrl: null, birthDate: '1856', deathDate: null },
+        ]);
       });
     });
 

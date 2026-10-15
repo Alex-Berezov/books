@@ -123,6 +123,8 @@ describe('sanitizeRichHtml (LEGACY-414)', () => {
         'br',
         'code',
         'em',
+        'figcaption',
+        'figure',
         'h1',
         'h2',
         'h3',
@@ -192,5 +194,15 @@ describe('sanitizeRichHtml (LEGACY-414)', () => {
       'video',
       'xmp',
     ]);
+  });
+});
+
+describe('sanitizeRichHtml: иллюстрация с подписью (F02-2)', () => {
+  it('оставляет figure и figcaption, вычищая атрибуты-обработчики', () => {
+    const html =
+      '<figure onclick="x()"><img src="https://e.org/a.jpg" alt="a"><figcaption>Подпись</figcaption></figure>';
+    expect(sanitizeRichHtml(html)).toBe(
+      '<figure><img src="https://e.org/a.jpg" alt="a" /><figcaption>Подпись</figcaption></figure>',
+    );
   });
 });

@@ -1,0 +1,693 @@
+{
+  "birthDate": "1828-09-09",
+  "deathDate": "1910-11-20",
+  "nativeName": "Лев Николаевич Толстой",
+  "translations": {
+    "en": {
+      "name": "Leo Tolstoy",
+      "slug": "leo-tolstoy",
+      "wikidataUrl": "https://www.wikidata.org/wiki/Q7243",
+      "wikipediaUrl": "https://en.wikipedia.org/wiki/Leo_Tolstoy",
+      "tagline": "Russian writer, author of War and Peace and Anna Karenina",
+      "facts": {
+        "gender": "male",
+        "birthPlace": "Yasnaya Polyana, Russian Empire",
+        "deathPlace": "Astapovo, Russian Empire",
+        "nationality": "Russia",
+        "occupations": ["novelist", "short story writer", "essayist"],
+        "movements": ["realism"],
+        "genres": ["novel", "novella", "short story"],
+        "languages": ["Russian"],
+        "pseudonyms": []
+      },
+      "notableWorks": [
+        {
+          "title": "War and Peace",
+          "year": 1869,
+          "bookSlug": "war-and-peace"
+        },
+        {
+          "title": "Anna Karenina",
+          "year": 1878,
+          "bookSlug": "anna-karenina"
+        },
+        {
+          "title": "The Death of Ivan Ilyich",
+          "year": 1886,
+          "bookSlug": null
+        },
+        {
+          "title": "Resurrection",
+          "year": 1899,
+          "bookSlug": null
+        }
+      ],
+      "startHere": [
+        {
+          "bookSlug": "anna-karenina",
+          "reason": "A single family drama with a clear plot: the easiest way into Tolstoy's style before the scale of War and Peace."
+        },
+        {
+          "bookSlug": "war-and-peace",
+          "reason": "The book he is best known for; read it once his manner feels familiar."
+        }
+      ],
+      "timeline": [
+        {
+          "year": 1828,
+          "text": "Born on the family estate of Yasnaya Polyana.",
+          "bookSlug": null
+        },
+        {
+          "year": 1852,
+          "text": "His first novel, Childhood, appears in the journal The Contemporary.",
+          "bookSlug": null
+        },
+        {
+          "year": 1862,
+          "text": "Marries Sophia Behrs.",
+          "bookSlug": null
+        },
+        {
+          "year": 1869,
+          "text": "Completes War and Peace.",
+          "bookSlug": "war-and-peace"
+        },
+        {
+          "year": 1878,
+          "text": "Anna Karenina is published as a book.",
+          "bookSlug": "anna-karenina"
+        },
+        {
+          "year": 1910,
+          "text": "Leaves Yasnaya Polyana and dies at Astapovo railway station.",
+          "bookSlug": null
+        }
+      ],
+      "influences": {
+        "influencedBy": [
+          {
+            "name": "Jean-Jacques Rousseau",
+            "authorSlug": null
+          },
+          {
+            "name": "Charles Dickens",
+            "authorSlug": "charles-dickens"
+          }
+        ],
+        "influenced": [
+          {
+            "name": "Mahatma Gandhi",
+            "authorSlug": null
+          }
+        ]
+      },
+      "awards": [
+        {
+          "name": "Nobel Prize in Literature",
+          "year": 1902,
+          "nomination": true
+        }
+      ],
+      "adaptations": [
+        {
+          "title": "War and Peace",
+          "year": 1956,
+          "kind": "film",
+          "basedOn": "War and Peace",
+          "bookSlug": "war-and-peace"
+        },
+        {
+          "title": "Anna Karenina",
+          "year": 1935,
+          "kind": "film",
+          "basedOn": "Anna Karenina",
+          "bookSlug": "anna-karenina"
+        }
+      ],
+      "funFacts": [
+        {
+          "text": "The first parts of War and Peace came out in the journal The Russian Messenger under the title 1805.",
+          "sourceTitle": "Encyclopaedia Britannica",
+          "sourceUrl": "https://www.britannica.com/biography/Leo-Tolstoy"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "All happy families are alike; each unhappy family is unhappy in its own way.",
+          "source": "Anna Karenina",
+          "bookSlug": "anna-karenina"
+        }
+      ],
+      "faq": [
+        {
+          "question": "What is Leo Tolstoy best known for?",
+          "answer": "For the novels War and Peace and Anna Karenina."
+        }
+      ],
+      "similarSlugs": ["fyodor-dostoevsky"],
+      "sources": [
+        {
+          "title": "Encyclopaedia Britannica: Leo Tolstoy",
+          "url": "https://www.britannica.com/biography/Leo-Tolstoy"
+        },
+        {
+          "title": "Wikidata: Leo Tolstoy",
+          "url": "https://www.wikidata.org/wiki/Q7243"
+        }
+      ],
+      "seo": {
+        "metaTitle": "Leo Tolstoy — biography, books and quotes | Bibliaris",
+        "metaDescription": "Leo Tolstoy, Russian novelist: life in dates, War and Peace and Anna Karenina, where to start reading, quotes and facts with sources.",
+        "canonicalUrl": "https://bibliaris.com/en/author/leo-tolstoy",
+        "robots": "index, follow",
+        "ogTitle": "Leo Tolstoy — biography, books and quotes | Bibliaris",
+        "ogDescription": "Leo Tolstoy, Russian novelist: life in dates, War and Peace and Anna Karenina, where to start reading, quotes and facts with sources.",
+        "ogImageUrl": null,
+        "ogImageAlt": "Portrait of Leo Tolstoy",
+        "twitterCard": "summary_large_image"
+      }
+    },
+    "es": {
+      "name": "León Tolstói",
+      "slug": "leon-tolstoi",
+      "wikidataUrl": "https://www.wikidata.org/wiki/Q7243",
+      "wikipediaUrl": "https://es.wikipedia.org/wiki/Le%C3%B3n_Tolst%C3%B3i",
+      "tagline": "Escritor ruso, autor de «Guerra y paz» y «Ana Karénina»",
+      "facts": {
+        "gender": "male",
+        "birthPlace": "Yásnaya Poliana, Imperio ruso",
+        "deathPlace": "Astápovo, Imperio ruso",
+        "nationality": "Rusia",
+        "occupations": ["novelista", "ensayista"],
+        "movements": ["realismo"],
+        "genres": ["novela", "relato"],
+        "languages": ["ruso"],
+        "pseudonyms": []
+      },
+      "notableWorks": [
+        {
+          "title": "Guerra y paz",
+          "year": 1869,
+          "bookSlug": "guerra-y-paz"
+        },
+        {
+          "title": "Ana Karénina",
+          "year": 1878,
+          "bookSlug": "ana-karenina"
+        },
+        {
+          "title": "La muerte de Iván Ilich",
+          "year": 1886,
+          "bookSlug": null
+        }
+      ],
+      "startHere": [
+        {
+          "bookSlug": "ana-karenina",
+          "reason": "Una historia familiar con una trama clara: la entrada más sencilla al estilo de Tolstói antes de la escala de «Guerra y paz»."
+        }
+      ],
+      "timeline": [
+        {
+          "year": 1828,
+          "text": "Nace en la finca familiar de Yásnaya Poliana.",
+          "bookSlug": null
+        },
+        {
+          "year": 1869,
+          "text": "Termina «Guerra y paz».",
+          "bookSlug": "guerra-y-paz"
+        },
+        {
+          "year": 1910,
+          "text": "Abandona Yásnaya Poliana y muere en la estación de Astápovo.",
+          "bookSlug": null
+        }
+      ],
+      "influences": {
+        "influencedBy": [
+          {
+            "name": "Jean-Jacques Rousseau",
+            "authorSlug": null
+          }
+        ],
+        "influenced": [
+          {
+            "name": "Mahatma Gandhi",
+            "authorSlug": null
+          }
+        ]
+      },
+      "awards": [
+        {
+          "name": "Premio Nobel de Literatura",
+          "year": 1902,
+          "nomination": true
+        }
+      ],
+      "adaptations": [
+        {
+          "title": "Guerra y paz",
+          "year": 1956,
+          "kind": "film",
+          "basedOn": "Guerra y paz",
+          "bookSlug": "guerra-y-paz"
+        }
+      ],
+      "funFacts": [
+        {
+          "text": "Las primeras partes de «Guerra y paz» se publicaron en la revista El Mensajero Ruso con el título «1805».",
+          "sourceTitle": "Encyclopaedia Britannica",
+          "sourceUrl": "https://www.britannica.com/biography/Leo-Tolstoy"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "Todas las familias felices se parecen unas a otras, pero cada familia infeliz lo es a su manera.",
+          "source": "Ana Karénina",
+          "bookSlug": "ana-karenina"
+        }
+      ],
+      "faq": [
+        {
+          "question": "¿Por qué es conocido León Tolstói?",
+          "answer": "Por las novelas «Guerra y paz» y «Ana Karénina»."
+        }
+      ],
+      "similarSlugs": ["fyodor-dostoevsky"],
+      "sources": [
+        {
+          "title": "Encyclopaedia Britannica: Leo Tolstoy",
+          "url": "https://www.britannica.com/biography/Leo-Tolstoy"
+        },
+        {
+          "title": "Wikidata",
+          "url": "https://www.wikidata.org/wiki/Q7243"
+        }
+      ],
+      "seo": {
+        "metaTitle": "León Tolstói — biografía, libros y citas | Bibliaris",
+        "metaDescription": "León Tolstói, novelista ruso: su vida en fechas, «Guerra y paz» y «Ana Karénina», por dónde empezar, citas y datos con fuentes.",
+        "canonicalUrl": "https://bibliaris.com/es/author/leon-tolstoi",
+        "robots": "index, follow",
+        "ogTitle": "León Tolstói — biografía, libros y citas | Bibliaris",
+        "ogDescription": "León Tolstói, novelista ruso: su vida en fechas, «Guerra y paz» y «Ana Karénina», por dónde empezar, citas y datos con fuentes.",
+        "ogImageUrl": null,
+        "ogImageAlt": "Retrato de León Tolstói",
+        "twitterCard": "summary_large_image"
+      }
+    },
+    "fr": {
+      "name": "Léon Tolstoï",
+      "slug": "leon-tolstoi",
+      "wikidataUrl": "https://www.wikidata.org/wiki/Q7243",
+      "wikipediaUrl": "https://fr.wikipedia.org/wiki/L%C3%A9on_Tolsto%C3%AF",
+      "tagline": "Écrivain russe, auteur de « Guerre et Paix » et d’« Anna Karénine »",
+      "facts": {
+        "gender": "male",
+        "birthPlace": "Iasnaïa Poliana, Empire russe",
+        "deathPlace": "Astapovo, Empire russe",
+        "nationality": "Russie",
+        "occupations": ["romancier", "essayiste"],
+        "movements": ["réalisme"],
+        "genres": ["roman", "nouvelle"],
+        "languages": ["russe"],
+        "pseudonyms": []
+      },
+      "notableWorks": [
+        {
+          "title": "Guerre et Paix",
+          "year": 1869,
+          "bookSlug": "guerre-et-paix"
+        },
+        {
+          "title": "Anna Karénine",
+          "year": 1878,
+          "bookSlug": "anna-karenine"
+        },
+        {
+          "title": "La Mort d’Ivan Ilitch",
+          "year": 1886,
+          "bookSlug": null
+        }
+      ],
+      "startHere": [
+        {
+          "bookSlug": "anna-karenine",
+          "reason": "Un drame familial à l’intrigue claire : l’entrée la plus simple dans le style de Tolstoï avant l’ampleur de « Guerre et Paix »."
+        }
+      ],
+      "timeline": [
+        {
+          "year": 1828,
+          "text": "Naît dans le domaine familial d’Iasnaïa Poliana.",
+          "bookSlug": null
+        },
+        {
+          "year": 1869,
+          "text": "Achève « Guerre et Paix ».",
+          "bookSlug": "guerre-et-paix"
+        },
+        {
+          "year": 1910,
+          "text": "Quitte Iasnaïa Poliana et meurt à la gare d’Astapovo.",
+          "bookSlug": null
+        }
+      ],
+      "influences": {
+        "influencedBy": [
+          {
+            "name": "Jean-Jacques Rousseau",
+            "authorSlug": null
+          }
+        ],
+        "influenced": [
+          {
+            "name": "Mahatma Gandhi",
+            "authorSlug": null
+          }
+        ]
+      },
+      "awards": [
+        {
+          "name": "Prix Nobel de littérature",
+          "year": 1902,
+          "nomination": true
+        }
+      ],
+      "adaptations": [
+        {
+          "title": "Guerre et Paix",
+          "year": 1956,
+          "kind": "film",
+          "basedOn": "Guerre et Paix",
+          "bookSlug": "guerre-et-paix"
+        }
+      ],
+      "funFacts": [
+        {
+          "text": "Les premières parties de « Guerre et Paix » ont paru dans la revue Le Messager russe sous le titre « 1805 ».",
+          "sourceTitle": "Encyclopaedia Britannica",
+          "sourceUrl": "https://www.britannica.com/biography/Leo-Tolstoy"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "Toutes les familles heureuses se ressemblent, mais chaque famille malheureuse l’est à sa façon.",
+          "source": "Anna Karénine",
+          "bookSlug": "anna-karenine"
+        }
+      ],
+      "faq": [
+        {
+          "question": "Pourquoi Léon Tolstoï est-il célèbre ?",
+          "answer": "Pour les romans « Guerre et Paix » et « Anna Karénine »."
+        }
+      ],
+      "similarSlugs": ["fyodor-dostoevsky"],
+      "sources": [
+        {
+          "title": "Encyclopaedia Britannica : Leo Tolstoy",
+          "url": "https://www.britannica.com/biography/Leo-Tolstoy"
+        },
+        {
+          "title": "Wikidata",
+          "url": "https://www.wikidata.org/wiki/Q7243"
+        }
+      ],
+      "seo": {
+        "metaTitle": "Léon Tolstoï — biographie, livres et citations | Bibliaris",
+        "metaDescription": "Léon Tolstoï, romancier russe : sa vie en dates, « Guerre et Paix » et « Anna Karénine », par où commencer, citations et faits sourcés.",
+        "canonicalUrl": "https://bibliaris.com/fr/author/leon-tolstoi",
+        "robots": "index, follow",
+        "ogTitle": "Léon Tolstoï — biographie, livres et citations | Bibliaris",
+        "ogDescription": "Léon Tolstoï, romancier russe : sa vie en dates, « Guerre et Paix » et « Anna Karénine », par où commencer, citations et faits sourcés.",
+        "ogImageUrl": null,
+        "ogImageAlt": "Portrait de Léon Tolstoï",
+        "twitterCard": "summary_large_image"
+      }
+    },
+    "pt": {
+      "name": "Liev Tolstói",
+      "slug": "liev-tolstoi",
+      "wikidataUrl": "https://www.wikidata.org/wiki/Q7243",
+      "wikipediaUrl": "https://pt.wikipedia.org/wiki/Liev_Tolst%C3%B3i",
+      "tagline": "Escritor russo, autor de «Guerra e Paz» e «Anna Kariênina»",
+      "facts": {
+        "gender": "male",
+        "birthPlace": "Iásnaia Poliana, Império Russo",
+        "deathPlace": "Astápovo, Império Russo",
+        "nationality": "Rússia",
+        "occupations": ["romancista", "ensaísta"],
+        "movements": ["realismo"],
+        "genres": ["romance", "conto"],
+        "languages": ["russo"],
+        "pseudonyms": []
+      },
+      "notableWorks": [
+        {
+          "title": "Guerra e Paz",
+          "year": 1869,
+          "bookSlug": "guerra-e-paz"
+        },
+        {
+          "title": "Anna Kariênina",
+          "year": 1878,
+          "bookSlug": "anna-karenina"
+        },
+        {
+          "title": "A Morte de Ivan Ilitch",
+          "year": 1886,
+          "bookSlug": null
+        }
+      ],
+      "startHere": [
+        {
+          "bookSlug": "anna-karenina",
+          "reason": "Um drama familiar de enredo claro: a entrada mais simples no estilo de Tolstói antes da escala de «Guerra e Paz»."
+        }
+      ],
+      "timeline": [
+        {
+          "year": 1828,
+          "text": "Nasce na propriedade da família em Iásnaia Poliana.",
+          "bookSlug": null
+        },
+        {
+          "year": 1869,
+          "text": "Conclui «Guerra e Paz».",
+          "bookSlug": "guerra-e-paz"
+        },
+        {
+          "year": 1910,
+          "text": "Deixa Iásnaia Poliana e morre na estação de Astápovo.",
+          "bookSlug": null
+        }
+      ],
+      "influences": {
+        "influencedBy": [
+          {
+            "name": "Jean-Jacques Rousseau",
+            "authorSlug": null
+          }
+        ],
+        "influenced": [
+          {
+            "name": "Mahatma Gandhi",
+            "authorSlug": null
+          }
+        ]
+      },
+      "awards": [
+        {
+          "name": "Prêmio Nobel de Literatura",
+          "year": 1902,
+          "nomination": true
+        }
+      ],
+      "adaptations": [
+        {
+          "title": "Guerra e Paz",
+          "year": 1956,
+          "kind": "film",
+          "basedOn": "Guerra e Paz",
+          "bookSlug": "guerra-e-paz"
+        }
+      ],
+      "funFacts": [
+        {
+          "text": "As primeiras partes de «Guerra e Paz» saíram na revista O Mensageiro Russo com o título «1805».",
+          "sourceTitle": "Encyclopaedia Britannica",
+          "sourceUrl": "https://www.britannica.com/biography/Leo-Tolstoy"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "Todas as famílias felizes se parecem; cada família infeliz é infeliz à sua maneira.",
+          "source": "Anna Kariênina",
+          "bookSlug": "anna-karenina"
+        }
+      ],
+      "faq": [
+        {
+          "question": "Por que Liev Tolstói é conhecido?",
+          "answer": "Pelos romances «Guerra e Paz» e «Anna Kariênina»."
+        }
+      ],
+      "similarSlugs": ["fyodor-dostoevsky"],
+      "sources": [
+        {
+          "title": "Encyclopaedia Britannica: Leo Tolstoy",
+          "url": "https://www.britannica.com/biography/Leo-Tolstoy"
+        },
+        {
+          "title": "Wikidata",
+          "url": "https://www.wikidata.org/wiki/Q7243"
+        }
+      ],
+      "seo": {
+        "metaTitle": "Liev Tolstói — biografia, livros e citações | Bibliaris",
+        "metaDescription": "Liev Tolstói, romancista russo: a vida em datas, «Guerra e Paz» e «Anna Kariênina», por onde começar, citações e fatos com fontes.",
+        "canonicalUrl": "https://bibliaris.com/pt/author/liev-tolstoi",
+        "robots": "index, follow",
+        "ogTitle": "Liev Tolstói — biografia, livros e citações | Bibliaris",
+        "ogDescription": "Liev Tolstói, romancista russo: a vida em datas, «Guerra e Paz» e «Anna Kariênina», por onde começar, citações e fatos com fontes.",
+        "ogImageUrl": null,
+        "ogImageAlt": "Retrato de Liev Tolstói",
+        "twitterCard": "summary_large_image"
+      }
+    },
+    "ru": {
+      "name": "Лев Толстой",
+      "slug": "lev-tolstoy",
+      "wikidataUrl": "https://www.wikidata.org/wiki/Q7243",
+      "wikipediaUrl": "https://ru.wikipedia.org/wiki/Толстой,_Лев_Николаевич",
+      "tagline": "Русский писатель, автор «Войны и мира» и «Анны Карениной»",
+      "facts": {
+        "gender": "male",
+        "birthPlace": "Ясная Поляна, Российская империя",
+        "deathPlace": "Астапово, Российская империя",
+        "nationality": "Россия",
+        "occupations": ["писатель", "публицист"],
+        "movements": ["реализм"],
+        "genres": ["роман", "повесть", "рассказ"],
+        "languages": ["русский"],
+        "pseudonyms": []
+      },
+      "notableWorks": [
+        {
+          "title": "Война и мир",
+          "year": 1869,
+          "bookSlug": "voyna-i-mir"
+        },
+        {
+          "title": "Анна Каренина",
+          "year": 1878,
+          "bookSlug": "anna-karenina"
+        },
+        {
+          "title": "Смерть Ивана Ильича",
+          "year": 1886,
+          "bookSlug": null
+        }
+      ],
+      "startHere": [
+        {
+          "bookSlug": "anna-karenina",
+          "reason": "Одна семейная история с ясным сюжетом — самый простой вход в манеру Толстого перед масштабом «Войны и мира»."
+        }
+      ],
+      "timeline": [
+        {
+          "year": 1828,
+          "text": "Родился в усадьбе Ясная Поляна.",
+          "bookSlug": null
+        },
+        {
+          "year": 1852,
+          "text": "В «Современнике» выходит повесть «Детство».",
+          "bookSlug": null
+        },
+        {
+          "year": 1869,
+          "text": "Закончена «Война и мир».",
+          "bookSlug": "voyna-i-mir"
+        },
+        {
+          "year": 1910,
+          "text": "Уходит из Ясной Поляны и умирает на станции Астапово.",
+          "bookSlug": null
+        }
+      ],
+      "influences": {
+        "influencedBy": [
+          {
+            "name": "Жан-Жак Руссо",
+            "authorSlug": null
+          }
+        ],
+        "influenced": [
+          {
+            "name": "Махатма Ганди",
+            "authorSlug": null
+          }
+        ]
+      },
+      "awards": [
+        {
+          "name": "Нобелевская премия по литературе",
+          "year": 1902,
+          "nomination": true
+        }
+      ],
+      "adaptations": [
+        {
+          "title": "Война и мир",
+          "year": 1966,
+          "kind": "film",
+          "basedOn": "Война и мир",
+          "bookSlug": "voyna-i-mir"
+        }
+      ],
+      "funFacts": [
+        {
+          "text": "Первые части «Войны и мира» печатались в «Русском вестнике» под названием «1805 год».",
+          "sourceTitle": "Encyclopaedia Britannica",
+          "sourceUrl": "https://www.britannica.com/biography/Leo-Tolstoy"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "Все счастливые семьи похожи друг на друга, каждая несчастливая семья несчастлива по-своему.",
+          "source": "Анна Каренина",
+          "bookSlug": "anna-karenina"
+        }
+      ],
+      "faq": [
+        {
+          "question": "Чем известен Лев Толстой?",
+          "answer": "Романами «Война и мир» и «Анна Каренина»."
+        }
+      ],
+      "similarSlugs": ["fyodor-dostoevsky"],
+      "sources": [
+        {
+          "title": "Encyclopaedia Britannica: Leo Tolstoy",
+          "url": "https://www.britannica.com/biography/Leo-Tolstoy"
+        }
+      ],
+      "seo": {
+        "metaTitle": "Лев Толстой — биография, книги и цитаты | Bibliaris",
+        "metaDescription": "Лев Толстой, русский писатель: жизнь по годам, «Война и мир» и «Анна Каренина», с чего начать читать, цитаты и факты с источниками.",
+        "canonicalUrl": "https://bibliaris.com/ru/author/lev-tolstoy",
+        "robots": "index, follow",
+        "ogTitle": "Лев Толстой — биография, книги и цитаты | Bibliaris",
+        "ogDescription": "Лев Толстой, русский писатель: жизнь по годам, «Война и мир» и «Анна Каренина», с чего начать читать, цитаты и факты с источниками.",
+        "ogImageUrl": null,
+        "ogImageAlt": "Портрет Льва Толстого",
+        "twitterCard": "summary_large_image"
+      }
+    }
+  }
+}

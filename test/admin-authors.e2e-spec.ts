@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
@@ -505,6 +507,137 @@ describe('Admin authors routing (e2e)', () => {
       const path = '/admin/authors/00000000-0000-0000-0000-000000000000/person-link';
       await request(http()).delete(path).expect(401);
       await request(http()).delete(path).set('Authorization', `Bearer ${readerToken}`).expect(403);
+    });
+  });
+
+  /**
+   * F02-2: данные страницы автора через живой HTTP — тот же `ValidationPipe`, что на проде
+   * (`whitelist` + `forbidNonWhitelisted`). Автор — копия эталона `example-author.json`
+   * (решение арбитра 15.10.2026, `F02 | F02-2`) со слагами, уникальными для прогона.
+   */
+  describe('F02-2: данные страницы автора', () => {
+    const mark = Date.now();
+    let authorId: string | undefined;
+
+    const exampleBody = () => {
+      const example = JSON.parse(
+        readFileSync(join(__dirname, 'fixtures/example-author.json'), 'utf8'),
+      ) as { translations: Record<string, Record<string, unknown>> } & Record<string, unknown>;
+      const translations = Object.entries(example.translations).map(([language, t]) => ({
+        ...t,
+        language,
+        slug: `${String(t.slug)}-${mark}`,
+      }));
+      return { ...example, translations };
+    };
+
+    afterAll(async () => {
+      if (authorId) {
+        await request(http())
+          .delete(`/admin/authors/${authorId}`)
+          .set('Authorization', `Bearer ${adminToken}`);
+      }
+    });
+
+    it('пример полного автора сохраняется; ненайденные слаги — предупреждения, а не отказ', async () => {
+      const response = await request(http())
+        .post('/admin/authors')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send(exampleBody())
+        .expect(201);
+      const body = response.body as {
+        id: string;
+        nativeName: string;
+        warnings: Array<{ lang: string; path: string; slug: string }> | null;
+        translations: Array<{ language: string; tagline: string; funFacts: unknown[] }>;
+      };
+      authorId = body.id;
+      expect(body.nativeName).toBe('Лев Николаевич Толстой');
+      expect(body.translations.find((t) => t.language === 'ru')?.tagline).toBe(
+        'Русский писатель, автор «Войны и мира» и «Анны Карениной»',
+      );
+      // Книг из примера в базе e2e нет: каждый слаг книги — предупреждение с путём.
+      expect(body.warnings).toEqual(
+        expect.arrayContaining([
+          { lang: 'en', path: 'startHere[0].bookSlug', slug: 'anna-karenina' },
+          { lang: 'ru', path: 'notableWorks[0].bookSlug', slug: 'voyna-i-mir' },
+        ]),
+      );
+    });
+
+    it('лишний ключ в блоке — 400 с путём, запись не проходит', async () => {
+      const body = exampleBody();
+      (body.translations[0] as Record<string, unknown>).funFacts = [
+        { text: 'x', sourceTitle: 'y', sourceUrl: 'https://e.org', rating: 5 },
+      ];
+      const response = await request(http())
+        .post('/admin/authors')
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          ...body,
+          translations: body.translations.map((t) => ({ ...t, slug: `${String(t.slug)}-x` })),
+        })
+        .expect(400);
+      expect(JSON.stringify(response.body)).toContain('rating');
+    });
+
+    it('публичная ручка отдаёт блоки; null при сохранении блок очищает', async () => {
+      expect(authorId).toBeDefined();
+      const body = exampleBody();
+      await request(http())
+        .put(`/admin/authors/${authorId}`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          ...body,
+          translations: body.translations.map((t) =>
+            t.language === 'en' ? { ...t, awards: null } : t,
+          ),
+        })
+        .expect(200);
+
+      const en = await request(http()).get(`/en/authors/leo-tolstoy-${mark}`).expect(200);
+      const page = en.body as {
+        tagline: string;
+        awards: unknown[];
+        funFacts: Array<{ sourceUrl: string }>;
+        startHere: unknown[];
+        notableWorks: Array<{ title: string; book: unknown }>;
+      };
+      expect(page.tagline).toBe('Russian writer, author of War and Peace and Anna Karenina');
+      expect(page.awards).toEqual([]);
+      expect(page.funFacts[0].sourceUrl).toBe('https://www.britannica.com/biography/Leo-Tolstoy');
+      // Книг из примера на сайте нет: «С чего начать» пуст, главные произведения — без ссылок.
+      expect(page.startHere).toEqual([]);
+      expect(page.notableWorks.map((w) => w.book)).toEqual([null, null, null, null]);
+    });
+
+    it('«Вводные для промпта»: автор, книги по языкам и список авторов', async () => {
+      expect(authorId).toBeDefined();
+      const response = await request(http())
+        .get(`/admin/authors/${authorId}/prompt-inputs`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      const body = response.body as {
+        birthDate: string;
+        names: Array<{ lang: string; slug: string }>;
+        books: Array<{ lang: string; items: unknown[]; total: number }>;
+        authors: Array<{ names: Array<{ lang: string; slug: string }> }>;
+        authorsTruncated: boolean;
+      };
+      expect(body.birthDate).toBe('1828-09-09');
+      expect(body.names.map((n) => n.lang).sort()).toEqual(['en', 'es', 'fr', 'pt', 'ru']);
+      // Книги — на все пять языков, а не только на переведённые: промпт заполняет все пять.
+      expect(body.books.map((b) => b.lang).sort()).toEqual(['en', 'es', 'fr', 'pt', 'ru']);
+      expect(body.authors.some((a) => a.names.some((n) => n.slug === `lev-tolstoy-${mark}`))).toBe(
+        true,
+      );
+      expect(body.authorsTruncated).toBe(false);
+    });
+
+    it('«Вводные для промпта»: без токена 401, без роли 403', async () => {
+      const path = `/admin/authors/${authorId ?? 'none'}/prompt-inputs`;
+      await request(http()).get(path).expect(401);
+      await request(http()).get(path).set('Authorization', `Bearer ${readerToken}`).expect(403);
     });
   });
 });

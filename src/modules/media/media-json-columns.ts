@@ -27,7 +27,23 @@ export const MEDIA_JSON_COLUMNS: readonly MediaSearchedColumn[] = [
   ].map((field) => ({ model: 'BookVersion', field })),
   { model: 'Page', field: 'faq' },
   { model: 'Page', field: 'sections' },
-  ...['quotes', 'faq', 'similarSlugs'].map((field) => ({ model: 'AuthorTranslation', field })),
+  ...[
+    'quotes',
+    'faq',
+    'similarSlugs',
+    // F02-2: блоки страницы автора — пишет админка, ссылки на файлы в них возможны.
+    'facts',
+    'notableWorks',
+    'startHere',
+    'timeline',
+    'influences',
+    'awards',
+    'adaptations',
+    'funFacts',
+    'sources',
+  ].map((field) => ({ model: 'AuthorTranslation', field })),
+  // F02-2: подпись к портрету (`sourceUrl` может указывать на файл хранилища).
+  { model: 'Author', field: 'photoCredit' },
   { model: 'CategoryTranslation', field: 'faq' },
   ...[
     'faq',

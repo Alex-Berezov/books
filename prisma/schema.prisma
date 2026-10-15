@@ -694,6 +694,9 @@ model Author {
   id            String              @id @default(uuid())
   birthDate     String?             // Формат YYYY-MM-DD
   deathDate     String?             // Формат YYYY-MM-DD
+  // F02-2: имя на родном языке и подпись к портрету - одни на все языки.
+  nativeName    String?
+  photoCredit   Json?               // { author, license, licenseUrl?, sourceUrl? }
   createdAt     DateTime            @default(now())
   updatedAt     DateTime            @updatedAt
 
@@ -719,6 +722,21 @@ model AuthorTranslation {
   quotes        Json?    // Массив цитат: [{ text: "...", source: "..." }]
   faq           Json?    // Массив вопросов и ответов: [{ question: "...", answer: "..." }]
   similarSlugs  Json?    // Массив слагов похожих авторов: ["oscar-wilde", ...]
+  // F02-2: блоки страницы автора. Форму стережёт DTO записи (author-translation.dto.ts),
+  // описание - books-app-docs/features/F02-author-page/tech.md §2.
+  tagline       String?
+  facts         Json?
+  notableWorks  Json?
+  startHere     Json?
+  timeline      Json?
+  influences    Json?
+  awards        Json?
+  adaptations   Json?
+  funFacts      Json?
+  sources       Json?
+  // Дата последней смены содержимого перевода на этом языке. Не `@updatedAt`: `AuthorService.update`
+  // пересоздаёт переводы и переносит старое значение, если перевод не менялся (решение арбитра F02-2).
+  updatedAt     DateTime @default(now())
 
   seoId         Int?     @unique
   seo           Seo?     @relation("SeoForAuthorTranslation", fields: [seoId], references: [id], onDelete: SetNull)

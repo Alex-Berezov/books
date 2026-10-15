@@ -214,6 +214,20 @@
             "description": "Name of the picked translation, empty string if there is none",
             "type": "string"
           },
+          "nativeName": {
+            "description": "Full name in the native script",
+            "nullable": true,
+            "type": "string"
+          },
+          "photoCredit": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthorPhotoCreditDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
           "photoUrl": {
             "nullable": true,
             "type": "string"
@@ -243,6 +257,8 @@
           "name",
           "birthDate",
           "deathDate",
+          "nativeName",
+          "photoCredit",
           "wikidataUrl",
           "wikipediaUrl",
           "photoUrl",
@@ -1177,6 +1193,115 @@
         ],
         "type": "object"
       },
+      "AuthorAdaptationDto": {
+        "properties": {
+          "basedOn": {
+            "nullable": true,
+            "type": "string"
+          },
+          "bookSlug": {
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "film",
+              "series",
+              "animation",
+              "play",
+              "opera",
+              "other"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "title",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "AuthorAwardDto": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "nomination": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "year": {
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "AuthorFactsDto": {
+        "properties": {
+          "birthPlace": {
+            "nullable": true,
+            "type": "string"
+          },
+          "deathPlace": {
+            "nullable": true,
+            "type": "string"
+          },
+          "gender": {
+            "enum": [
+              "male",
+              "female"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "movements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "nationality": {
+            "nullable": true,
+            "type": "string"
+          },
+          "occupations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pseudonyms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "AuthorFaqDto": {
         "properties": {
           "answer": {
@@ -1196,6 +1321,60 @@
         ],
         "type": "object"
       },
+      "AuthorFunFactDto": {
+        "properties": {
+          "sourceTitle": {
+            "description": "Source title; a fact without a source is rejected",
+            "type": "string"
+          },
+          "sourceUrl": {
+            "description": "Absolute http(s) URL of the source",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "sourceTitle",
+          "sourceUrl"
+        ],
+        "type": "object"
+      },
+      "AuthorInfluenceRefDto": {
+        "properties": {
+          "authorSlug": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "type": "object"
+      },
+      "AuthorInfluencesDto": {
+        "properties": {
+          "influenced": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorInfluenceRefDto"
+            },
+            "type": "array"
+          },
+          "influencedBy": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorInfluenceRefDto"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "AuthorLetterCountDto": {
         "properties": {
           "count": {
@@ -1211,8 +1390,201 @@
         ],
         "type": "object"
       },
+      "AuthorNotableWorkDto": {
+        "properties": {
+          "bookSlug": {
+            "nullable": true,
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "title"
+        ],
+        "type": "object"
+      },
+      "AuthorPhotoCreditDto": {
+        "properties": {
+          "author": {
+            "description": "Author of the photo",
+            "type": "string"
+          },
+          "license": {
+            "description": "License name, e.g. \"CC BY-SA 4.0\" or \"Public domain\"",
+            "type": "string"
+          },
+          "licenseUrl": {
+            "nullable": true,
+            "type": "string"
+          },
+          "sourceUrl": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "author",
+          "license"
+        ],
+        "type": "object"
+      },
+      "AuthorPromptBookDto": {
+        "properties": {
+          "firstPublishedYear": {
+            "nullable": true,
+            "type": "number"
+          },
+          "hasAudio": {
+            "type": "boolean"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "slug",
+          "firstPublishedYear",
+          "hasAudio"
+        ],
+        "type": "object"
+      },
+      "AuthorPromptBooksDto": {
+        "properties": {
+          "items": {
+            "description": "Same set and order as the author page",
+            "items": {
+              "$ref": "#/components/schemas/AuthorPromptBookDto"
+            },
+            "type": "array"
+          },
+          "lang": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "total": {
+            "description": "Published books in this language; > items.length when cut",
+            "type": "number"
+          }
+        },
+        "required": [
+          "lang",
+          "items",
+          "total"
+        ],
+        "type": "object"
+      },
+      "AuthorPromptInputsResponseDto": {
+        "properties": {
+          "authors": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorPromptSiteAuthorDto"
+            },
+            "type": "array"
+          },
+          "authorsTruncated": {
+            "description": "The author list hit the row cap and is incomplete",
+            "type": "boolean"
+          },
+          "birthDate": {
+            "nullable": true,
+            "type": "string"
+          },
+          "books": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorPromptBooksDto"
+            },
+            "type": "array"
+          },
+          "deathDate": {
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "names": {
+            "description": "This author per language",
+            "items": {
+              "$ref": "#/components/schemas/AuthorPromptNameDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "birthDate",
+          "deathDate",
+          "names",
+          "books",
+          "authors",
+          "authorsTruncated"
+        ],
+        "type": "object"
+      },
+      "AuthorPromptNameDto": {
+        "properties": {
+          "lang": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "lang",
+          "name",
+          "slug"
+        ],
+        "type": "object"
+      },
+      "AuthorPromptSiteAuthorDto": {
+        "properties": {
+          "names": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorPromptNameDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "names"
+        ],
+        "type": "object"
+      },
       "AuthorQuoteDto": {
         "properties": {
+          "bookSlug": {
+            "description": "Slug of the book on the site the quote is from (F02-2); `null`/empty — none",
+            "nullable": true,
+            "type": "string"
+          },
           "source": {
             "description": "Source of the quote",
             "type": "string"
@@ -1247,10 +1619,24 @@
             "format": "uuid",
             "type": "string"
           },
+          "nativeName": {
+            "description": "Full name in the native script",
+            "nullable": true,
+            "type": "string"
+          },
           "personId": {
             "format": "uuid",
             "nullable": true,
             "type": "string"
+          },
+          "photoCredit": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthorPhotoCreditDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
           },
           "translations": {
             "items": {
@@ -1267,6 +1653,8 @@
           "id",
           "birthDate",
           "deathDate",
+          "nativeName",
+          "photoCredit",
           "createdAt",
           "updatedAt",
           "personId",
@@ -1274,11 +1662,185 @@
         ],
         "type": "object"
       },
+      "AuthorSaveResponseDto": {
+        "properties": {
+          "birthDate": {
+            "example": "1854-10-16",
+            "nullable": true,
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "deathDate": {
+            "example": "1900-11-30",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "nativeName": {
+            "description": "Full name in the native script",
+            "nullable": true,
+            "type": "string"
+          },
+          "personId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "photoCredit": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthorPhotoCreditDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "translations": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorTranslationResponseDto"
+            },
+            "type": "array"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "warnings": {
+            "description": "Slugs of books or authors in the data the page will show without a link. `null` — the check itself failed (not \"all found\")",
+            "items": {
+              "$ref": "#/components/schemas/AuthorSlugWarningDto"
+            },
+            "nullable": true,
+            "type": "array"
+          }
+        },
+        "required": [
+          "id",
+          "birthDate",
+          "deathDate",
+          "nativeName",
+          "photoCredit",
+          "createdAt",
+          "updatedAt",
+          "personId",
+          "translations",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "AuthorSlugWarningDto": {
+        "properties": {
+          "lang": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "example": "startHere[0].bookSlug",
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "lang",
+          "path",
+          "slug"
+        ],
+        "type": "object"
+      },
+      "AuthorSourceDto": {
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "description": "Absolute http(s) URL",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "url"
+        ],
+        "type": "object"
+      },
+      "AuthorStartHereDto": {
+        "properties": {
+          "bookSlug": {
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 220,
+            "type": "string"
+          }
+        },
+        "required": [
+          "bookSlug",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "AuthorTimelineEventDto": {
+        "properties": {
+          "bookSlug": {
+            "nullable": true,
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 200,
+            "type": "string"
+          },
+          "year": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "year",
+          "text"
+        ],
+        "type": "object"
+      },
       "AuthorTranslationDto": {
         "properties": {
+          "adaptations": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "awards": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorAwardDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "biography": {
             "description": "Biography of the author in this language",
             "type": "string"
+          },
+          "facts": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthorFactsDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
           },
           "faq": {
             "description": "FAQ array",
@@ -1286,6 +1848,22 @@
               "$ref": "#/components/schemas/AuthorFaqDto"
             },
             "type": "array"
+          },
+          "funFacts": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorFunFactDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "influences": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthorInfluencesDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
           },
           "language": {
             "enum": [
@@ -1300,6 +1878,13 @@
           "name": {
             "description": "Name of the author in this language",
             "type": "string"
+          },
+          "notableWorks": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorNotableWorkDto"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "photoUrl": {
             "description": "Author photo URL for this language",
@@ -1334,6 +1919,32 @@
             "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$",
             "type": "string"
           },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorSourceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "startHere": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorStartHereDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "tagline": {
+            "maxLength": 140,
+            "nullable": true,
+            "type": "string"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorTimelineEventDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "wikidataUrl": {
             "description": "Wikidata URL for this language",
             "example": "https://www.wikidata.org/wiki/Q30875",
@@ -1354,13 +1965,36 @@
       },
       "AuthorTranslationResponseDto": {
         "properties": {
+          "adaptations": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "authorId": {
             "format": "uuid",
             "type": "string"
           },
+          "awards": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorAwardDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "biography": {
             "nullable": true,
             "type": "string"
+          },
+          "facts": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthorFactsDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
           },
           "faq": {
             "items": {
@@ -1369,9 +2003,25 @@
             "nullable": true,
             "type": "array"
           },
+          "funFacts": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorFunFactDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "id": {
             "format": "uuid",
             "type": "string"
+          },
+          "influences": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthorInfluencesDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
           },
           "language": {
             "enum": [
@@ -1385,6 +2035,13 @@
           },
           "name": {
             "type": "string"
+          },
+          "notableWorks": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorNotableWorkDto"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "photoUrl": {
             "nullable": true,
@@ -1420,6 +2077,36 @@
           "slug": {
             "type": "string"
           },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorSourceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "startHere": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorStartHereDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "tagline": {
+            "nullable": true,
+            "type": "string"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/AuthorTimelineEventDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "updatedAt": {
+            "description": "Last change of this translation content; kept when a save leaves it as is",
+            "format": "date-time",
+            "type": "string"
+          },
           "wikidataUrl": {
             "nullable": true,
             "type": "string"
@@ -1442,6 +2129,17 @@
           "quotes",
           "faq",
           "similarSlugs",
+          "tagline",
+          "facts",
+          "notableWorks",
+          "startHere",
+          "timeline",
+          "influences",
+          "awards",
+          "adaptations",
+          "funFacts",
+          "sources",
+          "updatedAt",
           "seoId",
           "seo"
         ],
@@ -6726,6 +7424,22 @@
             "description": "Date of death YYYY-MM-DD",
             "example": "1900-11-30",
             "type": "string"
+          },
+          "nativeName": {
+            "description": "Full name in the native language and script (F02-2); `null`/empty — none",
+            "example": "Лев Николаевич Толстой",
+            "nullable": true,
+            "type": "string"
+          },
+          "photoCredit": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthorPhotoCreditDto"
+              }
+            ],
+            "description": "Portrait credit, one for all languages (F02-2); `null` — none",
+            "nullable": true,
+            "type": "object"
           },
           "slug": {
             "description": "Author unique slug (optional for creation compatibility)",
@@ -12638,6 +13352,48 @@
         ],
         "type": "object"
       },
+      "PublicAuthorAdaptationDto": {
+        "properties": {
+          "basedOn": {
+            "type": "string"
+          },
+          "book": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAuthorPageBookDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "bookSlug": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "film",
+              "series",
+              "animation",
+              "play",
+              "opera",
+              "other"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "title",
+          "kind",
+          "book"
+        ],
+        "type": "object"
+      },
       "PublicAuthorAlternateDto": {
         "properties": {
           "indexable": {
@@ -12662,6 +13418,23 @@
           "lang",
           "slug",
           "indexable"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorAwardDto": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "nomination": {
+            "type": "boolean"
+          },
+          "year": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "name"
         ],
         "type": "object"
       },
@@ -12762,9 +13535,23 @@
       },
       "PublicAuthorDetailResponseDto": {
         "properties": {
+          "adaptations": {
+            "description": "By year asc, undated last (F02-2)",
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorAdaptationDto"
+            },
+            "type": "array"
+          },
           "alternates": {
             "items": {
               "$ref": "#/components/schemas/PublicAuthorAlternateDto"
+            },
+            "type": "array"
+          },
+          "awards": {
+            "description": "By year asc, undated last (F02-2)",
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorAwardDto"
             },
             "type": "array"
           },
@@ -12793,6 +13580,16 @@
             "nullable": true,
             "type": "string"
           },
+          "facts": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAuthorFactsDto"
+              }
+            ],
+            "description": "F02-2",
+            "nullable": true,
+            "type": "object"
+          },
           "faq": {
             "description": "Empty array when unset",
             "items": {
@@ -12800,21 +13597,60 @@
             },
             "type": "array"
           },
+          "funFacts": {
+            "description": "F02-2",
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorFunFactDto"
+            },
+            "type": "array"
+          },
           "id": {
             "description": "Canonical `Author.id`",
             "type": "string"
           },
+          "influences": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAuthorInfluencesDto"
+              }
+            ],
+            "description": "F02-2",
+            "nullable": true,
+            "type": "object"
+          },
           "name": {
             "type": "string"
+          },
+          "nativeName": {
+            "description": "Full name in the native language and script (F02-2)",
+            "nullable": true,
+            "type": "string"
+          },
+          "notableWorks": {
+            "description": "By year asc, undated last; empty array when unset (F02-2)",
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorNotableWorkDto"
+            },
+            "type": "array"
+          },
+          "photoCredit": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAuthorPhotoCreditDto"
+              }
+            ],
+            "description": "F02-2",
+            "nullable": true,
+            "type": "object"
           },
           "photoUrl": {
             "nullable": true,
             "type": "string"
           },
           "quotes": {
-            "description": "Empty array when unset",
+            "description": "Empty array when unset; `book` resolved from `bookSlug` (F02-2)",
             "items": {
-              "$ref": "#/components/schemas/AuthorQuoteDto"
+              "$ref": "#/components/schemas/PublicAuthorQuoteDto"
             },
             "type": "array"
           },
@@ -12837,6 +13673,37 @@
             "description": "Slug of the matched translation",
             "type": "string"
           },
+          "sources": {
+            "description": "F02-2",
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorSourceDto"
+            },
+            "type": "array"
+          },
+          "startHere": {
+            "description": "Reading order as entered; books not on the site are dropped (F02-2)",
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorStartHereDto"
+            },
+            "type": "array"
+          },
+          "tagline": {
+            "description": "Who this is, one line (F02-2)",
+            "nullable": true,
+            "type": "string"
+          },
+          "timeline": {
+            "description": "By year asc (F02-2)",
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorTimelineEventDto"
+            },
+            "type": "array"
+          },
+          "updatedAt": {
+            "description": "Last change of this translation content (F02-2)",
+            "format": "date-time",
+            "type": "string"
+          },
           "wikidataUrl": {
             "nullable": true,
             "type": "string"
@@ -12849,13 +13716,142 @@
         "required": [
           "id",
           "slug",
+          "nativeName",
+          "photoCredit",
           "name",
+          "tagline",
+          "facts",
+          "notableWorks",
+          "startHere",
+          "timeline",
+          "influences",
+          "awards",
+          "adaptations",
+          "funFacts",
+          "sources",
           "quotes",
           "faq",
+          "updatedAt",
           "alternates",
           "similarAuthors",
           "booksTotal",
           "books"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorFactsDto": {
+        "properties": {
+          "birthPlace": {
+            "type": "string"
+          },
+          "deathPlace": {
+            "type": "string"
+          },
+          "gender": {
+            "enum": [
+              "male",
+              "female"
+            ],
+            "type": "string"
+          },
+          "genres": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "movements": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "nationality": {
+            "type": "string"
+          },
+          "occupations": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "pseudonyms": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "PublicAuthorFunFactDto": {
+        "properties": {
+          "sourceTitle": {
+            "type": "string"
+          },
+          "sourceUrl": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "sourceTitle",
+          "sourceUrl"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorInfluenceRefDto": {
+        "properties": {
+          "author": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAuthorPageAuthorLinkDto"
+              }
+            ],
+            "description": "`null` when the author is not on the site, has no translation in this language or no published books in it (the page would be `noindex`)",
+            "nullable": true,
+            "type": "object"
+          },
+          "authorSlug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "author"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorInfluencesDto": {
+        "properties": {
+          "influenced": {
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorInfluenceRefDto"
+            },
+            "type": "array"
+          },
+          "influencedBy": {
+            "items": {
+              "$ref": "#/components/schemas/PublicAuthorInfluenceRefDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "influencedBy",
+          "influenced"
         ],
         "type": "object"
       },
@@ -12906,6 +13902,183 @@
           "booksCount",
           "audioCount",
           "translations"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorNotableWorkDto": {
+        "properties": {
+          "book": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAuthorPageBookDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "bookSlug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "year": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "title",
+          "book"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorPageAuthorLinkDto": {
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "name"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorPageBookDto": {
+        "properties": {
+          "coverUrl": {
+            "type": "string"
+          },
+          "slug": {
+            "description": "Slug of the published version in this language",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "title",
+          "coverUrl"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorPhotoCreditDto": {
+        "properties": {
+          "author": {
+            "type": "string"
+          },
+          "license": {
+            "type": "string"
+          },
+          "licenseUrl": {
+            "type": "string"
+          },
+          "sourceUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "author",
+          "license"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorQuoteDto": {
+        "properties": {
+          "book": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAuthorPageBookDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "bookSlug": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "book"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorSourceDto": {
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "url"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorStartHereDto": {
+        "properties": {
+          "book": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAuthorPageBookDto"
+              }
+            ],
+            "description": "Always resolved: entries whose book is not on the site are dropped"
+          },
+          "bookSlug": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bookSlug",
+          "reason",
+          "book"
+        ],
+        "type": "object"
+      },
+      "PublicAuthorTimelineEventDto": {
+        "properties": {
+          "book": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/PublicAuthorPageBookDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "bookSlug": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "year": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "year",
+          "text",
+          "book"
         ],
         "type": "object"
       },
@@ -13650,18 +14823,36 @@
       },
       "PublicSimilarAuthorDto": {
         "properties": {
+          "birthDate": {
+            "description": "YYYY-MM-DD or YYYY",
+            "nullable": true,
+            "type": "string"
+          },
+          "deathDate": {
+            "description": "YYYY-MM-DD or YYYY",
+            "nullable": true,
+            "type": "string"
+          },
           "name": {
             "type": "string"
           },
+          "photoUrl": {
+            "description": "Portrait URL (F02-2)",
+            "nullable": true,
+            "type": "string"
+          },
           "slug": {
-            "description": "Slug in the requested language; `null` when the author has no translation in it (show the name as plain text, without a link)",
+            "description": "Slug in the requested language; `null` in two cases — the author has no translation in it, or has one but no published books in it (the page is `noindex` and not in the sitemap). Either way show the name as plain text, without a link",
             "nullable": true,
             "type": "string"
           }
         },
         "required": [
           "name",
-          "slug"
+          "slug",
+          "photoUrl",
+          "birthDate",
+          "deathDate"
         ],
         "type": "object"
       },
@@ -22319,6 +23510,22 @@
             "example": "1900-11-30",
             "type": "string"
           },
+          "nativeName": {
+            "description": "Full name in the native language and script (F02-2); `null`/empty — none",
+            "example": "Лев Николаевич Толстой",
+            "nullable": true,
+            "type": "string"
+          },
+          "photoCredit": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AuthorPhotoCreditDto"
+              }
+            ],
+            "description": "Portrait credit, one for all languages (F02-2); `null` — none",
+            "nullable": true,
+            "type": "object"
+          },
           "slug": {
             "description": "Author unique slug (optional for creation compatibility)",
             "example": "oscar-wilde",
@@ -24724,7 +25931,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthorResponseDto"
+                  "$ref": "#/components/schemas/AuthorSaveResponseDto"
                 }
               }
             },
@@ -24901,7 +26108,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthorResponseDto"
+                  "$ref": "#/components/schemas/AuthorSaveResponseDto"
                 }
               }
             },
@@ -24954,6 +26161,47 @@
           }
         ],
         "summary": "Unlink author from person (LEGACY-396)",
+        "tags": [
+          "authors"
+        ]
+      }
+    },
+    "/admin/authors/{id}/prompt-inputs": {
+      "get": {
+        "description": "The author, its published books per language (same set and order as the author page) and every author of the site with a slug per language — for the «Prompt inputs» button.",
+        "operationId": "AuthorController_promptInputs",
+        "parameters": [
+          {
+            "description": "Author id",
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthorPromptInputsResponseDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Author not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Prompt inputs for the author data prompt (F02-2)",
         "tags": [
           "authors"
         ]

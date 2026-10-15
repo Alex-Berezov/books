@@ -1,6 +1,18 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Language } from '@prisma/client';
 import { AuthorFaqDto, AuthorQuoteDto } from './author-translation.dto';
+import {
+  AuthorAdaptationDto,
+  AuthorAwardDto,
+  AuthorFactsDto,
+  AuthorFunFactDto,
+  AuthorInfluencesDto,
+  AuthorNotableWorkDto,
+  AuthorPhotoCreditDto,
+  AuthorSourceDto,
+  AuthorStartHereDto,
+  AuthorTimelineEventDto,
+} from './author-page-blocks.dto';
 
 /**
  * Форма `Seo`, как она реально приезжает вложенной в перевод автора
@@ -141,6 +153,45 @@ export class AuthorTranslationResponseDto {
   @ApiProperty({ nullable: true, type: [String] })
   similarSlugs!: string[] | null;
 
+  // F02-2: блоки страницы автора — в той форме, в какой их принимает запись
+  // (`author-page-blocks.dto.ts`); пустой блок хранится как `null`.
+  @ApiProperty({ nullable: true, type: String })
+  tagline!: string | null;
+
+  @ApiProperty({ nullable: true, type: AuthorFactsDto })
+  facts!: AuthorFactsDto | null;
+
+  @ApiProperty({ nullable: true, type: [AuthorNotableWorkDto] })
+  notableWorks!: AuthorNotableWorkDto[] | null;
+
+  @ApiProperty({ nullable: true, type: [AuthorStartHereDto] })
+  startHere!: AuthorStartHereDto[] | null;
+
+  @ApiProperty({ nullable: true, type: [AuthorTimelineEventDto] })
+  timeline!: AuthorTimelineEventDto[] | null;
+
+  @ApiProperty({ nullable: true, type: AuthorInfluencesDto })
+  influences!: AuthorInfluencesDto | null;
+
+  @ApiProperty({ nullable: true, type: [AuthorAwardDto] })
+  awards!: AuthorAwardDto[] | null;
+
+  @ApiProperty({ nullable: true, type: [AuthorAdaptationDto] })
+  adaptations!: AuthorAdaptationDto[] | null;
+
+  @ApiProperty({ nullable: true, type: [AuthorFunFactDto] })
+  funFacts!: AuthorFunFactDto[] | null;
+
+  @ApiProperty({ nullable: true, type: [AuthorSourceDto] })
+  sources!: AuthorSourceDto[] | null;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    description: 'Last change of this translation content; kept when a save leaves it as is',
+  })
+  updatedAt!: Date;
+
   @ApiProperty({ nullable: true, type: Number })
   seoId!: number | null;
 
@@ -163,6 +214,12 @@ export class AuthorDto {
   @ApiProperty({ nullable: true, type: String, example: '1900-11-30' })
   deathDate!: string | null;
 
+  @ApiProperty({ nullable: true, type: String, description: 'Full name in the native script' })
+  nativeName!: string | null;
+
+  @ApiProperty({ nullable: true, type: AuthorPhotoCreditDto })
+  photoCredit!: AuthorPhotoCreditDto | null;
+
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;
 
@@ -183,6 +240,34 @@ export class AuthorDto {
 export class AuthorResponseDto extends AuthorDto {
   @ApiProperty({ type: AuthorTranslationResponseDto, isArray: true })
   translations!: AuthorTranslationResponseDto[];
+}
+
+/** Слаг из данных автора, который страница покажет без ссылки (F02-2). */
+export class AuthorSlugWarningDto {
+  @ApiProperty({ enum: Language })
+  lang!: Language;
+
+  @ApiProperty({ type: String, example: 'startHere[0].bookSlug' })
+  path!: string;
+
+  @ApiProperty({ type: String })
+  slug!: string;
+}
+
+/**
+ * Ответ `POST /admin/authors` и `PUT /admin/authors/:id`: автор с переводами и предупреждения
+ * о ненайденных слагах (решение арбитра 15.10.2026, `F02 | F02-2`). Сохранение они не отменяют.
+ */
+export class AuthorSaveResponseDto extends AuthorResponseDto {
+  @ApiProperty({
+    type: AuthorSlugWarningDto,
+    isArray: true,
+    nullable: true,
+    description:
+      'Slugs of books or authors in the data the page will show without a link. ' +
+      '`null` — the check itself failed (not "all found")',
+  })
+  warnings!: AuthorSlugWarningDto[] | null;
 }
 
 /**
@@ -220,6 +305,12 @@ export class AdminAuthorItemDto {
 
   @ApiProperty({ nullable: true, type: String, example: '1900-11-30' })
   deathDate!: string | null;
+
+  @ApiProperty({ nullable: true, type: String, description: 'Full name in the native script' })
+  nativeName!: string | null;
+
+  @ApiProperty({ nullable: true, type: AuthorPhotoCreditDto })
+  photoCredit!: AuthorPhotoCreditDto | null;
 
   @ApiProperty({ nullable: true, type: String })
   wikidataUrl!: string | null;

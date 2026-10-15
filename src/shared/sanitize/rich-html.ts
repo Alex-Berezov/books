@@ -23,6 +23,9 @@ export const RICH_HTML_ALLOWED_TAGS: readonly string[] = [
   'hr',
   'a',
   'img',
+  // F02-2: подпись к иллюстрации в биографии автора (`tech.md` F02 §2).
+  'figure',
+  'figcaption',
 ];
 
 export const RICH_HTML_ALLOWED_ATTRIBUTES: Readonly<Record<string, readonly string[]>> = {

@@ -1,8 +1,17 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsString, Matches, IsOptional, IsArray, ValidateNested } from 'class-validator';
-import { Type } from 'class-transformer';
+import {
+  IsString,
+  Matches,
+  IsOptional,
+  IsArray,
+  ValidateNested,
+  ValidateIf,
+  MaxLength,
+} from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { AuthorTranslationDto } from './author-translation.dto';
+import { AUTHOR_PAGE_LIMITS, AuthorPhotoCreditDto } from './author-page-blocks.dto';
 
 export class CreateAuthorDto {
   @ApiPropertyOptional({
@@ -24,6 +33,28 @@ export class CreateAuthorDto {
   @IsOptional()
   @IsString()
   deathDate?: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description: 'Full name in the native language and script (F02-2); `null`/empty — none',
+    example: 'Лев Николаевич Толстой',
+  })
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsString()
+  @MaxLength(AUTHOR_PAGE_LIMITS.nativeName)
+  nativeName?: string | null;
+
+  @ApiPropertyOptional({
+    type: AuthorPhotoCreditDto,
+    nullable: true,
+    description: 'Portrait credit, one for all languages (F02-2); `null` — none',
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AuthorPhotoCreditDto)
+  photoCredit?: AuthorPhotoCreditDto | null;
 
   @ApiProperty({ description: 'Author translations', type: [AuthorTranslationDto] })
   @IsArray()

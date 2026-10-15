@@ -10,8 +10,9 @@ import {
   Matches,
   MaxLength,
   ValidateIf,
+  ArrayMaxSize,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { UpdateSeoDto } from '../../seo/dto/update-seo.dto';
 import { SLUG_PATTERN, SLUG_REGEX_README } from '../../../shared/validators/slug';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
@@ -20,6 +21,18 @@ import {
   FAQ_QUESTION_MAX_LENGTH,
 } from '../../../shared/constants/validation';
 import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
+import {
+  AUTHOR_PAGE_LIMITS,
+  AuthorAdaptationDto,
+  AuthorAwardDto,
+  AuthorFactsDto,
+  AuthorFunFactDto,
+  AuthorInfluencesDto,
+  AuthorNotableWorkDto,
+  AuthorSourceDto,
+  AuthorStartHereDto,
+  AuthorTimelineEventDto,
+} from './author-page-blocks.dto';
 
 export class AuthorQuoteDto {
   @ApiProperty({ description: 'Text of the quote' })
@@ -30,6 +43,19 @@ export class AuthorQuoteDto {
   @IsOptional()
   @IsString()
   source?: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description: 'Slug of the book on the site the quote is from (F02-2); `null`/empty — none',
+  })
+  // Обрезка краёв — как у остальных слагов блоков (`OptionalSlug`, `tech.md` §2).
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsString()
+  @MaxLength(AUTHOR_PAGE_LIMITS.slug)
+  @Matches(new RegExp(SLUG_PATTERN), { message: SLUG_REGEX_README })
+  bookSlug?: string | null;
 }
 
 export class AuthorFaqDto {
@@ -103,6 +129,7 @@ export class AuthorTranslationDto {
   @ApiPropertyOptional({ description: 'Quotes array', type: [AuthorQuoteDto] })
   @IsOptional()
   @IsArray()
+  @ArrayMaxSize(AUTHOR_PAGE_LIMITS.quotes)
   @ValidateNested({ each: true })
   @Type(() => AuthorQuoteDto)
   quotes?: AuthorQuoteDto[];
@@ -113,6 +140,83 @@ export class AuthorTranslationDto {
   @ValidateNested({ each: true })
   @Type(() => AuthorFaqDto)
   faq?: AuthorFaqDto[];
+
+  // F02-2: блоки страницы автора. `null` или `[]` у поля верхнего уровня — «блока нет»
+  // (так фронт очищает поле при импорте, T5); форма элементов — `author-page-blocks.dto.ts`.
+  @ApiPropertyOptional({ type: String, nullable: true, maxLength: AUTHOR_PAGE_LIMITS.tagline })
+  @Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value))
+  @ValidateIf((_o, value) => value !== undefined && value !== null && value !== '')
+  @IsString()
+  @MaxLength(AUTHOR_PAGE_LIMITS.tagline)
+  tagline?: string | null;
+
+  @ApiPropertyOptional({ type: AuthorFactsDto, nullable: true })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AuthorFactsDto)
+  facts?: AuthorFactsDto | null;
+
+  @ApiPropertyOptional({ type: [AuthorNotableWorkDto], nullable: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(AUTHOR_PAGE_LIMITS.notableWorks)
+  @ValidateNested({ each: true })
+  @Type(() => AuthorNotableWorkDto)
+  notableWorks?: AuthorNotableWorkDto[] | null;
+
+  @ApiPropertyOptional({ type: [AuthorStartHereDto], nullable: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(AUTHOR_PAGE_LIMITS.startHere.list)
+  @ValidateNested({ each: true })
+  @Type(() => AuthorStartHereDto)
+  startHere?: AuthorStartHereDto[] | null;
+
+  @ApiPropertyOptional({ type: [AuthorTimelineEventDto], nullable: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(AUTHOR_PAGE_LIMITS.timeline.list)
+  @ValidateNested({ each: true })
+  @Type(() => AuthorTimelineEventDto)
+  timeline?: AuthorTimelineEventDto[] | null;
+
+  @ApiPropertyOptional({ type: AuthorInfluencesDto, nullable: true })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => AuthorInfluencesDto)
+  influences?: AuthorInfluencesDto | null;
+
+  @ApiPropertyOptional({ type: [AuthorAwardDto], nullable: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(AUTHOR_PAGE_LIMITS.awards)
+  @ValidateNested({ each: true })
+  @Type(() => AuthorAwardDto)
+  awards?: AuthorAwardDto[] | null;
+
+  @ApiPropertyOptional({ type: [AuthorAdaptationDto], nullable: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(AUTHOR_PAGE_LIMITS.adaptations)
+  @ValidateNested({ each: true })
+  @Type(() => AuthorAdaptationDto)
+  adaptations?: AuthorAdaptationDto[] | null;
+
+  @ApiPropertyOptional({ type: [AuthorFunFactDto], nullable: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(AUTHOR_PAGE_LIMITS.funFacts.list)
+  @ValidateNested({ each: true })
+  @Type(() => AuthorFunFactDto)
+  funFacts?: AuthorFunFactDto[] | null;
+
+  @ApiPropertyOptional({ type: [AuthorSourceDto], nullable: true })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(AUTHOR_PAGE_LIMITS.sources)
+  @ValidateNested({ each: true })
+  @Type(() => AuthorSourceDto)
+  sources?: AuthorSourceDto[] | null;
 
   @ApiPropertyOptional({ description: 'Slugs of similar authors', type: [String] })
   @IsOptional()

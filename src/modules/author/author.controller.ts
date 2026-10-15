@@ -29,7 +29,12 @@ import { UpdateAuthorDto } from './dto/update-author.dto';
 import { ListAuthorsQueryDto } from './dto/list-authors-query.dto';
 import { CheckAuthorSlugQueryDto } from './dto/check-slug-query.dto';
 import { CheckAuthorSlugResponseDto } from './dto/check-slug-response.dto';
-import { AdminAuthorItemDto, AuthorResponseDto } from './dto/author-response.dto';
+import { AuthorPromptInputsResponseDto } from './dto/author-prompt-inputs-response.dto';
+import {
+  AdminAuthorItemDto,
+  AuthorResponseDto,
+  AuthorSaveResponseDto,
+} from './dto/author-response.dto';
 import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -98,7 +103,7 @@ export class AuthorController {
 
   @Post('admin/authors')
   @ApiOperation({ summary: 'Create author' })
-  @ApiCreatedResponse({ type: AuthorResponseDto })
+  @ApiCreatedResponse({ type: AuthorSaveResponseDto })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   create(@Body() dto: CreateAuthorDto) {
@@ -124,9 +129,25 @@ export class AuthorController {
     return this.service.findOne(id);
   }
 
+  @Get('admin/authors/:id/prompt-inputs')
+  @ApiOperation({
+    summary: 'Prompt inputs for the author data prompt (F02-2)',
+    description:
+      'The author, its published books per language (same set and order as the author page) and ' +
+      'every author of the site with a slug per language — for the «Prompt inputs» button.',
+  })
+  @ApiParam({ name: 'id', description: 'Author id' })
+  @ApiOkResponse({ type: AuthorPromptInputsResponseDto })
+  @ApiResponse({ status: 404, description: 'Author not found' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  promptInputs(@Param('id') id: string) {
+    return this.service.getPromptInputs(id);
+  }
+
   @Put('admin/authors/:id')
   @ApiOperation({ summary: 'Update author' })
-  @ApiOkResponse({ type: AuthorResponseDto })
+  @ApiOkResponse({ type: AuthorSaveResponseDto })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
   update(@Param('id') id: string, @Body() dto: UpdateAuthorDto) {
