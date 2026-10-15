@@ -328,9 +328,13 @@ export const controllersIn = (source: ts.SourceFile, file: string): ControllerIn
       node: statement,
       decorators,
       bases: controllerBases(controller),
-      hasBaseClass: (statement.heritageClauses ?? []).some(
-        (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
-      ),
+      // Без `?? []` и с явным типом параметра: на объединении `NodeArray<HeritageClause> | never[]`
+      // проверка типов ts-jest в CI (Linux) выводила параметр `.some` как `never` (TS2339),
+      // хотя `tsc` и локальный прогон были зелёными. Аннотацию не снимать.
+      hasBaseClass:
+        statement.heritageClauses?.some(
+          (clause: ts.HeritageClause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+        ) ?? false,
       handlers: statement.members.filter(ts.isMethodDeclaration).map((member) => ({
         name: member.name.getText(source),
         ownerLine: ownerLineOf(source, member),

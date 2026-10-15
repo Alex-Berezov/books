@@ -903,6 +903,12 @@ describe('детектор краснеет на каждом виде нару�
       ['класс наследует базовый — его декораторы и гварды не разобрать'],
     ],
     [
+      // `implements` — не базовый класс: его декораторы и гварды в класс не попадают.
+      'класс только с implements',
+      `${COMMON}\n@Controller() class C implements OnModuleInit { @Get() a() {} onModuleInit() {} }`,
+      [],
+    ],
+    [
       '@Inject(REQUEST) в конструкторе',
       "import { Inject } from '@nestjs/common';\nimport { REQUEST } from '@nestjs/core';\n@Controller() class C { constructor(@Inject(REQUEST) private readonly req: unknown) {} @Get() a() {} }",
       ['@Inject(REQUEST) в конструкторе — запрос того, кто спрашивает'],
