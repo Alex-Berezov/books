@@ -38,6 +38,7 @@ interface PrismaStub {
   };
   bookVersion: {
     findMany: jest.Mock;
+    findFirst: jest.Mock;
     count: jest.Mock;
   };
   bookRating: {
@@ -77,6 +78,7 @@ const createPrismaStub = (): PrismaStub => {
     },
     bookVersion: {
       findMany: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
       count: jest.fn().mockResolvedValue(0),
     },
     bookRating: {
@@ -1017,17 +1019,90 @@ describe('AuthorService', () => {
       expect(prisma.bookVersion.count).toHaveBeenCalledWith({ where: args.where });
     });
 
-    // Предохранитель выборки (решение арбитра 14.10.2026, уточнение C): список ограничен,
-    // счёт — нет. Без `take` публичная ручка снова тянула бы все строки в память.
-    it('список ограничен предохранителем 500, а booksTotal им не режется', async () => {
+    // Порция 12 (F02-3, `product.md` §7): список — первые 12, счёт — по всему набору.
+    // Без `take` публичная ручка снова тянула бы все строки в память.
+    it('список — порция 12, а booksTotal ею не режется', async () => {
       prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
       prisma.bookVersion.count.mockResolvedValue(600);
 
       const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
 
       const [args] = prisma.bookVersion.findMany.mock.calls[0] as [{ take: number }];
-      expect(args.take).toBe(500);
+      expect(args.take).toBe(12);
       expect(result.booksTotal).toBe(600);
+    });
+
+    // Агрегаты шапки — по всему набору, а не по порции (решение арбитра 14.10.2026,
+    // `F02 | F02-1`): аудио у книги за пределами первых 12 тоже даёт «есть аудио».
+    it('booksHasAudio — по всему набору книг тем же условием, а не по порции', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+      prisma.bookVersion.findMany.mockResolvedValue([cardRow()]);
+      prisma.bookVersion.findFirst.mockResolvedValue({ id: 'v13' });
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      expect(result.books[0].hasAudio).toBe(false);
+      expect(result.booksHasAudio).toBe(true);
+      const [listArgs] = prisma.bookVersion.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ];
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith({
+        where: { ...listArgs.where, audioChapters: { some: {} } },
+        select: { id: true },
+      });
+    });
+
+    it('booksHasAudio — false, когда ни у одной книги набора нет аудиоглав', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+      prisma.bookVersion.findFirst.mockResolvedValue(null);
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      expect(result.booksHasAudio).toBe(false);
+    });
+
+    // Среднее средних по книгам с оценками (решение арбитра 15.10.2026, `F02 | F02-3`, Р3):
+    // оценки — по всему набору одним `groupBy` с пределом, а не по книгам порции.
+    it('booksAvgRating — невзвешенное среднее средних по всему набору книг', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+      prisma.bookVersion.findMany.mockResolvedValue([cardRow({ bookId: 'b1' })]);
+      prisma.bookRating.groupBy.mockImplementation((args: { where: Record<string, unknown> }) =>
+        Promise.resolve(
+          'book' in args.where
+            ? [
+                { bookId: 'b1', _avg: { score: 5 } },
+                { bookId: 'b13', _avg: { score: 2 } },
+              ]
+            : [],
+        ),
+      );
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      expect(result.booksAvgRating).toBe(3.5);
+      const [listArgs] = prisma.bookVersion.findMany.mock.calls[0] as [
+        { where: Record<string, unknown> },
+      ];
+      const headerCalls = prisma.bookRating.groupBy.mock.calls.filter(
+        ([args]) => 'book' in (args as { where: Record<string, unknown> }).where,
+      );
+      expect(headerCalls).toHaveLength(1);
+      expect(prisma.bookRating.groupBy).toHaveBeenCalledWith({
+        by: ['bookId'],
+        where: { book: { versions: { some: listArgs.where } } },
+        _avg: { score: true },
+        orderBy: { bookId: 'asc' },
+        take: 500,
+      });
+    });
+
+    it('booksAvgRating — null, когда оценок нет, а не 0', async () => {
+      prisma.authorTranslation.findFirst.mockResolvedValue(wildeTranslation());
+
+      const result = await service.getPublicBySlug('oskar-uajld', Language.ru);
+
+      expect(result.booksAvgRating).toBeNull();
     });
 
     // Версия без своего слага ведёт на слаг книги: `getOverview` по id версии не ищет.
@@ -1418,14 +1493,22 @@ describe('AuthorService', () => {
         });
       });
 
-      it('на двадцати книгах не зовёт bookRating.aggregate ни разу, а groupBy - ровно один', async () => {
+      // С F02-3 рядом идёт ещё один `groupBy` — средняя оценка шапки по всему набору
+      // (`where.book`), ровно один на страницу; оценки карточек — свой, по `bookId in`.
+      const cardRatingCalls = () =>
+        (
+          prisma.bookRating.groupBy.mock.calls as Array<[{ where: Record<string, unknown> }]>
+        ).filter(([args]) => 'bookId' in args.where);
+
+      it('на двадцати книгах не зовёт bookRating.aggregate ни разу, а groupBy - один на карточки и один на шапку', async () => {
         prisma.bookVersion.findMany.mockResolvedValue(twentyVersions);
         prisma.bookRating.groupBy.mockResolvedValue([]);
 
         await service.getPublicBySlug('oscar-wilde', Language.en);
 
         expect(prisma.bookRating.aggregate).toHaveBeenCalledTimes(0);
-        expect(prisma.bookRating.groupBy).toHaveBeenCalledTimes(1);
+        expect(cardRatingCalls()).toHaveLength(1);
+        expect(prisma.bookRating.groupBy).toHaveBeenCalledTimes(2);
       });
 
       it('групповой запрос спрашивает идентификаторы всех книг автора', async () => {
@@ -1434,19 +1517,17 @@ describe('AuthorService', () => {
 
         await service.getPublicBySlug('oscar-wilde', Language.en);
 
-        const [args] = prisma.bookRating.groupBy.mock.calls[0] as [
-          { where: { bookId: { in: string[] } } },
-        ];
+        const [args] = cardRatingCalls()[0] as [{ where: { bookId: { in: string[] } } }];
         expect(args.where.bookId.in).toEqual(twentyVersions.map((v) => v.bookId));
       });
 
-      it('у автора без книг в базу за рейтингами не ходит вовсе', async () => {
+      it('у автора без книг за оценками карточек в базу не ходит', async () => {
         prisma.bookVersion.findMany.mockResolvedValue([]);
 
         const result = await service.getPublicBySlug('oscar-wilde', Language.en);
 
         expect(result.books).toEqual([]);
-        expect(prisma.bookRating.groupBy).toHaveBeenCalledTimes(0);
+        expect(cardRatingCalls()).toHaveLength(0);
       });
     });
   });

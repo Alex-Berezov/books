@@ -63,6 +63,7 @@ function createDb(translations: TranslationRow[], versions: VersionRow[], linkab
     author: { findUnique: jest.fn(), update: jest.fn() },
     bookVersion: {
       count: jest.fn().mockResolvedValue(0),
+      findFirst: jest.fn().mockResolvedValue(null),
       findMany: jest.fn<Promise<unknown[]>, [{ where: Where }]>(({ where }) => {
         calls.bookVersion += 1;
         if (Array.isArray(where.OR) && 'slug' in (where.OR[0] as Where)) {

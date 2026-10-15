@@ -175,12 +175,34 @@ export function authorSlugKey(authorId: string, language: Language): string {
 const SLUG_SUGGESTION_BATCH = 20;
 
 /**
- * Предохранитель выборки книг страницы автора: до F02-3 страница отдаёт все книги
- * без порции (решение арбитра 14.10.2026, `F02 | F02-1`), но безлимитный `findMany`
- * в публичной ручке запрещён. Порог выше любого автора каталога; `booksTotal`
- * считается отдельно и предохранителем не режется.
+ * Предохранитель выборки книг автора для «Вводных для промпта» и для счёта оценок шапки:
+ * безлимитная выборка в память в публичной ручке запрещена. Порог выше любого автора
+ * каталога; `booksTotal` считается отдельно и предохранителем не режется.
  */
 const AUTHOR_PAGE_BOOKS_CAP = 500;
+
+/**
+ * Порция книг страницы автора (F02-3, `product.md` §7): первые 12 по году, остальное
+ * догружает «Показать все» через `/books/cards` тем же набором и порядком.
+ */
+const AUTHOR_PAGE_BOOKS_FIRST = 12;
+
+/**
+ * Опубликованные книги автора на языке: по `authorId` или, у книг без связи, по имени.
+ * Один набор на страницу, `/books/cards` автора и агрегаты шапки (`tech.md` F02, §4).
+ */
+function publishedAuthorBooksWhere(
+  author: { id: string; name: string | null },
+  language: Language,
+): Prisma.BookVersionWhereInput {
+  return {
+    language,
+    status: 'published',
+    OR: author.name
+      ? [{ authorId: author.id }, { author: author.name }]
+      : [{ authorId: author.id }],
+  };
+}
 
 /** Сколько слагов из `similarSlugs` разрешает страница автора: блок — ряд имён, не каталог. */
 const SIMILAR_AUTHORS_MAX = 20;
@@ -1079,14 +1101,14 @@ export class AuthorService {
     const similarSlugs = (translation.similarSlugs as unknown as string[]) || [];
     const blocks = readStoredBlocks(translation);
 
-    // Все книги, без порции: «Показать все» появится только в F02-3, а до неё порция
-    // спрятала бы часть книг со страницы. `booksTotal` — отдельный счёт по тому же условию,
-    // чтобы контракт был готов к порции (решение арбитра 14.10.2026, `F02 | F02-1`).
-    const [{ entries, total }, alternates, { books: bookRefs, authors: authorRefs }] =
+    // Порция 12 (F02-3); `booksTotal` и агрегаты шапки — по всему набору, а не по порции:
+    // по порции они врут у автора с книгами за пределами первых 12 (решение арбитра
+    // 14.10.2026, `F02 | F02-1`).
+    const bookAuthor = { id: author.id, name: translation.name };
+    const [{ entries, total }, aggregates, alternates, { books: bookRefs, authors: authorRefs }] =
       await Promise.all([
-        this.getPublishedBookCards({ id: author.id, name: translation.name }, language, {
-          take: AUTHOR_PAGE_BOOKS_CAP,
-        }),
+        this.getPublishedBookCards(bookAuthor, language, { take: AUTHOR_PAGE_BOOKS_FIRST }),
+        this.getPublishedBooksAggregates(bookAuthor, language),
         this.getPublicAlternates(author.id),
         this.resolvePageRefs(blocks, similarSlugs, language),
       ]);
@@ -1149,6 +1171,8 @@ export class AuthorService {
       alternates,
       similarAuthors,
       booksTotal: total,
+      booksHasAudio: aggregates.hasAudio,
+      booksAvgRating: aggregates.avgRating,
       books: entries.map((e) => ({ ...e.card, firstPublishedYear: e.firstPublishedYear })),
     };
   }
@@ -1279,13 +1303,7 @@ export class AuthorService {
     entries: Array<{ card: BookCardDto; firstPublishedYear: number | null }>;
     total: number;
   }> {
-    const where: Prisma.BookVersionWhereInput = {
-      language,
-      status: 'published',
-      OR: author.name
-        ? [{ authorId: author.id }, { author: author.name }]
-        : [{ authorId: author.id }],
-    };
+    const where = publishedAuthorBooksWhere(author, language);
 
     const [rows, total] = await Promise.all([
       this.prisma.bookVersion.findMany({
@@ -1334,6 +1352,40 @@ export class AuthorService {
         firstPublishedYear: r.firstPublishedYear,
       })),
       total,
+    };
+  }
+
+  /**
+   * Агрегаты шапки страницы автора по всему набору книг, а не по порции (F02-3):
+   * есть ли книга с аудио — тем же признаком, что бейдж карточки (`audioChapters`,
+   * `toBookCardDto`), — и средняя оценка: среднее средних по книгам с оценками, как
+   * считала шапка по списку до порции. Оценки — одним `groupBy` с пределом строк.
+   */
+  private async getPublishedBooksAggregates(
+    author: { id: string; name: string | null },
+    language: Language,
+  ): Promise<{ hasAudio: boolean; avgRating: number | null }> {
+    const where = publishedAuthorBooksWhere(author, language);
+    const [withAudio, ratings] = await Promise.all([
+      this.prisma.bookVersion.findFirst({
+        where: { ...where, audioChapters: { some: {} } },
+        select: { id: true },
+      }),
+      this.prisma.bookRating.groupBy({
+        by: ['bookId'],
+        where: { book: { versions: { some: where } } },
+        _avg: { score: true },
+        orderBy: { bookId: 'asc' },
+        take: AUTHOR_PAGE_BOOKS_CAP,
+      }),
+    ]);
+    const averages = ratings
+      .map((g) => g._avg?.score)
+      .filter((avg): avg is number => typeof avg === 'number');
+    return {
+      hasAudio: withAudio !== null,
+      avgRating:
+        averages.length > 0 ? averages.reduce((sum, avg) => sum + avg, 0) / averages.length : null,
     };
   }
 

@@ -9103,8 +9103,12 @@ export interface components {
       biography?: string | null;
       /** @description YYYY-MM-DD */
       birthDate?: string | null;
-      /** @description Ordered by `firstPublishedYear` asc (undated last), then title */
+      /** @description First 12 books ordered by `firstPublishedYear` asc (undated last), then title; the rest — `/books/cards` of the author */
       books: components['schemas']['PublicAuthorBookDto'][];
+      /** @description Mean of per-book average ratings over published books in this language (first 500 rated books by id); null when none is rated */
+      booksAvgRating: number | null;
+      /** @description Any published book of the author in this language has audio (all books, not only `books`) */
+      booksHasAudio: boolean;
       /** @description Published books of the author in this language; counted separately from `books` */
       booksTotal: number;
       /** @description YYYY-MM-DD */
