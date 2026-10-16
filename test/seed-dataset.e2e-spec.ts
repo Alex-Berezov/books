@@ -184,6 +184,98 @@ describe('Seeded dataset (e2e)', () => {
   });
 
   /**
+   * 🔴 Авторы приёмки страницы автора (`F02-5`, `prisma/seed-authors.ts`). Их читает
+   * `books-front/e2e/author-page.spec.ts` из образа бэкенда, и без этой проверки поломка сида
+   * всплыла бы только в чужом конвейере - 404 или пустым блоком на странице фронта.
+   * Проверяется то, на чём стоят критерии приёмки: полный автор с блоками и ссылками на книги
+   * каталога, ненайденные слаги без ссылки, минимальный автор без блоков, «старый» без новых
+   * полей и автор без перевода на язык страницы - именем без слага.
+   */
+  it('сид даёт авторов приёмки страницы автора в нужном составе', async () => {
+    type Ref = { slug: string } | null;
+    type Page = {
+      name: string;
+      birthDate: string | null;
+      biography: string | null;
+      tagline: string | null;
+      facts: unknown;
+      photoUrl: string | null;
+      photoCredit: unknown;
+      timeline: Array<{ year: number; book: Ref }>;
+      influences: { influencedBy: Array<{ name: string; author: Ref }> } | null;
+      notableWorks: Array<{ book: Ref }>;
+      startHere: Array<{ book: Ref }>;
+      awards: unknown[];
+      adaptations: Array<{ book: Ref }>;
+      funFacts: unknown[];
+      sources: unknown[];
+      quotes: unknown[];
+      faq: unknown[];
+      similarAuthors: Array<{ name: string; slug: string | null }>;
+    };
+    const page = async (lang: string, slug: string) =>
+      (await get(`/${lang}/authors/${slug}`).expect(200)).body as Page;
+
+    // Слаги по языкам: Верн, Дюма, Киплинг. Стивенсон переведён только на `en`.
+    const slugs = {
+      en: ['jules-verne', 'alexandre-dumas', 'rudyard-kipling'],
+      ru: ['zhyul-vern', 'aleksandr-dyuma', 'redyard-kipling'],
+      es: ['julio-verne', 'alejandro-dumas', 'rudyard-kipling'],
+      fr: ['jules-verne', 'alexandre-dumas', 'rudyard-kipling'],
+      pt: ['julio-verne', 'alexandre-dumas', 'rudyard-kipling'],
+    };
+    for (const [lang, [verneSlug, dumasSlug, kiplingSlug]] of Object.entries(slugs)) {
+      const verne = await page(lang, verneSlug);
+      expect(verne.tagline).toBeTruthy();
+      expect(verne.biography).toContain('<h3>');
+      expect(verne.facts).not.toBeNull();
+      expect(verne.photoUrl).toBeTruthy();
+      expect(verne.photoCredit).not.toBeNull();
+      // Две книги каталога разрешены в ссылки, первый роман сайта не знает.
+      expect(verne.notableWorks.filter((w) => w.book)).toHaveLength(2);
+      expect(verne.startHere.filter((s) => s.book)).toHaveLength(2);
+      expect(verne.adaptations.filter((a) => a.book)).toHaveLength(2);
+      expect(verne.timeline.map((e) => e.year)).toEqual([1828, 1863, 1869, 1872, 1905]);
+      expect(verne.timeline.find((e) => e.year === 1863)?.book).toBeNull();
+      expect(verne.influences?.influencedBy.map((r) => r.author?.slug ?? null)).toEqual([
+        null,
+        dumasSlug,
+        null,
+      ]);
+      expect(verne.awards).toHaveLength(1);
+      expect(verne.funFacts).toHaveLength(3);
+      expect(verne.sources).toHaveLength(2);
+      expect(verne.quotes).toHaveLength(1);
+      expect(verne.faq).toHaveLength(1);
+      // Стивенсон без перевода на язык страницы - имя без слага; `no-such-author` пропущен.
+      expect(verne.similarAuthors.map((a) => a.slug)).toEqual([
+        dumasSlug,
+        kiplingSlug,
+        lang === 'en' ? 'robert-louis-stevenson' : null,
+      ]);
+    }
+
+    const dumas = await page('ru', 'aleksandr-dyuma');
+    expect(dumas).toMatchObject({
+      birthDate: null,
+      biography: null,
+      tagline: null,
+      facts: null,
+      timeline: [],
+      quotes: [],
+      faq: [],
+      similarAuthors: [],
+    });
+
+    const kipling = await page('ru', 'redyard-kipling');
+    expect(kipling.biography).not.toContain('<h3>');
+    expect(kipling.quotes).toHaveLength(1);
+    expect(kipling.faq).toHaveLength(1);
+    expect(kipling.tagline).toBeNull();
+    expect(kipling.timeline).toEqual([]);
+  });
+
+  /**
    * 🔴 Сид здесь гоняется **второй раз**, своим вызовом, а не полагается на прогон
    * харнесса. Разница принципиальная: `test/setup-e2e.ts:99-106` зовёт `prisma db seed`
    * ровно один раз по шаблонной базе, и `deploy.yml` тоже сеет один раз. Проверка
@@ -244,10 +336,49 @@ describe('Seeded dataset (e2e)', () => {
     expect(catalogCategoriesBefore).toBe(75);
     expect(catalogTagsBefore).toBe(25);
 
+    // Переводы авторов сида, в том числе авторов приёмки страницы автора (F02-5): `upsert`
+    // по `(authorId, language)`, второй прогон не добавляет ни одного.
+    const seedAuthorsWhere = { authorId: { startsWith: 'seed-author-' } };
+    const seedTranslationsBefore = await prisma.authorTranslation.count({
+      where: seedAuthorsWhere,
+    });
+    // Точное число, а не нижняя граница: префикс `seed-author-` у id только у авторов сида.
+    // Роулинг 5, Верн 5, Дюма 5, Киплинг 5, Стивенсон 1 (`prisma/seed-authors.ts`).
+    expect(seedTranslationsBefore).toBe(21);
+    const authorOfCatalog = () =>
+      prisma.bookVersion.findMany({
+        where: { book: { slug: { in: catalogSlugs } } },
+        select: { id: true, authorId: true, book: { select: { slug: true } } },
+        orderBy: { id: 'asc' },
+      });
+    const catalogAuthorsBefore = await authorOfCatalog();
+    expect(catalogAuthorsBefore).toHaveLength(25);
+    // Автор каждой книги - точно, по книге: все пять языковых версий у своего автора.
+    const expectedOwner: Record<string, string> = {
+      'treasure-island': 'seed-author-robert-louis-stevenson',
+      'the-jungle-book': 'seed-author-rudyard-kipling',
+      'around-the-world-in-eighty-days': 'seed-author-jules-verne',
+      'the-three-musketeers': 'seed-author-alexandre-dumas',
+      'twenty-thousand-leagues-under-the-sea': 'seed-author-jules-verne',
+    };
+    expect(catalogAuthorsBefore.filter((v) => v.authorId !== expectedOwner[v.book.slug])).toEqual(
+      [],
+    );
+
     const intakesBefore = await prisma.rightsIntake.count();
     const profilesBefore = await prisma.rightsProfile.count();
     const reviewsBefore = await prisma.rightsReview.count();
     const importsBefore = await prisma.rightsReviewImport.count();
+
+    // Минимальному автору «импортировали» блок между прогонами: повторный сид обязан вернуть
+    // его к заданному составу (`EMPTY_PAGE` в `prisma/seed-authors.ts`), иначе приёмка
+    // «минимальный автор без блоков» на непервой базе краснеет не от кода.
+    await prisma.authorTranslation.update({
+      where: {
+        authorId_language: { authorId: 'seed-author-alexandre-dumas', language: 'ru' },
+      },
+      data: { tagline: 'Импортировано руками', timeline: [{ year: 1844, text: 'x' }] },
+    });
 
     const stampBefore = await prisma.bookVersion.findFirst({
       where: { book: { slug: 'harry-potter' }, language: 'en' },
@@ -279,6 +410,18 @@ describe('Seeded dataset (e2e)', () => {
     );
     const body = res.body as { items: Array<{ name: string }> };
     expect(body.items.filter((a) => a.name === 'Джоан Роулинг')).toHaveLength(1);
+    expect(await prisma.authorTranslation.count({ where: seedAuthorsWhere })).toBe(
+      seedTranslationsBefore,
+    );
+    expect(await authorOfCatalog()).toEqual(catalogAuthorsBefore);
+    expect(
+      await prisma.authorTranslation.findUnique({
+        where: {
+          authorId_language: { authorId: 'seed-author-alexandre-dumas', language: 'ru' },
+        },
+        select: { tagline: true, timeline: true },
+      }),
+    ).toEqual({ tagline: null, timeline: null });
 
     // 🔴 Второй прогон не должен ни добавлять привязок, ни перевешивать их на другую
     // языковую версию. До 02.09.2026 версия у книги была одна, и `book.versions[0]`
