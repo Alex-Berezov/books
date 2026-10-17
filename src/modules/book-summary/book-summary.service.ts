@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateBookSummaryDto } from './dto/update-book-summary.dto';
+import { richHtmlText } from '../../shared/sanitize/rich-html-text';
 
 // Пространство имён двухаргументного `pg_advisory_xact_lock`; занятые — в перечне у `RECHECK_SCAN_LOCK_KEY`.
 const BOOK_SUMMARY_LOCK_NAMESPACE = 831_427_004;
@@ -65,10 +66,13 @@ export class BookSummaryService {
           where: { bookVersionId },
           orderBy: CURRENT_SUMMARY_ORDER,
         });
+        // Признак текста считается тем же правилом, что валидатор: сейчас он всегда true, но
+        // счётчик пересказов опирается на колонку, а не на то, что валидатор стоит на входе.
+        const hasText = richHtmlText(dto.summary) !== '';
         if (!existing) {
-          return tx.bookSummary.create({ data: { bookVersionId, ...dto } });
+          return tx.bookSummary.create({ data: { bookVersionId, ...dto, hasText } });
         }
-        return tx.bookSummary.update({ where: { id: existing.id }, data: { ...dto } });
+        return tx.bookSummary.update({ where: { id: existing.id }, data: { ...dto, hasText } });
       }, BOOK_SUMMARY_TX_OPTIONS);
     } catch (e: unknown) {
       // Версию проверяли до транзакции и без замка, а её удаление идёт мимо замка сводки:

@@ -964,6 +964,7 @@ describe('AuthorService', () => {
           'coverImageUrl',
           'firstPublishedYear',
           'hasAudio',
+          'hasSummary',
           'hasText',
           'id',
           'publishedAt',

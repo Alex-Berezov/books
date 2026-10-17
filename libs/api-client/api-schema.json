@@ -2402,6 +2402,11 @@
             "example": false,
             "type": "boolean"
           },
+          "hasSummary": {
+            "description": "Whether this language version has an editorial summary (BookSummary)",
+            "example": false,
+            "type": "boolean"
+          },
           "hasText": {
             "description": "Whether a published text version exists for this language",
             "example": true,
@@ -2452,6 +2457,7 @@
           "ratingsCount",
           "hasText",
           "hasAudio",
+          "hasSummary",
           "publishedAt",
           "categoryIds"
         ],
@@ -4539,6 +4545,10 @@
             "format": "date-time",
             "type": "string"
           },
+          "hasText": {
+            "description": "В summary есть видимый текст; по нему считаются _count.summaries и hasSummary",
+            "type": "boolean"
+          },
           "id": {
             "type": "string"
           },
@@ -4558,6 +4568,7 @@
           "id",
           "bookVersionId",
           "summary",
+          "hasText",
           "analysis",
           "themes",
           "createdAt",
@@ -13477,6 +13488,11 @@
             "example": false,
             "type": "boolean"
           },
+          "hasSummary": {
+            "description": "Whether this language version has an editorial summary (BookSummary)",
+            "example": false,
+            "type": "boolean"
+          },
           "hasText": {
             "description": "Whether a published text version exists for this language",
             "example": true,
@@ -13527,6 +13543,7 @@
           "ratingsCount",
           "hasText",
           "hasAudio",
+          "hasSummary",
           "publishedAt",
           "categoryIds",
           "firstPublishedYear"

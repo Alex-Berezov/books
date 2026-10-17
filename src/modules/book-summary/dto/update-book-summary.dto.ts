@@ -1,11 +1,16 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString } from 'class-validator';
-import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
+import {
+  RICH_HTML_MAX_LENGTH,
+  RichHtml,
+  RichHtmlHasText,
+} from '../../../shared/validators/rich-html.decorator';
 
 export class UpdateBookSummaryDto {
   @ApiProperty({ description: 'Short summary text' })
   @IsString()
   @RichHtml(RICH_HTML_MAX_LENGTH.text)
+  @RichHtmlHasText()
   summary!: string;
 
   @ApiPropertyOptional({ description: 'Optional analysis' })

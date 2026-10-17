@@ -125,6 +125,46 @@ describe('BookSummary e2e', () => {
     expect(put2.body.summary).toBe('Updated summary');
   });
 
+  // Пустой редактор отдаёт `<p></p>`: такой пересказ вышел бы пустой индексируемой страницей.
+  it('PUT rejects a summary without visible text', async () => {
+    for (const summary of ['', '   ', '<p></p>', '<p>&nbsp;</p>', '<h2> </h2><p><br></p>']) {
+      await request(http())
+        .put(`/versions/${versionId}/summary`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ summary })
+        .expect(400);
+    }
+    const get = await request(http()).get(`/versions/${versionId}/summary`).expect(200);
+    expect(get.body.summary).toBe('Updated summary');
+  });
+
+  // Строки без текста, сохранённые до 17.10.2026 (миграция выставила им hasText=false), пересказом
+  // не считаются: иначе кнопка, карточка и карта сайта вели бы на страницу, которая отвечает 404.
+  it('пересказ без текста не даёт hasSummary в обзоре', async () => {
+    const slug = `book-sum-empty-${Date.now()}`;
+    const book = await createBookFixture(prisma, slug);
+    const version = await prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: 'en',
+        title: 'Empty Summary Version',
+        author: 'Author',
+        description: 'Desc',
+        coverImageUrl: 'https://example.com/c.jpg',
+        type: 'text',
+        isFree: true,
+        status: 'published',
+      },
+    });
+    await prisma.bookSummary.create({
+      data: { bookVersionId: version.id, summary: '<p>&nbsp;</p>', hasText: false },
+    });
+
+    const res = await request(http()).get(`/en/books/${slug}/overview`).expect(200);
+    expect(res.body.hasSummary).toBe(false);
+    expect(res.body.versions[0]._count.summaries).toBe(0);
+  });
+
   /**
    * `LEGACY-420`, посадка. Раньше `upsertForVersion` шёл «прочитал -> создал»
    * без транзакции и без уникального ключа: два параллельных сохранения одной

@@ -168,7 +168,7 @@ describe('BookSummaryService', () => {
     expect(res.id).toBe('s2');
     expect(tx.bookSummary.create).toHaveBeenCalledTimes(1);
     expect(tx.bookSummary.create).toHaveBeenCalledWith({
-      data: { bookVersionId: 'v1', summary: 'NS' },
+      data: { bookVersionId: 'v1', summary: 'NS', hasText: true },
     });
     expect(tx.bookSummary.update).not.toHaveBeenCalled();
   });
@@ -186,7 +186,7 @@ describe('BookSummaryService', () => {
     expect(tx.bookSummary.update).toHaveBeenCalledTimes(1);
     expect(tx.bookSummary.update).toHaveBeenCalledWith({
       where: { id: 's1' },
-      data: { summary: 'UPD' },
+      data: { summary: 'UPD', hasText: true },
     });
     expect(tx.bookSummary.create).not.toHaveBeenCalled();
   });
@@ -220,5 +220,35 @@ describe('BookSummaryService', () => {
     );
     expect(prisma.bookSummary.findFirst).not.toHaveBeenCalled();
     expect(prisma.bookSummary.create).not.toHaveBeenCalled();
+  });
+
+  // Признак текста считается правилом валидатора, а не берётся на веру: счётчик пересказов
+  // (карточка, карта сайта, кнопка) опирается на колонку.
+  it('upsertForVersion пишет hasText=false для HTML без видимого текста', async () => {
+    prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1' });
+    tx.bookSummary.findFirst.mockResolvedValue(null);
+    tx.bookSummary.create.mockResolvedValue({ id: 's3' });
+
+    await service.upsertForVersion('v1', { summary: '<p>&nbsp;</p>' });
+
+    expect(tx.bookSummary.create).toHaveBeenCalledTimes(1);
+    expect(tx.bookSummary.update).not.toHaveBeenCalled();
+    expect(tx.bookSummary.create).toHaveBeenCalledWith({
+      data: { bookVersionId: 'v1', summary: '<p>&nbsp;</p>', hasText: false },
+    });
+  });
+
+  it('upsertForVersion пересчитывает hasText и при обновлении', async () => {
+    prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1' });
+    tx.bookSummary.findFirst.mockResolvedValue({ id: 's1', bookVersionId: 'v1', hasText: true });
+    tx.bookSummary.update.mockResolvedValue({ id: 's1' });
+
+    await service.upsertForVersion('v1', { summary: '<p></p>' });
+
+    expect(tx.bookSummary.update).toHaveBeenCalledTimes(1);
+    expect(tx.bookSummary.update).toHaveBeenCalledWith({
+      where: { id: 's1' },
+      data: { summary: '<p></p>', hasText: false },
+    });
   });
 });

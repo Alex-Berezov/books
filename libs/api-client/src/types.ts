@@ -5074,6 +5074,11 @@ export interface components {
        */
       hasAudio: boolean;
       /**
+       * @description Whether this language version has an editorial summary (BookSummary)
+       * @example false
+       */
+      hasSummary: boolean;
+      /**
        * @description Whether a published text version exists for this language
        * @example true
        */
@@ -5752,6 +5757,8 @@ export interface components {
       bookVersionId: string;
       /** Format: date-time */
       createdAt: string;
+      /** @description В summary есть видимый текст; по нему считаются _count.summaries и hasSummary */
+      hasText: boolean;
       id: string;
       summary: string;
       themes: string | null;
@@ -9057,6 +9064,11 @@ export interface components {
        * @example false
        */
       hasAudio: boolean;
+      /**
+       * @description Whether this language version has an editorial summary (BookSummary)
+       * @example false
+       */
+      hasSummary: boolean;
       /**
        * @description Whether a published text version exists for this language
        * @example true

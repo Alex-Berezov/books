@@ -2,6 +2,17 @@ import { BookType, Prisma } from '@prisma/client';
 import { BookCardDto } from './dto/book-card.dto';
 
 /**
+ * Счётчик пересказов для `_count`: только строки с видимым текстом (`BookSummary.hasText`, его
+ * пишет `upsertForVersion` по `richHtmlText`, старые строки пересчитала миграция
+ * `20261017120000_book_summary_has_text`). Один на все выборки, которые отдают признак пересказа:
+ * карточки, список книг (карта сайта) и обзор книги (кнопка и страница). Пустой пересказ, посчитанный
+ * здесь, повёл бы на страницу, которая отвечает 404 (решение арбитра 17.10.2026).
+ */
+export const SUMMARIES_WITH_TEXT_COUNT = {
+  where: { hasText: true },
+} as const satisfies Prisma.BookVersionCountOutputTypeCountSummariesArgs;
+
+/**
  * Карточка книги — одна форма на все пути, которые её отдают: `/books/cards` в разрезах
  * и страница автора (`AuthorService.getPublishedBookCards`, F02-1). Чистые функции без DI:
  * `AuthorService` не может внедрить `BookService` (`BookModule` уже импортирует
@@ -18,7 +29,9 @@ export const BOOK_CARD_SELECT = {
   coverImageUrl: true,
   type: true,
   publishedAt: true,
-  _count: { select: { chapters: true, audioChapters: true } },
+  _count: {
+    select: { chapters: true, audioChapters: true, summaries: SUMMARIES_WITH_TEXT_COUNT },
+  },
   categories: { select: { categoryId: true } },
   book: { select: { slug: true } },
 } as const satisfies Prisma.BookVersionSelect;
@@ -60,6 +73,8 @@ export function bookCardSlug(row: { slug: string | null; book: { slug: string } 
  *
  * `hasAudio` — по наличию аудиоглав, а не по `type` версии: бейдж обещает, что книгу можно
  * послушать, а это подтверждают только главы (решение арбитра 14.10.2026, `F02 | F02-1`).
+ * `hasSummary` — у этой версии есть пересказ: карточка в блоке «Похожие пересказы» ведёт
+ * на `/{lang}/book/{slug}/summary`, и без него ссылка вела бы в 404.
  */
 export function toBookCardDto(
   row: BookCardRow,
@@ -77,6 +92,7 @@ export function toBookCardDto(
     ratingsCount: rating?.count ?? 0,
     hasText: row._count.chapters > 0 || row.type === BookType.text,
     hasAudio: row._count.audioChapters > 0,
+    hasSummary: row._count.summaries > 0,
     publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
     categoryIds: row.categories.map((c) => c.categoryId),
   };

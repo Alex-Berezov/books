@@ -19,6 +19,7 @@ import {
   type BookCardRating,
   type BookCardRow,
   loadBookCardRatings,
+  SUMMARIES_WITH_TEXT_COUNT,
   toBookCardDto,
 } from './book-card';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
@@ -164,7 +165,7 @@ export class BookService {
                 select: {
                   chapters: true,
                   audioChapters: true,
-                  summaries: true,
+                  summaries: SUMMARIES_WITH_TEXT_COUNT,
                 },
               },
               tags: {
@@ -418,7 +419,7 @@ export class BookService {
           select: {
             chapters: true,
             audioChapters: true,
-            summaries: true,
+            summaries: SUMMARIES_WITH_TEXT_COUNT,
           },
         },
       },

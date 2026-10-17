@@ -71,6 +71,12 @@ export class BookCardDto {
   hasAudio!: boolean;
 
   @ApiProperty({
+    description: 'Whether this language version has an editorial summary (BookSummary)',
+    example: false,
+  })
+  hasSummary!: boolean;
+
+  @ApiProperty({
     description:
       'ISO date the language version was published (BookVersion.publishedAt). null if unpublished.',
     type: String,

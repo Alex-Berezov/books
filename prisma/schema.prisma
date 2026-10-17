@@ -205,6 +205,8 @@ model BookSummary {
   /// Одна сводка на версию (LEGACY-420): рубеж в базе ко второму писателю мимо замка.
   bookVersionId String      @unique
   summary       String
+  /// Есть видимый текст (`richHtmlText`): по нему считаются `_count.summaries` и `hasSummary`.
+  hasText       Boolean     @default(true)
   analysis      String?
   themes        String?
   createdAt     DateTime    @default(now())

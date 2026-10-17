@@ -15,6 +15,12 @@ export class BookSummaryResponseDto {
   @ApiProperty({ type: String })
   summary!: string;
 
+  @ApiProperty({
+    type: Boolean,
+    description: 'В summary есть видимый текст; по нему считаются _count.summaries и hasSummary',
+  })
+  hasText!: boolean;
+
   @ApiProperty({ type: String, nullable: true })
   analysis!: string | null;
 

@@ -243,6 +243,12 @@ describe('BookService.getOverview', () => {
     expect(res.hasText).toBe(true);
     expect(res.hasAudio).toBe(true);
     expect(res.hasSummary).toBe(true);
+    // Признак пересказа обзора - только строки с видимым текстом (кнопка и страница пересказа).
+    const versionsArgs = prisma.bookVersion.findMany.mock.calls.find(
+      (call: unknown[]) =>
+        (call[0] as { select?: { _count?: unknown } } | undefined)?.select?._count !== undefined,
+    )?.[0] as { select: { _count: { select: { summaries: unknown } } } };
+    expect(versionsArgs.select._count.select.summaries).toEqual({ where: { hasText: true } });
     expect(res.versionIds).toEqual({ text: 'v-text-en', audio: 'v-audio-es' });
     expect(res.seo.main?.metaTitle).toBe('T-text');
     expect(res.seo.read?.metaTitle).toBe('T-text');
@@ -845,6 +851,13 @@ describe('BookService.getOverview', () => {
       expect(res.data[0].hasText).toBe(true);
       expect(res.data[0].hasAudio).toBe(true);
       expect(res.data[0].hasSummary).toBe(true);
+      // Пересказы считаются только с видимым текстом: список книг - источник карты сайта.
+      const args = prisma.book.findMany.mock.calls[0][0] as {
+        select: { versions: { select: { _count: { select: { summaries: unknown } } } } };
+      };
+      expect(args.select.versions.select._count.select.summaries).toEqual({
+        where: { hasText: true },
+      });
     });
 
     it('sets hasText/hasAudio to false if no chapters or drafts only', async () => {
