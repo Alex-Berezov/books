@@ -1,0 +1,433 @@
+{
+  "language": "en",
+  "facts": {
+    "genre": "psychological and philosophical novel",
+    "movement": "realism",
+    "writtenYears": "1865–1866",
+    "settingPlace": "St Petersburg, the streets around the Haymarket",
+    "settingTime": "early July, summer 1865",
+    "narrator": "third person, kept close to Raskolnikov's mind",
+    "structure": "six parts and an epilogue"
+  },
+  "mainIdea": "Crime and Punishment tests a seductive idea on a living man: that an “extraordinary” person may step over blood for the sake of a higher goal. Raskolnikov kills to prove the theory to himself and discovers that the real punishment is not prison but being cut off from everyone, himself included. Dostoevsky's way out lies not in logic but in confession, suffering and love.",
+  "themes": [
+    {
+      "key": "guilt",
+      "title": "Guilt and conscience",
+      "interpretation": "In this novel the punishment starts long before the police do. Within hours of the murder Raskolnikov faints at the police station, falls into fever and pushes away his mother and sister. Conscience works on him like an illness rather than a moral conclusion.\n\nWhat surprises many readers is that he does not repent the act itself for most of the book. He despises himself for failing the test, for not being a Napoleon. Genuine remorse arrives only in the epilogue, and Dostoevsky presents it as a slow, painful return to other people rather than a sudden conversion.",
+      "chapters": [7, 8, 10, 20, 30, 39, 41]
+    },
+    {
+      "key": "extraordinary-man",
+      "title": "The “extraordinary man” theory",
+      "interpretation": "In his article “On Crime” Raskolnikov divides humanity into the ordinary, who must obey, and the extraordinary, who have the right to overstep the law for a new idea. Napoleon is his proof that history forgives the victor his bloodshed.\n\nThe novel refutes the theory not by argument but by experience. The neat arithmetic of one death for a hundred lives collapses the moment the gentle Lizaveta also falls under the axe. The theory turns out to be pride dressed up as philosophy, and pride is what isolates him.",
+      "chapters": [6, 19, 20, 30, 33],
+      "quotes": [
+        {
+          "text": "One death, and a hundred lives in exchange—it's simple arithmetic!",
+          "chapter": 6,
+          "comment": "A student overheard in a tavern voices Raskolnikov's own thoughts almost word for word."
+        }
+      ]
+    },
+    {
+      "key": "redemption",
+      "title": "Suffering and resurrection",
+      "interpretation": "Sonya Marmeladova offers Raskolnikov the opposite of his theory: to accept suffering and return to people through confession. The Gospel story of Lazarus, which she reads aloud to him, becomes the key to the whole book. He is spiritually dead, and the question is whether he can be raised.\n\nDostoevsky refuses to make this easy. Confessing brings no relief, and even in Siberia Raskolnikov remains proud. The turn comes only in the final pages, and the narrator openly calls it the beginning of a new story rather than an ending.",
+      "chapters": [19, 24, 30, 39, 41]
+    },
+    {
+      "key": "poverty",
+      "title": "Poverty and humiliation",
+      "interpretation": "The Petersburg of the novel is a city of cramped rented rooms, taverns and debts. The ruin of the Marmeladov family, Dunya's readiness to marry the calculating Luzhin for her brother's sake, and Raskolnikov's own coffin-like garret build the pressure under which his theory takes shape.\n\nYet poverty is never an excuse. Sonya and her father are poorer still, and it is Raskolnikov who takes up the axe: the social cause is real, but the choice belongs to the man.",
+      "chapters": [2, 3, 4, 14, 28, 31]
+    },
+    {
+      "key": "alienation",
+      "title": "Isolation",
+      "interpretation": "His surname echoes the Russian word raskol, “split” or “schism”, and throughout the book he splits away from the world. He cannot speak to his mother, drives off his friend and feels cut off from everyone as if with scissors. Isolation is the direct consequence of an idea that sets one man above the rest.\n\nSvidrigailov, his dark double, shows where that road ends: total freedom from morality turns into emptiness and suicide.",
+      "chapters": [10, 15, 20, 21, 37, 38]
+    }
+  ],
+  "characters": [
+    {
+      "key": "raskolnikov",
+      "name": "Rodion Romanovich Raskolnikov",
+      "role": "main",
+      "description": "A former law student who has dropped out through poverty. Clever, proud and capable of sudden generosity, he gives his last money for Marmeladov's funeral. Two forces fight in him: a cold theory that justifies murder and a living heart that will not accept it.\n\nThe novel needs him as a test case. Through his fever, fear and stubbornness Dostoevsky shows that reason cut loose from conscience destroys its owner first.",
+      "arc": {
+        "from": "a proud theorist who sets out to prove he has the right",
+        "to": "a convict who discovers love and the possibility of a new life"
+      },
+      "themeKeys": ["guilt", "extraordinary-man", "alienation"],
+      "relations": [
+        {
+          "to": "sonya",
+          "label": "loves"
+        },
+        {
+          "to": "dunya",
+          "label": "brother"
+        },
+        {
+          "to": "razumikhin",
+          "label": "friend"
+        },
+        {
+          "to": "porfiry",
+          "label": "adversary"
+        },
+        {
+          "to": "svidrigailov",
+          "label": "double"
+        }
+      ]
+    },
+    {
+      "key": "sonya",
+      "name": "Sonya Marmeladova",
+      "role": "main",
+      "description": "Marmeladov's daughter, driven into prostitution to keep her starving family alive. Timid and quiet, but with an unshakeable faith. Sonya has also “overstepped”, but against herself rather than another person, and so she becomes Raskolnikov's companion rather than his judge.\n\nShe embodies the path of humility and compassion that answers his proud theory, and she is the first person he confesses to.",
+      "arc": {
+        "from": "a humiliated girl ashamed of herself",
+        "to": "Raskolnikov's support in Siberia, loved by the convicts"
+      },
+      "quote": {
+        "text": "Go at once, this very minute, stand at the cross-roads, bow down, first kiss the earth which you have defiled and then bow down to all the world and say to all men aloud, “I am a murderer!”",
+        "chapter": 30
+      },
+      "themeKeys": ["redemption", "poverty"],
+      "relations": [
+        {
+          "to": "marmeladov",
+          "label": "daughter"
+        },
+        {
+          "to": "katerina-ivanovna",
+          "label": "stepdaughter"
+        }
+      ]
+    },
+    {
+      "key": "porfiry",
+      "name": "Porfiry Petrovich",
+      "role": "secondary",
+      "description": "The investigating magistrate who guesses the truth before anyone else but has no evidence. Over three long conversations he fights a psychological duel with Raskolnikov, betting not on an arrest but on the murderer coming forward himself.\n\nHe is more than a detective: he understands the theory from the inside and offers its author a way out, confession as the start of a new life. Readers of crime fiction often see him as an ancestor of the modern psychological detective.",
+      "themeKeys": ["extraordinary-man", "guilt"]
+    },
+    {
+      "key": "svidrigailov",
+      "name": "Arkady Ivanovich Svidrigailov",
+      "role": "secondary",
+      "description": "A landowner with a sinister past who pursues Dunya. He lives as if everything really were permitted, which makes him Raskolnikov's double and a glimpse of his possible future.\n\nBehind the cynicism there is generosity, boredom and dread of eternity. His suicide shows where freedom without faith or love leads.",
+      "quote": {
+        "text": "Instead of all that, what if it's one little room, like a bath house in the country, black and grimy and spiders in every corner, and that's all eternity is?",
+        "chapter": 21
+      },
+      "themeKeys": ["alienation", "extraordinary-man"],
+      "relations": [
+        {
+          "to": "dunya",
+          "label": "pursues"
+        }
+      ]
+    },
+    {
+      "key": "dunya",
+      "name": "Avdotya Romanovna (Dunya)",
+      "role": "secondary",
+      "description": "Raskolnikov's proud and resolute sister. She is ready to marry Luzhin to help her brother, a sacrifice that mirrors Sonya's. She stands up to both Luzhin and Svidrigailov and keeps her freedom of choice.",
+      "themeKeys": ["poverty"],
+      "relations": [
+        {
+          "to": "razumikhin",
+          "label": "loves"
+        },
+        {
+          "to": "luzhin",
+          "label": "former fiancée"
+        },
+        {
+          "to": "pulcheria",
+          "label": "daughter"
+        }
+      ]
+    },
+    {
+      "key": "razumikhin",
+      "name": "Dmitri Prokofich Razumikhin",
+      "role": "secondary",
+      "description": "Raskolnikov's fellow student and loyal friend, just as poor but energetic and cheerful. He earns money by translating and builds no theories. His name comes from the Russian razum, “reason”: common sense and kindness set against the hero's cold rationalism.",
+      "themeKeys": ["poverty"]
+    },
+    {
+      "key": "marmeladov",
+      "name": "Semyon Zakharovich Marmeladov",
+      "role": "secondary",
+      "description": "A drunken former clerk and Sonya's father. His tavern confession opens the theme of the humiliated, people who know exactly how far they have fallen and still hope to be forgiven.",
+      "themeKeys": ["poverty", "redemption"],
+      "relations": [
+        {
+          "to": "katerina-ivanovna",
+          "label": "husband"
+        }
+      ]
+    },
+    {
+      "key": "katerina-ivanovna",
+      "name": "Katerina Ivanovna",
+      "role": "secondary",
+      "description": "Marmeladov's consumptive wife and Sonya's stepmother, clinging to the memory of a genteel past. Her death shows how poverty grinds down human dignity.",
+      "themeKeys": ["poverty"]
+    },
+    {
+      "key": "luzhin",
+      "name": "Pyotr Petrovich Luzhin",
+      "role": "secondary",
+      "description": "Dunya's calculating fiancé. His “economic” morality of enlightened self-interest is a vulgar caricature of Raskolnikov's theory: profit justifies anything, even slandering Sonya.",
+      "themeKeys": ["extraordinary-man"]
+    },
+    {
+      "key": "pulcheria",
+      "name": "Pulcheria Alexandrovna",
+      "role": "secondary",
+      "description": "Raskolnikov's mother. Her letter and boundless love keep reminding him of the life and the people he has cut himself off from.",
+      "relations": [
+        {
+          "to": "raskolnikov",
+          "label": "mother"
+        }
+      ]
+    },
+    {
+      "key": "alyona",
+      "name": "Alyona Ivanovna",
+      "role": "minor",
+      "description": "The old pawnbroker. To Raskolnikov she is a “louse”, useless and harmful; to the novel she is a human being whose death is murder all the same."
+    },
+    {
+      "key": "lizaveta",
+      "name": "Lizaveta",
+      "role": "minor",
+      "description": "The pawnbroker's meek half-sister, killed because she walks in at the wrong moment. Her death instantly breaks the theory's arithmetic: the axe falls on exactly the kind of person the theory claimed to protect."
+    }
+  ],
+  "symbols": [
+    {
+      "title": "The colour yellow",
+      "interpretation": "Yellow wallpaper in the pawnbroker's flat and in Raskolnikov's garret, Sonya's “yellow ticket” as a registered prostitute, sallow faces: yellow is the colour of sickness, poverty and moral decay that tints the novel's Petersburg.",
+      "chapters": [1, 2, 3, 24]
+    },
+    {
+      "title": "The raising of Lazarus",
+      "interpretation": "Porfiry asks Raskolnikov whether he believes in the raising of Lazarus, and later Sonya reads him that chapter of the Gospel of John. Lazarus, four days in the tomb, is an image of the hero who died spiritually with the murder, and a promise of the resurrection in the epilogue.",
+      "chapters": [19, 24, 41]
+    },
+    {
+      "title": "The cross",
+      "interpretation": "Sonya gives Raskolnikov her cypress-wood cross and keeps Lizaveta's copper one. To take the cross is to accept suffering; he puts it on when he goes to confess.",
+      "chapters": [30, 39]
+    }
+  ],
+  "keyQuotes": [
+    {
+      "text": "Whether I can step over barriers or not, whether I dare stoop to pick up or not, whether I am a trembling creature or whether I have the right...",
+      "chapter": 30,
+      "speakerKey": "raskolnikov",
+      "themeKeys": ["extraordinary-man"],
+      "interpretation": "The question at the heart of the novel, in the hero's own words. The murder was never about money; it was a test of whether he belongs among the extraordinary. The wording itself is a trap: a person is either a “trembling creature” or has the right to another's life, and the theory sees no third, human option."
+    },
+    {
+      "text": "I didn't kill a human being, but a principle! I killed the principle, but I didn't overstep, I stopped on this side....",
+      "chapter": 20,
+      "speakerKey": "raskolnikov",
+      "themeKeys": ["extraordinary-man", "guilt"],
+      "interpretation": "Raskolnikov admits defeat, but not yet a moral one: he failed to become the man he wanted to be. The word “overstep” ties this line to the Russian title, where the word for crime literally means a stepping over."
+    },
+    {
+      "text": "Did I murder the old woman? I murdered myself, not her!",
+      "chapter": 30,
+      "speakerKey": "raskolnikov",
+      "themeKeys": ["guilt", "alienation"],
+      "interpretation": "The crime strikes back at the one who commits it. By killing another he destroyed his own bond with people, which is why the punishment in this book is inward rather than legal."
+    },
+    {
+      "text": "The candle-end was flickering out in the battered candlestick, dimly lighting up in the poverty-stricken room the murderer and the harlot who had so strangely been reading together the eternal book.",
+      "chapter": 24,
+      "themeKeys": ["redemption"],
+      "interpretation": "The narrator brings the two transgressors together over the Gospel. The scene carries the design of the whole novel: the fallen and the promise of resurrection in one poor room."
+    },
+    {
+      "text": "Become a sun and all will see you.",
+      "chapter": 33,
+      "speakerKey": "porfiry",
+      "themeKeys": ["redemption"],
+      "interpretation": "The investigator offers the murderer not punishment but a way back: confession and suffering will return him to the world of people. Porfiry speaks almost like Sonya here, only in the language of reason."
+    },
+    {
+      "text": "They were renewed by love; the heart of each held infinite sources of life for the heart of the other.",
+      "chapter": 41,
+      "themeKeys": ["redemption"],
+      "interpretation": "The novel's conclusion: the theory is defeated not by another theory but by love. The resurrection is named outright yet shown only as the start of a road."
+    }
+  ],
+  "titleMeaning": "The English title hides a pun that every Russian reader hears. The Russian word for crime, prestuplenie, literally means “a stepping over”, and the novel keeps returning to it: Raskolnikov wants to step over the moral law and find out whether he can cross the line that divides ordinary people from extraordinary ones. The closest English echo is “transgression”, which also means crossing a boundary.\n\nThe “punishment”, meanwhile, has little to do with the court. Prison takes up a few pages of the epilogue; the real penalty, sickness, fear and estrangement from those he loves, begins the moment the crime is done. Read this way, the title is a formula: step over another person and you punish yourself.",
+  "endingMeaning": "Confession and Siberia are not yet repentance. For a long time in prison Raskolnikov believes his only fault was failing to bear the deed. The change comes after an illness and a fever dream of a plague in which people infected with certainty of their own rightness destroy one another: he sees his theory carried to its end.\n\nThe last scene by the river, where he weeps at Sonya's feet for the first time, is a beginning rather than a resolution. The narrator says outright that a new story starts here, the story of a man's gradual renewal. The novel closes not with a verdict but with hope.",
+  "context": "Dostoevsky conceived the book in the summer of 1865 in Wiesbaden, stranded and penniless after losing at roulette. He offered Mikhail Katkov, editor of The Russian Messenger, a story about a young man who commits murder under the sway of half-baked ideas. At the same time he was planning a novel called The Drunkards about a clerk's ruined family; that strand became the Marmeladovs.\n\nAt the end of 1865 he burned the first draft, written as a first-person confession, and started again in the third person. The novel ran in The Russian Messenger throughout 1866, while Dostoevsky was also racing to deliver The Gambler to a publisher under a ruinous contract.\n\nThe background is Russia after the emancipation of the serfs and the legal reforms of 1864, a time of fierce debate about rational egoism, nihilism and whether violence for the common good can be justified. Dostoevsky's own years in a Siberian prison camp gave him the material for the epilogue.",
+  "timeline": [
+    {
+      "year": "1821",
+      "event": "Fyodor Dostoevsky is born in Moscow.",
+      "kind": "author"
+    },
+    {
+      "year": "1849",
+      "event": "Arrested with the Petrashevsky circle; a mock execution is staged before the sentence is commuted.",
+      "kind": "author"
+    },
+    {
+      "year": "1850–1854",
+      "event": "Penal servitude in Omsk, the experience behind the epilogue.",
+      "kind": "author"
+    },
+    {
+      "year": "1861",
+      "event": "Emancipation of the serfs in Russia.",
+      "kind": "epoch"
+    },
+    {
+      "year": "1864",
+      "event": "Judicial reform introduces open trials and a new system of investigation.",
+      "kind": "epoch"
+    },
+    {
+      "year": "1865",
+      "event": "The idea takes shape in Wiesbaden; the first draft is burned at the end of the year.",
+      "kind": "book"
+    },
+    {
+      "year": "1866",
+      "event": "The novel is serialised in The Russian Messenger.",
+      "kind": "book"
+    },
+    {
+      "year": "1867",
+      "event": "First edition in book form.",
+      "kind": "book"
+    },
+    {
+      "year": "1881",
+      "event": "Dostoevsky dies in St Petersburg.",
+      "kind": "author"
+    },
+    {
+      "year": "1886",
+      "event": "First English translation, by Frederick Whishaw.",
+      "kind": "book"
+    },
+    {
+      "year": "1914",
+      "event": "Constance Garnett's translation, the version most English readers knew for decades.",
+      "kind": "book"
+    }
+  ],
+  "style": [
+    {
+      "device": "Polyphony",
+      "explanation": "Mikhail Bakhtin called Dostoevsky's novels polyphonic: the characters' voices sound with the same weight as the author's. Raskolnikov's theory, Luzhin's self-interest, Svidrigailov's cynicism and Sonya's faith argue at full strength, and the author does not cut the argument short with a ready-made verdict."
+    },
+    {
+      "device": "Interior monologue",
+      "explanation": "The narration is in the third person but stays almost entirely inside the hero's head. We hear his feverish reasoning, his quarrels with himself and his sudden decisions, so the reader lives through the crime from within without being handed a judgement."
+    },
+    {
+      "device": "Prophetic dreams",
+      "explanation": "Dreams tell the truth the hero denies by day: the beaten horse before the murder, the laughing old woman after it, the plague in the epilogue. They are the novel's main way of showing what lies beneath the theory."
+    },
+    {
+      "device": "A real, mapped city",
+      "explanation": "Dostoevsky hides addresses behind initials yet traces routes so precisely that readers still walk them: Stolyarny Lane, Kokushkin Bridge, the Haymarket. The stifling heat and crowds press on the hero as heavily as his idea.",
+      "example": {
+        "text": "On an exceptionally hot evening early in July a young man came out of the garret in which he lodged in S. Place and walked slowly, as though in hesitation, towards K. bridge.",
+        "chapter": 1
+      }
+    }
+  ],
+  "reception": "The novel was an immediate success in Russia; readers waited for each new instalment of The Russian Messenger, and critics argued over it in print. Dmitry Pisarev read it as a social novel about what poverty does to a person, a reading that sits uneasily with Dostoevsky's insistence on personal responsibility.\n\nIn English the book reached a wide audience through Constance Garnett's translation of 1914, and later through new versions such as Richard Pevear and Larissa Volokhonsky's. In the twentieth century Mikhail Bakhtin's idea of polyphony, first worked out on Dostoevsky, became central to the theory of the novel. Today Crime and Punishment is a fixture of school and university reading lists and a touchstone for crime fiction that cares more about why than who.",
+  "adaptations": [
+    {
+      "title": "Crime and Punishment",
+      "year": 1935,
+      "kind": "film",
+      "differences": "Josef von Sternberg's Hollywood version with Peter Lorre as Raskolnikov. It compresses the novel into a tight psychological thriller and leaves out most of the subplots and the religious dimension."
+    },
+    {
+      "title": "Crime and Punishment",
+      "year": 2002,
+      "kind": "film",
+      "differences": "A BBC television film with John Simm as Raskolnikov. Its short running time keeps the duel with Porfiry and the bond with Sonya at the centre and cuts much of the surrounding cast."
+    }
+  ],
+  "misreadings": [
+    {
+      "myth": "Raskolnikov kills the pawnbroker for her money.",
+      "explanation": "Money is secondary. He never even opens the purse he steals and hides it under a stone. In his own words he wanted to find out whether he was a trembling creature or had the right. The murder is an experiment on himself, not a robbery."
+    },
+    {
+      "myth": "The punishment in the title is prison in Siberia.",
+      "explanation": "Prison takes up only the short epilogue. Almost the entire novel describes an inner punishment, fever, fear and estrangement from family and friends, which begins long before any trial."
+    },
+    {
+      "myth": "Porfiry Petrovich catches Raskolnikov with evidence.",
+      "explanation": "The investigator has no proof and says so. He reads the murderer psychologically and urges him to confess; the decision to give himself up is Raskolnikov's own."
+    },
+    {
+      "myth": "Sonya is a passive victim.",
+      "explanation": "Sonya is one of the strongest figures in the book. She is the one who demands his confession and withstands his anger. Her humility is conscious faith, not weakness."
+    }
+  ],
+  "discussionQuestions": [
+    "Why does Raskolnikov fail to “step over” even though he commits the murder?",
+    "In what ways is Svidrigailov Raskolnikov's double, and where do they differ?",
+    "What role does the reading of the Lazarus story play in the novel?",
+    "Does the novel answer the “arithmetic” of one death for a hundred lives?",
+    "Why does Raskolnikov repent only in the epilogue and not at the moment of confession?",
+    "Which parts of Raskolnikov's theory seem persuasive to you, and which seem dangerous?"
+  ],
+  "faq": [
+    {
+      "question": "What is the main idea of Crime and Punishment?",
+      "answer": "The novel shows that an idea which permits murder for a higher purpose destroys the murderer first. Dostoevsky locates salvation not in theory but in confession, suffering and love."
+    },
+    {
+      "question": "Why is the novel called Crime and Punishment?",
+      "answer": "In Russian the word for crime literally means “stepping over”: the hero steps over the moral law. The punishment is above all his tormented conscience and isolation, not the court's sentence."
+    },
+    {
+      "question": "Why does Raskolnikov kill the pawnbroker?",
+      "answer": "To test his theory that extraordinary people have the right to overstep the law. The money plays only a minor part in his plan."
+    },
+    {
+      "question": "How does Crime and Punishment end?",
+      "answer": "Raskolnikov confesses and is sent to a Siberian prison camp, and Sonya follows him. In the epilogue he finally feels love for her, and the narrator calls this the beginning of his renewal."
+    },
+    {
+      "question": "How many parts does the novel have?",
+      "answer": "Six parts and an epilogue."
+    }
+  ],
+  "sources": [
+    {
+      "title": "Crime and Punishment — Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Crime_and_Punishment"
+    },
+    {
+      "title": "Fyodor Dostoevsky — Wikipedia",
+      "url": "https://en.wikipedia.org/wiki/Fyodor_Dostoevsky"
+    },
+    {
+      "title": "Crime and Punishment, translated by Constance Garnett — Project Gutenberg",
+      "url": "https://www.gutenberg.org/ebooks/2554"
+    }
+  ]
+}

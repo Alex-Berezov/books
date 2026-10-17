@@ -71,6 +71,7 @@ const PUBLIC_ROUTES: ReadonlyArray<readonly [HttpVerb, string]> = [
   ['get', '/rights/agent/report-schema'],
   ['get', '/rights/agent/report-schema/:version'],
   ['get', '/uploads/limits'],
+  ['get', '/versions/:bookVersionId/analysis'],
   ['get', '/versions/:bookVersionId/audio-chapters'],
   ['get', '/versions/:bookVersionId/chapters'],
   ['get', '/versions/:bookVersionId/seo'],

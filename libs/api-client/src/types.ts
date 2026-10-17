@@ -2214,6 +2214,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/versions/{bookVersionId}/chapter-titles': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Admin: chapter numbers and titles of a version, without text */
+    get: operations['ChapterController_listAdminTitles'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/versions/{bookVersionId}/chapters': {
     parameters: {
       query?: never;
@@ -3764,6 +3781,24 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/versions/{bookVersionId}/analysis': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Get book analysis for a version (drafts are visible to editors only; geo-blocked like the text) */
+    get: operations['BookAnalysisController_get'];
+    /** Create or merge analysis for a version (JSON import format); dryRun=true writes nothing */
+    put: operations['BookAnalysisController_save'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/versions/{bookVersionId}/audio-chapters': {
     parameters: {
       query?: never;
@@ -5045,6 +5080,140 @@ export interface components {
       counts: components['schemas']['BackgroundJobsCountsDto'];
       jobs: components['schemas']['BackgroundJobStatusDto'][];
     };
+    BookAnalysisAdaptationDto: {
+      differences?: string | null;
+      /** @enum {string} */
+      kind: 'film' | 'series' | 'stage' | 'other';
+      title: string;
+      year?: number | null;
+    };
+    BookAnalysisArcDto: {
+      from: string;
+      to: string;
+    };
+    BookAnalysisCharacterDto: {
+      arc?: components['schemas']['BookAnalysisArcDto'] | null;
+      description?: string | null;
+      key: string;
+      name: string;
+      quote?: components['schemas']['BookAnalysisQuoteDto'] | null;
+      relations?: components['schemas']['BookAnalysisRelationDto'][];
+      /** @enum {string} */
+      role: 'main' | 'secondary' | 'minor';
+      themeKeys?: string[];
+    };
+    BookAnalysisFactsDto: {
+      genre?: string | null;
+      movement?: string | null;
+      narrator?: string | null;
+      settingPlace?: string | null;
+      settingTime?: string | null;
+      structure?: string | null;
+      writtenYears?: string | null;
+    };
+    BookAnalysisFaqDto: {
+      answer: string;
+      question: string;
+    };
+    BookAnalysisKeyQuoteDto: {
+      chapter?: number | null;
+      interpretation?: string | null;
+      speakerKey?: string | null;
+      text: string;
+      themeKeys?: string[];
+    };
+    BookAnalysisMisreadingDto: {
+      explanation: string;
+      myth: string;
+    };
+    BookAnalysisQuoteDto: {
+      chapter?: number | null;
+      text: string;
+    };
+    BookAnalysisRelationDto: {
+      label: string;
+      /** @description Key of a main or secondary character */
+      to: string;
+    };
+    BookAnalysisResponseDto: {
+      adaptations: components['schemas']['BookAnalysisAdaptationDto'][] | null;
+      characters: components['schemas']['BookAnalysisCharacterDto'][] | null;
+      context: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      discussionQuestions: string[] | null;
+      endingMeaning: string | null;
+      facts: components['schemas']['BookAnalysisFactsDto'] | null;
+      faq: components['schemas']['BookAnalysisFaqDto'][] | null;
+      /** @description Core is filled (product.md §2); page and sitemap follow it */
+      hasCore: boolean;
+      keyQuotes: components['schemas']['BookAnalysisKeyQuoteDto'][] | null;
+      /**
+       * @description Language of the version
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      mainIdea: string | null;
+      misreadings: components['schemas']['BookAnalysisMisreadingDto'][] | null;
+      reception: string | null;
+      sources: components['schemas']['BookAnalysisSourceDto'][] | null;
+      style: components['schemas']['BookAnalysisStyleDto'][] | null;
+      symbols: components['schemas']['BookAnalysisSymbolDto'][] | null;
+      themes: components['schemas']['BookAnalysisThemeDto'][] | null;
+      timeline: components['schemas']['BookAnalysisTimelineEventDto'][] | null;
+      titleMeaning: string | null;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookAnalysisSaveResponseDto: {
+      /** @description Saved record; null on dryRun (nothing is written) */
+      analysis: components['schemas']['BookAnalysisResponseDto'] | null;
+      /** @description Core of the merged record */
+      hasCore: boolean;
+      warnings: components['schemas']['BookAnalysisWarningDto'][];
+    };
+    BookAnalysisSourceDto: {
+      title: string;
+      /** @description Absolute https URL */
+      url: string;
+    };
+    BookAnalysisStyleDto: {
+      device: string;
+      example?: components['schemas']['BookAnalysisQuoteDto'] | null;
+      explanation: string;
+    };
+    BookAnalysisSymbolDto: {
+      chapters?: number[];
+      interpretation: string;
+      quote?: components['schemas']['BookAnalysisQuoteDto'] | null;
+      title: string;
+    };
+    BookAnalysisThemeDto: {
+      chapters?: number[];
+      interpretation?: string | null;
+      key: string;
+      quotes?: components['schemas']['BookAnalysisThemeQuoteDto'][];
+      title: string;
+    };
+    BookAnalysisThemeQuoteDto: {
+      chapter?: number | null;
+      comment?: string | null;
+      text: string;
+    };
+    BookAnalysisTimelineEventDto: {
+      event: string;
+      /** @enum {string} */
+      kind: 'author' | 'epoch' | 'book';
+      /** @description Year or period, e.g. "1866" or "1860s" */
+      year: string;
+    };
+    BookAnalysisWarningDto: {
+      /** @enum {string} */
+      code: 'chapter_not_found' | 'core_incomplete';
+      message: string;
+      /** @description Field path, e.g. "themes.0.chapters.1" or "keyQuotes" */
+      path: string;
+    };
     BookCardDto: {
       /**
        * @description Localized display author name
@@ -5912,6 +6081,8 @@ export interface components {
       name: string;
     };
     BookVersionContentCountDto: {
+      /** @description Analysis with a filled core (0 or 1) */
+      analyses: number;
       audioChapters: number;
       chapters: number;
       summaries: number;
@@ -6301,6 +6472,10 @@ export interface components {
       /** Format: date-time */
       createdAt: string;
       id: string;
+      number: number;
+      title: string;
+    };
+    ChapterTitleDto: {
       number: number;
       title: string;
     };
@@ -12140,6 +12315,30 @@ export interface components {
       /** @description Author translations */
       translations?: components['schemas']['AuthorTranslationDto'][];
     };
+    UpdateBookAnalysisDto: {
+      adaptations?: components['schemas']['BookAnalysisAdaptationDto'][] | null;
+      characters?: components['schemas']['BookAnalysisCharacterDto'][] | null;
+      context?: string | null;
+      discussionQuestions?: string[] | null;
+      endingMeaning?: string | null;
+      facts?: components['schemas']['BookAnalysisFactsDto'] | null;
+      faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
+      keyQuotes?: components['schemas']['BookAnalysisKeyQuoteDto'][] | null;
+      /**
+       * @description Must equal the language of the version
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      mainIdea?: string | null;
+      misreadings?: components['schemas']['BookAnalysisMisreadingDto'][] | null;
+      reception?: string | null;
+      sources?: components['schemas']['BookAnalysisSourceDto'][] | null;
+      style?: components['schemas']['BookAnalysisStyleDto'][] | null;
+      symbols?: components['schemas']['BookAnalysisSymbolDto'][] | null;
+      themes?: components['schemas']['BookAnalysisThemeDto'][] | null;
+      timeline?: components['schemas']['BookAnalysisTimelineEventDto'][] | null;
+      titleMeaning?: string | null;
+    };
     UpdateBookDto: {
       /**
        * @description Unique book slug. Lowercase: Latin letters and digits, separator is a hyphen. No spaces, no double or edge hyphens. Examples: "harry-potter", "book-123". The 100-character limit applies only when the slug changes: the book's current slug is accepted as is.
@@ -17210,6 +17409,30 @@ export interface operations {
       };
     };
   };
+  ChapterController_listAdminTitles: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['ChapterTitleDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
   ChapterController_listAdmin: {
     parameters: {
       query?: {
@@ -20151,6 +20374,56 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['UserRoleDto'];
+        };
+      };
+    };
+  };
+  BookAnalysisController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Analysis, or null when the version has none */
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookAnalysisResponseDto'] | null;
+        };
+      };
+    };
+  };
+  BookAnalysisController_save: {
+    parameters: {
+      query?: {
+        /** @description Validate and merge exactly as a save would, write nothing, return hasCore and warnings (decision A3) */
+        dryRun?: 'true' | 'false';
+      };
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateBookAnalysisDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookAnalysisSaveResponseDto'];
         };
       };
     };

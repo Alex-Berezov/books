@@ -247,8 +247,10 @@ describe('BookService.getOverview', () => {
     const versionsArgs = prisma.bookVersion.findMany.mock.calls.find(
       (call: unknown[]) =>
         (call[0] as { select?: { _count?: unknown } } | undefined)?.select?._count !== undefined,
-    )?.[0] as { select: { _count: { select: { summaries: unknown } } } };
+    )?.[0] as { select: { _count: { select: { summaries: unknown; analyses: unknown } } } };
     expect(versionsArgs.select._count.select.summaries).toEqual({ where: { hasText: true } });
+    // F03: анализ в обзоре - только с заполненным ядром (кнопка и страница анализа).
+    expect(versionsArgs.select._count.select.analyses).toEqual({ where: { hasCore: true } });
     expect(res.versionIds).toEqual({ text: 'v-text-en', audio: 'v-audio-es' });
     expect(res.seo.main?.metaTitle).toBe('T-text');
     expect(res.seo.read?.metaTitle).toBe('T-text');
@@ -853,10 +855,16 @@ describe('BookService.getOverview', () => {
       expect(res.data[0].hasSummary).toBe(true);
       // Пересказы считаются только с видимым текстом: список книг - источник карты сайта.
       const args = prisma.book.findMany.mock.calls[0][0] as {
-        select: { versions: { select: { _count: { select: { summaries: unknown } } } } };
+        select: {
+          versions: { select: { _count: { select: { summaries: unknown; analyses: unknown } } } };
+        };
       };
       expect(args.select.versions.select._count.select.summaries).toEqual({
         where: { hasText: true },
+      });
+      // F03: список книг - источник адресов анализа в карте сайта, считается только ядро.
+      expect(args.select.versions.select._count.select.analyses).toEqual({
+        where: { hasCore: true },
       });
     });
 

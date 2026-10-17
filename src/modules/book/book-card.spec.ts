@@ -3,6 +3,7 @@ import {
   BOOK_CARD_SELECT,
   type BookCardRow,
   SUMMARIES_WITH_TEXT_COUNT,
+  ANALYSES_WITH_CORE_COUNT,
   toBookCardDto,
 } from './book-card';
 
@@ -17,7 +18,7 @@ describe('toBookCardDto', () => {
     coverImageUrl: 'cover.jpg',
     type: BookType.text,
     publishedAt: null,
-    _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+    _count: { chapters: 1, audioChapters: 0, summaries: 0, analyses: 0 },
     categories: [],
     book: { slug: 'christmas-carol' },
     ...over,
@@ -39,7 +40,9 @@ describe('toBookCardDto', () => {
   // Карточка «Похожие пересказы» ведёт на `/book/{slug}/summary`: признак - пересказ этой версии.
   it('hasSummary - по пересказу этой версии', () => {
     expect(toBookCardDto(row(), undefined, null).hasSummary).toBe(false);
-    const withSummary = row({ _count: { chapters: 1, audioChapters: 0, summaries: 1 } });
+    const withSummary = row({
+      _count: { chapters: 1, audioChapters: 0, summaries: 1, analyses: 0 },
+    });
     expect(toBookCardDto(withSummary, undefined, null).hasSummary).toBe(true);
   });
 
@@ -47,5 +50,11 @@ describe('toBookCardDto', () => {
   it('BOOK_CARD_SELECT считает пересказы по hasText', () => {
     expect(BOOK_CARD_SELECT._count.select.summaries).toEqual({ where: { hasText: true } });
     expect(SUMMARIES_WITH_TEXT_COUNT).toEqual({ where: { hasText: true } });
+  });
+
+  // F03: анализ считается только с заполненным ядром (`BookAnalysis.hasCore`) - решение арбитра А8.
+  it('BOOK_CARD_SELECT считает анализ по hasCore', () => {
+    expect(BOOK_CARD_SELECT._count.select.analyses).toEqual({ where: { hasCore: true } });
+    expect(ANALYSES_WITH_CORE_COUNT).toEqual({ where: { hasCore: true } });
   });
 });

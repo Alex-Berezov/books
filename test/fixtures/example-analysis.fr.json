@@ -1,0 +1,286 @@
+{
+  "language": "fr",
+  "facts": {
+    "genre": "roman psychologique et philosophique",
+    "movement": "réalisme",
+    "writtenYears": "1865–1866",
+    "settingPlace": "Saint-Pétersbourg, autour de la place aux Foins",
+    "settingTime": "début juillet, été 1865",
+    "narrator": "récit à la troisième personne, au plus près de la conscience de Raskolnikov",
+    "structure": "six parties et un épilogue"
+  },
+  "mainIdea": "Crime et Châtiment met à l'épreuve, sur un homme bien vivant, l'idée qu'un être « extraordinaire » aurait le droit de franchir le sang au nom d'un but supérieur. Raskolnikov tue pour se prouver sa théorie et découvre que le vrai châtiment n'est pas le bagne, mais la rupture avec les autres et avec lui-même. Dostoïevski ne cherche pas l'issue dans la logique, mais dans l'aveu, la souffrance et l'amour.",
+  "themes": [
+    {
+      "key": "guilt",
+      "title": "La faute et la conscience",
+      "interpretation": "Dans ce roman, le châtiment commence bien avant l'enquête. Quelques heures après le meurtre, Raskolnikov s'évanouit au commissariat, tombe malade et repousse sa mère et sa sœur : la conscience agit sur lui comme une fièvre, non comme une conclusion morale.\n\nCe qui déroute souvent le lecteur, c'est qu'il ne regrette pas l'acte lui-même pendant presque tout le livre. Il se méprise de n'avoir pas tenu, de n'être pas un Napoléon. Le vrai repentir n'arrive que dans l'épilogue, et Dostoïevski le montre comme un retour lent et douloureux vers les autres.",
+      "chapters": [7, 8, 10, 20, 30, 39, 41]
+    },
+    {
+      "key": "extraordinary-man",
+      "title": "La théorie de l'homme extraordinaire",
+      "interpretation": "Dans son article sur le crime, Raskolnikov partage l'humanité entre les « ordinaires », voués à l'obéissance, et les « extraordinaires », qui ont le droit d'enfreindre la loi pour une idée nouvelle. Napoléon lui sert de preuve : l'histoire pardonne le sang au vainqueur.\n\nLe roman réfute la théorie non par des arguments mais par l'expérience. L'« arithmétique » d'une mort contre cent vies s'effondre dès que la douce Lizaveta tombe elle aussi sous la hache. La théorie se révèle un orgueil déguisé en philosophie, et c'est cet orgueil qui l'isole.",
+      "chapters": [6, 19, 20, 30, 33]
+    },
+    {
+      "key": "redemption",
+      "title": "Souffrance et résurrection",
+      "interpretation": "Sonia Marmeladova propose à Raskolnikov le chemin inverse de sa théorie : accepter la souffrance et revenir vers les autres par l'aveu. Le récit évangélique de la résurrection de Lazare, qu'elle lui lit à voix haute, donne la clé du livre : le héros est mort intérieurement, et toute la question est de savoir s'il peut ressusciter.\n\nDostoïevski ne rend pas ce chemin facile. L'aveu n'apporte aucun soulagement, et au bagne Raskolnikov reste orgueilleux. Le tournant n'arrive qu'aux dernières pages, que le narrateur présente comme le début d'une nouvelle histoire plutôt que comme une fin.",
+      "chapters": [19, 24, 30, 39, 41]
+    }
+  ],
+  "characters": [
+    {
+      "key": "raskolnikov",
+      "name": "Rodion Romanovitch Raskolnikov",
+      "role": "main",
+      "description": "Ancien étudiant en droit qui a abandonné l'université faute d'argent. Intelligent, orgueilleux, capable d'une générosité soudaine : il donne ses derniers roubles pour l'enterrement de Marmeladov. En lui s'affrontent une théorie froide qui justifie le meurtre et un cœur vivant qui la refuse.\n\nLe roman en fait un cas d'épreuve : par sa fièvre, sa peur et son entêtement, Dostoïevski montre que la raison coupée de la conscience détruit d'abord celui qui la porte.",
+      "arc": {
+        "from": "un théoricien orgueilleux décidé à prouver qu'il « a le droit »",
+        "to": "un forçat qui découvre l'amour et la possibilité d'une vie nouvelle"
+      },
+      "themeKeys": ["guilt", "extraordinary-man"],
+      "relations": [
+        {
+          "to": "sonya",
+          "label": "aime"
+        },
+        {
+          "to": "dunya",
+          "label": "frère"
+        },
+        {
+          "to": "razumikhin",
+          "label": "ami"
+        },
+        {
+          "to": "porfiry",
+          "label": "adversaire"
+        },
+        {
+          "to": "svidrigailov",
+          "label": "double"
+        }
+      ]
+    },
+    {
+      "key": "sonya",
+      "name": "Sonia Marmeladova",
+      "role": "main",
+      "description": "Fille de Marmeladov, contrainte de se prostituer pour que sa famille ne meure pas de faim. Timide et silencieuse, mais d'une foi inébranlable. Sonia a elle aussi « franchi la limite », mais contre elle-même et non contre autrui : elle devient pour Raskolnikov une compagne plutôt qu'un juge.\n\nElle incarne la voie de l'humilité et de la compassion qui répond à la théorie orgueilleuse, et c'est à elle qu'il avoue d'abord son crime.",
+      "arc": {
+        "from": "une jeune fille humiliée qui a honte d'elle-même",
+        "to": "le soutien de Raskolnikov au bagne, aimée des forçats"
+      },
+      "themeKeys": ["redemption"],
+      "relations": [
+        {
+          "to": "marmeladov",
+          "label": "fille"
+        }
+      ]
+    },
+    {
+      "key": "porfiry",
+      "name": "Porphyre Petrovitch",
+      "role": "secondary",
+      "description": "Le juge d'instruction qui devine la vérité avant tout le monde mais n'a aucune preuve. En trois longues conversations, il mène avec Raskolnikov un duel psychologique et parie non sur l'arrestation, mais sur l'aveu spontané du meurtrier. Il comprend la théorie de l'intérieur et offre à son auteur une issue : l'aveu comme commencement d'une vie nouvelle.",
+      "themeKeys": ["extraordinary-man", "guilt"]
+    },
+    {
+      "key": "svidrigailov",
+      "name": "Arkadi Ivanovitch Svidrigaïlov",
+      "role": "secondary",
+      "description": "Propriétaire au passé trouble qui poursuit Dounia. Il vit comme si tout était permis, ce qui fait de lui le double de Raskolnikov et l'image de son avenir possible. Son suicide montre où mène une liberté sans foi ni amour.",
+      "themeKeys": ["extraordinary-man"],
+      "relations": [
+        {
+          "to": "dunya",
+          "label": "la poursuit"
+        }
+      ]
+    },
+    {
+      "key": "dunya",
+      "name": "Avdotia Romanovna (Dounia)",
+      "role": "secondary",
+      "description": "La sœur de Raskolnikov, fière et résolue. Elle est prête à épouser Loujine pour aider son frère, sacrifice qui fait écho à celui de Sonia. Elle tient tête à Loujine comme à Svidrigaïlov et reste libre de ses choix.",
+      "relations": [
+        {
+          "to": "razumikhin",
+          "label": "aime"
+        },
+        {
+          "to": "luzhin",
+          "label": "ex-fiancée"
+        }
+      ]
+    },
+    {
+      "key": "razumikhin",
+      "name": "Dmitri Prokofitch Razoumikhine",
+      "role": "secondary",
+      "description": "Camarade d'études et ami fidèle de Raskolnikov, tout aussi pauvre mais actif et joyeux. Il vit de traductions et ne bâtit pas de théories. Son nom vient du russe razoum, « la raison » : le bon sens et la bonté face au rationalisme glacé du héros."
+    },
+    {
+      "key": "marmeladov",
+      "name": "Sémione Zakharovitch Marmeladov",
+      "role": "secondary",
+      "description": "Ancien fonctionnaire alcoolique, père de Sonia. Sa confession au cabaret ouvre le thème des humiliés : des êtres qui savent jusqu'où ils sont tombés et espèrent pourtant le pardon.",
+      "themeKeys": ["redemption"]
+    },
+    {
+      "key": "luzhin",
+      "name": "Piotr Petrovitch Loujine",
+      "role": "secondary",
+      "description": "Le fiancé calculateur de Dounia. Sa morale « économique » de l'intérêt bien compris est une caricature vulgaire de la théorie de Raskolnikov : le profit justifie tout, jusqu'à la calomnie contre Sonia.",
+      "themeKeys": ["extraordinary-man"]
+    },
+    {
+      "key": "lizaveta",
+      "name": "Lizaveta",
+      "role": "minor",
+      "description": "La douce sœur de l'usurière, tuée pour être entrée au mauvais moment. Sa mort brise aussitôt l'arithmétique de la théorie : la hache s'abat sur celle-là même que la théorie prétendait protéger."
+    }
+  ],
+  "symbols": [
+    {
+      "title": "La couleur jaune",
+      "interpretation": "Le papier peint jaune chez l'usurière et dans la mansarde de Raskolnikov, le « billet jaune » de Sonia, les visages jaunâtres : le jaune est la couleur de la maladie, de la misère et de la déchéance morale qui teinte le Pétersbourg du roman.",
+      "chapters": [1, 2, 3, 24]
+    },
+    {
+      "title": "La résurrection de Lazare",
+      "interpretation": "Porphyre demande à Raskolnikov s'il croit à la résurrection de Lazare ; plus tard, Sonia lui lit ce passage de l'Évangile selon saint Jean. Lazare, quatre jours au tombeau, est l'image du héros mort intérieurement après le meurtre, et la promesse de sa résurrection dans l'épilogue.",
+      "chapters": [19, 24, 41]
+    }
+  ],
+  "keyQuotes": [
+    {
+      "text": "Suis-je une créature tremblante ou ai-je le droit ?",
+      "chapter": 30,
+      "speakerKey": "raskolnikov",
+      "themeKeys": ["extraordinary-man"],
+      "interpretation": "La question centrale du roman, dans la bouche du héros. Le meurtre n'a jamais été une affaire d'argent : c'était une épreuve pour savoir s'il appartient aux « extraordinaires ». La formule elle-même est un piège : on serait soit une créature tremblante, soit en droit de disposer de la vie d'autrui ; la théorie ne voit pas de troisième voie, la voie humaine."
+    },
+    {
+      "text": "Est-ce la vieille que j'ai tuée ? C'est moi que j'ai tué, et non la vieille !",
+      "chapter": 30,
+      "speakerKey": "raskolnikov",
+      "themeKeys": ["guilt"],
+      "interpretation": "Le crime se retourne contre celui qui le commet : en tuant autrui, Raskolnikov a détruit son propre lien avec les hommes. C'est pourquoi le châtiment du titre est intérieur et non judiciaire."
+    },
+    {
+      "text": "C'est l'amour qui les avait ressuscités.",
+      "chapter": 41,
+      "themeKeys": ["redemption"],
+      "interpretation": "Le dernier mot du roman sur le salut : la théorie n'est pas vaincue par une autre théorie, mais par l'amour. La résurrection est nommée, mais montrée seulement comme le début d'un chemin."
+    }
+  ],
+  "titleMeaning": "En russe, le mot « crime » (prestouplénié) signifie littéralement « le fait d'enjamber, de franchir », et le roman revient sans cesse à cette image : Raskolnikov veut franchir la loi morale et vérifier s'il est capable de passer la ligne qui sépare les hommes ordinaires des extraordinaires. En français, l'écho le plus proche est « transgression », qui désigne lui aussi le passage d'une limite.\n\nLe « châtiment », lui, n'a presque rien à voir avec le tribunal. Le bagne occupe quelques pages de l'épilogue ; la vraie peine, la fièvre, la peur, l'éloignement des siens, commence dès que le crime est commis. Ainsi lu, le titre est une formule : qui franchit autrui se châtie lui-même.",
+  "endingMeaning": "L'aveu et la Sibérie ne sont pas encore le repentir : au bagne, Raskolnikov croit longtemps que sa seule faute est de n'avoir pas su porter son acte. Le tournant vient après une maladie et un rêve de fièvre où une épidémie rend chacun fanatiquement sûr d'avoir raison, jusqu'à ce que les hommes s'entre-tuent : il y voit sa théorie poussée jusqu'au bout.\n\nLa dernière scène au bord du fleuve, où il pleure pour la première fois aux pieds de Sonia, est un commencement et non un dénouement. Le narrateur le dit expressément : ici commence une nouvelle histoire, celle du renouvellement progressif d'un homme. Le roman ne s'achève pas sur un verdict, mais sur l'espérance.",
+  "context": "Dostoïevski conçoit le livre à l'été 1865 à Wiesbaden, ruiné après avoir perdu à la roulette. Il propose à Mikhaïl Katkov, directeur du Messager russe, le récit d'un jeune homme qui tue sous l'emprise d'idées « inachevées ». Il projette en même temps un roman sur la famille d'un fonctionnaire ivrogne ; cette ligne deviendra l'histoire des Marmeladov.\n\nFin 1865, il brûle la première version, écrite à la première personne sous forme de confession, et recommence à la troisième personne. Le roman paraît en feuilleton dans Le Messager russe tout au long de 1866.\n\nL'arrière-plan est la Russie d'après l'abolition du servage et la réforme judiciaire de 1864, époque de débats passionnés sur l'égoïsme rationnel, le nihilisme et la légitimité de la violence au nom du bien commun. Les années de bagne de Dostoïevski lui-même ont nourri l'épilogue.",
+  "timeline": [
+    {
+      "year": "1821",
+      "event": "Naissance de Fiodor Dostoïevski à Moscou.",
+      "kind": "author"
+    },
+    {
+      "year": "1849",
+      "event": "Arrêté avec le cercle de Petrachevski, il subit un simulacre d'exécution avant la commutation de sa peine.",
+      "kind": "author"
+    },
+    {
+      "year": "1850–1854",
+      "event": "Bagne d'Omsk, expérience qui nourrit l'épilogue.",
+      "kind": "author"
+    },
+    {
+      "year": "1861",
+      "event": "Abolition du servage en Russie.",
+      "kind": "epoch"
+    },
+    {
+      "year": "1866",
+      "event": "Le roman paraît en feuilleton dans Le Messager russe.",
+      "kind": "book"
+    },
+    {
+      "year": "1881",
+      "event": "Mort de Dostoïevski à Saint-Pétersbourg.",
+      "kind": "author"
+    },
+    {
+      "year": "1886",
+      "event": "Eugène-Melchior de Vogüé publie Le Roman russe et fait connaître Dostoïevski au public français.",
+      "kind": "epoch"
+    }
+  ],
+  "style": [
+    {
+      "device": "Polyphonie",
+      "explanation": "Mikhaïl Bakhtine a qualifié de polyphoniques les romans de Dostoïevski : les voix des personnages pèsent autant que celle de l'auteur. La théorie de Raskolnikov, le calcul de Loujine, le cynisme de Svidrigaïlov et la foi de Sonia s'affrontent à pleine force, sans que l'auteur tranche par un verdict."
+    },
+    {
+      "device": "Monologue intérieur",
+      "explanation": "Le récit est à la troisième personne mais reste presque toujours dans la tête du héros : on entend ses raisonnements fiévreux, ses disputes avec lui-même, ses décisions soudaines. Le lecteur vit le crime de l'intérieur, sans jugement tout fait."
+    }
+  ],
+  "reception": "En Russie, le roman connaît un succès immédiat : les lecteurs guettent chaque livraison du Messager russe et la critique en débat dans la presse. En France, Dostoïevski est révélé au grand public par Le Roman russe d'Eugène-Melchior de Vogüé en 1886 ; au XXe siècle, André Gide lui consacre un livre et Albert Camus le revendique comme l'un de ses maîtres.\n\nLa notion de polyphonie que Mikhaïl Bakhtine a dégagée chez Dostoïevski est devenue centrale dans la théorie du roman. Aujourd'hui, Crime et Châtiment reste l'un des romans étrangers les plus lus au lycée et à l'université.",
+  "adaptations": [
+    {
+      "title": "Crime et Châtiment",
+      "year": 1935,
+      "kind": "film",
+      "differences": "Film de Pierre Chenal avec Pierre Blanchar en Raskolnikov et Harry Baur en Porphyre. Il resserre le roman autour du duel entre l'étudiant et le juge et réduit fortement les intrigues secondaires."
+    },
+    {
+      "title": "Crime et Châtiment",
+      "year": 1956,
+      "kind": "film",
+      "differences": "Georges Lampin transpose l'histoire dans la France contemporaine, avec Jean Gabin dans le rôle de l'inspecteur. Les noms, le décor et l'époque changent ; le schéma du crime, de l'enquête psychologique et de l'aveu demeure."
+    }
+  ],
+  "misreadings": [
+    {
+      "myth": "Raskolnikov tue l'usurière pour son argent.",
+      "explanation": "L'argent est secondaire : il n'ouvre même pas la bourse volée et la cache sous une pierre. Lui-même dit qu'il voulait savoir s'il était une créature tremblante ou s'il avait le droit. Le meurtre est une expérience sur lui-même, non un vol."
+    },
+    {
+      "myth": "Le châtiment du titre, c'est le bagne.",
+      "explanation": "Le bagne n'occupe que le bref épilogue. Presque tout le roman décrit un châtiment intérieur, la fièvre, la peur, la rupture avec la famille et les amis, qui commence bien avant tout procès."
+    }
+  ],
+  "discussionQuestions": [
+    "Pourquoi Raskolnikov ne parvient-il pas à « franchir la limite » alors qu'il a tué ?",
+    "En quoi Svidrigaïlov est-il le double de Raskolnikov, et en quoi s'en distingue-t-il ?",
+    "Quel rôle joue la lecture de la résurrection de Lazare ?",
+    "Le roman répond-il à l'« arithmétique » d'une mort contre cent vies ?"
+  ],
+  "faq": [
+    {
+      "question": "Quelle est l'idée principale de Crime et Châtiment ?",
+      "answer": "Le roman montre qu'une idée qui autorise à tuer pour un but supérieur détruit d'abord le meurtrier lui-même. Dostoïevski place le salut non dans la théorie, mais dans l'aveu, la souffrance et l'amour."
+    },
+    {
+      "question": "Pourquoi le roman s'intitule-t-il Crime et Châtiment ?",
+      "answer": "En russe, le mot « crime » signifie littéralement « franchissement » : le héros franchit la loi morale. Le châtiment, c'est avant tout sa conscience tourmentée et son isolement, non la sentence du tribunal."
+    },
+    {
+      "question": "Comment se termine Crime et Châtiment ?",
+      "answer": "Raskolnikov avoue et part au bagne en Sibérie, où Sonia le suit. Dans l'épilogue, il éprouve enfin de l'amour pour elle, et le narrateur y voit le début de sa régénération."
+    }
+  ],
+  "sources": [
+    {
+      "title": "Crime et Châtiment — Wikipédia",
+      "url": "https://fr.wikipedia.org/wiki/Crime_et_Ch%C3%A2timent"
+    },
+    {
+      "title": "Fiodor Dostoïevski — Wikipédia",
+      "url": "https://fr.wikipedia.org/wiki/Fiodor_Dosto%C3%AFevski"
+    }
+  ]
+}

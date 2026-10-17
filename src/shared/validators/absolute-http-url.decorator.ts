@@ -18,6 +18,19 @@ export function IsAbsoluteHttpUrl(validationOptions?: ValidationOptions): Proper
   return IsUrl({ ...ABSOLUTE_HTTP_URL_OPTIONS }, validationOptions);
 }
 
+// Источник анализа книги (F03, `tech.md` §3): только `https://`, без исключения для localhost —
+// это внешняя ссылка на публичной странице, а не адрес нашего хранилища.
+// Копия правила на фронте — `books-front/lib/utils/http-url.ts` (`isAbsoluteHttpsUrl`).
+const ABSOLUTE_HTTPS_URL_OPTIONS = Object.freeze({
+  require_protocol: true,
+  require_tld: true,
+  protocols: ['https'],
+});
+
+export function IsAbsoluteHttpsUrl(validationOptions?: ValidationOptions): PropertyDecorator {
+  return IsUrl({ ...ABSOLUTE_HTTPS_URL_OPTIONS }, validationOptions);
+}
+
 // Тот же предел, что `max_allowed_length` у `isURL` по умолчанию: одна длина на обе ветки поля.
 const MAX_URL_LENGTH = 2084;
 

@@ -203,6 +203,30 @@ describe('ChapterService', () => {
     });
   });
 
+  // F03-1 (А5): «Вводные для промпта» — номера и названия без текста глав; `total` настоящий,
+  // усечение пределом видно потребителю (`LEGACY-098`).
+  it('lists chapter titles without content and with the real total', async () => {
+    prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1', status: 'draft' });
+    (prisma.chapter.findMany as jest.Mock).mockResolvedValue([{ number: 1, title: 'One' }]);
+    prisma.chapter.count.mockResolvedValue(6000);
+    const res = await service.listAdminTitles('v1');
+    expect(prisma.chapter.findMany).toHaveBeenCalledWith({
+      where: { bookVersionId: 'v1' },
+      orderBy: { number: 'asc' },
+      select: { number: true, title: true },
+      take: 5000,
+    });
+    expect(prisma.chapter.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.chapter.count).toHaveBeenCalledWith({ where: { bookVersionId: 'v1' } });
+    expect(res.items).toEqual([{ number: 1, title: 'One' }]);
+    expect(res.pagination.total).toBe(6000);
+  });
+
+  it('rejects chapter titles when the version does not exist', async () => {
+    prisma.bookVersion.findUnique.mockResolvedValue(null);
+    await expect(service.listAdminTitles('missing')).rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it('rejects admin listing when the version does not exist', async () => {
     prisma.bookVersion.findUnique.mockResolvedValue(null);
     await expect(service.listAdminByVersion('missing')).rejects.toBeInstanceOf(NotFoundException);

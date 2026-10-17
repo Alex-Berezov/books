@@ -2368,6 +2368,619 @@
         ],
         "type": "object"
       },
+      "BookAnalysisAdaptationDto": {
+        "properties": {
+          "differences": {
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "film",
+              "series",
+              "stage",
+              "other"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "type": "string"
+          },
+          "year": {
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "title",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisArcDto": {
+        "properties": {
+          "from": {
+            "maxLength": 300,
+            "type": "string"
+          },
+          "to": {
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisCharacterDto": {
+        "properties": {
+          "arc": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookAnalysisArcDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "description": {
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
+          "key": {
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 300,
+            "type": "string"
+          },
+          "quote": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookAnalysisQuoteDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisRelationDto"
+            },
+            "type": "array"
+          },
+          "role": {
+            "enum": [
+              "main",
+              "secondary",
+              "minor"
+            ],
+            "type": "string"
+          },
+          "themeKeys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "role"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisFactsDto": {
+        "properties": {
+          "genre": {
+            "nullable": true,
+            "type": "string"
+          },
+          "movement": {
+            "nullable": true,
+            "type": "string"
+          },
+          "narrator": {
+            "nullable": true,
+            "type": "string"
+          },
+          "settingPlace": {
+            "nullable": true,
+            "type": "string"
+          },
+          "settingTime": {
+            "nullable": true,
+            "type": "string"
+          },
+          "structure": {
+            "nullable": true,
+            "type": "string"
+          },
+          "writtenYears": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "BookAnalysisFaqDto": {
+        "properties": {
+          "answer": {
+            "maxLength": 3000,
+            "type": "string"
+          },
+          "question": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
+        "required": [
+          "question",
+          "answer"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisKeyQuoteDto": {
+        "properties": {
+          "chapter": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "number"
+          },
+          "interpretation": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "speakerKey": {
+            "nullable": true,
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500,
+            "type": "string"
+          },
+          "themeKeys": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisMisreadingDto": {
+        "properties": {
+          "explanation": {
+            "maxLength": 1500,
+            "type": "string"
+          },
+          "myth": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
+        "required": [
+          "myth",
+          "explanation"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisQuoteDto": {
+        "properties": {
+          "chapter": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisRelationDto": {
+        "properties": {
+          "label": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "to": {
+            "description": "Key of a main or secondary character",
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "label"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisResponseDto": {
+        "properties": {
+          "adaptations": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "characters": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisCharacterDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "context": {
+            "nullable": true,
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "discussionQuestions": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "endingMeaning": {
+            "nullable": true,
+            "type": "string"
+          },
+          "facts": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookAnalysisFactsDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "faq": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisFaqDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "hasCore": {
+            "description": "Core is filled (product.md §2); page and sitemap follow it",
+            "type": "boolean"
+          },
+          "keyQuotes": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisKeyQuoteDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "language": {
+            "description": "Language of the version",
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "mainIdea": {
+            "nullable": true,
+            "type": "string"
+          },
+          "misreadings": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisMisreadingDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "reception": {
+            "nullable": true,
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisSourceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "style": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisStyleDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisSymbolDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "themes": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisThemeDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisTimelineEventDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "titleMeaning": {
+            "nullable": true,
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "language",
+          "hasCore",
+          "facts",
+          "mainIdea",
+          "themes",
+          "characters",
+          "symbols",
+          "keyQuotes",
+          "titleMeaning",
+          "endingMeaning",
+          "context",
+          "timeline",
+          "style",
+          "reception",
+          "adaptations",
+          "misreadings",
+          "discussionQuestions",
+          "faq",
+          "sources",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisSaveResponseDto": {
+        "properties": {
+          "analysis": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookAnalysisResponseDto"
+              }
+            ],
+            "description": "Saved record; null on dryRun (nothing is written)",
+            "nullable": true,
+            "type": "object"
+          },
+          "hasCore": {
+            "description": "Core of the merged record",
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisWarningDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "analysis",
+          "hasCore",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisSourceDto": {
+        "properties": {
+          "title": {
+            "maxLength": 300,
+            "type": "string"
+          },
+          "url": {
+            "description": "Absolute https URL",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "url"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisStyleDto": {
+        "properties": {
+          "device": {
+            "maxLength": 300,
+            "type": "string"
+          },
+          "example": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookAnalysisQuoteDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "explanation": {
+            "maxLength": 1500,
+            "type": "string"
+          }
+        },
+        "required": [
+          "device",
+          "explanation"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisSymbolDto": {
+        "properties": {
+          "chapters": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "interpretation": {
+            "maxLength": 3000,
+            "type": "string"
+          },
+          "quote": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookAnalysisQuoteDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "title": {
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "interpretation"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisThemeDto": {
+        "properties": {
+          "chapters": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "interpretation": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "key": {
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          },
+          "quotes": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisThemeQuoteDto"
+            },
+            "type": "array"
+          },
+          "title": {
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisThemeQuoteDto": {
+        "properties": {
+          "chapter": {
+            "minimum": 1,
+            "nullable": true,
+            "type": "number"
+          },
+          "comment": {
+            "maxLength": 500,
+            "nullable": true,
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisTimelineEventDto": {
+        "properties": {
+          "event": {
+            "maxLength": 300,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "author",
+              "epoch",
+              "book"
+            ],
+            "type": "string"
+          },
+          "year": {
+            "description": "Year or period, e.g. \"1866\" or \"1860s\"",
+            "maxLength": 40,
+            "type": "string"
+          }
+        },
+        "required": [
+          "year",
+          "event",
+          "kind"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisWarningDto": {
+        "properties": {
+          "code": {
+            "enum": [
+              "chapter_not_found",
+              "core_incomplete"
+            ],
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "description": "Field path, e.g. \"themes.0.chapters.1\" or \"keyQuotes\"",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "path",
+          "message"
+        ],
+        "type": "object"
+      },
       "BookCardDto": {
         "properties": {
           "author": {
@@ -5115,6 +5728,10 @@
       },
       "BookVersionContentCountDto": {
         "properties": {
+          "analyses": {
+            "description": "Analysis with a filled core (0 or 1)",
+            "type": "number"
+          },
           "audioChapters": {
             "type": "number"
           },
@@ -5128,7 +5745,8 @@
         "required": [
           "chapters",
           "audioChapters",
-          "summaries"
+          "summaries",
+          "analyses"
         ],
         "type": "object"
       },
@@ -6406,6 +7024,21 @@
           "title",
           "content",
           "createdAt"
+        ],
+        "type": "object"
+      },
+      "ChapterTitleDto": {
+        "properties": {
+          "number": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "title"
         ],
         "type": "object"
       },
@@ -23570,6 +24203,136 @@
         },
         "type": "object"
       },
+      "UpdateBookAnalysisDto": {
+        "properties": {
+          "adaptations": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "characters": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisCharacterDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "context": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "discussionQuestions": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "endingMeaning": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "facts": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookAnalysisFactsDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "faq": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisFaqDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "keyQuotes": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisKeyQuoteDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "language": {
+            "description": "Must equal the language of the version",
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "mainIdea": {
+            "maxLength": 600,
+            "nullable": true,
+            "type": "string"
+          },
+          "misreadings": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisMisreadingDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "reception": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisSourceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "style": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisStyleDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisSymbolDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "themes": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisThemeDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "timeline": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisTimelineEventDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "titleMeaning": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "language"
+        ],
+        "type": "object"
+      },
       "UpdateBookDto": {
         "properties": {
           "slug": {
@@ -34184,6 +34947,57 @@
         ]
       }
     },
+    "/admin/versions/{bookVersionId}/chapter-titles": {
+      "get": {
+        "operationId": "ChapterController_listAdminTitles",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/ChapterTitleDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Admin: chapter numbers and titles of a version, without text",
+        "tags": [
+          "chapters"
+        ]
+      }
+    },
     "/admin/versions/{bookVersionId}/chapters": {
       "get": {
         "operationId": "ChapterController_listAdmin",
@@ -39490,6 +40304,104 @@
         "summary": "Assign role to user (admin only)",
         "tags": [
           "users"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/analysis": {
+      "get": {
+        "operationId": "BookAnalysisController_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/BookAnalysisResponseDto"
+                    }
+                  ],
+                  "nullable": true
+                }
+              }
+            },
+            "description": "Analysis, or null when the version has none"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Get book analysis for a version (drafts are visible to editors only; geo-blocked like the text)",
+        "tags": [
+          "analyses"
+        ]
+      },
+      "put": {
+        "operationId": "BookAnalysisController_save",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Validate and merge exactly as a save would, write nothing, return hasCore and warnings (decision A3)",
+            "in": "query",
+            "name": "dryRun",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBookAnalysisDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookAnalysisSaveResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create or merge analysis for a version (JSON import format); dryRun=true writes nothing",
+        "tags": [
+          "analyses"
         ]
       }
     },

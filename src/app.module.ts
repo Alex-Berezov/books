@@ -14,6 +14,7 @@ import { ChapterModule } from './modules/chapter/chapter.module';
 import { AudioChapterModule } from './modules/audio-chapter/audio-chapter.module';
 import { SeoModule } from './modules/seo/seo.module';
 import { BookSummaryModule } from './modules/book-summary/book-summary.module';
+import { BookAnalysisModule } from './modules/book-analysis/book-analysis.module';
 import { CategoryModule } from './modules/category/category.module';
 import { BookshelfModule } from './modules/bookshelf/bookshelf.module';
 import { CommentsModule } from './modules/comments/comments.module';
@@ -80,6 +81,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     AudioChapterModule,
     SeoModule,
     BookSummaryModule,
+    BookAnalysisModule,
     CategoryModule,
     BookshelfModule,
     CommentsModule,

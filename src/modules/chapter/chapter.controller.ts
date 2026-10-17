@@ -24,6 +24,7 @@ import {
 import { ChapterService } from './chapter.service';
 import { ListChaptersQueryDto } from './dto/list-chapters-query.dto';
 import { ChapterResponseDto } from './dto/chapter-response.dto';
+import { ChapterTitleDto } from './dto/chapter-title.dto';
 import { PaginationInfoDto, paginatedSchema } from '../../shared/dto/paginated-response.dto';
 import { CreateChapterDto } from './dto/create-chapter.dto';
 import { UpdateChapterDto } from './dto/update-chapter.dto';
@@ -46,7 +47,7 @@ interface RequestUser {
 }
 
 @ApiTags('chapters')
-@ApiExtraModels(ChapterResponseDto, PaginationInfoDto)
+@ApiExtraModels(ChapterResponseDto, ChapterTitleDto, PaginationInfoDto)
 @Controller()
 export class ChapterController {
   constructor(
@@ -85,6 +86,17 @@ export class ChapterController {
   @Roles(Role.Admin, Role.ContentManager)
   listAdmin(@Param('bookVersionId') bookVersionId: string, @Query() query: ListChaptersQueryDto) {
     return this.service.listAdminByVersion(bookVersionId, query.page, query.limit);
+  }
+
+  @Get('admin/versions/:bookVersionId/chapter-titles')
+  @ApiOperation({ summary: 'Admin: chapter numbers and titles of a version, without text' })
+  @ApiParam({ name: 'bookVersionId' })
+  @ApiOkResponse({ schema: paginatedSchema(ChapterTitleDto) })
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.Admin, Role.ContentManager)
+  listAdminTitles(@Param('bookVersionId') bookVersionId: string) {
+    return this.service.listAdminTitles(bookVersionId);
   }
 
   @Post('versions/:bookVersionId/chapters')

@@ -13,6 +13,15 @@ export const SUMMARIES_WITH_TEXT_COUNT = {
 } as const satisfies Prisma.BookVersionCountOutputTypeCountSummariesArgs;
 
 /**
+ * Счётчик анализа для `_count` (F03): только запись с заполненным ядром (`BookAnalysis.hasCore`,
+ * пересчитывается при каждом сохранении). Одна константа на карточки, список книг (по нему карта
+ * сайта строит адреса анализа) и обзор книги — решение арбитра А8 (`decisions-log.md`, `F03 | F03-1`).
+ */
+export const ANALYSES_WITH_CORE_COUNT = {
+  where: { hasCore: true },
+} as const satisfies Prisma.BookVersionCountOutputTypeCountAnalysesArgs;
+
+/**
  * Карточка книги — одна форма на все пути, которые её отдают: `/books/cards` в разрезах
  * и страница автора (`AuthorService.getPublishedBookCards`, F02-1). Чистые функции без DI:
  * `AuthorService` не может внедрить `BookService` (`BookModule` уже импортирует
@@ -30,7 +39,12 @@ export const BOOK_CARD_SELECT = {
   type: true,
   publishedAt: true,
   _count: {
-    select: { chapters: true, audioChapters: true, summaries: SUMMARIES_WITH_TEXT_COUNT },
+    select: {
+      chapters: true,
+      audioChapters: true,
+      summaries: SUMMARIES_WITH_TEXT_COUNT,
+      analyses: ANALYSES_WITH_CORE_COUNT,
+    },
   },
   categories: { select: { categoryId: true } },
   book: { select: { slug: true } },

@@ -72,6 +72,9 @@ model BookVersion {
   updatedAt       DateTime          @updatedAt
   book            Book              @relation(fields: [bookId], references: [id], onDelete: Cascade)
   summaries       BookSummary[]
+  /// Разбор и анализ (F03): одна запись на версию (`@unique` на стороне анализа); списком —
+  /// ради `_count.analyses` в карточке, списке книг (карта сайта) и обзоре.
+  analyses        BookAnalysis[]
   chapters        Chapter[]
   audioChapters   AudioChapter[]
   bookshelf       Bookshelf[]
@@ -212,6 +215,37 @@ model BookSummary {
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+}
+
+/// Раздел «Разбор и анализ» версии (F03, `books-app-docs/features/F03-book-analysis/tech.md` §2-§3).
+/// Тексты — простой текст с абзацами (пустая строка между ними); списки и `facts` — Json, форму стережёт
+/// `UpdateBookAnalysisDto`. Язык — язык версии.
+model BookAnalysis {
+  id                  String      @id @default(uuid())
+  bookVersionId       String      @unique
+  /// Ядро заполнено (`book-analysis-core.ts`): пересчитывается при каждом сохранении,
+  /// по нему считаются `_count.analyses`, страница и карта сайта.
+  hasCore             Boolean     @default(false)
+  facts               Json?
+  mainIdea            String?
+  themes              Json?
+  characters          Json?
+  symbols             Json?
+  keyQuotes           Json?
+  titleMeaning        String?
+  endingMeaning       String?
+  context             String?
+  timeline            Json?
+  style               Json?
+  reception           String?
+  adaptations         Json?
+  misreadings         Json?
+  discussionQuestions Json?
+  faq                 Json?
+  sources             Json?
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+  bookVersion         BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
 }
 
 model Chapter {

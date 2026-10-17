@@ -151,4 +151,7 @@ export class BookVersionContentCountDto {
 
   @ApiProperty({ type: Number })
   summaries!: number;
+
+  @ApiProperty({ type: Number, description: 'Analysis with a filled core (0 or 1)' })
+  analyses!: number;
 }

@@ -25,6 +25,11 @@ export const MEDIA_TEXT_COLUMNS: readonly MediaSearchedColumn[] = [
     (field) => ({ model: 'BookVersion', field }),
   ),
   ...['summary', 'analysis', 'themes'].map((field) => ({ model: 'BookSummary', field })),
+  // F03-1: тексты анализа книги — пишет оператор импортом, адрес в них возможен.
+  ...['mainIdea', 'titleMeaning', 'endingMeaning', 'context', 'reception'].map((field) => ({
+    model: 'BookAnalysis',
+    field,
+  })),
   { model: 'Chapter', field: 'content' },
   ...['description', 'transcript'].map((field) => ({ model: 'AudioChapter', field })),
   { model: 'Comment', field: 'text' },

@@ -1,0 +1,275 @@
+{
+  "language": "pt",
+  "facts": {
+    "genre": "romance psicológico e filosófico",
+    "movement": "realismo",
+    "writtenYears": "1865–1866",
+    "settingPlace": "São Petersburgo, nos arredores da praça do Feno",
+    "settingTime": "início de julho, verão de 1865",
+    "narrator": "terceira pessoa, colada à consciência de Raskólnikov",
+    "structure": "seis partes e um epílogo"
+  },
+  "mainIdea": "Crime e Castigo testa num homem de carne e osso a ideia de que um ser “extraordinário” pode passar por cima do sangue em nome de um objetivo maior. Raskólnikov mata para provar a si mesmo a sua teoria e descobre que o verdadeiro castigo não é a prisão, mas o rompimento com os outros e consigo mesmo. Dostoiévski não encontra a saída na lógica, e sim na confissão, no sofrimento e no amor.",
+  "themes": [
+    {
+      "key": "guilt",
+      "title": "Culpa e consciência",
+      "interpretation": "No romance, o castigo começa muito antes da investigação. Poucas horas depois do assassinato, Raskólnikov desmaia na delegacia, adoece e afasta a mãe e a irmã: a consciência age nele como uma febre, não como uma conclusão moral.\n\nO que surpreende muitos leitores é que, durante quase todo o livro, ele não se arrepende do ato em si. Despreza-se por não ter aguentado a prova, por não ser um Napoleão. O arrependimento verdadeiro só chega no epílogo, e Dostoiévski o mostra como uma volta lenta e dolorosa para junto dos outros.",
+      "chapters": [7, 8, 10, 20, 30, 39, 41]
+    },
+    {
+      "key": "extraordinary-man",
+      "title": "A teoria do homem extraordinário",
+      "interpretation": "Em seu artigo sobre o crime, Raskólnikov divide a humanidade em “ordinários”, que devem obedecer, e “extraordinários”, que têm o direito de transgredir a lei por uma ideia nova. Napoleão é a sua prova de que a história perdoa o sangue ao vencedor.\n\nO romance refuta a teoria não com argumentos, mas com a experiência: a “aritmética” de uma morte em troca de cem vidas desmorona assim que a mansa Lizavieta também cai sob o machado. A teoria revela-se orgulho disfarçado de filosofia, e é esse orgulho que o isola.",
+      "chapters": [6, 19, 20, 30, 33]
+    },
+    {
+      "key": "redemption",
+      "title": "Sofrimento e ressurreição",
+      "interpretation": "Sônia Marmeládova oferece a Raskólnikov o caminho oposto ao da teoria: aceitar o sofrimento e voltar para os outros por meio da confissão. A passagem do Evangelho sobre a ressurreição de Lázaro, que ela lê em voz alta para ele, é a chave do livro inteiro: o herói está morto por dentro, e a pergunta é se ele pode ressuscitar.\n\nDostoiévski não facilita esse caminho. A confissão não traz alívio, e na Sibéria Raskólnikov continua orgulhoso. A virada só vem nas últimas páginas, que o narrador apresenta como o começo de uma nova história, e não como um fim.",
+      "chapters": [19, 24, 30, 39, 41]
+    }
+  ],
+  "characters": [
+    {
+      "key": "raskolnikov",
+      "name": "Rodion Románovitch Raskólnikov",
+      "role": "main",
+      "description": "Ex-estudante de Direito que largou a universidade por falta de dinheiro. Inteligente, orgulhoso e capaz de uma generosidade repentina: dá o último dinheiro que tem para o enterro de Marmeládov. Nele lutam uma teoria fria que justifica o assassinato e um coração vivo que não a aceita.\n\nO romance precisa dele como experimento: por meio da sua febre, do seu medo e da sua teimosia, Dostoiévski mostra que a razão separada da consciência destrói primeiro quem a carrega.",
+      "arc": {
+        "from": "um teórico orgulhoso que quer provar que “tem o direito”",
+        "to": "um condenado que descobre o amor e a possibilidade de uma vida nova"
+      },
+      "themeKeys": ["guilt", "extraordinary-man"],
+      "relations": [
+        {
+          "to": "sonya",
+          "label": "ama"
+        },
+        {
+          "to": "dunya",
+          "label": "irmão"
+        },
+        {
+          "to": "razumikhin",
+          "label": "amigo"
+        },
+        {
+          "to": "porfiry",
+          "label": "adversário"
+        },
+        {
+          "to": "svidrigailov",
+          "label": "duplo"
+        }
+      ]
+    },
+    {
+      "key": "sonya",
+      "name": "Sônia Marmeládova",
+      "role": "main",
+      "description": "Filha de Marmeládov, obrigada a se prostituir para que a família não morra de fome. Tímida e calada, mas de uma fé inabalável. Sônia também “transgrediu”, mas contra si mesma e não contra outro, e por isso se torna companheira de Raskólnikov, e não sua juíza.\n\nEla encarna o caminho da humildade e da compaixão que responde à teoria orgulhosa, e é a primeira pessoa a quem ele confessa o crime.",
+      "arc": {
+        "from": "uma moça humilhada que se envergonha de si mesma",
+        "to": "o apoio de Raskólnikov na Sibéria, querida pelos presos"
+      },
+      "themeKeys": ["redemption"],
+      "relations": [
+        {
+          "to": "marmeladov",
+          "label": "filha"
+        }
+      ]
+    },
+    {
+      "key": "porfiry",
+      "name": "Porfiri Petróvitch",
+      "role": "secondary",
+      "description": "O juiz de instrução que adivinha a verdade antes de todos, mas não tem provas. Em três longas conversas, trava com Raskólnikov um duelo psicológico e aposta não na prisão, mas na confissão espontânea do assassino. Entende a teoria por dentro e oferece ao seu autor uma saída: a confissão como início de uma vida nova.",
+      "themeKeys": ["extraordinary-man", "guilt"]
+    },
+    {
+      "key": "svidrigailov",
+      "name": "Arkádi Ivánovitch Svidrigáilov",
+      "role": "secondary",
+      "description": "Proprietário de passado sombrio que persegue Dúnia. Vive como se tudo fosse permitido, o que faz dele o duplo de Raskólnikov e uma imagem do seu futuro possível. Seu suicídio mostra aonde leva a liberdade sem fé nem amor.",
+      "themeKeys": ["extraordinary-man"],
+      "relations": [
+        {
+          "to": "dunya",
+          "label": "persegue"
+        }
+      ]
+    },
+    {
+      "key": "dunya",
+      "name": "Avdótia Románovna (Dúnia)",
+      "role": "secondary",
+      "description": "A irmã de Raskólnikov, orgulhosa e decidida. Está disposta a casar com Lújin para ajudar o irmão, um sacrifício que espelha o de Sônia. Enfrenta tanto Lújin quanto Svidrigáilov e preserva a liberdade de escolher.",
+      "relations": [
+        {
+          "to": "razumikhin",
+          "label": "ama"
+        },
+        {
+          "to": "luzhin",
+          "label": "ex-noiva"
+        }
+      ]
+    },
+    {
+      "key": "razumikhin",
+      "name": "Dmitri Prokófitch Razumíkhin",
+      "role": "secondary",
+      "description": "Colega de faculdade e amigo fiel de Raskólnikov, tão pobre quanto ele, mas ativo e alegre. Vive de traduções e não constrói teorias. O sobrenome vem da palavra russa razum, “razão”: o bom senso e a bondade contra o racionalismo frio do herói."
+    },
+    {
+      "key": "marmeladov",
+      "name": "Semion Zakhárovitch Marmeládov",
+      "role": "secondary",
+      "description": "Funcionário aposentado e alcoólatra, pai de Sônia. Sua confissão na taberna abre o tema dos humilhados: pessoas que sabem até onde caíram e mesmo assim esperam o perdão.",
+      "themeKeys": ["redemption"]
+    },
+    {
+      "key": "luzhin",
+      "name": "Piotr Petróvitch Lújin",
+      "role": "secondary",
+      "description": "O noivo calculista de Dúnia. Sua moral “econômica” do interesse próprio é uma caricatura vulgar da teoria de Raskólnikov: o lucro justifica tudo, até caluniar Sônia.",
+      "themeKeys": ["extraordinary-man"]
+    },
+    {
+      "key": "alyona",
+      "name": "Aliona Ivánovna",
+      "role": "minor",
+      "description": "A velha usurária assassinada. Para Raskólnikov ela é um “piolho” inútil e nocivo; para o romance é um ser humano, e sua morte continua sendo um assassinato."
+    }
+  ],
+  "symbols": [
+    {
+      "title": "A cor amarela",
+      "interpretation": "O papel de parede amarelo na casa da usurária e no cubículo de Raskólnikov, o “bilhete amarelo” de Sônia, os rostos amarelados: o amarelo é a cor da doença, da miséria e da decadência moral que tinge a São Petersburgo do romance.",
+      "chapters": [1, 2, 3, 24]
+    },
+    {
+      "title": "A ressurreição de Lázaro",
+      "interpretation": "Porfiri pergunta a Raskólnikov se ele acredita na ressurreição de Lázaro; mais tarde, Sônia lê para ele essa passagem do Evangelho de João. Lázaro, quatro dias no túmulo, é a imagem do herói morto por dentro depois do crime e a promessa da sua ressurreição no epílogo.",
+      "chapters": [19, 24, 41]
+    }
+  ],
+  "keyQuotes": [
+    {
+      "text": "Sou uma criatura trêmula ou tenho o direito?",
+      "chapter": 30,
+      "speakerKey": "raskolnikov",
+      "themeKeys": ["extraordinary-man"],
+      "interpretation": "A pergunta central do romance, na boca do próprio herói. O assassinato nunca foi questão de dinheiro, mas uma prova para saber se ele pertence aos “extraordinários”. A própria formulação é uma armadilha: ou se é uma criatura trêmula, ou se tem direito à vida alheia; a teoria não enxerga uma terceira via, a humana."
+    },
+    {
+      "text": "Foi a velha que eu matei? Eu matei a mim mesmo, e não a velha!",
+      "chapter": 30,
+      "speakerKey": "raskolnikov",
+      "themeKeys": ["guilt"],
+      "interpretation": "O crime se volta contra quem o comete: ao matar outra pessoa, Raskólnikov destruiu o próprio vínculo com os outros. Por isso o castigo do título é interior, e não judicial."
+    },
+    {
+      "text": "Ressuscitou-os o amor.",
+      "chapter": 41,
+      "themeKeys": ["redemption"],
+      "interpretation": "A conclusão do romance: a teoria não é vencida por outra teoria, mas pelo amor. A ressurreição é nomeada abertamente, mas mostrada apenas como o começo de um caminho."
+    }
+  ],
+  "titleMeaning": "Em russo, a palavra “crime” (prestuplénie) significa literalmente “passo por cima”, e o romance volta o tempo todo a essa imagem: Raskólnikov quer passar por cima da lei moral e verificar se é capaz de cruzar a linha que separa os homens ordinários dos extraordinários. Em português, o eco mais próximo é “transgressão”, que também quer dizer ultrapassar um limite.\n\nJá o “castigo” pouco tem a ver com o tribunal. A prisão ocupa poucas páginas do epílogo; a verdadeira pena, a febre, o medo e o afastamento dos seus, começa no momento em que o crime é cometido. Lido assim, o título é uma fórmula: quem passa por cima do outro castiga a si mesmo.",
+  "endingMeaning": "A confissão e a Sibéria ainda não são arrependimento: na prisão, Raskólnikov acredita por muito tempo que sua única culpa foi não ter suportado o próprio ato. A virada vem depois de uma doença e de um sonho febril com uma peste que torna cada pessoa fanaticamente certa da própria razão, até que todos se destroem: ele vê ali a sua teoria levada ao extremo.\n\nA última cena à beira do rio, quando ele chora pela primeira vez aos pés de Sônia, é um começo, e não um desfecho. O narrador diz expressamente que ali começa uma nova história, a da renovação gradual de um homem. O romance não termina com um veredito, mas com esperança.",
+  "context": "Dostoiévski concebeu o livro no verão de 1865, em Wiesbaden, arruinado depois de perder na roleta. Propôs a Mikhail Katkov, editor do Mensageiro Russo, a história de um jovem que mata sob a influência de ideias “inacabadas”. Ao mesmo tempo planejava um romance sobre a família de um funcionário beberrão; essa linha se transformou na história dos Marmeládov.\n\nNo fim de 1865, queimou a primeira versão, escrita em primeira pessoa como uma confissão, e recomeçou em terceira pessoa. O romance saiu em folhetim no Mensageiro Russo ao longo de 1866.\n\nO pano de fundo é a Rússia posterior à abolição da servidão e à reforma judiciária de 1864, época de debates acalorados sobre o egoísmo racional, o niilismo e a justificação da violência em nome do bem comum. Os anos de trabalhos forçados do próprio Dostoiévski na Sibéria lhe deram o material do epílogo.",
+  "timeline": [
+    {
+      "year": "1821",
+      "event": "Nasce Fiódor Dostoiévski, em Moscou.",
+      "kind": "author"
+    },
+    {
+      "year": "1849",
+      "event": "Preso com o círculo de Petrachévski, passa por um simulacro de fuzilamento antes da comutação da pena.",
+      "kind": "author"
+    },
+    {
+      "year": "1850–1854",
+      "event": "Trabalhos forçados em Omsk, experiência que alimenta o epílogo.",
+      "kind": "author"
+    },
+    {
+      "year": "1861",
+      "event": "Abolição da servidão na Rússia.",
+      "kind": "epoch"
+    },
+    {
+      "year": "1866",
+      "event": "O romance é publicado em folhetim no Mensageiro Russo.",
+      "kind": "book"
+    },
+    {
+      "year": "1881",
+      "event": "Morre Dostoiévski, em São Petersburgo.",
+      "kind": "author"
+    }
+  ],
+  "style": [
+    {
+      "device": "Polifonia",
+      "explanation": "Mikhail Bakhtin chamou de polifônicos os romances de Dostoiévski: as vozes das personagens têm o mesmo peso que a do autor. A teoria de Raskólnikov, o cálculo de Lújin, o cinismo de Svidrigáilov e a fé de Sônia se enfrentam com toda a força, sem que o autor encerre a discussão com um veredito."
+    },
+    {
+      "device": "Sonhos reveladores",
+      "explanation": "Os sonhos dizem a verdade que o herói nega durante o dia: o cavalo espancado antes do crime, a velha que ri depois dele, a peste do epílogo. São o principal recurso para mostrar o que existe por baixo da teoria."
+    }
+  ],
+  "reception": "Na Rússia, o romance foi um sucesso imediato: os leitores aguardavam cada fascículo do Mensageiro Russo e a crítica o discutiu na imprensa. No século XX, a ideia de polifonia formulada por Mikhail Bakhtin a partir de Dostoiévski tornou-se central na teoria do romance.\n\nNo Brasil, a tradução feita diretamente do russo por Paulo Bezerra deu ao leitor de língua portuguesa um Dostoiévski mais próximo do original do que as antigas versões indiretas, feitas a partir do francês. Hoje Crime e Castigo é presença constante em listas de leitura escolares e universitárias.",
+  "adaptations": [
+    {
+      "title": "Crime e Castigo",
+      "year": 1935,
+      "kind": "film",
+      "differences": "Versão de Hollywood dirigida por Josef von Sternberg, com Peter Lorre como Raskólnikov. Condensa o romance num suspense psicológico e deixa de lado a maior parte das tramas secundárias e a dimensão religiosa."
+    }
+  ],
+  "misreadings": [
+    {
+      "myth": "Raskólnikov mata a usurária por dinheiro.",
+      "explanation": "O dinheiro é secundário: ele nem abre a bolsa roubada e a esconde debaixo de uma pedra. Ele mesmo diz que queria saber se era uma criatura trêmula ou se tinha o direito. O assassinato é um experimento consigo mesmo, não um roubo."
+    },
+    {
+      "myth": "Porfiri Petróvitch prende Raskólnikov com provas.",
+      "explanation": "O juiz de instrução não tem provas e admite isso. Adivinha o assassino psicologicamente e o aconselha a confessar; a decisão de se entregar é do próprio Raskólnikov."
+    }
+  ],
+  "discussionQuestions": [
+    "Por que Raskólnikov não consegue “passar por cima”, mesmo tendo cometido o assassinato?",
+    "Em que sentido Svidrigáilov é o duplo de Raskólnikov, e em que eles se diferenciam?",
+    "Qual o papel da leitura da passagem de Lázaro no romance?",
+    "Por que Raskólnikov só se arrepende no epílogo, e não no momento da confissão?"
+  ],
+  "faq": [
+    {
+      "question": "Qual é a ideia principal de Crime e Castigo?",
+      "answer": "O romance mostra que uma ideia que permite matar por um objetivo maior destrói antes de tudo o próprio assassino. Dostoiévski coloca a salvação não na teoria, mas na confissão, no sofrimento e no amor."
+    },
+    {
+      "question": "Por que o livro se chama Crime e Castigo?",
+      "answer": "Em russo, a palavra “crime” significa literalmente “passo por cima”: o herói passa por cima da lei moral. O castigo é, acima de tudo, a consciência atormentada e o isolamento, não a sentença do tribunal."
+    },
+    {
+      "question": "Como termina Crime e Castigo?",
+      "answer": "Raskólnikov confessa e é mandado para a Sibéria, para onde Sônia o acompanha. No epílogo, ele finalmente sente amor por ela, e o narrador apresenta isso como o começo da sua renovação."
+    }
+  ],
+  "sources": [
+    {
+      "title": "Crime e Castigo — Wikipédia, a enciclopédia livre",
+      "url": "https://pt.wikipedia.org/wiki/Crime_e_Castigo"
+    },
+    {
+      "title": "Fiódor Dostoiévski — Wikipédia, a enciclopédia livre",
+      "url": "https://pt.wikipedia.org/wiki/Fi%C3%B3dor_Dostoi%C3%A9vski"
+    }
+  ]
+}

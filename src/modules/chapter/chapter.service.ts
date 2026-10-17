@@ -14,6 +14,9 @@ import {
   type PaginatedResult,
 } from '../../shared/dto/paginated-response.dto';
 
+// Предохранитель списка названий глав: глав в версии на порядки меньше.
+const CHAPTER_TITLES_MAX = 5_000;
+
 @Injectable()
 export class ChapterService {
   constructor(
@@ -50,6 +53,27 @@ export class ChapterService {
   async listAdminByVersion(bookVersionId: string, page?: number, limit?: number) {
     await this.ensureVersionExists(bookVersionId);
     return this.listInternal(bookVersionId, page, limit);
+  }
+
+  /**
+   * Номера и названия глав без текста — «Вводные для промпта» анализа (F03-1, решение арбитра А5):
+   * `listInternal` тянет полный `content` каждой главы, на большой книге это мегабайты.
+   */
+  async listAdminTitles(bookVersionId: string) {
+    await this.ensureVersionExists(bookVersionId);
+    const where = { bookVersionId };
+    // `total` — настоящий: усечение пределом видно потребителю (`LEGACY-098`), «Вводные» пишут
+    // «показано N из M».
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.chapter.findMany({
+        where,
+        orderBy: { number: 'asc' },
+        select: { number: true, title: true },
+        take: CHAPTER_TITLES_MAX,
+      }),
+      this.prisma.chapter.count({ where }),
+    ]);
+    return paginated(items, { page: 1, limit: CHAPTER_TITLES_MAX, total });
   }
 
   // `total` считается всегда, когда выдача режется: без него последняя страница

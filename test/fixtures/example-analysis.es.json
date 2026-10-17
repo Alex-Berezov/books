@@ -1,0 +1,312 @@
+{
+  "language": "es",
+  "facts": {
+    "genre": "novela psicológica y filosófica",
+    "movement": "realismo",
+    "writtenYears": "1865–1866",
+    "settingPlace": "San Petersburgo, en torno a la plaza del Heno",
+    "settingTime": "principios de julio, verano de 1865",
+    "narrator": "tercera persona, muy pegada a la conciencia de Raskólnikov",
+    "structure": "seis partes y un epílogo"
+  },
+  "mainIdea": "Crimen y castigo pone a prueba en un hombre de carne y hueso la idea de que un ser «extraordinario» puede pasar por encima de la sangre en nombre de un fin superior. Raskólnikov mata para demostrarse su teoría y descubre que el verdadero castigo no es el presidio, sino la ruptura con los demás y consigo mismo. Dostoievski no ve la salida en la lógica, sino en la confesión, el sufrimiento y el amor.",
+  "themes": [
+    {
+      "key": "guilt",
+      "title": "Culpa y conciencia",
+      "interpretation": "En la novela el castigo empieza mucho antes que la investigación. A las pocas horas del asesinato Raskólnikov se desmaya en la comisaría, cae enfermo y aparta a su madre y a su hermana: la conciencia actúa en él como una fiebre, no como una conclusión moral.\n\nLo que sorprende a muchos lectores es que durante casi todo el libro no se arrepiente del crimen en sí. Se desprecia por no haber soportado la prueba, por no ser un Napoleón. El arrepentimiento verdadero llega solo en el epílogo, y Dostoievski lo muestra como un regreso lento y doloroso hacia los demás.",
+      "chapters": [7, 8, 10, 20, 30, 39, 41]
+    },
+    {
+      "key": "extraordinary-man",
+      "title": "La teoría del hombre extraordinario",
+      "interpretation": "En su artículo sobre el crimen, Raskólnikov divide a la humanidad en «ordinarios», que deben obedecer, y «extraordinarios», que tienen derecho a transgredir la ley por una idea nueva. Napoleón es su prueba de que la historia perdona la sangre al vencedor.\n\nLa novela refuta la teoría no con argumentos, sino con la experiencia: la «aritmética» de una muerte a cambio de cien vidas se derrumba en cuanto bajo el hacha cae también la mansa Lizaveta. La teoría resulta ser orgullo disfrazado de filosofía, y es ese orgullo el que lo aísla.",
+      "chapters": [6, 19, 20, 30, 33]
+    },
+    {
+      "key": "redemption",
+      "title": "Sufrimiento y resurrección",
+      "interpretation": "Sonia Marmeládova le ofrece a Raskólnikov el camino opuesto a su teoría: aceptar el sufrimiento y volver a los demás a través de la confesión. El pasaje del Evangelio sobre la resurrección de Lázaro, que ella le lee en voz alta, es la clave de todo el libro: el protagonista está muerto por dentro, y la pregunta es si puede resucitar.\n\nDostoievski no lo pone fácil. La confesión no le trae alivio y en Siberia sigue siendo orgulloso. El cambio llega en las últimas páginas, y el narrador lo llama el comienzo de una historia nueva, no un final.",
+      "chapters": [19, 24, 30, 39, 41]
+    },
+    {
+      "key": "poverty",
+      "title": "Pobreza y humillación",
+      "interpretation": "El San Petersburgo de la novela es una ciudad de cuartuchos alquilados, tabernas y deudas. La ruina de los Marmeládov, la disposición de Dunia a casarse con el calculador Luzhin para ayudar a su hermano y la buhardilla de Raskólnikov, parecida a un ataúd, crean la presión bajo la que nace la teoría.\n\nPero la pobreza nunca es una excusa: Sonia y su padre son aún más pobres, y quien empuña el hacha es Raskólnikov. La causa social existe, pero la decisión es del hombre.",
+      "chapters": [2, 3, 4, 14, 28, 31]
+    }
+  ],
+  "characters": [
+    {
+      "key": "raskolnikov",
+      "name": "Rodión Románovich Raskólnikov",
+      "role": "main",
+      "description": "Antiguo estudiante de Derecho que ha abandonado la universidad por falta de dinero. Inteligente, orgulloso y capaz de una generosidad repentina: entrega su último dinero para el entierro de Marmeládov. En él luchan una teoría fría que justifica el asesinato y un corazón vivo que no la acepta.\n\nLa novela lo necesita como experimento: a través de su fiebre, su miedo y su terquedad, Dostoievski muestra que la razón separada de la conciencia destruye primero a quien la sostiene.",
+      "arc": {
+        "from": "un teórico orgulloso que quiere demostrar que «tiene derecho»",
+        "to": "un presidiario que descubre el amor y la posibilidad de una vida nueva"
+      },
+      "themeKeys": ["guilt", "extraordinary-man"],
+      "relations": [
+        {
+          "to": "sonya",
+          "label": "la ama"
+        },
+        {
+          "to": "dunya",
+          "label": "hermano"
+        },
+        {
+          "to": "razumikhin",
+          "label": "amigo"
+        },
+        {
+          "to": "porfiry",
+          "label": "adversario"
+        },
+        {
+          "to": "svidrigailov",
+          "label": "doble"
+        }
+      ]
+    },
+    {
+      "key": "sonya",
+      "name": "Sonia Marmeládova",
+      "role": "main",
+      "description": "Hija de Marmeládov, obligada a prostituirse para que su familia no muera de hambre. Tímida y callada, pero de una fe inquebrantable. Sonia también ha «transgredido», aunque contra sí misma y no contra otro, y por eso se convierte en compañera de Raskólnikov y no en su juez.\n\nEncarna el camino de la humildad y la compasión que responde a la teoría orgullosa, y es la primera persona a quien él confiesa el crimen.",
+      "arc": {
+        "from": "una muchacha humillada que se avergüenza de sí misma",
+        "to": "el sostén de Raskólnikov en Siberia, querida por los presidiarios"
+      },
+      "themeKeys": ["redemption", "poverty"],
+      "relations": [
+        {
+          "to": "marmeladov",
+          "label": "hija"
+        }
+      ]
+    },
+    {
+      "key": "porfiry",
+      "name": "Porfiri Petróvich",
+      "role": "secondary",
+      "description": "El juez de instrucción que adivina la verdad antes que nadie, pero no tiene pruebas. En tres largas conversaciones libra con Raskólnikov un duelo psicológico y apuesta no por detenerlo, sino por que el asesino se entregue por sí mismo. Entiende la teoría desde dentro y ofrece a su autor una salida: la confesión como comienzo de una vida nueva.",
+      "themeKeys": ["extraordinary-man", "guilt"]
+    },
+    {
+      "key": "svidrigailov",
+      "name": "Arkadi Ivánovich Svidrigáilov",
+      "role": "secondary",
+      "description": "Terrateniente de pasado turbio que persigue a Dunia. Vive como si de verdad todo estuviera permitido, y por eso es el doble de Raskólnikov y un anticipo de su posible futuro. Su suicidio muestra adónde lleva la libertad sin fe ni amor.",
+      "themeKeys": ["extraordinary-man"],
+      "relations": [
+        {
+          "to": "dunya",
+          "label": "la acosa"
+        }
+      ]
+    },
+    {
+      "key": "dunya",
+      "name": "Avdotia Románovna (Dunia)",
+      "role": "secondary",
+      "description": "La hermana de Raskólnikov, orgullosa y decidida. Está dispuesta a casarse con Luzhin para ayudar a su hermano, un sacrificio que refleja el de Sonia. Se enfrenta tanto a Luzhin como a Svidrigáilov y conserva su libertad de elegir.",
+      "themeKeys": ["poverty"],
+      "relations": [
+        {
+          "to": "razumikhin",
+          "label": "lo ama"
+        },
+        {
+          "to": "luzhin",
+          "label": "exprometida"
+        }
+      ]
+    },
+    {
+      "key": "razumikhin",
+      "name": "Dmitri Prokófich Razumijin",
+      "role": "secondary",
+      "description": "Compañero de estudios y amigo fiel de Raskólnikov, igual de pobre pero activo y alegre. Gana dinero con traducciones y no construye teorías. Su apellido procede de la palabra rusa razum, «razón»: el sentido común y la bondad frente al racionalismo frío del protagonista.",
+      "themeKeys": ["poverty"]
+    },
+    {
+      "key": "marmeladov",
+      "name": "Semión Zajárovich Marmeládov",
+      "role": "secondary",
+      "description": "Funcionario retirado y alcohólico, padre de Sonia. Su confesión en la taberna abre el tema de los humillados: personas que saben hasta dónde han caído y aun así esperan el perdón.",
+      "themeKeys": ["poverty", "redemption"]
+    },
+    {
+      "key": "luzhin",
+      "name": "Piotr Petróvich Luzhin",
+      "role": "secondary",
+      "description": "El calculador prometido de Dunia. Su moral «económica» del interés propio es una caricatura vulgar de la teoría de Raskólnikov: el provecho lo justifica todo, incluso calumniar a Sonia.",
+      "themeKeys": ["extraordinary-man"]
+    },
+    {
+      "key": "alyona",
+      "name": "Aliona Ivánovna",
+      "role": "minor",
+      "description": "La vieja usurera asesinada. Para Raskólnikov es un «piojo» inútil y dañino; para la novela es un ser humano cuya muerte sigue siendo un asesinato."
+    },
+    {
+      "key": "lizaveta",
+      "name": "Lizaveta",
+      "role": "minor",
+      "description": "La mansa hermana de la usurera, asesinada por entrar en el peor momento. Su muerte desmonta al instante la aritmética de la teoría: el hacha cae justo sobre alguien a quien la teoría decía proteger."
+    }
+  ],
+  "symbols": [
+    {
+      "title": "El color amarillo",
+      "interpretation": "El papel pintado amarillo en casa de la usurera y en la buhardilla de Raskólnikov, la «cartilla amarilla» de Sonia, los rostros amarillentos: el amarillo es el color de la enfermedad, la miseria y la decadencia moral que tiñe el San Petersburgo de la novela.",
+      "chapters": [1, 2, 3, 24]
+    },
+    {
+      "title": "La resurrección de Lázaro",
+      "interpretation": "Porfiri pregunta a Raskólnikov si cree en la resurrección de Lázaro, y más tarde Sonia le lee ese pasaje del Evangelio de san Juan. Lázaro, cuatro días en el sepulcro, es la imagen del protagonista muerto por dentro tras el crimen y la promesa de su resurrección en el epílogo.",
+      "chapters": [19, 24, 41]
+    }
+  ],
+  "keyQuotes": [
+    {
+      "text": "¿Soy una criatura temblorosa o tengo derecho?",
+      "chapter": 30,
+      "speakerKey": "raskolnikov",
+      "themeKeys": ["extraordinary-man"],
+      "interpretation": "La pregunta central de la novela, en boca del propio protagonista. El asesinato nunca fue cuestión de dinero, sino una prueba para saber si pertenece a los «extraordinarios». La propia formulación es una trampa: o se es una criatura temblorosa o se tiene derecho a la vida ajena; la teoría no ve una tercera vía, la humana."
+    },
+    {
+      "text": "¿Acaso maté a la vieja? Me maté a mí mismo, no a la vieja.",
+      "chapter": 30,
+      "speakerKey": "raskolnikov",
+      "themeKeys": ["guilt"],
+      "interpretation": "El crimen se vuelve contra quien lo comete: al matar a otro, Raskólnikov destruyó su propio vínculo con los demás. Por eso el castigo del título es interior y no judicial."
+    },
+    {
+      "text": "Los había resucitado el amor.",
+      "chapter": 41,
+      "themeKeys": ["redemption"],
+      "interpretation": "La conclusión de la novela: la teoría no la vence otra teoría, sino el amor. La resurrección se nombra abiertamente, pero se muestra solo como el comienzo de un camino."
+    }
+  ],
+  "titleMeaning": "En ruso, la palabra «crimen» (prestuplenie) significa literalmente «paso por encima», y la novela juega todo el tiempo con esa imagen: Raskólnikov quiere pasar por encima de la ley moral y comprobar si es capaz de cruzar la línea que separa a los hombres ordinarios de los extraordinarios. En español el eco más cercano es «transgresión», que también significa ir más allá de un límite.\n\nEl «castigo», en cambio, apenas tiene que ver con el tribunal. El presidio ocupa unas pocas páginas del epílogo; la verdadera pena, la fiebre, el miedo y el alejamiento de los suyos, empieza en cuanto se comete el crimen. Leído así, el título es una fórmula: quien pasa por encima de otro se castiga a sí mismo.",
+  "endingMeaning": "La confesión y Siberia todavía no son arrepentimiento: en el presidio Raskólnikov cree durante mucho tiempo que su única culpa fue no haber soportado el crimen. El cambio llega tras una enfermedad y un sueño febril sobre una peste que vuelve a la gente fanáticamente segura de tener razón, hasta que se exterminan unos a otros: él ve su teoría llevada hasta el final.\n\nLa última escena junto al río, cuando por primera vez llora a los pies de Sonia, es un comienzo y no un desenlace. El narrador dice expresamente que ahí empieza una historia nueva, la de la renovación gradual de un hombre. La novela no termina con un veredicto, sino con esperanza.",
+  "context": "Dostoievski concibió el libro en el verano de 1865 en Wiesbaden, arruinado tras perder en la ruleta. Propuso a Mijaíl Katkov, editor de El Mensajero Ruso, un relato sobre un joven que mata bajo la influencia de ideas «inacabadas». Al mismo tiempo planeaba una novela sobre la familia de un funcionario borracho; esa línea se convirtió en la historia de los Marmeládov.\n\nA finales de 1865 quemó la primera versión, escrita en primera persona como una confesión, y empezó de nuevo en tercera persona. La novela se publicó por entregas en El Mensajero Ruso a lo largo de 1866.\n\nEl fondo es la Rusia posterior a la abolición de la servidumbre y a la reforma judicial de 1864, una época de debates encendidos sobre el egoísmo racional, el nihilismo y la justificación de la violencia en nombre del bien común. Los años de presidio del propio Dostoievski en Siberia le dieron el material del epílogo.",
+  "timeline": [
+    {
+      "year": "1821",
+      "event": "Nace Fiódor Dostoievski en Moscú.",
+      "kind": "author"
+    },
+    {
+      "year": "1849",
+      "event": "Detenido con el círculo de Petrashevski; sufre un simulacro de fusilamiento antes de que se le conmute la pena.",
+      "kind": "author"
+    },
+    {
+      "year": "1850–1854",
+      "event": "Presidio en Omsk, la experiencia que nutre el epílogo.",
+      "kind": "author"
+    },
+    {
+      "year": "1861",
+      "event": "Abolición de la servidumbre en Rusia.",
+      "kind": "epoch"
+    },
+    {
+      "year": "1865",
+      "event": "La idea toma forma en Wiesbaden; a fin de año quema el primer borrador.",
+      "kind": "book"
+    },
+    {
+      "year": "1866",
+      "event": "La novela se publica por entregas en El Mensajero Ruso.",
+      "kind": "book"
+    },
+    {
+      "year": "1881",
+      "event": "Muere Dostoievski en San Petersburgo.",
+      "kind": "author"
+    },
+    {
+      "year": "1887",
+      "event": "Emilia Pardo Bazán difunde la novela rusa en España con La revolución y la novela en Rusia.",
+      "kind": "epoch"
+    }
+  ],
+  "style": [
+    {
+      "device": "Polifonía",
+      "explanation": "Mijaíl Bajtín llamó polifónicas a las novelas de Dostoievski: las voces de los personajes suenan con el mismo peso que la del autor. La teoría de Raskólnikov, el cálculo de Luzhin, el cinismo de Svidrigáilov y la fe de Sonia discuten con toda su fuerza, y el autor no zanja la discusión con un veredicto."
+    },
+    {
+      "device": "Monólogo interior",
+      "explanation": "La narración está en tercera persona, pero casi siempre dentro de la cabeza del protagonista: oímos sus razonamientos febriles, sus discusiones consigo mismo y sus decisiones repentinas. El lector vive el crimen desde dentro, sin recibir un juicio hecho."
+    },
+    {
+      "device": "Sueños reveladores",
+      "explanation": "Los sueños dicen la verdad que el protagonista niega de día: el caballo apaleado antes del crimen, la vieja que se ríe después, la peste del epílogo. Son el principal recurso para mostrar lo que hay debajo de la teoría."
+    }
+  ],
+  "reception": "En Rusia la novela fue un éxito inmediato: los lectores esperaban cada entrega de El Mensajero Ruso y la crítica la discutió en la prensa. Dmitri Písarev la leyó como una novela social sobre lo que la miseria hace con una persona, una lectura que choca con la insistencia de Dostoievski en la responsabilidad individual.\n\nEn España, Emilia Pardo Bazán contribuyó a dar a conocer la novela rusa con sus conferencias y su libro de 1887, y más tarde Rafael Cansinos Assens tradujo las obras completas de Dostoievski. En el siglo XX la idea de polifonía de Mijaíl Bajtín, formulada a partir de Dostoievski, se volvió central en la teoría de la novela. Hoy Crimen y castigo es lectura habitual en institutos y universidades de todo el mundo hispanohablante.",
+  "adaptations": [
+    {
+      "title": "Crimen y castigo",
+      "year": 1983,
+      "kind": "film",
+      "differences": "El finlandés Aki Kaurismäki traslada la historia al Helsinki contemporáneo, con un protagonista que trabaja en un matadero. Conserva el esquema del crimen y la confesión, pero elimina la dimensión religiosa."
+    }
+  ],
+  "misreadings": [
+    {
+      "myth": "Raskólnikov mata a la usurera para robarle el dinero.",
+      "explanation": "El dinero es secundario: ni siquiera abre la bolsa robada y la esconde bajo una piedra. Él mismo dice que quería saber si era una criatura temblorosa o tenía derecho. El asesinato es un experimento consigo mismo, no un robo."
+    },
+    {
+      "myth": "El castigo del título es el presidio en Siberia.",
+      "explanation": "El presidio ocupa solo el breve epílogo. Casi toda la novela describe un castigo interior, la fiebre, el miedo y la ruptura con la familia y los amigos, que empieza mucho antes de cualquier juicio."
+    },
+    {
+      "myth": "Porfiri Petróvich atrapa a Raskólnikov con pruebas.",
+      "explanation": "El juez de instrucción no tiene pruebas y lo reconoce. Adivina al asesino psicológicamente y le insta a confesar; la decisión de entregarse es del propio Raskólnikov."
+    }
+  ],
+  "discussionQuestions": [
+    "¿Por qué Raskólnikov no logra «pasar por encima» aunque comete el asesinato?",
+    "¿En qué sentido Svidrigáilov es el doble de Raskólnikov y en qué se diferencian?",
+    "¿Qué papel desempeña la lectura del pasaje de Lázaro?",
+    "¿Responde la novela a la «aritmética» de una muerte a cambio de cien vidas?",
+    "¿Por qué Raskólnikov se arrepiente solo en el epílogo y no al confesar?"
+  ],
+  "faq": [
+    {
+      "question": "¿Cuál es la idea principal de Crimen y castigo?",
+      "answer": "La novela muestra que una idea que permite matar por un fin superior destruye antes que nada al propio asesino. Dostoievski sitúa la salvación no en la teoría, sino en la confesión, el sufrimiento y el amor."
+    },
+    {
+      "question": "¿Por qué se titula Crimen y castigo?",
+      "answer": "En ruso, «crimen» significa literalmente «paso por encima»: el protagonista pasa por encima de la ley moral. El castigo es sobre todo su conciencia atormentada y su aislamiento, no la sentencia del tribunal."
+    },
+    {
+      "question": "¿Cómo termina Crimen y castigo?",
+      "answer": "Raskólnikov confiesa y es enviado a un presidio en Siberia, adonde lo sigue Sonia. En el epílogo siente por fin amor por ella, y el narrador lo presenta como el comienzo de su renovación."
+    },
+    {
+      "question": "¿Cuántas partes tiene la novela?",
+      "answer": "Seis partes y un epílogo."
+    }
+  ],
+  "sources": [
+    {
+      "title": "Crimen y castigo — Wikipedia, la enciclopedia libre",
+      "url": "https://es.wikipedia.org/wiki/Crimen_y_castigo"
+    },
+    {
+      "title": "Fiódor Dostoyevski — Wikipedia, la enciclopedia libre",
+      "url": "https://es.wikipedia.org/wiki/Fi%C3%B3dor_Dostoyevski"
+    }
+  ]
+}

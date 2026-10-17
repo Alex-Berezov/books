@@ -20,6 +20,7 @@ import {
   type BookCardRow,
   loadBookCardRatings,
   SUMMARIES_WITH_TEXT_COUNT,
+  ANALYSES_WITH_CORE_COUNT,
   toBookCardDto,
 } from './book-card';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
@@ -166,6 +167,7 @@ export class BookService {
                   chapters: true,
                   audioChapters: true,
                   summaries: SUMMARIES_WITH_TEXT_COUNT,
+                  analyses: ANALYSES_WITH_CORE_COUNT,
                 },
               },
               tags: {
@@ -420,6 +422,7 @@ export class BookService {
             chapters: true,
             audioChapters: true,
             summaries: SUMMARIES_WITH_TEXT_COUNT,
+            analyses: ANALYSES_WITH_CORE_COUNT,
           },
         },
       },
