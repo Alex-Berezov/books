@@ -44,7 +44,12 @@ import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { suggestedSlugCandidate } from '../../shared/validators/slug';
 import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 import { seoDtoToData } from '../seo/utils/seo-dto-to-data.util';
-import { BOOK_CARD_SELECT, loadBookCardRatings, toBookCardDto } from '../book/book-card';
+import {
+  BOOK_CARD_SELECT,
+  bookCardSlug,
+  loadBookCardRatings,
+  toBookCardDto,
+} from '../book/book-card';
 import { BookCardDto } from '../book/dto/book-card.dto';
 import {
   AdminAuthorRow,
@@ -1308,7 +1313,7 @@ export class AuthorService {
     const [rows, total] = await Promise.all([
       this.prisma.bookVersion.findMany({
         where,
-        select: { ...BOOK_CARD_SELECT, firstPublishedYear: true, book: { select: { slug: true } } },
+        select: { ...BOOK_CARD_SELECT, firstPublishedYear: true },
         orderBy: [
           { firstPublishedYear: { sort: 'asc', nulls: 'last' } },
           { title: 'asc' },
@@ -1337,18 +1342,12 @@ export class AuthorService {
 
     return {
       entries: rows.map((r) => ({
-        card: {
-          // Книга без `authorId` попала сюда по имени этого автора — ссылка на него же.
-          ...toBookCardDto(
-            r,
-            ratings.get(r.bookId),
-            r.authorId ? (slugs.get(authorSlugKey(r.authorId, language)) ?? null) : ownSlug,
-          ),
-          // Версия без своего слага ведёт на слаг книги, как страница автора до F02-1:
-          // `getOverview` ищет по `BookVersion.slug` и `Book.slug`, а не по id версии,
-          // и запасной `row.id` общей карточки дал бы здесь ссылку в 404.
-          slug: r.slug || r.book.slug,
-        },
+        // Книга без `authorId` попала сюда по имени этого автора — ссылка на него же.
+        card: toBookCardDto(
+          r,
+          ratings.get(r.bookId),
+          r.authorId ? (slugs.get(authorSlugKey(r.authorId, language)) ?? null) : ownSlug,
+        ),
         firstPublishedYear: r.firstPublishedYear,
       })),
       total,
@@ -1604,8 +1603,8 @@ export class AuthorService {
     const cardByBook = new Map(
       versions.map((v) => [
         v.bookId,
-        // Версия без своего слага ведёт на слаг книги — как карточки книг автора (F02-1).
-        { slug: v.slug || v.book.slug, title: v.title, coverUrl: v.coverImageUrl },
+        // Версия без своего слага ведёт на слаг книги — то же правило, что у карточки.
+        { slug: bookCardSlug(v), title: v.title, coverUrl: v.coverImageUrl },
       ]),
     );
     const result = new Map<string, AuthorPageBookRef>();

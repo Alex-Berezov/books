@@ -20,6 +20,7 @@ export const BOOK_CARD_SELECT = {
   publishedAt: true,
   _count: { select: { chapters: true, audioChapters: true } },
   categories: { select: { categoryId: true } },
+  book: { select: { slug: true } },
 } as const satisfies Prisma.BookVersionSelect;
 
 export type BookCardRow = Prisma.BookVersionGetPayload<{ select: typeof BOOK_CARD_SELECT }>;
@@ -44,6 +45,16 @@ export async function loadBookCardRatings(
 }
 
 /**
+ * Слаг ссылки на книгу: свой слаг версии, а без него — слаг книги. Публичная страница
+ * (`BookService.getOverview`) ищет по `BookVersion.slug` и `Book.slug`, по id версии — нет:
+ * прежний запасной `row.id` давал ссылку в 404 (`LEGACY-472`). `||`, а не `??`: пустая строка
+ * дала бы ссылку `/{lang}/book/`.
+ */
+export function bookCardSlug(row: { slug: string | null; book: { slug: string } }): string {
+  return row.slug || row.book.slug;
+}
+
+/**
  * Строка версии в карточку. `authorSlug` — слаг автора **на языке карточки** или `null`:
  * карточка ведёт на `/{lang}/author/...`, и чужой слаг дал бы ссылку в никуда.
  *
@@ -57,7 +68,7 @@ export function toBookCardDto(
 ): BookCardDto {
   return {
     id: row.bookId,
-    slug: row.slug ?? row.id,
+    slug: bookCardSlug(row),
     title: row.title,
     author: row.author,
     authorSlug,

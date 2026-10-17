@@ -892,7 +892,7 @@ describe('BookService.getOverview', () => {
     const mockVersion = (overrides: Record<string, unknown> = {}) => ({
       id: (overrides.id as string) ?? 'v1',
       bookId: (overrides.bookId as string) ?? 'b1',
-      slug: (overrides.slug as string) ?? 'test-book',
+      slug: 'slug' in overrides ? (overrides.slug as string | null) : 'test-book',
       title: (overrides.title as string) ?? 'Test Book',
       author: (overrides.author as string) ?? 'Test Author',
       authorId: (overrides.authorId as string | null) ?? 'a1',
@@ -906,6 +906,7 @@ describe('BookService.getOverview', () => {
         audioChapters: (overrides.audioChapters as number) ?? 0,
       },
       categories: (overrides.categories as { categoryId: string }[]) ?? [{ categoryId: 'c1' }],
+      book: { slug: 'test-book-base' },
     });
 
     beforeEach(() => {
@@ -949,6 +950,21 @@ describe('BookService.getOverview', () => {
       expect(res.items).toHaveLength(1);
       expect(res.items[0].title).toBe('Test Book');
       expect(res.pagination).toEqual({ page: 1, limit: 24, total: 1, totalPages: 1 });
+    });
+
+    // `LEGACY-472`: версия без своего слага ведёт на слаг книги, а не на id версии (404).
+    it('card of a version without its own slug links to Book.slug', async () => {
+      mockOneCard();
+      prisma.bookVersion.findMany
+        .mockResolvedValueOnce([mockVersion({ slug: null })])
+        .mockResolvedValueOnce([{ authorId: 'a1', language: 'en', slug: 'test-author' }]);
+
+      const res = await service.findCards(Language.en);
+
+      expect(res.items[0].slug).toBe('test-book-base');
+      expect(prisma.bookVersion.findMany.mock.calls[0][0].select.book).toEqual({
+        select: { slug: true },
+      });
     });
 
     /**
@@ -1058,6 +1074,7 @@ describe('BookService.getOverview', () => {
       contributors: [],
       _count: { chapters: 1, audioChapters: 0 },
       categories: [],
+      book: { slug: bookId },
     });
 
     /** Порядок нарочно перемешан: правильный ответ не должен совпадать с порядком базы. */
@@ -1125,6 +1142,8 @@ describe('BookService.getOverview', () => {
       await service.findRelated('cur-slug', Language.en);
 
       expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(4);
+      // Версия по слагу нашлась — до `Book.slug` поиск не доходит.
+      expect(prisma.book.findFirst).not.toHaveBeenCalled();
       expect(prisma.bookVersion.findFirst).toHaveBeenNthCalledWith(
         2,
         expect.objectContaining({
@@ -1132,6 +1151,41 @@ describe('BookService.getOverview', () => {
           orderBy: { language: 'asc' },
         }),
       );
+    });
+
+    // `LEGACY-472`: карточка версии без своего слага ведёт на `Book.slug` — подборка
+    // обязана находить книгу и по нему, как `getOverview`, иначе блоки страницы отвечают 404.
+    it('без версии с этим слагом находит книгу по Book.slug', async () => {
+      prisma.bookVersion.findFirst.mockReset();
+      prisma.bookVersion.findFirst
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({ author: 'A', authorId: null })
+        .mockResolvedValueOnce({ id: 'v-cur' });
+      prisma.book.findFirst.mockResolvedValueOnce({ id: 'cur' });
+      prisma.bookCategory.findMany.mockResolvedValue([]);
+      prisma.bookVersion.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce(shuffled());
+
+      const res = await service.findRelated('christmas-carol', Language.en);
+
+      expect(prisma.book.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.book.findFirst).toHaveBeenCalledWith({
+        where: { slug: 'christmas-carol', versions: { some: { status: 'published' } } },
+        select: { id: true },
+      });
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(4);
+      // Найденная книга — текущая: её нет ни в «другие книги автора», ни в похожих.
+      expect(prisma.bookVersion.findMany.mock.calls[0][0].where.bookId).toEqual({ not: 'cur' });
+      expect(res.similar).toHaveLength(3);
+    });
+
+    it('слага нет ни у версий, ни у книги — 404', async () => {
+      prisma.bookVersion.findFirst.mockReset().mockResolvedValue(null);
+
+      await expect(service.findRelated('missing', Language.en)).rejects.toBeInstanceOf(
+        NotFoundException,
+      );
+      expect(prisma.book.findFirst).toHaveBeenCalledTimes(1);
     });
 
     /**

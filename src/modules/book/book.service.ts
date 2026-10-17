@@ -800,7 +800,17 @@ export class BookService {
         orderBy: { language: 'asc' },
         select: { bookId: true },
       });
-      currentBookId = anyVersion?.bookId ?? null;
+      // Затем `Book.slug` — третий шаг `getOverview`: на него ведёт карточка версии без своего
+      // слага (`bookCardSlug`, `LEGACY-472`), и без этого шага страница открывается, а её
+      // «другие книги автора» и похожие отвечают 404. Только книга с опубликованной версией:
+      // черновая книга по своему слагу подборку не получает, как и по слагу версии выше.
+      const legacyBook = anyVersion
+        ? null
+        : await this.prisma.book.findFirst({
+            where: { slug, versions: { some: { status: 'published' } } },
+            select: { id: true },
+          });
+      currentBookId = anyVersion?.bookId ?? legacyBook?.id ?? null;
       if (currentBookId) {
         const langVersion = await this.prisma.bookVersion.findFirst({
           where: { bookId: currentBookId, language: lang, status: 'published' },
