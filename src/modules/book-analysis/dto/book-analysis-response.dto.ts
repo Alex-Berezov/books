@@ -28,6 +28,13 @@ export class BookAnalysisResponseDto {
   })
   hasCore!: boolean;
 
+  @ApiProperty({
+    type: [Number],
+    description:
+      'Chapter numbers of the version, ascending; chapter links are rendered only for these (empty without text)',
+  })
+  chapterNumbers!: number[];
+
   @ApiProperty({ type: BookAnalysisFactsDto, nullable: true })
   facts!: BookAnalysisFactsDto | null;
 
@@ -117,4 +124,35 @@ export class BookAnalysisSaveResponseDto {
 
   @ApiProperty({ type: [BookAnalysisWarningDto] })
   warnings!: BookAnalysisWarningDto[];
+}
+
+/**
+ * Закрытие анализа блоком окончённой претензии (решение арбитра `F03 | F03-2`). Только то, что
+ * нужно middleware фронта, чтобы закрыть адрес `/{lang}/book/{slug}/analysis` в стране блока:
+ * слаги, язык, страна и срок. Ни претензии, ни причины, ни заявителя.
+ */
+export class BookAnalysisClaimClosureDto {
+  @ApiProperty({
+    type: [String],
+    description: 'Slugs the page may be opened by: the book slug and the version slugs',
+  })
+  slugs!: string[];
+
+  @ApiProperty({
+    enum: Language,
+    nullable: true,
+    description: 'Language of the closed version; null — every language of the book',
+  })
+  language!: Language | null;
+
+  @ApiProperty({ type: String, nullable: true, description: 'ISO country; null — worldwide' })
+  countryCode!: string | null;
+
+  @ApiProperty({ type: String, format: 'date-time', nullable: true })
+  expiresAt!: Date | null;
+}
+
+export class BookAnalysisClaimClosuresResponseDto {
+  @ApiProperty({ type: [BookAnalysisClaimClosureDto] })
+  items!: BookAnalysisClaimClosureDto[];
 }

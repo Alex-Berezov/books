@@ -2652,6 +2652,23 @@ export interface paths {
     patch: operations['PagesController_unpublish'];
     trace?: never;
   };
+  '/analyses/claim-closures': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Where book analyses are closed by active blocks of settled rights claims (slugs, language, country, expiry only) */
+    get: operations['BookAnalysisController_listClaimClosures'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/audio-chapters/{id}': {
     parameters: {
       query?: never;
@@ -5102,6 +5119,22 @@ export interface components {
       role: 'main' | 'secondary' | 'minor';
       themeKeys?: string[];
     };
+    BookAnalysisClaimClosureDto: {
+      /** @description ISO country; null — worldwide */
+      countryCode: string | null;
+      /** Format: date-time */
+      expiresAt: string | null;
+      /**
+       * @description Language of the closed version; null — every language of the book
+       * @enum {string|null}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru' | null;
+      /** @description Slugs the page may be opened by: the book slug and the version slugs */
+      slugs: string[];
+    };
+    BookAnalysisClaimClosuresResponseDto: {
+      items: components['schemas']['BookAnalysisClaimClosureDto'][];
+    };
     BookAnalysisFactsDto: {
       genre?: string | null;
       movement?: string | null;
@@ -5137,6 +5170,8 @@ export interface components {
     };
     BookAnalysisResponseDto: {
       adaptations: components['schemas']['BookAnalysisAdaptationDto'][] | null;
+      /** @description Chapter numbers of the version, ascending; chapter links are rendered only for these (empty without text) */
+      chapterNumbers: number[];
       characters: components['schemas']['BookAnalysisCharacterDto'][] | null;
       context: string | null;
       /** Format: date-time */
@@ -18110,6 +18145,25 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['PageResponse'];
+        };
+      };
+    };
+  };
+  BookAnalysisController_listClaimClosures: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookAnalysisClaimClosuresResponseDto'];
         };
       };
     };

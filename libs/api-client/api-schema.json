@@ -2477,6 +2477,60 @@
         ],
         "type": "object"
       },
+      "BookAnalysisClaimClosureDto": {
+        "properties": {
+          "countryCode": {
+            "description": "ISO country; null — worldwide",
+            "nullable": true,
+            "type": "string"
+          },
+          "expiresAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "language": {
+            "description": "Language of the closed version; null — every language of the book",
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "slugs": {
+            "description": "Slugs the page may be opened by: the book slug and the version slugs",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "slugs",
+          "language",
+          "countryCode",
+          "expiresAt"
+        ],
+        "type": "object"
+      },
+      "BookAnalysisClaimClosuresResponseDto": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisClaimClosureDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "items"
+        ],
+        "type": "object"
+      },
       "BookAnalysisFactsDto": {
         "properties": {
           "genre": {
@@ -2621,6 +2675,13 @@
             "nullable": true,
             "type": "array"
           },
+          "chapterNumbers": {
+            "description": "Chapter numbers of the version, ascending; chapter links are rendered only for these (empty without text)",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
           "characters": {
             "items": {
               "$ref": "#/components/schemas/BookAnalysisCharacterDto"
@@ -2747,6 +2808,7 @@
         "required": [
           "language",
           "hasCore",
+          "chapterNumbers",
           "facts",
           "mainIdea",
           "themes",
@@ -36462,6 +36524,28 @@
         "summary": "Unpublish page",
         "tags": [
           "pages"
+        ]
+      }
+    },
+    "/analyses/claim-closures": {
+      "get": {
+        "operationId": "BookAnalysisController_listClaimClosures",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookAnalysisClaimClosuresResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "Where book analyses are closed by active blocks of settled rights claims (slugs, language, country, expiry only)",
+        "tags": [
+          "analyses"
         ]
       }
     },

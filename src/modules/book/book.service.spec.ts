@@ -1,6 +1,7 @@
 import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { BookService } from './book.service';
 import { translatorsSelect } from './book-translators';
+import { analysesWithCoreCount } from './book-card';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorService } from '../author/author.service';
@@ -166,6 +167,27 @@ const routeOldAddresses = (prisma: PrismaStub) => {
   );
 };
 
+/**
+ * F03-2: счётчик анализа зависит от момента запроса (срок блока претензии). Момент берётся
+ * из самого аргумента, форма сверяется с `analysesWithCoreCount` — её литерал прибит в `book-card.spec.ts`.
+ */
+const expectAnalysesCount = (received: unknown) => {
+  const where = (
+    received as {
+      where: {
+        bookVersion: {
+          rightsClaimAccessBlocks: { none: { OR: Array<{ expiresAt: { gt: Date } | null }> } };
+        };
+      };
+    }
+  ).where;
+  const now = where.bookVersion.rightsClaimAccessBlocks.none.OR[1].expiresAt?.gt as Date;
+  expect(now).toBeInstanceOf(Date);
+  // Момент - текущий, а не застывший: иначе блоки с истёкшим сроком закрывали бы анализ вечно.
+  expect(Math.abs(now.getTime() - Date.now())).toBeLessThan(60_000);
+  expect(received).toEqual(analysesWithCoreCount(now));
+};
+
 describe('BookService.getOverview', () => {
   let service: BookService;
   let adminAudit: { record: jest.Mock };
@@ -249,8 +271,8 @@ describe('BookService.getOverview', () => {
         (call[0] as { select?: { _count?: unknown } } | undefined)?.select?._count !== undefined,
     )?.[0] as { select: { _count: { select: { summaries: unknown; analyses: unknown } } } };
     expect(versionsArgs.select._count.select.summaries).toEqual({ where: { hasText: true } });
-    // F03: анализ в обзоре - только с заполненным ядром (кнопка и страница анализа).
-    expect(versionsArgs.select._count.select.analyses).toEqual({ where: { hasCore: true } });
+    // F03: анализ в обзоре - только с заполненным ядром и без закрытия окончённой претензией.
+    expectAnalysesCount(versionsArgs.select._count.select.analyses);
     expect(res.versionIds).toEqual({ text: 'v-text-en', audio: 'v-audio-es' });
     expect(res.seo.main?.metaTitle).toBe('T-text');
     expect(res.seo.read?.metaTitle).toBe('T-text');
@@ -862,10 +884,8 @@ describe('BookService.getOverview', () => {
       expect(args.select.versions.select._count.select.summaries).toEqual({
         where: { hasText: true },
       });
-      // F03: список книг - источник адресов анализа в карте сайта, считается только ядро.
-      expect(args.select.versions.select._count.select.analyses).toEqual({
-        where: { hasCore: true },
-      });
+      // F03: список книг - источник адресов анализа в карте сайта: ядро и без закрытия претензией.
+      expectAnalysesCount(args.select.versions.select._count.select.analyses);
     });
 
     it('sets hasText/hasAudio to false if no chapters or drafts only', async () => {

@@ -902,7 +902,7 @@ describe('AuthorService', () => {
   });
 
   describe('getPublicBySlug', () => {
-    /** Строка `BookVersion` в форме `BOOK_CARD_SELECT` + год (`book-card.ts`). */
+    /** Строка `BookVersion` в форме `bookCardSelect` + год (`book-card.ts`). */
     function cardRow(over: Record<string, unknown> = {}) {
       return {
         id: 'v1',
@@ -943,7 +943,7 @@ describe('AuthorService', () => {
     });
 
     /**
-     * F02-1: форма книги — карточка (`BOOK_CARD_SELECT` → `toBookCardDto`) плюс год, и ничего
+     * F02-1: форма книги — карточка (`bookCardSelect` → `toBookCardDto`) плюс год, и ничего
      * сверх. Сравнивается **полный** набор ключей: проверка одного поля пропустила бы возврат
      * `include` с правовыми полями версии.
      */

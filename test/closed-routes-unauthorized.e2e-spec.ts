@@ -52,6 +52,7 @@ const PUBLIC_ROUTES: ReadonlyArray<readonly [HttpVerb, string]> = [
   ['get', '/:lang/tags'],
   ['get', '/:lang/tags/:slug/books'],
   ['get', '/:lang/tags/:slug/books/cards'],
+  ['get', '/analyses/claim-closures'],
   ['get', '/audio-chapters/:id'],
   ['get', '/books/:bookId/versions'],
   ['get', '/books/:id'],

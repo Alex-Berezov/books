@@ -1,9 +1,9 @@
-import { BookType } from '@prisma/client';
+import { BookType, GeoBlockScope, RightsClaimBlockStatus, RightsClaimStatus } from '@prisma/client';
 import {
-  BOOK_CARD_SELECT,
+  bookCardSelect,
   type BookCardRow,
   SUMMARIES_WITH_TEXT_COUNT,
-  ANALYSES_WITH_CORE_COUNT,
+  analysesWithCoreCount,
   toBookCardDto,
 } from './book-card';
 
@@ -46,15 +46,47 @@ describe('toBookCardDto', () => {
     expect(toBookCardDto(withSummary, undefined, null).hasSummary).toBe(true);
   });
 
+  const now = new Date('2026-10-18T12:00:00Z');
+
   // Признак пересказа считается только по строкам с видимым текстом (`BookSummary.hasText`).
-  it('BOOK_CARD_SELECT считает пересказы по hasText', () => {
-    expect(BOOK_CARD_SELECT._count.select.summaries).toEqual({ where: { hasText: true } });
+  it('bookCardSelect считает пересказы по hasText', () => {
+    expect(bookCardSelect(now)._count.select.summaries).toEqual({ where: { hasText: true } });
     expect(SUMMARIES_WITH_TEXT_COUNT).toEqual({ where: { hasText: true } });
   });
 
-  // F03: анализ считается только с заполненным ядром (`BookAnalysis.hasCore`) - решение арбитра А8.
-  it('BOOK_CARD_SELECT считает анализ по hasCore', () => {
-    expect(BOOK_CARD_SELECT._count.select.analyses).toEqual({ where: { hasCore: true } });
-    expect(ANALYSES_WITH_CORE_COUNT).toEqual({ where: { hasCore: true } });
+  // F03: анализ считается только с заполненным ядром (решение арбитра А8) и без действующего блока
+  // окончённой претензии ни по какой стране — на версии или на всей книге (`F03 | F03-2`). Условие
+  // прибито литералом: без фильтра претензии адрес закрытого анализа уходит в карту сайта.
+  it('bookCardSelect и обзор считают анализ по hasCore без закрытых претензией', () => {
+    const closing = {
+      status: RightsClaimBlockStatus.ACTIVE,
+      scope: {
+        in: [GeoBlockScope.ENTIRE_BOOK, GeoBlockScope.LANGUAGE_EDITION, GeoBlockScope.TEXT_READER],
+      },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      rightsClaim: {
+        status: {
+          in: [
+            RightsClaimStatus.RESOLVED_VALID,
+            RightsClaimStatus.RESOLVED_INVALID,
+            RightsClaimStatus.WITHDRAWN,
+            RightsClaimStatus.CLOSED,
+          ],
+        },
+      },
+    };
+    const expected = {
+      where: {
+        hasCore: true,
+        bookVersion: {
+          rightsClaimAccessBlocks: { none: closing },
+          book: {
+            rightsClaimAccessBlocks: { none: { ...closing, scope: GeoBlockScope.ENTIRE_BOOK } },
+          },
+        },
+      },
+    };
+    expect(analysesWithCoreCount(now)).toEqual(expected);
+    expect(bookCardSelect(now)._count.select.analyses).toEqual(expected);
   });
 });

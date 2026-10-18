@@ -1,4 +1,9 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -14,8 +19,12 @@ import {
 } from './book-analysis-data';
 import { computeAnalysisCore } from './book-analysis-core';
 import { checkAnalysisRefs, collectChapterRefs } from './book-analysis-refs';
+import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
+import { settledClaimBlockWhere } from '../rights-claims/settled-claim-block';
 import type { UpdateBookAnalysisDto } from './dto/update-book-analysis.dto';
 import type {
+  BookAnalysisClaimClosureDto,
+  BookAnalysisClaimClosuresResponseDto,
   BookAnalysisResponseDto,
   BookAnalysisSaveResponseDto,
   BookAnalysisWarningDto,
@@ -25,6 +34,14 @@ import type {
 const BOOK_ANALYSIS_LOCK_NAMESPACE = 831_427_006;
 // Явные границы (`L-020`): писатель, дождавшийся замка, не должен падать P2028 на дефолтных 5 секундах.
 const BOOK_ANALYSIS_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+/** Порция списка закрытий анализа (`listClaimClosures`, порог `id > последний`) и предел порций - граница памяти. */
+export const CLAIM_CLOSURES_BATCH = 1000;
+export const CLAIM_CLOSURES_MAX_BATCHES = 20;
+/**
+ * Предел выборки номеров глав (`chapterNumbers`): тот же, что у списка названий глав админки
+ * (`chapter-titles`, 5 000). Выборка целиком в память идёт с ограничением строк.
+ */
+export const CHAPTER_NUMBERS_LIMIT = 5000;
 
 type AnalysisRow = Prisma.BookAnalysisGetPayload<{ select: typeof BOOK_ANALYSIS_SELECT }>;
 
@@ -75,7 +92,52 @@ export class BookAnalysisService {
     });
     // Без ядра анализа для читателя нет (`product.md` §2): незаконченные блоки видит только редактор.
     if (!row || (!editor && !row.hasCore)) return null;
-    return toResponse(row, version.language);
+    return toResponse(row, version.language, await loadChapterNumbers(this.prisma, bookVersionId));
+  }
+
+  /**
+   * Где анализ закрыт блоком окончённой претензии — для middleware фронта (решение арбитра
+   * `F03 | F03-2`). Страница анализа рендерится статично без страны читателя, поэтому блок по
+   * стране закрывает её middleware по этому списку; условие блока — то же, что у ручки
+   * `getByVersion` и счётчика `_count.analyses` (`settledClaimBlockWhere`).
+   *
+   * Блок с областью на всю книгу закрывает все языки (`language: null`), блок версии — её язык.
+   * Только опубликованные версии: черновик и без того 404. Срок отдаётся, чтобы middleware не
+   * держал истёкший блок до следующего обновления списка.
+   */
+  async listClaimClosures(): Promise<BookAnalysisClaimClosuresResponseDto> {
+    const where = settledClaimBlockWhere(new Date(), ClaimBlockScope.TEXT_READER);
+    const items: BookAnalysisClaimClosuresResponseDto['items'] = [];
+    let cursor: string | undefined;
+    // Список читается целиком, порциями: обрезанный список middleware не отличил бы от полного
+    // и открыл бы анализ в стране блока (L-015). Предел порций - граница памяти; дошли до него -
+    // отказ, и middleware работает по прежнему списку, а не по урезанному.
+    // Предел проверяется после чтения: ровно `MAX_BATCHES` полных порций - ещё полный список, отказ
+    // только если за ними есть хоть одна строка.
+    for (let batch = 0; batch <= CLAIM_CLOSURES_MAX_BATCHES; batch += 1) {
+      const take = batch === CLAIM_CLOSURES_MAX_BATCHES ? 1 : CLAIM_CLOSURES_BATCH;
+      // Порог `id > последний`, а не курсор Prisma: курсор ищет свою строку, и удалённая каскадом
+      // между порциями строка дала бы пустую порцию - урезанный список под видом конца.
+      const blocks = await this.prisma.rightsClaimAccessBlock.findMany({
+        where: cursor ? { AND: [where, { id: { gt: cursor } }] } : where,
+        select: CLAIM_CLOSURE_SELECT,
+        orderBy: { id: 'asc' },
+        take,
+      });
+      if (batch === CLAIM_CLOSURES_MAX_BATCHES) {
+        if (blocks.length > 0) {
+          throw new ServiceUnavailableException('Too many claim closures to list');
+        }
+        return { items };
+      }
+      for (const block of blocks) {
+        const closure = toClaimClosure(block);
+        if (closure) items.push(closure);
+      }
+      if (blocks.length < CLAIM_CLOSURES_BATCH) return { items };
+      cursor = blocks[blocks.length - 1].id;
+    }
+    return { items };
   }
 
   /**
@@ -128,7 +190,8 @@ export class BookAnalysisService {
               data: { bookVersionId, ...data },
               select: BOOK_ANALYSIS_SELECT,
             });
-        return { analysis: toResponse(row, version.language), ...summary };
+        const chapterNumbers = await loadChapterNumbers(tx, bookVersionId);
+        return { analysis: toResponse(row, version.language, chapterNumbers), ...summary };
       }, BOOK_ANALYSIS_TX_OPTIONS);
     } catch (e: unknown) {
       // Версию проверяли до транзакции и без замка: удалённая в этом окне версия даёт FK-отказ
@@ -196,13 +259,80 @@ export class BookAnalysisService {
   }
 }
 
+/** Поля блока для списка закрытий: только цель, страна и срок - без причины и претензии. */
+const CLAIM_CLOSURE_SELECT = {
+  id: true,
+  scope: true,
+  countryCode: true,
+  expiresAt: true,
+  book: {
+    select: {
+      slug: true,
+      versions: { where: { status: 'published' }, select: { slug: true } },
+    },
+  },
+  bookVersion: {
+    select: { slug: true, language: true, status: true, book: { select: { slug: true } } },
+  },
+} as const satisfies Prisma.RightsClaimAccessBlockSelect;
+
+type ClaimClosureRow = Prisma.RightsClaimAccessBlockGetPayload<{
+  select: typeof CLAIM_CLOSURE_SELECT;
+}>;
+
+/**
+ * Строка списка закрытий или `null`. Блок на всю книгу закрывает все языки, но только книги
+ * с опубликованной версией: слаг книги без единой опубликованной версии - непубличный адрес,
+ * и вместе с ним наружу ушёл бы факт претензии. Блок версии - только опубликованной.
+ */
+function toClaimClosure(block: ClaimClosureRow): BookAnalysisClaimClosureDto | null {
+  const countryCode = block.countryCode ? block.countryCode.toUpperCase() : null;
+  if (block.scope === ClaimBlockScope.ENTIRE_BOOK && block.book) {
+    if (block.book.versions.length === 0) return null;
+    const slugs = [block.book.slug, ...block.book.versions.map((version) => version.slug)];
+    return { slugs: uniqueSlugs(slugs), language: null, countryCode, expiresAt: block.expiresAt };
+  }
+  if (block.bookVersion && block.bookVersion.status === 'published') {
+    return {
+      slugs: uniqueSlugs([block.bookVersion.slug, block.bookVersion.book.slug]),
+      language: block.bookVersion.language,
+      countryCode,
+      expiresAt: block.expiresAt,
+    };
+  }
+  return null;
+}
+
+function uniqueSlugs(slugs: Array<string | null>): string[] {
+  return [...new Set(slugs.filter((slug): slug is string => Boolean(slug)))];
+}
+
+/**
+ * Номера глав версии — чтобы страница ставила ссылку «глава N» только на существующую главу
+ * (`product.md` §1.6, решение арбитра `F03 | F03-2`). Только `number`: ни заголовков, ни текста.
+ */
+async function loadChapterNumbers(
+  db: Prisma.TransactionClient,
+  bookVersionId: string,
+): Promise<number[]> {
+  const chapters = await db.chapter.findMany({
+    where: { bookVersionId },
+    select: { number: true },
+    orderBy: { number: 'asc' },
+    take: CHAPTER_NUMBERS_LIMIT,
+  });
+  return chapters.map((chapter) => chapter.number);
+}
+
 function toResponse(
   row: AnalysisRow,
   language: BookAnalysisResponseDto['language'],
+  chapterNumbers: number[],
 ): BookAnalysisResponseDto {
   return {
     language,
     hasCore: row.hasCore,
+    chapterNumbers,
     ...readStoredAnalysis(row),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

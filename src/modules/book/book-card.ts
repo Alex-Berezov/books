@@ -1,4 +1,6 @@
 import { BookType, Prisma } from '@prisma/client';
+import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
+import { settledClaimBlockWhere } from '../rights-claims/settled-claim-block';
 import { BookCardDto } from './dto/book-card.dto';
 
 /**
@@ -13,13 +15,31 @@ export const SUMMARIES_WITH_TEXT_COUNT = {
 } as const satisfies Prisma.BookVersionCountOutputTypeCountSummariesArgs;
 
 /**
- * Счётчик анализа для `_count` (F03): только запись с заполненным ядром (`BookAnalysis.hasCore`,
- * пересчитывается при каждом сохранении). Одна константа на карточки, список книг (по нему карта
- * сайта строит адреса анализа) и обзор книги — решение арбитра А8 (`decisions-log.md`, `F03 | F03-1`).
+ * Счётчик анализа для `_count` (F03): запись с заполненным ядром (`BookAnalysis.hasCore`,
+ * пересчитывается при каждом сохранении) у версии, которую не закрывает блок окончённой
+ * претензии ни по какой стране — ни на самой версии, ни на всей книге. Одна функция на карточки,
+ * список книг (по нему карта сайта строит адреса анализа и hreflang) и обзор книги (кнопка,
+ * переключатель языка) — решения арбитра А8 и `F03 | F03-2` (`decisions-log.md`).
+ *
+ * Страну счётчик не читает намеренно: ответ списка и обзора кэшируется публично и одинаков для
+ * всех стран. Блок по одной стране убирает адрес из карты сайта и кнопку везде, а сам доступ
+ * закрывает только в стране блока — middleware фронта по списку `GET analyses/claim-closures`.
+ * `now` — потому что у блока есть срок (`expiresAt`), а константа застыла бы на старте процесса.
  */
-export const ANALYSES_WITH_CORE_COUNT = {
-  where: { hasCore: true },
-} as const satisfies Prisma.BookVersionCountOutputTypeCountAnalysesArgs;
+export function analysesWithCoreCount(now: Date) {
+  const closing = settledClaimBlockWhere(now, ClaimBlockScope.TEXT_READER);
+  return {
+    where: {
+      hasCore: true,
+      bookVersion: {
+        rightsClaimAccessBlocks: { none: closing },
+        book: {
+          rightsClaimAccessBlocks: { none: { ...closing, scope: ClaimBlockScope.ENTIRE_BOOK } },
+        },
+      },
+    },
+  } satisfies Prisma.BookVersionCountOutputTypeCountAnalysesArgs;
+}
 
 /**
  * Карточка книги — одна форма на все пути, которые её отдают: `/books/cards` в разрезах
@@ -28,29 +48,33 @@ export const ANALYSES_WITH_CORE_COUNT = {
  * `AuthorModule`), а вторая копия преобразования разошлась бы с первой на первом же поле
  * (решение арбитра 14.10.2026, `decisions-log.md`, `F02 | F02-1`).
  */
-export const BOOK_CARD_SELECT = {
-  id: true,
-  bookId: true,
-  slug: true,
-  title: true,
-  author: true,
-  authorId: true,
-  coverImageUrl: true,
-  type: true,
-  publishedAt: true,
-  _count: {
-    select: {
-      chapters: true,
-      audioChapters: true,
-      summaries: SUMMARIES_WITH_TEXT_COUNT,
-      analyses: ANALYSES_WITH_CORE_COUNT,
+export function bookCardSelect(now: Date) {
+  return {
+    id: true,
+    bookId: true,
+    slug: true,
+    title: true,
+    author: true,
+    authorId: true,
+    coverImageUrl: true,
+    type: true,
+    publishedAt: true,
+    _count: {
+      select: {
+        chapters: true,
+        audioChapters: true,
+        summaries: SUMMARIES_WITH_TEXT_COUNT,
+        analyses: analysesWithCoreCount(now),
+      },
     },
-  },
-  categories: { select: { categoryId: true } },
-  book: { select: { slug: true } },
-} as const satisfies Prisma.BookVersionSelect;
+    categories: { select: { categoryId: true } },
+    book: { select: { slug: true } },
+  } as const satisfies Prisma.BookVersionSelect;
+}
 
-export type BookCardRow = Prisma.BookVersionGetPayload<{ select: typeof BOOK_CARD_SELECT }>;
+export type BookCardRow = Prisma.BookVersionGetPayload<{
+  select: ReturnType<typeof bookCardSelect>;
+}>;
 
 export type BookCardRating = { avg: number | null; count: number };
 

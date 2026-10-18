@@ -17,6 +17,7 @@ import { BookAnalysisService } from './book-analysis.service';
 import { UpdateBookAnalysisDto } from './dto/update-book-analysis.dto';
 import { SaveBookAnalysisQueryDto } from './dto/save-book-analysis-query.dto';
 import {
+  BookAnalysisClaimClosuresResponseDto,
   BookAnalysisResponseDto,
   BookAnalysisSaveResponseDto,
 } from './dto/book-analysis-response.dto';
@@ -28,6 +29,20 @@ export class BookAnalysisController {
     private readonly service: BookAnalysisService,
     private readonly geoIpCountryService: GeoIpCountryService,
   ) {}
+
+  /**
+   * Список закрытий анализа блоками окончённых претензий — для middleware фронта (решение арбитра
+   * `F03 | F03-2`). Публичный: в нём только слаги, язык, страна и срок; ответ одинаков для всех.
+   */
+  @Get('analyses/claim-closures')
+  @ApiOperation({
+    summary:
+      'Where book analyses are closed by active blocks of settled rights claims (slugs, language, country, expiry only)',
+  })
+  @ApiOkResponse({ type: BookAnalysisClaimClosuresResponseDto })
+  listClaimClosures() {
+    return this.service.listClaimClosures();
+  }
 
   @Get('versions/:bookVersionId/analysis')
   @ApiBearerAuth()

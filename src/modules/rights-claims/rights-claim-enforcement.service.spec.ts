@@ -94,12 +94,18 @@ describe('RightsClaimEnforcementService', () => {
   // книги закрывает только блок претензии в конечном статусе. Набор статусов прибит литералом:
   // сдвиг `CLOSED_CLAIM_STATUSES` краснеет здесь, а не открывает или закрывает анализ молча.
   it('settledOnly — только блоки претензий, спор по которым окончен', async () => {
-    await service.checkClaimAccess({
-      bookVersionId: 'version-1',
-      countryCode: 'DE',
-      scope: ClaimBlockScope.TEXT_READER,
-      settledOnly: true,
-    });
+    const now = new Date('2026-10-18T12:00:00Z');
+    jest.useFakeTimers({ now });
+    try {
+      await service.checkClaimAccess({
+        bookVersionId: 'version-1',
+        countryCode: 'DE',
+        scope: ClaimBlockScope.TEXT_READER,
+        settledOnly: true,
+      });
+    } finally {
+      jest.useRealTimers();
+    }
 
     expect(prisma.rightsClaimAccessBlock.findMany).toHaveBeenCalledTimes(1);
     expect(prisma.rightsClaimAccessBlock.findMany).toHaveBeenCalledWith({
@@ -109,16 +115,29 @@ describe('RightsClaimEnforcementService', () => {
           { bookVersionId: 'version-1' },
           { bookId: 'book-1', scope: ClaimBlockScope.ENTIRE_BOOK },
         ],
-        rightsClaim: {
-          status: {
-            in: [
-              RightsClaimStatus.RESOLVED_VALID,
-              RightsClaimStatus.RESOLVED_INVALID,
-              RightsClaimStatus.WITHDRAWN,
-              RightsClaimStatus.CLOSED,
-            ],
+        AND: [
+          {
+            status: RightsClaimBlockStatus.ACTIVE,
+            scope: {
+              in: [
+                ClaimBlockScope.ENTIRE_BOOK,
+                ClaimBlockScope.LANGUAGE_EDITION,
+                ClaimBlockScope.TEXT_READER,
+              ],
+            },
+            OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+            rightsClaim: {
+              status: {
+                in: [
+                  RightsClaimStatus.RESOLVED_VALID,
+                  RightsClaimStatus.RESOLVED_INVALID,
+                  RightsClaimStatus.WITHDRAWN,
+                  RightsClaimStatus.CLOSED,
+                ],
+              },
+            },
           },
-        },
+        ],
       },
     });
   });

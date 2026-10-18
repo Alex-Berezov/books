@@ -4,9 +4,9 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   CLAIM_ACCESS_BLOCK_MESSAGE_RU,
   CLAIM_ACCESS_BLOCK_REASON_CODE,
-  CLOSED_CLAIM_STATUSES,
 } from './rights-claim.constants';
 import { ClaimBlockScope, RightsClaimBlockStatus } from './rights-claim-interface';
+import { scopesCovering, settledClaimBlockWhere } from './settled-claim-block';
 
 export interface ClaimAccessCheckInput {
   bookId?: string;
@@ -61,9 +61,7 @@ export class RightsClaimEnforcementService {
       where: {
         status: RightsClaimBlockStatus.ACTIVE,
         OR: targetConditions,
-        ...(input.settledOnly
-          ? { rightsClaim: { status: { in: [...CLOSED_CLAIM_STATUSES] } } }
-          : {}),
+        ...(input.settledOnly ? { AND: [settledClaimBlockWhere(new Date(), input.scope)] } : {}),
       },
     });
 
@@ -112,9 +110,7 @@ export class RightsClaimEnforcementService {
     blockScope: RightsClaimAccessBlock['scope'],
     requestedScope: ClaimBlockScope,
   ): boolean {
-    if (blockScope === ClaimBlockScope.ENTIRE_BOOK) return true;
-    if (blockScope === ClaimBlockScope.LANGUAGE_EDITION) return true;
-    return blockScope === requestedScope;
+    return scopesCovering(requestedScope).includes(blockScope);
   }
 
   private worldwideRank(block: RightsClaimAccessBlock): number {
