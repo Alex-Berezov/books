@@ -319,24 +319,26 @@ export class GeoBlockRuleService {
   }
 
   /**
-   * Только блоки правовых претензий, без территориальных гео-правил. Для ручек, которые гео-блок
-   * по странам не закрывает, а претензия правообладателя закрывает (анализ книги, F03: решение
-   * владельца 18.10.2026 по гео — «а», претензии ждут его ответа, до него закрывают как прежде).
+   * Только блоки претензий, спор по которым окончен, без территориальных гео-правил и без
+   * претензий в работе (`OPEN_CLAIM_STATUSES`). Для ручек, которые закрывает лишь итог спора
+   * (анализ книги, F03: слово владельца 18.10.2026 — гео не закрывает, претензия закрывает после
+   * решения; перевод на статусы — решение арбитра `2026-10-18-f03-claim-upheld`).
    */
-  async assertClaimAccess(input: GeoAccessCheckInput): Promise<void> {
-    const claim = await this.checkClaim(input);
+  async assertSettledClaimAccess(input: GeoAccessCheckInput): Promise<void> {
+    const claim = await this.checkClaim(input, true);
     if (claim.blocked) {
       throw claimBlockedException(claim.countryCode ?? UNKNOWN_COUNTRY_CODE, input.scope);
     }
   }
 
-  /** Блоки претензий — одна точка для `checkAccess` и `assertClaimAccess` (ADR-012 п.3). */
-  private checkClaim(input: GeoAccessCheckInput) {
+  /** Блоки претензий — одна точка для `checkAccess` и `assertSettledClaimAccess` (ADR-012 п.3). */
+  private checkClaim(input: GeoAccessCheckInput, settledOnly = false) {
     return this.claimEnforcement.checkClaimAccess({
       bookId: input.bookId,
       bookVersionId: input.bookVersionId,
       countryCode: input.countryCode,
       scope: input.scope,
+      settledOnly,
     });
   }
 

@@ -1,9 +1,10 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment -- тело ответа supertest типизировано как any */
+import { randomUUID } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { Language } from '@prisma/client';
+import { Language, RightsClaimStatus } from '@prisma/client';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -403,65 +404,113 @@ describe('BookAnalysis e2e', () => {
     await request(http()).get(`/versions/${blocked.versionId}/analysis`).expect(200);
   });
 
-  /**
-   * Блок правовой претензии закрывает анализ, как текст версии: этот вопрос владелец не решал
-   * (тема №4), до ответа — прежнее поведение (решение арбитра, `2026-10-18-f03-a1-geo`).
-   */
-  it('блок претензии правообладателя закрывает анализ: 451 BLOCKED_BY_RIGHTS_CLAIM, редактору 200', async () => {
-    const v = await createVersion();
-    await put(v.versionId, { language: 'en', ...core() }).expect(200);
+  /** Претензия с блоком доступа к тексту версии; статус претензии — стадия спора. */
+  const claimWithBlock = async (
+    v: { bookId: string; versionId: string },
+    status: RightsClaimStatus,
+    block: {
+      countryCode?: string | null;
+      status?: 'ACTIVE' | 'LIFTED';
+      entireBook?: boolean;
+    } = {},
+  ) => {
     const claim = await prisma.rightsClaim.create({
       data: {
-        claimNumber: `RC-AN-${Date.now()}`,
+        claimNumber: `RC-AN-${randomUUID()}`,
         claimType: 'COPYRIGHT_INFRINGEMENT',
         claimantName: 'Claimant',
         descriptionRu: 'Тест',
         bookId: v.bookId,
         bookVersionId: v.versionId,
+        status,
       },
     });
     await prisma.rightsClaimAccessBlock.create({
       data: {
         rightsClaimId: claim.id,
-        bookVersionId: v.versionId,
-        scope: 'TEXT_READER',
-        countryCode: null,
+        ...(block.entireBook
+          ? { bookId: v.bookId, scope: 'ENTIRE_BOOK' as const }
+          : { bookVersionId: v.versionId, scope: 'TEXT_READER' as const }),
+        countryCode: block.countryCode ?? null,
+        status: block.status ?? 'ACTIVE',
         reasonRu: 'Внутренняя причина: заявитель Zx9Claimant',
       },
     });
-    const res = await request(http()).get(`/versions/${v.versionId}/analysis`).expect(451);
-    expect(res.body.code).toBe('BLOCKED_BY_RIGHTS_CLAIM');
-    // Ни данные претензии, ни редакторский `reasonRu` блока наружу не уходят (ADR-012 п.8).
-    expect(JSON.stringify(res.body)).not.toContain('Claimant');
-    expect(JSON.stringify(res.body)).not.toContain('Zx9');
-    await request(http())
-      .get(`/versions/${v.versionId}/analysis`)
-      .set('Authorization', `Bearer ${adminAccess}`)
-      .expect(200);
-  });
+    return claim;
+  };
 
-  it('блок претензии по стране закрывает анализ только в этой стране', async () => {
+  const versionWithAnalysis = async () => {
     const v = await createVersion();
     await put(v.versionId, { language: 'en', ...core() }).expect(200);
-    const claim = await prisma.rightsClaim.create({
-      data: {
-        claimNumber: `RC-AN-GB-${Date.now()}`,
-        claimType: 'COPYRIGHT_INFRINGEMENT',
-        claimantName: 'Claimant',
-        descriptionRu: 'Тест',
-        bookId: v.bookId,
-        bookVersionId: v.versionId,
-      },
-    });
-    await prisma.rightsClaimAccessBlock.create({
-      data: {
-        rightsClaimId: claim.id,
-        bookVersionId: v.versionId,
-        scope: 'TEXT_READER',
-        countryCode: 'GB',
-        reasonRu: 'Тест',
-      },
-    });
+    return v;
+  };
+
+  /**
+   * Слово владельца 18.10.2026 (`work-queue.md` «ВЛАДЕЛЕЦ» п.6): пока спор с правообладателем
+   * идёт, анализ открыт; спор окончен, а блок не снят (текст убран) — анализ закрыт там же, где
+   * текст. Перевод на статусы — решение арбитра `2026-10-18-f03-claim-upheld`: резолюция
+   * не читается.
+   */
+  it.each([
+    'RECEIVED',
+    'UNDER_REVIEW',
+    'ACTION_REQUIRED',
+    'AWAITING_CLAIMANT',
+    'CONTENT_REMOVED',
+    'CONTENT_RESTRICTED',
+    'COUNTER_NOTICE_FILED',
+    'ESCALATED_TO_LAWYER',
+  ] as const)('спор идёт (%s): текст закрыт, анализ открыт', async (status) => {
+    const v = await versionWithAnalysis();
+    await claimWithBlock(v, status);
+    await request(http()).get(`/versions/${v.versionId}/chapters`).expect(451);
+    await request(http()).get(`/versions/${v.versionId}/analysis`).expect(200);
+  });
+
+  it.each(['RESOLVED_VALID', 'RESOLVED_INVALID', 'WITHDRAWN', 'CLOSED'] as const)(
+    'спор окончен (%s), блок не снят: анализ 451 BLOCKED_BY_RIGHTS_CLAIM, редактору 200',
+    async (status) => {
+      const v = await versionWithAnalysis();
+      // Без резолюции — так статус ставит `changeStatus`; резолюция на исход не влияет.
+      await claimWithBlock(v, status);
+      const res = await request(http()).get(`/versions/${v.versionId}/analysis`).expect(451);
+      expect(res.body.code).toBe('BLOCKED_BY_RIGHTS_CLAIM');
+      // Ни данные претензии, ни редакторский `reasonRu` блока наружу не уходят (ADR-012 п.8).
+      expect(JSON.stringify(res.body)).not.toContain('Claimant');
+      expect(JSON.stringify(res.body)).not.toContain('Zx9');
+      await request(http())
+        .get(`/versions/${v.versionId}/analysis`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+    },
+  );
+
+  it('спор окончен, блок снят — анализ открыт; претензию переоткрыли — снова открыт', async () => {
+    const lifted = await versionWithAnalysis();
+    await claimWithBlock(lifted, 'RESOLVED_VALID', { status: 'LIFTED' });
+    await request(http()).get(`/versions/${lifted.versionId}/analysis`).expect(200);
+
+    const reopened = await versionWithAnalysis();
+    const claim = await claimWithBlock(reopened, 'RESOLVED_VALID');
+    await request(http()).get(`/versions/${reopened.versionId}/analysis`).expect(451);
+    await prisma.rightsClaim.update({ where: { id: claim.id }, data: { status: 'UNDER_REVIEW' } });
+    await request(http()).get(`/versions/${reopened.versionId}/analysis`).expect(200);
+  });
+
+  it('блок на всю книгу: в споре анализ открыт, по окончании закрыт', async () => {
+    const open = await versionWithAnalysis();
+    await claimWithBlock(open, 'UNDER_REVIEW', { entireBook: true });
+    await request(http()).get(`/versions/${open.versionId}/chapters`).expect(451);
+    await request(http()).get(`/versions/${open.versionId}/analysis`).expect(200);
+
+    const settled = await versionWithAnalysis();
+    await claimWithBlock(settled, 'CLOSED', { entireBook: true });
+    await request(http()).get(`/versions/${settled.versionId}/analysis`).expect(451);
+  });
+
+  it('окончённая претензия по стране закрывает анализ только в этой стране', async () => {
+    const v = await versionWithAnalysis();
+    await claimWithBlock(v, 'RESOLVED_VALID', { countryCode: 'GB' });
     await request(http())
       .get(`/versions/${v.versionId}/analysis`)
       .set('X-Geo-Country', 'GB')

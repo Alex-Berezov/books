@@ -33,7 +33,7 @@ export class BookAnalysisController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Get book analysis for a version (drafts and analyses without a core are visible to editors only; closed by rights-claim blocks)',
+      'Get book analysis for a version (drafts and analyses without a core are visible to editors only; closed only by active rights-claim blocks of claims whose dispute is over)',
   })
   // Тело может отсутствовать: у версии нет анализа — `null` (как у пересказа).
   @ApiExtraModels(BookAnalysisResponseDto)

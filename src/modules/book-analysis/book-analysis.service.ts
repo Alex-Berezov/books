@@ -42,9 +42,10 @@ export class BookAnalysisService {
    *
    * Территориального гео-блока нет: анализ — сведения о книге, собственный текст Bibliaris
    * с короткими цитатами (решение владельца 18.10.2026 по А1, ADR-012 п.7 «карточка»).
-   * Блок правовой претензии правообладателя анализ закрывает, как текст версии: этот вопрос
-   * владелец не решал (тема №4, `work-queue.md` «ВЛАДЕЛЕЦ»), до его ответа — прежнее поведение
-   * (решение арбитра, `decisions-log.md`, `2026-10-18-f03-a1-geo`). Редактор проверку не проходит.
+   * Блок претензии правообладателя закрывает анализ, только когда спор окончен; пока
+   * разбирательство идёт, анализ открыт, хотя текст версии закрыт (слово владельца 18.10.2026,
+   * `work-queue.md` «ВЛАДЕЛЕЦ» п.6; перевод на статусы — решение арбитра в `decisions-log.md`).
+   * Редактор проверку не проходит.
    */
   async getByVersion(
     bookVersionId: string,
@@ -53,14 +54,15 @@ export class BookAnalysisService {
   ): Promise<BookAnalysisResponseDto | null> {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
-      select: { status: true, language: true },
+      select: { status: true, language: true, bookId: true },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
 
     const editor = await this.moderatorRoles.isModerator(actor);
     if (!editor) {
       if (version.status !== 'published') throw new NotFoundException('BookVersion not found');
-      await this.geoBlockRuleService.assertClaimAccess({
+      await this.geoBlockRuleService.assertSettledClaimAccess({
+        bookId: version.bookId,
         bookVersionId,
         countryCode,
         scope: GeoBlockScope.TEXT_READER,

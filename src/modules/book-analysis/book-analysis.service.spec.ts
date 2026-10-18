@@ -9,7 +9,7 @@ import type { UpdateBookAnalysisDto } from './dto/update-book-analysis.dto';
 
 /**
  * F03-1: ветки сервиса анализа без базы. Гонку замка и живой SQL держит
- * `test/book-analysis.e2e-spec.ts`; здесь — 404, блок претензии, ядро для читателя, `dryRun` без записи,
+ * `test/book-analysis.e2e-spec.ts`; здесь — 404, блок окончённой претензии, ядро для читателя, `dryRun` без записи,
  * границы транзакции (`L-020`) и выборка только упомянутых глав.
  */
 
@@ -62,7 +62,7 @@ describe('BookAnalysisService', () => {
     chapter: { findMany: jest.Mock };
   };
   let isModerator: jest.Mock;
-  let assertClaimAccess: jest.Mock;
+  let assertSettledClaimAccess: jest.Mock;
   let service: BookAnalysisService;
 
   beforeEach(() => {
@@ -75,17 +75,19 @@ describe('BookAnalysisService', () => {
     prisma = {
       $transaction: jest.fn((cb: (client: typeof tx) => unknown) => cb(tx)),
       bookVersion: {
-        findUnique: jest.fn().mockResolvedValue({ status: 'published', language: 'en' }),
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ status: 'published', language: 'en', bookId: 'b1' }),
       },
       bookAnalysis: analysisDelegate(),
       chapter: { findMany: jest.fn().mockResolvedValue([]) },
     };
     isModerator = jest.fn().mockResolvedValue(false);
-    assertClaimAccess = jest.fn().mockResolvedValue(undefined);
+    assertSettledClaimAccess = jest.fn().mockResolvedValue(undefined);
     service = new BookAnalysisService(
       prisma as unknown as PrismaService,
       { isModerator } as unknown as ModeratorRolesService,
-      { assertClaimAccess } as unknown as GeoBlockRuleService,
+      { assertSettledClaimAccess } as unknown as GeoBlockRuleService,
     );
   });
 
@@ -102,15 +104,16 @@ describe('BookAnalysisService', () => {
       await expect(service.getByVersion('v1', undefined, 'GB')).rejects.toBeInstanceOf(
         NotFoundException,
       );
-      expect(assertClaimAccess).not.toHaveBeenCalled();
+      expect(assertSettledClaimAccess).not.toHaveBeenCalled();
     });
 
-    // Территориального гео нет (решение владельца 18.10.2026, А1); блок претензии — как у текста.
-    it('читатель проходит только проверку претензии (scope TEXT_READER)', async () => {
+    // Территориального гео нет (решение владельца 18.10.2026, А1); претензия закрывает после окончания спора.
+    it('читатель проходит только проверку окончённой претензии (scope TEXT_READER)', async () => {
       prisma.bookAnalysis.findUnique.mockResolvedValue(row());
       const res = await service.getByVersion('v1', undefined, 'GB');
-      expect(assertClaimAccess).toHaveBeenCalledTimes(1);
-      expect(assertClaimAccess).toHaveBeenCalledWith({
+      expect(assertSettledClaimAccess).toHaveBeenCalledTimes(1);
+      expect(assertSettledClaimAccess).toHaveBeenCalledWith({
+        bookId: 'b1',
         bookVersionId: 'v1',
         countryCode: 'GB',
         scope: GeoBlockScope.TEXT_READER,
@@ -124,12 +127,12 @@ describe('BookAnalysisService', () => {
       prisma.bookAnalysis.findUnique.mockResolvedValue(row({ hasCore: false }));
       await expect(service.getByVersion('v1', undefined, null)).resolves.toBeNull();
 
-      assertClaimAccess.mockClear();
+      assertSettledClaimAccess.mockClear();
       isModerator.mockResolvedValue(true);
       prisma.bookVersion.findUnique.mockResolvedValue({ status: 'draft', language: 'en' });
       const res = await service.getByVersion('v1', { userId: 'u', email: 'e' }, 'GB');
       expect(res).toMatchObject({ hasCore: false, mainIdea: 'Idea' });
-      expect(assertClaimAccess).not.toHaveBeenCalled();
+      expect(assertSettledClaimAccess).not.toHaveBeenCalled();
     });
   });
 

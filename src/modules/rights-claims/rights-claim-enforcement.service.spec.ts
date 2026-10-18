@@ -1,7 +1,11 @@
 import { RightsClaimAccessBlock } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RightsClaimEnforcementService } from './rights-claim-enforcement.service';
-import { ClaimBlockScope, RightsClaimBlockStatus } from './rights-claim-interface';
+import {
+  ClaimBlockScope,
+  RightsClaimBlockStatus,
+  RightsClaimStatus,
+} from './rights-claim-interface';
 
 const now = new Date('2026-07-28T12:00:00.000Z');
 
@@ -82,6 +86,39 @@ describe('RightsClaimEnforcementService', () => {
           { bookVersionId: 'version-1' },
           { bookId: 'book-1', scope: ClaimBlockScope.ENTIRE_BOOK },
         ],
+      },
+    });
+  });
+
+  // F03, слово владельца 18.10.2026 и решение арбитра `2026-10-18-f03-claim-upheld`: анализ
+  // книги закрывает только блок претензии в конечном статусе. Набор статусов прибит литералом:
+  // сдвиг `CLOSED_CLAIM_STATUSES` краснеет здесь, а не открывает или закрывает анализ молча.
+  it('settledOnly — только блоки претензий, спор по которым окончен', async () => {
+    await service.checkClaimAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'DE',
+      scope: ClaimBlockScope.TEXT_READER,
+      settledOnly: true,
+    });
+
+    expect(prisma.rightsClaimAccessBlock.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.rightsClaimAccessBlock.findMany).toHaveBeenCalledWith({
+      where: {
+        status: RightsClaimBlockStatus.ACTIVE,
+        OR: [
+          { bookVersionId: 'version-1' },
+          { bookId: 'book-1', scope: ClaimBlockScope.ENTIRE_BOOK },
+        ],
+        rightsClaim: {
+          status: {
+            in: [
+              RightsClaimStatus.RESOLVED_VALID,
+              RightsClaimStatus.RESOLVED_INVALID,
+              RightsClaimStatus.WITHDRAWN,
+              RightsClaimStatus.CLOSED,
+            ],
+          },
+        },
       },
     });
   });

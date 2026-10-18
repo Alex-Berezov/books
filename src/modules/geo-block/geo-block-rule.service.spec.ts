@@ -769,24 +769,26 @@ describe('GeoBlockRuleService', () => {
   });
 
   /**
-   * F03: анализ книги закрывает только блок претензии, территориальные правила — нет
-   * (решение владельца 18.10.2026 по гео; претензии — до его ответа, решение арбитра).
+   * F03: анализ книги закрывает только блок претензии, спор по которой окончен; территориальные
+   * правила — нет (слово владельца 18.10.2026; перевод на статусы — решение арбитра
+   * `2026-10-18-f03-claim-upheld`).
    */
-  describe('assertClaimAccess', () => {
+  describe('assertSettledClaimAccess', () => {
     const input = {
       bookVersionId: 'version-1',
       countryCode: 'GB',
       scope: GeoBlockScope.TEXT_READER,
     };
 
-    it('без блока претензии пропускает и территориальные правила не читает', async () => {
-      await expect(service.assertClaimAccess(input)).resolves.toBeUndefined();
+    it('спрашивает только окончённые претензии, территориальные правила не читает', async () => {
+      await expect(service.assertSettledClaimAccess(input)).resolves.toBeUndefined();
       expect(claimEnforcement.checkClaimAccess).toHaveBeenCalledTimes(1);
       expect(claimEnforcement.checkClaimAccess).toHaveBeenCalledWith({
         bookId: undefined,
         bookVersionId: 'version-1',
         countryCode: 'GB',
         scope: GeoBlockScope.TEXT_READER,
+        settledOnly: true,
       });
       expect(prisma.geoBlockRule.findMany).not.toHaveBeenCalled();
     });
@@ -805,7 +807,7 @@ describe('GeoBlockRuleService', () => {
           reasonCode: 'BLOCKED_BY_RIGHTS_CLAIM',
           messageRu: 'Заявитель Иванов',
         } satisfies ClaimAccessCheckResult);
-        const error = await service.assertClaimAccess(input).catch((e: unknown) => e);
+        const error = await service.assertSettledClaimAccess(input).catch((e: unknown) => e);
         expect(error).toBeInstanceOf(HttpException);
         const body = (error as HttpException).getResponse() as Record<string, unknown>;
         expect((error as HttpException).getStatus()).toBe(451);
@@ -813,6 +815,24 @@ describe('GeoBlockRuleService', () => {
         expect(JSON.stringify(body)).not.toContain('Иванов');
       },
     );
+  });
+
+  // Текст версии закрывает любой активный блок претензии, в том числе пока спор идёт: флаг
+  // окончённого спора — только у анализа (`assertSettledClaimAccess`).
+  it('checkAccess спрашивает все активные блоки претензий, без settledOnly', async () => {
+    await service.checkAccess({
+      bookVersionId: 'version-1',
+      countryCode: 'GB',
+      scope: GeoBlockScope.TEXT_READER,
+    });
+    expect(claimEnforcement.checkClaimAccess).toHaveBeenCalledTimes(1);
+    expect(claimEnforcement.checkClaimAccess).toHaveBeenCalledWith({
+      bookId: undefined,
+      bookVersionId: 'version-1',
+      countryCode: 'GB',
+      scope: GeoBlockScope.TEXT_READER,
+      settledOnly: false,
+    });
   });
 
   it('answers 451 with BLOCKED_BY_RIGHTS_CLAIM when a claim block matched', async () => {

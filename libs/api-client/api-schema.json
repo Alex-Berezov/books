@@ -40342,7 +40342,7 @@
             "bearer": []
           }
         ],
-        "summary": "Get book analysis for a version (drafts and analyses without a core are visible to editors only; closed by rights-claim blocks)",
+        "summary": "Get book analysis for a version (drafts and analyses without a core are visible to editors only; closed only by active rights-claim blocks of claims whose dispute is over)",
         "tags": [
           "analyses"
         ]

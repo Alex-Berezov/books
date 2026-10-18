@@ -4,6 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import {
   CLAIM_ACCESS_BLOCK_MESSAGE_RU,
   CLAIM_ACCESS_BLOCK_REASON_CODE,
+  CLOSED_CLAIM_STATUSES,
 } from './rights-claim.constants';
 import { ClaimBlockScope, RightsClaimBlockStatus } from './rights-claim-interface';
 
@@ -12,6 +13,12 @@ export interface ClaimAccessCheckInput {
   bookVersionId?: string;
   countryCode: string | null;
   scope: ClaimBlockScope;
+  /**
+   * Только блоки претензий, спор по которым окончен (`CLOSED_CLAIM_STATUSES`). Резолюция не
+   * читается: активный блок окончённой претензии и есть «текст убран» (F03, слово владельца
+   * 18.10.2026, решение арбитра `2026-10-18-f03-claim-upheld`).
+   */
+  settledOnly?: boolean;
 }
 
 export interface ClaimAccessCheckResult {
@@ -54,6 +61,9 @@ export class RightsClaimEnforcementService {
       where: {
         status: RightsClaimBlockStatus.ACTIVE,
         OR: targetConditions,
+        ...(input.settledOnly
+          ? { rightsClaim: { status: { in: [...CLOSED_CLAIM_STATUSES] } } }
+          : {}),
       },
     });
 
