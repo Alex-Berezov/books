@@ -108,12 +108,27 @@ describe('кэш-заголовки живых ответов', () => {
     it.each([
       ['/versions/00000000-0000-0000-0000-000000000000/chapters'],
       ['/versions/00000000-0000-0000-0000-000000000000/audio-chapters'],
-      // F03-1: анализ зависит от страны и роли (гео `TEXT_READER`, черновик редактору).
-      ['/versions/00000000-0000-0000-0000-000000000000/analysis'],
       ['/chapters/00000000-0000-0000-0000-000000000000'],
       ['/audio-chapters/00000000-0000-0000-0000-000000000000'],
     ])('%s не объявляет себя публично кэшируемым', async (path) => {
       const response = await request(http()).get(path);
+
+      expect(String(response.headers['cache-control'])).not.toContain('public');
+      expect(String(response.headers['cache-control'])).toContain('no-store');
+    });
+  });
+
+  describe('ответ, зависящий от роли и претензии, не попадает в общий кэш', () => {
+    /**
+     * F03: территориальный гео-блок анализ не закрывает (решение владельца 18.10.2026), но черновик
+     * и анализ без ядра видит только редактор, а блок претензии бывает по стране — ответ под токеном
+     * или для одной страны не должен раздаваться остальным из общего кэша.
+     * Как и кейсы выше, проверяет глобальное умолчание на нулевом идентификаторе.
+     */
+    it('/versions/:id/analysis не объявляет себя публично кэшируемым', async () => {
+      const response = await request(http()).get(
+        '/versions/00000000-0000-0000-0000-000000000000/analysis',
+      );
 
       expect(String(response.headers['cache-control'])).not.toContain('public');
       expect(String(response.headers['cache-control'])).toContain('no-store');

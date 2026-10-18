@@ -371,10 +371,10 @@ describe('BookAnalysis e2e', () => {
   });
 
   /**
-   * Гео-блок: строгий вариант до ответа владельца (решение арбитра А1, тема №4) — анализ закрыт там,
-   * где закрыт текст версии (`TEXT_READER`). Смена решения — одна строка в сервисе и этот тест.
+   * Решение владельца 18.10.2026 по А1 (вариант «а»): анализ — сведения о книге, как пересказ
+   * (ADR-012 п.7, «карточка»), гео-блок текста версии его не закрывает.
    */
-  it('гео-блок текста версии: 451 в закрытой стране, 200 в открытой и у версии без правила', async () => {
+  it('гео-блок текста версии анализ не закрывает: 200 в закрытой стране', async () => {
     const blocked = await createVersion();
     await put(blocked.versionId, { language: 'en', ...core() }).expect(200);
     await prisma.geoBlockRule.create({
@@ -389,26 +389,86 @@ describe('BookAnalysis e2e', () => {
         generatedFrom: 'E2E_TEST',
       },
     });
+    // Текст версии в закрытой стране закрыт — правило действует.
     await request(http())
+      .get(`/versions/${blocked.versionId}/chapters`)
+      .set('X-Geo-Country', 'GB')
+      .expect(451);
+    const res = await request(http())
       .get(`/versions/${blocked.versionId}/analysis`)
+      .set('X-Geo-Country', 'GB')
+      .expect(200);
+    expect(res.body.hasCore).toBe(true);
+    // Без страны (серверный рендер страницы, поисковик) — тоже 200.
+    await request(http()).get(`/versions/${blocked.versionId}/analysis`).expect(200);
+  });
+
+  /**
+   * Блок правовой претензии закрывает анализ, как текст версии: этот вопрос владелец не решал
+   * (тема №4), до ответа — прежнее поведение (решение арбитра, `2026-10-18-f03-a1-geo`).
+   */
+  it('блок претензии правообладателя закрывает анализ: 451 BLOCKED_BY_RIGHTS_CLAIM, редактору 200', async () => {
+    const v = await createVersion();
+    await put(v.versionId, { language: 'en', ...core() }).expect(200);
+    const claim = await prisma.rightsClaim.create({
+      data: {
+        claimNumber: `RC-AN-${Date.now()}`,
+        claimType: 'COPYRIGHT_INFRINGEMENT',
+        claimantName: 'Claimant',
+        descriptionRu: 'Тест',
+        bookId: v.bookId,
+        bookVersionId: v.versionId,
+      },
+    });
+    await prisma.rightsClaimAccessBlock.create({
+      data: {
+        rightsClaimId: claim.id,
+        bookVersionId: v.versionId,
+        scope: 'TEXT_READER',
+        countryCode: null,
+        reasonRu: 'Внутренняя причина: заявитель Zx9Claimant',
+      },
+    });
+    const res = await request(http()).get(`/versions/${v.versionId}/analysis`).expect(451);
+    expect(res.body.code).toBe('BLOCKED_BY_RIGHTS_CLAIM');
+    // Ни данные претензии, ни редакторский `reasonRu` блока наружу не уходят (ADR-012 п.8).
+    expect(JSON.stringify(res.body)).not.toContain('Claimant');
+    expect(JSON.stringify(res.body)).not.toContain('Zx9');
+    await request(http())
+      .get(`/versions/${v.versionId}/analysis`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+  });
+
+  it('блок претензии по стране закрывает анализ только в этой стране', async () => {
+    const v = await createVersion();
+    await put(v.versionId, { language: 'en', ...core() }).expect(200);
+    const claim = await prisma.rightsClaim.create({
+      data: {
+        claimNumber: `RC-AN-GB-${Date.now()}`,
+        claimType: 'COPYRIGHT_INFRINGEMENT',
+        claimantName: 'Claimant',
+        descriptionRu: 'Тест',
+        bookId: v.bookId,
+        bookVersionId: v.versionId,
+      },
+    });
+    await prisma.rightsClaimAccessBlock.create({
+      data: {
+        rightsClaimId: claim.id,
+        bookVersionId: v.versionId,
+        scope: 'TEXT_READER',
+        countryCode: 'GB',
+        reasonRu: 'Тест',
+      },
+    });
+    await request(http())
+      .get(`/versions/${v.versionId}/analysis`)
       .set('X-Geo-Country', 'GB')
       .expect(451);
     await request(http())
-      .get(`/versions/${blocked.versionId}/analysis`)
+      .get(`/versions/${v.versionId}/analysis`)
       .set('X-Geo-Country', 'US')
-      .expect(200);
-    // Редактор правит анализ из любой страны: вкладка админки гео-блоком не режется.
-    await request(http())
-      .get(`/versions/${blocked.versionId}/analysis`)
-      .set('X-Geo-Country', 'GB')
-      .set('Authorization', `Bearer ${adminAccess}`)
-      .expect(200);
-
-    const open = await createVersion();
-    await put(open.versionId, { language: 'en', ...core() }).expect(200);
-    await request(http())
-      .get(`/versions/${open.versionId}/analysis`)
-      .set('X-Geo-Country', 'GB')
       .expect(200);
   });
 

@@ -243,16 +243,11 @@ export class GeoBlockRuleService {
   async checkAccess(input: GeoAccessCheckInput): Promise<GeoAccessCheckResultDto> {
     // Phase 16: rights-claim blocks are evaluated first — a worldwide block must fire even when
     // the requesting country is unknown, which the geo-block branch below deliberately allows.
-    const claimResult = await this.claimEnforcement.checkClaimAccess({
-      bookId: input.bookId,
-      bookVersionId: input.bookVersionId,
-      countryCode: input.countryCode,
-      scope: input.scope,
-    });
+    const claimResult = await this.checkClaim(input);
     if (claimResult.blocked) {
       return {
         allowed: false,
-        countryCode: claimResult.countryCode ?? 'UNKNOWN',
+        countryCode: claimResult.countryCode ?? UNKNOWN_COUNTRY_CODE,
         scope: input.scope,
         matchedRuleId: claimResult.matchedBlockId,
         reasonCode: CLAIM_ACCESS_BLOCK_REASON_CODE,
@@ -307,17 +302,7 @@ export class GeoBlockRuleService {
     // naming the claimant — it stays in the admin `checkAccess` payload and never reaches the
     // public response (Phase 16: claim details are not disclosed outward).
     if (result.reasonCode === CLAIM_ACCESS_BLOCK_REASON_CODE) {
-      throw new HttpException(
-        {
-          statusCode: 451,
-          code: CLAIM_ACCESS_BLOCK_REASON_CODE,
-          message: CLAIM_ACCESS_BLOCK_MESSAGE,
-          messageRu: CLAIM_ACCESS_BLOCK_MESSAGE_RU,
-          countryCode: result.countryCode,
-          scope: result.scope,
-        },
-        451,
-      );
+      throw claimBlockedException(result.countryCode, result.scope);
     }
 
     throw new HttpException(
@@ -331,6 +316,28 @@ export class GeoBlockRuleService {
       },
       451,
     );
+  }
+
+  /**
+   * Только блоки правовых претензий, без территориальных гео-правил. Для ручек, которые гео-блок
+   * по странам не закрывает, а претензия правообладателя закрывает (анализ книги, F03: решение
+   * владельца 18.10.2026 по гео — «а», претензии ждут его ответа, до него закрывают как прежде).
+   */
+  async assertClaimAccess(input: GeoAccessCheckInput): Promise<void> {
+    const claim = await this.checkClaim(input);
+    if (claim.blocked) {
+      throw claimBlockedException(claim.countryCode ?? UNKNOWN_COUNTRY_CODE, input.scope);
+    }
+  }
+
+  /** Блоки претензий — одна точка для `checkAccess` и `assertClaimAccess` (ADR-012 п.3). */
+  private checkClaim(input: GeoAccessCheckInput) {
+    return this.claimEnforcement.checkClaimAccess({
+      bookId: input.bookId,
+      bookVersionId: input.bookVersionId,
+      countryCode: input.countryCode,
+      scope: input.scope,
+    });
   }
 
   async getActiveRulesForVersion(bookVersionId: string): Promise<GeoBlockRuleDto[]> {
@@ -576,4 +583,23 @@ export class GeoBlockRuleService {
       (rule) => !candidates.includes(rule) || !covered.has(rule.countryCode.toUpperCase()),
     );
   }
+}
+
+/**
+ * Ответ на блок претензии — свой код; в теле нет ни претензии, ни заявителя. Внутренний `reasonRu`
+ * блока пишет редактор, и в нём часто имя заявителя — он остаётся в админском `checkAccess` и наружу
+ * не уходит (Phase 16: детали претензии не раскрываются).
+ */
+function claimBlockedException(countryCode: string, scope: GeoAccessCheckInput['scope']) {
+  return new HttpException(
+    {
+      statusCode: 451,
+      code: CLAIM_ACCESS_BLOCK_REASON_CODE,
+      message: CLAIM_ACCESS_BLOCK_MESSAGE,
+      messageRu: CLAIM_ACCESS_BLOCK_MESSAGE_RU,
+      countryCode,
+      scope,
+    },
+    451,
+  );
 }

@@ -3788,7 +3788,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Get book analysis for a version (drafts are visible to editors only; geo-blocked like the text) */
+    /** Get book analysis for a version (drafts and analyses without a core are visible to editors only; closed by rights-claim blocks) */
     get: operations['BookAnalysisController_get'];
     /** Create or merge analysis for a version (JSON import format); dryRun=true writes nothing */
     put: operations['BookAnalysisController_save'];

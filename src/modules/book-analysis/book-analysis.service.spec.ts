@@ -9,7 +9,7 @@ import type { UpdateBookAnalysisDto } from './dto/update-book-analysis.dto';
 
 /**
  * F03-1: ветки сервиса анализа без базы. Гонку замка и живой SQL держит
- * `test/book-analysis.e2e-spec.ts`; здесь — 404, гео, ядро для читателя, `dryRun` без записи,
+ * `test/book-analysis.e2e-spec.ts`; здесь — 404, блок претензии, ядро для читателя, `dryRun` без записи,
  * границы транзакции (`L-020`) и выборка только упомянутых глав.
  */
 
@@ -62,7 +62,7 @@ describe('BookAnalysisService', () => {
     chapter: { findMany: jest.Mock };
   };
   let isModerator: jest.Mock;
-  let assertAccess: jest.Mock;
+  let assertClaimAccess: jest.Mock;
   let service: BookAnalysisService;
 
   beforeEach(() => {
@@ -81,11 +81,11 @@ describe('BookAnalysisService', () => {
       chapter: { findMany: jest.fn().mockResolvedValue([]) },
     };
     isModerator = jest.fn().mockResolvedValue(false);
-    assertAccess = jest.fn().mockResolvedValue(undefined);
+    assertClaimAccess = jest.fn().mockResolvedValue(undefined);
     service = new BookAnalysisService(
       prisma as unknown as PrismaService,
       { isModerator } as unknown as ModeratorRolesService,
-      { assertAccess } as unknown as GeoBlockRuleService,
+      { assertClaimAccess } as unknown as GeoBlockRuleService,
     );
   });
 
@@ -97,19 +97,20 @@ describe('BookAnalysisService', () => {
       );
     });
 
-    it('черновик версии читателю — 404, гео не спрашивается', async () => {
+    it('черновик версии читателю — 404, претензия не спрашивается', async () => {
       prisma.bookVersion.findUnique.mockResolvedValue({ status: 'draft', language: 'en' });
       await expect(service.getByVersion('v1', undefined, 'GB')).rejects.toBeInstanceOf(
         NotFoundException,
       );
-      expect(assertAccess).not.toHaveBeenCalled();
+      expect(assertClaimAccess).not.toHaveBeenCalled();
     });
 
-    it('читатель проходит гео-проверку текста версии (А1, строгий вариант)', async () => {
+    // Территориального гео нет (решение владельца 18.10.2026, А1); блок претензии — как у текста.
+    it('читатель проходит только проверку претензии (scope TEXT_READER)', async () => {
       prisma.bookAnalysis.findUnique.mockResolvedValue(row());
       const res = await service.getByVersion('v1', undefined, 'GB');
-      expect(assertAccess).toHaveBeenCalledTimes(1);
-      expect(assertAccess).toHaveBeenCalledWith({
+      expect(assertClaimAccess).toHaveBeenCalledTimes(1);
+      expect(assertClaimAccess).toHaveBeenCalledWith({
         bookVersionId: 'v1',
         countryCode: 'GB',
         scope: GeoBlockScope.TEXT_READER,
@@ -123,12 +124,12 @@ describe('BookAnalysisService', () => {
       prisma.bookAnalysis.findUnique.mockResolvedValue(row({ hasCore: false }));
       await expect(service.getByVersion('v1', undefined, null)).resolves.toBeNull();
 
-      assertAccess.mockClear();
+      assertClaimAccess.mockClear();
       isModerator.mockResolvedValue(true);
       prisma.bookVersion.findUnique.mockResolvedValue({ status: 'draft', language: 'en' });
       const res = await service.getByVersion('v1', { userId: 'u', email: 'e' }, 'GB');
       expect(res).toMatchObject({ hasCore: false, mainIdea: 'Idea' });
-      expect(assertAccess).not.toHaveBeenCalled();
+      expect(assertClaimAccess).not.toHaveBeenCalled();
     });
   });
 

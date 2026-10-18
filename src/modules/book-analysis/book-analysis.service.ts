@@ -40,10 +40,11 @@ export class BookAnalysisService {
    * Публичное чтение и чтение вкладки админки — один адрес, как у пересказа: черновик версии
    * анониму — 404, редактору — запись; анализ без ядра анониму — `null`.
    *
-   * Гео-блок: анализ отдаётся только там, где отдаётся текст версии (`TEXT_READER`, как список
-   * глав). Строгий вариант до ответа владельца — решение арбитра А1 «к владельцу» (тема №4):
-   * смена решения — правка одного `assertReaderAccess`. Редактор проверку не проходит: админская
-   * выдача глав гео-блоком не режется (`ChapterService.listAdminByVersion`), вкладка — тоже.
+   * Территориального гео-блока нет: анализ — сведения о книге, собственный текст Bibliaris
+   * с короткими цитатами (решение владельца 18.10.2026 по А1, ADR-012 п.7 «карточка»).
+   * Блок правовой претензии правообладателя анализ закрывает, как текст версии: этот вопрос
+   * владелец не решал (тема №4, `work-queue.md` «ВЛАДЕЛЕЦ»), до его ответа — прежнее поведение
+   * (решение арбитра, `decisions-log.md`, `2026-10-18-f03-a1-geo`). Редактор проверку не проходит.
    */
   async getByVersion(
     bookVersionId: string,
@@ -59,7 +60,11 @@ export class BookAnalysisService {
     const editor = await this.moderatorRoles.isModerator(actor);
     if (!editor) {
       if (version.status !== 'published') throw new NotFoundException('BookVersion not found');
-      await this.assertReaderAccess(bookVersionId, countryCode);
+      await this.geoBlockRuleService.assertClaimAccess({
+        bookVersionId,
+        countryCode,
+        scope: GeoBlockScope.TEXT_READER,
+      });
     }
 
     const row = await this.prisma.bookAnalysis.findUnique({
@@ -186,14 +191,6 @@ export class BookAnalysisService {
       });
     }
     return { hasCore: core.hasCore, warnings };
-  }
-
-  private assertReaderAccess(bookVersionId: string, countryCode: string | null) {
-    return this.geoBlockRuleService.assertAccess({
-      bookVersionId,
-      countryCode,
-      scope: GeoBlockScope.TEXT_READER,
-    });
   }
 }
 

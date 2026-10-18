@@ -768,6 +768,53 @@ describe('GeoBlockRuleService', () => {
     expect(prisma.geoBlockRule.findMany).not.toHaveBeenCalled();
   });
 
+  /**
+   * F03: анализ книги закрывает только блок претензии, территориальные правила — нет
+   * (решение владельца 18.10.2026 по гео; претензии — до его ответа, решение арбитра).
+   */
+  describe('assertClaimAccess', () => {
+    const input = {
+      bookVersionId: 'version-1',
+      countryCode: 'GB',
+      scope: GeoBlockScope.TEXT_READER,
+    };
+
+    it('без блока претензии пропускает и территориальные правила не читает', async () => {
+      await expect(service.assertClaimAccess(input)).resolves.toBeUndefined();
+      expect(claimEnforcement.checkClaimAccess).toHaveBeenCalledTimes(1);
+      expect(claimEnforcement.checkClaimAccess).toHaveBeenCalledWith({
+        bookId: undefined,
+        bookVersionId: 'version-1',
+        countryCode: 'GB',
+        scope: GeoBlockScope.TEXT_READER,
+      });
+      expect(prisma.geoBlockRule.findMany).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['GB', 'GB'],
+      [null, 'UNKNOWN'],
+    ])(
+      'блок претензии (страна блока %s) — 451 BLOCKED_BY_RIGHTS_CLAIM без данных претензии',
+      async (blockCountry, expected) => {
+        claimEnforcement.checkClaimAccess.mockResolvedValue({
+          blocked: true,
+          countryCode: blockCountry,
+          scope: ClaimBlockScope.TEXT_READER,
+          matchedBlockId: 'block-1',
+          reasonCode: 'BLOCKED_BY_RIGHTS_CLAIM',
+          messageRu: 'Заявитель Иванов',
+        } satisfies ClaimAccessCheckResult);
+        const error = await service.assertClaimAccess(input).catch((e: unknown) => e);
+        expect(error).toBeInstanceOf(HttpException);
+        const body = (error as HttpException).getResponse() as Record<string, unknown>;
+        expect((error as HttpException).getStatus()).toBe(451);
+        expect(body).toMatchObject({ code: 'BLOCKED_BY_RIGHTS_CLAIM', countryCode: expected });
+        expect(JSON.stringify(body)).not.toContain('Иванов');
+      },
+    );
+  });
+
   it('answers 451 with BLOCKED_BY_RIGHTS_CLAIM when a claim block matched', async () => {
     claimEnforcement.checkClaimAccess.mockResolvedValue({
       blocked: true,
