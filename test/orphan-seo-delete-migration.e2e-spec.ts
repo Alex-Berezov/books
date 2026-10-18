@@ -240,10 +240,13 @@ describe('LEGACY-400 — удаление ничьих Seo с резервной
           };
           const exists = async (id: number) =>
             (await tx.seo.findUnique({ where: { id } })) !== null;
+          // Модели таблицы в схеме больше нет (`T106`): её создаёт миграция внутри этой же
+          // транзакции, читаем сырым SQL.
           const backups = async (ids: number[]) =>
-            (await tx.legacy400OrphanSeo.findMany({ where: { id: { in: ids } } })).map(
-              (backup) => backup.id,
-            );
+            (
+              await tx.$queryRaw<{ id: number }[]>`
+                SELECT "id" FROM "_legacy400_orphan_seo" WHERE "id" = ANY(${ids})`
+            ).map((backup) => backup.id);
 
           await tx.page.create({
             data: {
@@ -274,10 +277,9 @@ describe('LEGACY-400 — удаление ничьих Seo с резервной
           expect((await backups([orphanFull, orphanBare, orphanEdited])).sort()).toEqual(
             [orphanFull, orphanBare, orphanEdited].sort(),
           );
-          const edited = await tx.legacy400OrphanSeo.findUniqueOrThrow({
-            where: { id: orphanEdited },
-          });
-          expect((edited.row as { metaTitle: string }).metaTitle).toBe('edited');
+          const edited = await tx.$queryRaw<{ row: { metaTitle: string } }[]>`
+            SELECT "row" FROM "_legacy400_orphan_seo" WHERE "id" = ${orphanEdited}`;
+          expect(edited.map((backup) => backup.row.metaTitle)).toEqual(['edited']);
 
           // Повтор ничего не меняет: удалять больше нечего, копии прошлого прогона на месте.
           await run();

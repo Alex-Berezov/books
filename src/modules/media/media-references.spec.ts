@@ -62,8 +62,6 @@ const NOT_MEDIA_TEXT_REFERENCES: Record<string, string> = {
   'RightsReviewImport.reportPdfContentType': 'MIME-тип, пишет сервер из загрузки; в DTO поля нет',
   'SourceEdition.sourceFileContentType': 'MIME-тип, пишет сервер из загрузки; в DTO поля нет',
   'RightsEvidence.contentType': 'MIME-тип, пишет сервер из загрузки; в DTO поля нет',
-  'Legacy429CommentText.text':
-    'резервная копия для отката LEGACY-429, пишет только миграция, в DTO поля нет; адрес картинки остаётся в Comment.text',
 };
 
 /** Поля, куда редактор админки вставляет картинку из медиатеки (книга, глава, сводка, автор, категория, тег, страница, ответ на комментарий). */
@@ -95,10 +93,6 @@ const NOT_MEDIA_JSON_REFERENCES: Record<string, string> = {
   'RightsNotification.payload': 'уведомление, пишет сервер (RightsNotificationsService.create)',
   'RightsRecheckEvent.payload': 'журнал событий, пишет сервер',
   'RightsLawyerReviewEvent.payload': 'журнал событий, пишет сервер',
-  'Legacy400OrphanSeo.row':
-    'резервная копия удалённых ничьих Seo для отката LEGACY-400, пишет только миграция; держать медиа она не должна — ради этого строки и удалены',
-  'Legacy436Backfill.old':
-    'прежние значения Seo для отката LEGACY-436, пишет только миграция; живой адрес картинки лежит в самом Seo',
 };
 
 const jsonFields = (): string[] =>

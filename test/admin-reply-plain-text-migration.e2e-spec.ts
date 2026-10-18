@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Language, RoleName } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { tableExists } from './helpers/table-exists';
 import { createBookFixture } from './helpers/book-fixture';
 
 const MIGRATION = join(
@@ -28,6 +29,8 @@ const statements = (): string[] =>
 describe('LEGACY-429 — снятие HTML со старых ответов администратора (e2e)', () => {
   let moduleRef: TestingModule;
   let prisma: PrismaService;
+  // До замера в `beforeAll` — «не снимать»: упавший старт не должен убрать таблицу за цепочку миграций.
+  let leftByMigrations = true;
   const stamp = Date.now();
   const before = new Date('2026-09-20T10:00:00Z');
   const after = new Date('2026-09-29T10:00:00Z');
@@ -57,6 +60,9 @@ describe('LEGACY-429 — снятие HTML со старых ответов ад
     moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     await moduleRef.init();
+    // Таблицу, оставленную цепочкой миграций, спека не снимает: иначе проба
+    // `legacy-backup-tables-dropped` позеленела бы от уборки соседа по воркеру, а не от миграции `T106`.
+    leftByMigrations = await tableExists(prisma, '_legacy429_comment_text');
 
     const adminRole = await prisma.role.upsert({
       where: { name: RoleName.admin },
@@ -195,7 +201,11 @@ describe('LEGACY-429 — снятие HTML со старых ответов ад
 
   afterAll(async () => {
     const commentIds = Object.values(ids);
-    await prisma?.legacy429CommentText.deleteMany({ where: { id: { in: commentIds } } });
+    // Таблицу создаёт сама миграция (`CREATE TABLE IF NOT EXISTS`), а модели в схеме больше нет
+    // (`LEGACY-429`, пачка `T106`): на чистой базе после прогона её быть не должно.
+    if (prisma && !leftByMigrations) {
+      await prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "_legacy429_comment_text"');
+    }
     await prisma?.comment.deleteMany({ where: { parentId: { in: commentIds } } });
     await prisma?.comment.deleteMany({ where: { id: { in: commentIds } } });
     await prisma?.bookVersion.deleteMany({ where: { bookId } });
@@ -233,9 +243,8 @@ describe('LEGACY-429 — снятие HTML со старых ответов ад
     // Пустой итог не пишется: текст комментария обязателен.
     expect(await textOf('adminOnlyTags')).toBe('<p></p>');
 
-    const backup = await prisma.legacy429CommentText.findMany({
-      where: { id: { in: Object.values(ids) } },
-    });
+    const backup = await prisma.$queryRaw<{ id: string; text: string }[]>`
+      SELECT "id", "text" FROM "_legacy429_comment_text" WHERE "id" = ANY(${Object.values(ids)})`;
     expect(Object.fromEntries(backup.map((row) => [row.id, row.text]))).toEqual({
       [ids.adminOld]: html,
       [ids.managerOld]: managerHtml,

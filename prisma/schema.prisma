@@ -404,52 +404,6 @@ model Comment {
   @@index([parentId])
 }
 
-/// Резервная копия текста ответов администратора до снятия HTML (`LEGACY-429`, миграция
-/// `20261001120000_legacy_429_admin_reply_plain_text`). Нужна только для отката перезаписи;
-/// приложение её не читает. Удаление таблицы — решение владельца.
-model Legacy429CommentText {
-  id   String @id
-  text String
-
-  @@map("_legacy429_comment_text")
-}
-
-/// Пары старого и нового `Seo` перевода персоны, разведённого с автором (`LEGACY-400`, миграция
-/// `20261004120000_legacy_400_split_person_seo`). Нужна только для отката; приложение её не читает.
-/// Удаление таблицы — решение владельца.
-model Legacy400PersonSeo {
-  personTranslationId String @id
-  oldSeoId            Int
-  newSeoId            Int
-
-  @@map("_legacy400_person_seo")
-}
-
-/// Копии ничьих `Seo`, удалённых словом владельца (`LEGACY-400`, миграция
-/// `20261004180000_legacy_400_delete_orphan_seo`): строка целиком в `row`. Нужна только для отката;
-/// приложение её не читает. Снимается пачкой `T106` по слову владельца 04.10.2026 (срок — решение арбитра).
-model Legacy400OrphanSeo {
-  id  Int  @id
-  row Json
-
-  @@map("_legacy400_orphan_seo")
-}
-
-/// Журнал переноса плоских meta/OG перевода тега и категории в `Seo` (`LEGACY-436`, миграция
-/// `20261004200000_legacy_436_backfill_translation_seo`): `created` — строку `Seo` создала миграция,
-/// `old` — прежние шесть полей. Нужен только для отката; приложение его не читает. Снятие таблицы —
-/// решение владельца (`DROP TABLE`, `work-queue.md`, «Что ждёт владельца», п. 6).
-model Legacy436Backfill {
-  kind          String
-  translationId String
-  seoId         Int
-  created       Boolean
-  old           Json?
-
-  @@id([kind, translationId])
-  @@map("_legacy436_backfill")
-}
-
 /// Журнал коллизий email (`LEGACY-443`, миграция `20261008120000_legacy_443_lowercase_email`): аккаунты,
 /// чей адрес после `lower(btrim())` совпал с чужим и потому не приведён к нижнему регистру. Непустой —
 /// пары разбирает владелец; приложение журнал не читает. Снятие таблицы — решение владельца (`DROP TABLE`).

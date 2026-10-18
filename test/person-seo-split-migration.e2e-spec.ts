@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Language, Prisma } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { tableExists } from './helpers/table-exists';
 import { createBookFixture } from './helpers/book-fixture';
 
 const MIGRATION = join(
@@ -18,6 +19,18 @@ const statements = (): string[] =>
     .split(/;\s*$/m)
     .map((sql) => sql.trim())
     .filter(Boolean);
+
+/**
+ * Модели парной таблицы в схеме больше нет (`LEGACY-400`, пачка `T106`): таблицу создаёт сама
+ * миграция первым оператором. Пары из фикстур пишутся сырым SQL в эту же таблицу.
+ */
+const createPairsSql = (): string => {
+  const sql = statements().find((s) =>
+    s.startsWith('CREATE TABLE IF NOT EXISTS "_legacy400_person_seo"'),
+  );
+  if (!sql) throw new Error('В миграции нет создания парной таблицы');
+  return sql;
+};
 
 /** Рецепт отката из шапки миграции — ровно тот текст, который исполнят после выката. */
 const rollback = (): string => {
@@ -67,6 +80,8 @@ const fullSeo = (tag: string): Prisma.SeoCreateInput => ({
 describe('LEGACY-400 — раздельные Seo у автора и персоны (e2e)', () => {
   let moduleRef: TestingModule;
   let prisma: PrismaService;
+  // До замера в `beforeAll` — «не снимать»: упавший старт не должен убрать таблицу за цепочку миграций.
+  let leftByMigrations = true;
   const stamp = Date.now();
   const authorIds: string[] = [];
   const personIds: string[] = [];
@@ -123,19 +138,33 @@ describe('LEGACY-400 — раздельные Seo у автора и персо�
   const authorSeoIds = async (ids: number[]) =>
     prisma.authorTranslation.count({ where: { seoId: { in: ids } } });
 
+  const pair = (tr: string, oldSeoId: number, newSeoId: number) =>
+    prisma.$executeRaw`INSERT INTO "_legacy400_person_seo" ("personTranslationId", "oldSeoId", "newSeoId")
+      VALUES (${tr}, ${oldSeoId}, ${newSeoId})`;
+
   beforeAll(async () => {
     moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     await moduleRef.init();
+    // Таблицу, оставленную цепочкой миграций, спека не снимает: иначе проба
+    // `legacy-backup-tables-dropped` позеленела бы от уборки соседа по воркеру, а не от миграции `T106`.
+    leftByMigrations = await tableExists(prisma, '_legacy400_person_seo');
+    await prisma.$executeRawUnsafe(createPairsSql());
   });
 
   afterAll(async () => {
-    const pairs = await prisma?.legacy400PersonSeo.findMany({
-      where: { personTranslationId: { in: personTrIds } },
-    });
-    await prisma?.legacy400PersonSeo.deleteMany({
-      where: { personTranslationId: { in: personTrIds } },
-    });
+    // Таблица создаётся в `beforeAll`; нет её, только если тот упал раньше — любой другой отказ красный.
+    if (!prisma) {
+      await moduleRef?.close();
+      return;
+    }
+    const pairs = (await tableExists(prisma, '_legacy400_person_seo'))
+      ? await prisma.$queryRaw<{ newSeoId: number }[]>`
+          SELECT "newSeoId" FROM "_legacy400_person_seo" WHERE "personTranslationId" = ANY(${personTrIds})`
+      : [];
+    if (!leftByMigrations) {
+      await prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "_legacy400_person_seo"');
+    }
     await prisma?.person.deleteMany({ where: { id: { in: personIds } } });
     await prisma?.author.deleteMany({ where: { id: { in: authorIds } } });
     await prisma?.tag.deleteMany({ where: { id: { in: tagIds } } });
@@ -144,7 +173,7 @@ describe('LEGACY-400 — раздельные Seo у автора и персо�
     await prisma?.bookVersion.deleteMany({ where: { bookId } });
     await prisma?.book.deleteMany({ where: { id: bookId } });
     await prisma?.seo.deleteMany({
-      where: { id: { in: [...seoIds, ...(pairs ?? []).map((p) => p.newSeoId)] } },
+      where: { id: { in: [...seoIds, ...pairs.map((p) => p.newSeoId)] } },
     });
     await moduleRef?.close();
   });
@@ -238,9 +267,7 @@ describe('LEGACY-400 — раздельные Seo у автора и персо�
       );
       await author(`clash-${kind}`, old);
       const tr = await person(`clash-${kind}`, old);
-      await prisma.legacy400PersonSeo.create({
-        data: { personTranslationId: tr, oldSeoId: old, newSeoId: owner },
-      });
+      await pair(tr, old, owner);
       clashes.push({ tr, old, owner });
     }
 
@@ -249,9 +276,7 @@ describe('LEGACY-400 — раздельные Seo у автора и персо�
     await author('torn', torn);
     const tornTr = await person('torn', torn);
     const tornNew = await freeSeoId();
-    await prisma.legacy400PersonSeo.create({
-      data: { personTranslationId: tornTr, oldSeoId: torn, newSeoId: tornNew },
-    });
+    await pair(tornTr, torn, tornNew);
 
     // Пара записана, но перевод с тех пор перепривязан: возвращать его на копию нельзя.
     const moved = await seo({ metaTitle: 'moved' });
@@ -259,9 +284,7 @@ describe('LEGACY-400 — раздельные Seo у автора и персо�
     const movedOwn = await seo({ metaTitle: 'moved own' });
     const movedTr = await person('moved', movedOwn);
     const movedNew = await freeSeoId();
-    await prisma.legacy400PersonSeo.create({
-      data: { personTranslationId: movedTr, oldSeoId: moved, newSeoId: movedNew },
-    });
+    await pair(movedTr, moved, movedNew);
 
     // Отставшая последовательность (импорт или восстановление с явными id): следующий `nextval`
     // выдал бы id занятой строки. Миграция обязана подтянуть её к MAX("id") до выдачи.
@@ -304,10 +327,16 @@ describe('LEGACY-400 — раздельные Seo у автора и персо�
     expect(await seoIdOf(movedTr)).toBe(movedOwn);
     expect(await prisma.seo.findUnique({ where: { id: movedNew } })).toBeNull();
 
-    const pair = await prisma.legacy400PersonSeo.findUniqueOrThrow({
-      where: { personTranslationId: sharedTr },
+    const [stored, ...rest] = await prisma.$queryRaw<
+      { personTranslationId: string; oldSeoId: number; newSeoId: number }[]
+    >`SELECT "personTranslationId", "oldSeoId", "newSeoId" FROM "_legacy400_person_seo"
+      WHERE "personTranslationId" = ${sharedTr}`;
+    expect(rest).toEqual([]);
+    expect(stored).toEqual({
+      personTranslationId: sharedTr,
+      oldSeoId: shared,
+      newSeoId: sharedNew,
     });
-    expect(pair).toEqual({ personTranslationId: sharedTr, oldSeoId: shared, newSeoId: sharedNew });
     expect(await authorSeoIds([sharedNew!, tornNew])).toBe(0);
 
     // После разведения правка меты персоны не меняет мету автора.

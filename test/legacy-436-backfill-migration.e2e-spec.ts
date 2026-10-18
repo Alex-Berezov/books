@@ -4,6 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { tableExists } from './helpers/table-exists';
 
 const MIGRATION = join(
   __dirname,
@@ -33,6 +34,8 @@ const rollback = (): string[] =>
 describe('LEGACY-436 — перенос плоских meta/OG перевода в Seo (e2e)', () => {
   let moduleRef: TestingModule;
   let prisma: PrismaService;
+  // До замера в `beforeAll` — «не снимать»: упавший старт не должен убрать таблицу за цепочку миграций.
+  let leftByMigrations = true;
   const stamp = Date.now();
   const tagIds: string[] = [];
   const categoryIds: string[] = [];
@@ -52,17 +55,33 @@ describe('LEGACY-436 — перенос плоских meta/OG перевода 
     moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     await moduleRef.init();
+    // Таблицу, оставленную цепочкой миграций, спека не снимает: иначе проба
+    // `legacy-backup-tables-dropped` позеленела бы от уборки соседа по воркеру, а не от миграции `T106`.
+    leftByMigrations = await tableExists(prisma, '_legacy436_backfill');
   });
 
   afterAll(async () => {
-    const created = await prisma?.legacy436Backfill.findMany({
-      where: { kind: { in: ['tag', 'category'] }, created: true },
-    });
+    // Модели в схеме больше нет (`LEGACY-436`, пачка `T106`): таблицу создаёт сама миграция,
+    // читаем её сырым SQL и после прогона снимаем.
+    // Таблицы нет, только если тест упал до прогона миграции; любой другой отказ запроса — красный.
+    if (!prisma) {
+      await moduleRef?.close();
+      return;
+    }
+    const created = (await tableExists(prisma, '_legacy436_backfill'))
+      ? await prisma.$queryRaw<{ seoId: number }[]>`
+          SELECT "seoId" FROM "_legacy436_backfill" WHERE "kind" IN ('tag', 'category') AND "created"`
+      : [];
+    // Журнал снимается сразу после чтения: упавшая уборка ниже не должна оставить его пробе
+    // `legacy-backup-tables-dropped` в той же базе воркера.
+    if (!leftByMigrations) {
+      await prisma.$executeRawUnsafe('DROP TABLE IF EXISTS "_legacy436_backfill"');
+    }
     await prisma?.tag.deleteMany({ where: { id: { in: tagIds } } });
     await prisma?.category.deleteMany({ where: { id: { in: categoryIds } } });
     if (pageId) await prisma?.page.deleteMany({ where: { id: pageId } });
     await prisma?.seo.deleteMany({
-      where: { id: { in: [...seoIds, ...(created ?? []).map((b) => b.seoId)] } },
+      where: { id: { in: [...seoIds, ...created.map((b) => b.seoId)] } },
     });
     await moduleRef?.close();
   });
@@ -167,10 +186,11 @@ describe('LEGACY-436 — перенос плоских meta/OG перевода 
     ).toBeNull();
 
     // Журнал: строка на каждый тронутый перевод, прежние значения — для отката.
-    const journal = await prisma.legacy436Backfill.findMany({
-      where: { translationId: { in: [noSeo.id, partial.id, shared.id, empty.id] } },
-      orderBy: { kind: 'asc' },
-    });
+    const journal = await prisma.$queryRaw<
+      { kind: string; translationId: string; seoId: number; created: boolean; old: unknown }[]
+    >`SELECT "kind", "translationId", "seoId", "created", "old" FROM "_legacy436_backfill"
+      WHERE "translationId" = ANY(${[noSeo.id, partial.id, shared.id, empty.id]})
+      ORDER BY "kind" ASC`;
     expect(journal).toEqual([
       expect.objectContaining({
         kind: 'category',
@@ -190,11 +210,10 @@ describe('LEGACY-436 — перенос плоских meta/OG перевода 
 
     // Повтор ничего не меняет и не заводит второй строки: ни новой записи журнала, ни новой `Seo`.
     await run();
-    expect(
-      await prisma.legacy436Backfill.count({
-        where: { translationId: { in: [noSeo.id, partial.id, shared.id, empty.id] } },
-      }),
-    ).toBe(2);
+    const [{ count }] = await prisma.$queryRaw<{ count: number }[]>`
+      SELECT COUNT(*)::int AS "count" FROM "_legacy436_backfill"
+      WHERE "translationId" = ANY(${[noSeo.id, partial.id, shared.id, empty.id]})`;
+    expect(count).toBe(2);
     expect((await seoOfTag(noSeo.id))?.id).toBe(created?.id);
     expect(await seoOfCategory(partial.id)).toMatchObject({ metaTitle: 'Flat cat title' });
 
