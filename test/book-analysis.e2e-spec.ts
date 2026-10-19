@@ -2,13 +2,15 @@
 import { randomUUID } from 'crypto';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication, NotFoundException, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Language, RightsClaimStatus } from '@prisma/client';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { BookAnalysisService } from '../src/modules/book-analysis/book-analysis.service';
+import { BookService } from '../src/modules/book/book.service';
+import { RedirectException } from '../src/common/exceptions/redirect.exception';
 import type { UpdateBookAnalysisDto } from '../src/modules/book-analysis/dto/update-book-analysis.dto';
 import { createBookFixture } from './helpers/book-fixture';
 import { grantStaffRoles } from './helpers/staff-roles';
@@ -628,13 +630,131 @@ describe('BookAnalysis e2e', () => {
       { slugs: [byCountry.bookSlug], language: 'en', countryCode: 'GB', expiresAt: null },
     ]);
     expect(items.filter((i) => i.slugs.includes(wholeBook.bookSlug))).toEqual([
-      { slugs: [wholeBook.bookSlug], language: null, countryCode: null, expiresAt: null },
+      { slugs: [wholeBook.bookSlug], language: 'en', countryCode: null, expiresAt: null },
     ]);
     expect(items.some((i) => i.slugs.includes(inDispute.bookSlug))).toBe(false);
     // Ответ кэширует только middleware (до 300 с): на CDN снятый блок держался бы дольше.
     expect(res.headers['cache-control']).toBe('private, no-store');
     expect(res.text).not.toContain('Zx9');
     expect(res.text).not.toContain('Claimant');
+  });
+
+  /**
+   * F03-2f: список закрытий отдаёт адрес книге, которой его отдаёт `getOverview` (версия в языке
+   * адреса, затем версия в любом языке, затем `Book.slug`). Сверка - по самой ручке обзора: каждый
+   * слаг элемента ведёт на книгу блока, а чужой адрес в элемент не попадает.
+   */
+  describe('GET analyses/claim-closures: адрес - той книге, которой его отдаёт обзор', () => {
+    const addVersion = (bookId: string, language: Language, slug: string | null = null) =>
+      prisma.bookVersion.create({
+        data: {
+          bookId,
+          language,
+          slug,
+          title: 'Version',
+          author: 'Author',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/c.jpg',
+          type: 'text',
+          isFree: true,
+          status: 'published',
+        },
+      });
+    const setSlug = (versionId: string, slug: string) =>
+      prisma.bookVersion.update({ where: { id: versionId }, data: { slug } });
+
+    /**
+     * Книга, которую обзор отдаёт по адресу; 301 - по его цели. Зов сервиса, а не HTTP: приложение
+     * этой спеки собрано без глобальных фильтров, и 301 уходит без `Location`.
+     */
+    const bookOf = async (lang: Language, slug: string): Promise<string | null> => {
+      const books = app.get(BookService);
+      let target: [Language, string] = [lang, slug];
+      // Цель 301 сама может ответить 301 - идём по цепочке, но не дольше трёх шагов.
+      for (let step = 0; step < 3; step += 1) {
+        try {
+          return (await books.getOverview(target[1], target[0])).id;
+        } catch (error) {
+          if (error instanceof NotFoundException) return null;
+          if (!(error instanceof RedirectException)) throw error;
+          const match = /^\/api\/([a-z]+)\/books\/([^/]+)\/overview$/.exec(error.url);
+          if (!match) throw new Error(`Unexpected overview redirect: ${error.url}`);
+          target = [match[1] as Language, match[2]];
+        }
+      }
+      throw new Error(`Overview redirect chain too long for /${lang}/books/${slug}`);
+    };
+
+    const closuresOf = async (bookSlugs: string[]) => {
+      const res = await request(http()).get('/analyses/claim-closures').expect(200);
+      return (res.body.items as Array<{ slugs: string[]; language: Language }>).filter((i) =>
+        i.slugs.some((slug) => bookSlugs.includes(slug)),
+      );
+    };
+
+    const expectAllLeadTo = async (
+      items: Array<{ slugs: string[]; language: Language }>,
+      bookId: string,
+    ) => {
+      for (const item of items) {
+        for (const slug of item.slugs) {
+          expect([item.language, slug, await bookOf(item.language, slug)]).toEqual([
+            item.language,
+            slug,
+            bookId,
+          ]);
+        }
+      }
+    };
+
+    it('Book.slug книги A, которым в русском владеет версия книги B, не закрывается ни в каком языке', async () => {
+      const a = await versionWithAnalysis();
+      await addVersion(a.bookId, 'ru');
+      const b = await createVersion({ language: 'ru' });
+      await setSlug(b.versionId, a.bookSlug);
+      await claimWithBlock(a, 'CLOSED', { entireBook: true });
+
+      // en и ru адреса `a.bookSlug` обзор отдаёт книге B (в en - запасным поиском по любому языку).
+      expect(await bookOf('ru', a.bookSlug)).toBe(b.bookId);
+      expect(await bookOf('en', a.bookSlug)).toBe(b.bookId);
+      expect(await closuresOf([a.bookSlug])).toEqual([]);
+    });
+
+    it('версия без слага закрыта и по слагу другой версии своей книги', async () => {
+      const a = await versionWithAnalysis();
+      const enSlug = `${a.bookSlug}-en`;
+      await setSlug(a.versionId, enSlug);
+      await addVersion(a.bookId, 'ru');
+      await claimWithBlock(a, 'CLOSED', { entireBook: true });
+
+      const items = await closuresOf([a.bookSlug, enSlug]);
+      expect(items.map((i) => [i.language, [...i.slugs].sort()])).toEqual(
+        expect.arrayContaining([
+          ['en', [a.bookSlug, enSlug].sort()],
+          ['ru', [a.bookSlug, enSlug].sort()],
+        ]),
+      );
+      expect(items).toHaveLength(2);
+      await expectAllLeadTo(items, a.bookId);
+    });
+
+    it('слаг версии книги A, которым в языке адреса владеет версия книги B, закрывается только в своём языке', async () => {
+      const a = await versionWithAnalysis();
+      const shared = `${a.bookSlug}-shared`;
+      await setSlug(a.versionId, shared);
+      await addVersion(a.bookId, 'ru');
+      const b = await createVersion({ language: 'ru' });
+      await setSlug(b.versionId, shared);
+      await claimWithBlock(a, 'CLOSED', { entireBook: true });
+
+      const items = await closuresOf([a.bookSlug, shared]);
+      expect(items.find((i) => i.language === 'en')?.slugs.sort()).toEqual(
+        [a.bookSlug, shared].sort(),
+      );
+      expect(items.find((i) => i.language === 'ru')?.slugs).toEqual([a.bookSlug]);
+      expect(await bookOf('ru', shared)).toBe(b.bookId);
+      await expectAllLeadTo(items, a.bookId);
+    });
   });
 
   it('GET analyses/claim-closures: срок отдаётся датой, истёкший блок и книга без опубликованных версий не попадают', async () => {
@@ -669,7 +789,7 @@ describe('BookAnalysis e2e', () => {
    * middleware откроют анализ, который ручка закрывает.
    */
   it.each([
-    ['блок на книгу по bookId', { entireBook: true }, null],
+    ['блок на книгу по bookId', { entireBook: true }, 'en'],
     ['блок версии по bookVersionId', {}, 'en'],
     ['блок с областью на книгу, привязанный только к версии', { entireBookOnVersion: true }, 'en'],
   ] as const)('%s: ручка, счётчик и список закрытий согласны', async (_name, block, language) => {

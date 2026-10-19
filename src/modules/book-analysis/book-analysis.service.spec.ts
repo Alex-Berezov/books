@@ -15,6 +15,7 @@ import {
   CLAIM_CLOSURES_MAX_BATCHES,
 } from './book-analysis.service';
 import { settledClaimBlockWhere } from '../rights-claims/settled-claim-block';
+import { getSupportedLanguages } from '../../shared/language/language.util';
 import type { UpdateBookAnalysisDto } from './dto/update-book-analysis.dto';
 
 /**
@@ -67,7 +68,7 @@ describe('BookAnalysisService', () => {
   };
   let prisma: {
     $transaction: jest.Mock;
-    bookVersion: { findUnique: jest.Mock };
+    bookVersion: { findUnique: jest.Mock; findMany: jest.Mock };
     bookAnalysis: AnalysisDelegate;
     chapter: { findMany: jest.Mock };
     rightsClaimAccessBlock: { findMany: jest.Mock };
@@ -89,6 +90,7 @@ describe('BookAnalysisService', () => {
         findUnique: jest
           .fn()
           .mockResolvedValue({ status: 'published', language: 'en', bookId: 'b1' }),
+        findMany: jest.fn().mockResolvedValue([]),
       },
       bookAnalysis: analysisDelegate(),
       chapter: { findMany: jest.fn().mockResolvedValue([]) },
@@ -172,9 +174,14 @@ describe('BookAnalysisService', () => {
       countryCode: 'GB',
       expiresAt: null,
       book: null,
-      bookVersion: { slug: `s-${id}`, language: 'en', status: 'published', book: { slug: 'b' } },
+      bookVersion: {
+        language: 'en',
+        status: 'published',
+        book: { id: 'bk', slug: 'b', versions: [{ slug: `s-${id}`, language: 'en' }] },
+      },
       ...over,
     });
+    const owner = (slug: string, language: string, bookId: string) => ({ slug, language, bookId });
 
     it('условие - общее с ручкой и счётчиком; в выборке только опубликованные версии и без причины', async () => {
       jest.useFakeTimers({ now });
@@ -190,48 +197,164 @@ describe('BookAnalysisService', () => {
         select: {
           reasonRu?: unknown;
           book: { select: { versions: { where: unknown } } };
+          bookVersion: { select: { book: { select: { versions: { where: unknown } } } } };
         };
       };
       expect(args.where).toEqual(settledClaimBlockWhere(now, GeoBlockScope.TEXT_READER));
       expect(args.take).toBe(CLAIM_CLOSURES_BATCH);
       expect(args.select.book.select.versions.where).toEqual({ status: 'published' });
+      expect(args.select.bookVersion.select.book.select.versions.where).toEqual({
+        status: 'published',
+      });
       expect(args.select.reasonRu).toBeUndefined();
     });
 
-    it('блок на книгу - все языки и слаги; блок версии - её язык; черновик и книга без опубликованных версий не попадают', async () => {
+    it('владельцы слагов - один запрос на порцию, только опубликованные, по языку asc, как getOverview', async () => {
+      prisma.rightsClaimAccessBlock.findMany.mockResolvedValue([
+        versionBlock('1'),
+        versionBlock('2'),
+      ]);
+      await service.listClaimClosures();
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
+      const args = prisma.bookVersion.findMany.mock.calls[0][0] as {
+        where: { status: string; slug: { in: string[] }; language: { in: string[] } };
+        orderBy: unknown;
+      };
+      expect(args.where.status).toBe('published');
+      expect([...args.where.slug.in].sort()).toEqual(['b', 's-1', 's-2']);
+      expect(args.where.language.in).toEqual(getSupportedLanguages());
+      expect(args.orderBy).toEqual({ language: 'asc' });
+    });
+
+    it('блок на книгу - элемент на каждую опубликованную версию; блок версии - её язык; черновик и книга без опубликованных версий не попадают', async () => {
       const expiresAt = new Date('2026-12-01T00:00:00Z');
+      const hamlet = {
+        id: 'bk1',
+        slug: 'hamlet',
+        versions: [
+          { slug: 'hamlet-en', language: 'en' },
+          { slug: null, language: 'ru' },
+        ],
+      };
       prisma.rightsClaimAccessBlock.findMany.mockResolvedValue([
         versionBlock('1', {
           scope: GeoBlockScope.ENTIRE_BOOK,
           countryCode: 'de',
-          book: { slug: 'hamlet', versions: [{ slug: 'hamlet-en' }, { slug: null }] },
+          book: hamlet,
           bookVersion: null,
         }),
         versionBlock('2', {
           countryCode: null,
           expiresAt,
-          bookVersion: {
-            slug: 'gamlet',
-            language: 'ru',
-            status: 'published',
-            book: { slug: 'hamlet' },
-          },
+          bookVersion: { language: 'ru', status: 'published', book: hamlet },
         }),
         versionBlock('3', {
           scope: GeoBlockScope.LANGUAGE_EDITION,
-          bookVersion: { slug: 'x', language: 'fr', status: 'draft', book: { slug: 'y' } },
+          bookVersion: {
+            language: 'fr',
+            status: 'draft',
+            book: { id: 'bk3', slug: 'y', versions: [] },
+          },
         }),
         versionBlock('4', {
           scope: GeoBlockScope.ENTIRE_BOOK,
-          book: { slug: 'secret-book', versions: [] },
+          book: { id: 'bk4', slug: 'secret-book', versions: [] },
           bookVersion: null,
         }),
       ]);
+      prisma.bookVersion.findMany.mockResolvedValue([owner('hamlet-en', 'en', 'bk1')]);
+      // ru-версия без слага открывается и по слагу en-версии своей книги (запасной поиск getOverview).
       await expect(service.listClaimClosures()).resolves.toEqual({
         items: [
-          { slugs: ['hamlet', 'hamlet-en'], language: null, countryCode: 'DE', expiresAt: null },
-          { slugs: ['gamlet', 'hamlet'], language: 'ru', countryCode: null, expiresAt },
+          { slugs: ['hamlet', 'hamlet-en'], language: 'en', countryCode: 'DE', expiresAt: null },
+          { slugs: ['hamlet', 'hamlet-en'], language: 'ru', countryCode: 'DE', expiresAt: null },
+          { slugs: ['hamlet', 'hamlet-en'], language: 'ru', countryCode: null, expiresAt },
         ],
+      });
+    });
+
+    // F03-2f: адрес отдаётся книге, которой его отдаёт getOverview: версия в языке адреса, затем
+    // версия в любом языке, затем Book.slug. Чужой адрес не закрывается.
+    it('Book.slug, которым в этом языке владеет версия другой книги, не отдаётся', async () => {
+      prisma.rightsClaimAccessBlock.findMany.mockResolvedValue([
+        versionBlock('1', {
+          scope: GeoBlockScope.ENTIRE_BOOK,
+          book: {
+            id: 'bkA',
+            slug: 'hamlet',
+            versions: [
+              { slug: 'hamlet-en', language: 'en' },
+              { slug: null, language: 'ru' },
+            ],
+          },
+          bookVersion: null,
+        }),
+      ]);
+      prisma.bookVersion.findMany.mockResolvedValue([
+        owner('hamlet-en', 'en', 'bkA'),
+        owner('hamlet', 'ru', 'bkB'),
+      ]);
+      await expect(service.listClaimClosures()).resolves.toEqual({
+        items: [
+          { slugs: ['hamlet-en'], language: 'en', countryCode: 'GB', expiresAt: null },
+          { slugs: ['hamlet-en'], language: 'ru', countryCode: 'GB', expiresAt: null },
+        ],
+      });
+    });
+
+    it('Book.slug, которым владеет версия другой книги в другом языке, не отдаётся (запасной поиск)', async () => {
+      prisma.rightsClaimAccessBlock.findMany.mockResolvedValue([
+        versionBlock('1', {
+          bookVersion: {
+            language: 'ru',
+            status: 'published',
+            book: { id: 'bkA', slug: 'hamlet', versions: [{ slug: null, language: 'ru' }] },
+          },
+        }),
+      ]);
+      prisma.bookVersion.findMany.mockResolvedValue([owner('hamlet', 'fr', 'bkB')]);
+      // Адресов у ru-версии не осталось: /ru/book/hamlet открывает книгу B - элемента нет.
+      await expect(service.listClaimClosures()).resolves.toEqual({ items: [] });
+    });
+
+    it('свой слаг в языке адреса важнее чужого в другом языке', async () => {
+      prisma.rightsClaimAccessBlock.findMany.mockResolvedValue([
+        versionBlock('1', {
+          bookVersion: {
+            language: 'en',
+            status: 'published',
+            book: { id: 'bkA', slug: 'a', versions: [{ slug: 'hamlet', language: 'en' }] },
+          },
+        }),
+      ]);
+      prisma.bookVersion.findMany.mockResolvedValue([
+        owner('hamlet', 'es', 'bkB'),
+        owner('hamlet', 'en', 'bkA'),
+      ]);
+      await expect(service.listClaimClosures()).resolves.toEqual({
+        items: [{ slugs: ['a', 'hamlet'], language: 'en', countryCode: 'GB', expiresAt: null }],
+      });
+    });
+
+    it('слаг версии своей книги в другом языке закрывает и эту версию, пока его не держит чужая версия языка адреса', async () => {
+      const book = {
+        id: 'bkA',
+        slug: 'a',
+        versions: [
+          { slug: 'a-en', language: 'en' },
+          { slug: 'a-ru', language: 'ru' },
+        ],
+      };
+      prisma.rightsClaimAccessBlock.findMany.mockResolvedValue([
+        versionBlock('1', { bookVersion: { language: 'ru', status: 'published', book } }),
+      ]);
+      prisma.bookVersion.findMany.mockResolvedValue([
+        owner('a-en', 'en', 'bkA'),
+        owner('a-en', 'ru', 'bkB'),
+        owner('a-ru', 'ru', 'bkA'),
+      ]);
+      await expect(service.listClaimClosures()).resolves.toEqual({
+        items: [{ slugs: ['a', 'a-ru'], language: 'ru', countryCode: 'GB', expiresAt: null }],
       });
     });
 
@@ -246,6 +369,12 @@ describe('BookAnalysisService', () => {
 
       expect(res.items).toHaveLength(CLAIM_CLOSURES_BATCH + 1);
       expect(prisma.rightsClaimAccessBlock.findMany).toHaveBeenCalledTimes(2);
+      // Владельцы слагов - своим запросом на каждую порцию, по слагам именно этой порции.
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(2);
+      const ownersOfSecond = prisma.bookVersion.findMany.mock.calls[1][0] as {
+        where: { slug: { in: string[] } };
+      };
+      expect([...ownersOfSecond.where.slug.in].sort()).toEqual(['b', 's-last']);
       // Порог по `id`, а не курсор Prisma: удалённая между порциями строка не обрывает список.
       const second = prisma.rightsClaimAccessBlock.findMany.mock.calls[1][0] as {
         where: { AND: unknown[] };

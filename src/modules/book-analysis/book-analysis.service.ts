@@ -4,11 +4,12 @@ import {
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Language, Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
+import { getSupportedLanguages } from '../../shared/language/language.util';
 import {
   BOOK_ANALYSIS_SELECT,
   EMPTY_BOOK_ANALYSIS,
@@ -101,7 +102,8 @@ export class BookAnalysisService {
    * стране закрывает её middleware по этому списку; условие блока — то же, что у ручки
    * `getByVersion` и счётчика `_count.analyses` (`settledClaimBlockWhere`).
    *
-   * Блок с областью на всю книгу закрывает все языки (`language: null`), блок версии — её язык.
+   * Элемент один на опубликованную версию и её язык (`language` всегда задан): блок на всю книгу даёт
+   * элемент на каждую её версию, блок версии — на неё одну; слаги — по правилу `toClaimClosure`.
    * Только опубликованные версии: черновик и без того 404. Срок отдаётся, чтобы middleware не
    * держал истёкший блок до следующего обновления списка.
    */
@@ -130,9 +132,14 @@ export class BookAnalysisService {
         }
         return { items };
       }
-      for (const block of blocks) {
-        const closure = toClaimClosure(block);
-        if (closure) items.push(closure);
+      const candidates = blocks.flatMap(toClaimClosureCandidates);
+      const owners = await loadSlugOwners(
+        this.prisma,
+        candidates.flatMap((c) => c.slugs),
+      );
+      for (const candidate of candidates) {
+        const closure = toClaimClosure(candidate, owners);
+        if (closure.slugs.length > 0) items.push(closure);
       }
       if (blocks.length < CLAIM_CLOSURES_BATCH) return { items };
       cursor = blocks[blocks.length - 1].id;
@@ -259,6 +266,14 @@ export class BookAnalysisService {
   }
 }
 
+/** Слаги и языки опубликованных версий книги - из них собираются её адреса. */
+const PUBLISHED_VERSION_SLUGS = {
+  where: { status: 'published' },
+  // Порядок задан: без него порядок элементов и слагов в ответе плавает от плана запроса (LEGACY-375).
+  orderBy: { language: 'asc' },
+  select: { slug: true, language: true },
+} as const satisfies Prisma.Book$versionsArgs;
+
 /** Поля блока для списка закрытий: только цель, страна и срок - без причины и претензии. */
 const CLAIM_CLOSURE_SELECT = {
   id: true,
@@ -267,12 +282,17 @@ const CLAIM_CLOSURE_SELECT = {
   expiresAt: true,
   book: {
     select: {
+      id: true,
       slug: true,
-      versions: { where: { status: 'published' }, select: { slug: true } },
+      versions: PUBLISHED_VERSION_SLUGS,
     },
   },
   bookVersion: {
-    select: { slug: true, language: true, status: true, book: { select: { slug: true } } },
+    select: {
+      language: true,
+      status: true,
+      book: { select: { id: true, slug: true, versions: PUBLISHED_VERSION_SLUGS } },
+    },
   },
 } as const satisfies Prisma.RightsClaimAccessBlockSelect;
 
@@ -281,26 +301,98 @@ type ClaimClosureRow = Prisma.RightsClaimAccessBlockGetPayload<{
 }>;
 
 /**
- * Строка списка закрытий или `null`. Блок на всю книгу закрывает все языки, но только книги
- * с опубликованной версией: слаг книги без единой опубликованной версии - непубличный адрес,
- * и вместе с ним наружу ушёл бы факт претензии. Блок версии - только опубликованной.
+ * Закрываемая версия: её язык и все слаги, по которым может открыться страница книги, - `Book.slug`
+ * и слаги её опубликованных версий на любом языке. Какие из них ведут на эту книгу в языке версии,
+ * решает `toClaimClosure`.
  */
-function toClaimClosure(block: ClaimClosureRow): BookAnalysisClaimClosureDto | null {
+interface ClaimClosureCandidate {
+  bookId: string;
+  language: Language;
+  slugs: string[];
+  countryCode: string | null;
+  expiresAt: Date | null;
+}
+
+/**
+ * Версии, которые закрывает блок. Блок на всю книгу закрывает каждую её опубликованную версию, но
+ * только книги с опубликованной версией: слаг книги без единой опубликованной версии - непубличный
+ * адрес, и вместе с ним наружу ушёл бы факт претензии. Блок версии - только опубликованной.
+ */
+function toClaimClosureCandidates(block: ClaimClosureRow): ClaimClosureCandidate[] {
   const countryCode = block.countryCode ? block.countryCode.toUpperCase() : null;
+  const candidate = (
+    book: { id: string; slug: string; versions: Array<{ slug: string | null }> },
+    language: Language,
+  ): ClaimClosureCandidate => ({
+    bookId: book.id,
+    language,
+    slugs: uniqueSlugs([book.slug, ...book.versions.map((version) => version.slug)]),
+    countryCode,
+    expiresAt: block.expiresAt,
+  });
   if (block.scope === ClaimBlockScope.ENTIRE_BOOK && block.book) {
-    if (block.book.versions.length === 0) return null;
-    const slugs = [block.book.slug, ...block.book.versions.map((version) => version.slug)];
-    return { slugs: uniqueSlugs(slugs), language: null, countryCode, expiresAt: block.expiresAt };
+    const book = block.book;
+    return book.versions.map((version) => candidate(book, version.language));
   }
   if (block.bookVersion && block.bookVersion.status === 'published') {
-    return {
-      slugs: uniqueSlugs([block.bookVersion.slug, block.bookVersion.book.slug]),
-      language: block.bookVersion.language,
-      countryCode,
-      expiresAt: block.expiresAt,
-    };
+    return [candidate(block.bookVersion.book, block.bookVersion.language)];
   }
-  return null;
+  return [];
+}
+
+type SlugOwners = Map<string, Array<{ language: Language; bookId: string }>>;
+
+/**
+ * Опубликованные версии с этими слагами на любом языке, по слагу; внутри слага - по `language asc`,
+ * как запасной поиск `getOverview`. Один запрос на порцию.
+ *
+ * 🔴 `language: { in: ... }` - у `BookVersion` нет индекса с ведущим `slug`, только
+ * `@@unique([language, slug])`; без языка запрос читает таблицу целиком (как у `isBookSlugLive`).
+ */
+async function loadSlugOwners(
+  client: Prisma.TransactionClient,
+  slugs: string[],
+): Promise<SlugOwners> {
+  const owners: SlugOwners = new Map();
+  const unique = [...new Set(slugs)];
+  if (unique.length === 0) return owners;
+  const rows = await client.bookVersion.findMany({
+    where: { status: 'published', slug: { in: unique }, language: { in: getSupportedLanguages() } },
+    orderBy: { language: 'asc' },
+    select: { slug: true, language: true, bookId: true },
+  });
+  for (const row of rows) {
+    if (!row.slug) continue;
+    const list = owners.get(row.slug) ?? [];
+    list.push({ language: row.language, bookId: row.bookId });
+    owners.set(row.slug, list);
+  }
+  return owners;
+}
+
+/**
+ * Слаги, по которым `/{language}/book/{slug}/analysis` открывает именно эту книгу. Порядок - как
+ * у `BookService.getOverview`: опубликованная версия с этим слагом в языке адреса, затем такая же
+ * в любом языке (первая по `language asc`), затем `Book.slug`. Слаг, который по этому порядку
+ * достаётся другой книге, не отдаётся: middleware сверяет только слаг и язык, и чужой адрес получил
+ * бы ложный 451. Слаг версии уникален лишь в паре с языком, `Book.slug` - глобально (пачка F03-2f).
+ */
+function toClaimClosure(
+  candidate: ClaimClosureCandidate,
+  owners: SlugOwners,
+): BookAnalysisClaimClosureDto {
+  const ownerOf = (slug: string): string => {
+    const versions = owners.get(slug) ?? [];
+    const match = versions.find((v) => v.language === candidate.language) ?? versions[0];
+    // Опубликованной версии с этим слагом нет нигде - адрес отвечает `Book.slug` этой книги.
+    return match ? match.bookId : candidate.bookId;
+  };
+  return {
+    slugs: candidate.slugs.filter((slug) => ownerOf(slug) === candidate.bookId),
+    language: candidate.language,
+    countryCode: candidate.countryCode,
+    expiresAt: candidate.expiresAt,
+  };
 }
 
 function uniqueSlugs(slugs: Array<string | null>): string[] {
