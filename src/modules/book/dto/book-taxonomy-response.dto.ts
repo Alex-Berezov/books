@@ -154,4 +154,11 @@ export class BookVersionContentCountDto {
 
   @ApiProperty({ type: Number, description: 'Analysis with a filled core (0 or 1)' })
   analyses!: number;
+
+  @ApiPropertyOptional({
+    type: Number,
+    description:
+      'Summary sections open to readers (full summary has text, no settled rights-claim block in any country); book overview only',
+  })
+  summarySections?: number;
 }

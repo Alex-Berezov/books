@@ -27,18 +27,44 @@ export const SUMMARIES_WITH_TEXT_COUNT = {
  * `now` — потому что у блока есть срок (`expiresAt`), а константа застыла бы на старте процесса.
  */
 export function analysesWithCoreCount(now: Date) {
+  return {
+    where: { hasCore: true, bookVersion: openForTextReaderWhere(now) },
+  } satisfies Prisma.BookVersionCountOutputTypeCountAnalysesArgs;
+}
+
+/**
+ * Версия не закрыта блоком окончённой претензии ни по какой стране — ни на самой версии, ни на всей
+ * книге. Общая часть счётчиков анализа и разделов пересказа: правило претензии одно (F04 D4 — разделы
+ * «как анализ»).
+ */
+function openForTextReaderWhere(now: Date) {
   const closing = settledClaimBlockWhere(now, ClaimBlockScope.TEXT_READER);
   return {
-    where: {
-      hasCore: true,
-      bookVersion: {
-        rightsClaimAccessBlocks: { none: closing },
-        book: {
-          rightsClaimAccessBlocks: { none: { ...closing, scope: ClaimBlockScope.ENTIRE_BOOK } },
-        },
-      },
+    rightsClaimAccessBlocks: { none: closing },
+    book: {
+      rightsClaimAccessBlocks: { none: { ...closing, scope: ClaimBlockScope.ENTIRE_BOOK } },
     },
-  } satisfies Prisma.BookVersionCountOutputTypeCountAnalysesArgs;
+  } satisfies Prisma.BookVersionWhereInput;
+}
+
+/**
+ * Разделы пересказа видны читателю (F04, решение арбитра `F04 | F04-1`): у полного пересказа есть
+ * текст и версию не закрывает окончённая претензия ни по какой стране (правило анализа). Одно
+ * условие на счётчик `_count.summarySections` обзора, список разделов для читателя и ручку карты
+ * сайта: счётчик без `hasText` звал бы на оглавление, а список отвечал бы `[]`.
+ */
+export function summarySectionsVisibleWhere(now: Date) {
+  return {
+    summaries: { some: { hasText: true } },
+    ...openForTextReaderWhere(now),
+  } satisfies Prisma.BookVersionWhereInput;
+}
+
+/** Счётчик разделов пересказа для `_count` обзора книги — правилом `summarySectionsVisibleWhere`. */
+export function summarySectionsCount(now: Date) {
+  return {
+    where: { bookVersion: summarySectionsVisibleWhere(now) },
+  } satisfies Prisma.BookVersionCountOutputTypeCountSummarySectionsArgs;
 }
 
 /**

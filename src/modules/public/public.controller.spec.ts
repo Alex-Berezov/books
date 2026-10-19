@@ -1,3 +1,4 @@
+import { BookSummarySectionsService } from '../book-summary/book-summary-sections.service';
 import { readFileSync } from 'node:fs';
 import { PublicController } from './public.controller';
 import { Language as PrismaLanguage } from '@prisma/client';
@@ -30,6 +31,7 @@ describe('PublicController (unit)', () => {
   };
   const geoIpCountry = { resolveCountry: jest.fn().mockReturnValue(null) };
   const slugRedirects = { resolve: jest.fn().mockResolvedValue(null) };
+  const summarySections = { sitemap: jest.fn() };
 
   const controller = new PublicController(
     books as unknown as BookService,
@@ -39,6 +41,7 @@ describe('PublicController (unit)', () => {
     authors as unknown as AuthorService,
     geoIpCountry as unknown as GeoIpCountryService,
     slugRedirects as unknown as SlugRedirectService,
+    summarySections as unknown as BookSummarySectionsService,
   );
 
   beforeEach(() => {

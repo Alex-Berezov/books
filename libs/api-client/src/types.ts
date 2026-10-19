@@ -3498,6 +3498,24 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/summary-sections/{sectionId}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Summary section with text by id (admin tab) */
+    get: operations['BookSummaryController_getSectionById'];
+    /** Edit a summary section by id; 409 when expectedUpdatedAt is stale */
+    put: operations['BookSummaryController_updateSection'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/tags': {
     parameters: {
       query?: never;
@@ -3898,6 +3916,92 @@ export interface paths {
     get: operations['BookSummaryController_get'];
     /** Create or update summary for a version (upsert) */
     put: operations['BookSummaryController_upsert'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/summary-sections': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Summary sections of a version without texts (editors see all; readers get [] when the full summary has no text or a settled rights claim blocks the version anywhere) */
+    get: operations['BookSummaryController_listSections'];
+    put?: never;
+    /** Append a summary section (the service assigns the number) */
+    post: operations['BookSummaryController_createSection'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/summary-sections/delete': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Delete a summary section and renumber the following ones; 409 when `from` is not the current order */
+    post: operations['BookSummaryController_deleteSection'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/summary-sections/order': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Reorder summary sections; 409 when `from` is not the current order */
+    put: operations['BookSummaryController_reorderSections'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/summary-sections/{number}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Public summary section page by number (451 under a settled rights claim, checked before existence) */
+    get: operations['BookSummaryController_getSectionByNumber'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/summary/brief': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Set the very short summary of a version (the key is required; null or "" clears it); 409 without a full summary */
+    put: operations['BookSummaryController_upsertBrief'];
     post?: never;
     delete?: never;
     options?: never;
@@ -4364,6 +4468,23 @@ export interface paths {
     };
     /** Resolve a retired slug to its current one */
     get: operations['PublicController_slugRedirect'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/summary-sections/sitemap': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Summary sections for the sitemap: one item per published version with open sections (paged by version) */
+    get: operations['PublicController_summarySectionsSitemap'];
     put?: never;
     post?: never;
     delete?: never;
@@ -5959,6 +6080,10 @@ export interface components {
     BookSummaryResponseDto: {
       analysis: string | null;
       bookVersionId: string;
+      /** @description Very short summary (rich HTML); written by PUT versions/:id/summary/brief only */
+      brief: string | null;
+      /** @description brief has visible text; the "In brief" block is shown only then */
+      briefHasText: boolean;
       /** Format: date-time */
       createdAt: string;
       /** @description В summary есть видимый текст; по нему считаются _count.summaries и hasSummary */
@@ -5968,6 +6093,90 @@ export interface components {
       themes: string | null;
       /** Format: date-time */
       updatedAt: string;
+    };
+    BookSummarySectionAdminDto: {
+      /**
+       * Format: date-time
+       * @description Date of the section address: the later of the text edit and the number change
+       */
+      contentDate: string;
+      id: string;
+      number: number;
+      readerChapter: number | null;
+      /** @description Rich HTML */
+      text: string;
+      title: string;
+      /**
+       * Format: date-time
+       * @description Last edit of the section text
+       */
+      updatedAt: string;
+    };
+    BookSummarySectionCreateResponseDto: {
+      section: components['schemas']['BookSummarySectionAdminDto'];
+      sections: components['schemas']['BookSummarySectionListItemDto'][];
+      warnings: components['schemas']['BookSummarySectionWarningDto'][];
+    };
+    BookSummarySectionListDto: {
+      sections: components['schemas']['BookSummarySectionListItemDto'][];
+    };
+    BookSummarySectionListItemDto: {
+      id: string;
+      number: number;
+      readerChapter: number | null;
+      title: string;
+      /**
+       * Format: date-time
+       * @description Last edit of the section text
+       */
+      updatedAt: string;
+    };
+    BookSummarySectionPageDto: {
+      /** @description The version has a very short summary with text */
+      briefHasText: boolean;
+      /**
+       * Format: date-time
+       * @description Date of the section address: the later of the text edit and the number change
+       */
+      contentDate: string;
+      id: string;
+      number: number;
+      readerChapter: number | null;
+      /** @description readerChapter exists in this version */
+      readerChapterExists: boolean;
+      /** @description All sections by number */
+      sections: components['schemas']['BookSummarySectionTocItemDto'][];
+      /** @description Rich HTML */
+      text: string;
+      title: string;
+    };
+    BookSummarySectionTocItemDto: {
+      number: number;
+      title: string;
+    };
+    BookSummarySectionUpdateResponseDto: {
+      section: components['schemas']['BookSummarySectionAdminDto'];
+      warnings: components['schemas']['BookSummarySectionWarningDto'][];
+    };
+    BookSummarySectionWarningDto: {
+      /** @enum {string} */
+      code: 'chapter_not_found';
+      message: string;
+      /** @description Field path: "readerChapter" */
+      path: string;
+    };
+    BookSummarySectionsSitemapItemDto: {
+      sections: components['schemas']['BookSummarySectionsSitemapSectionDto'][];
+      /** @description Version slug */
+      slug: string;
+    };
+    BookSummarySectionsSitemapSectionDto: {
+      /**
+       * Format: date-time
+       * @description contentDate of the section
+       */
+      lastmod: string;
+      number: number;
     };
     BookTagDto: {
       id: string;
@@ -6121,6 +6330,8 @@ export interface components {
       audioChapters: number;
       chapters: number;
       summaries: number;
+      /** @description Summary sections open to readers (full summary has text, no settled rights-claim block in any country); book overview only */
+      summarySections?: number;
     };
     BookVersionContributorResponseDto: {
       bookVersionId: string;
@@ -6995,6 +7206,13 @@ export interface components {
        * @enum {string}
        */
       type: 'text' | 'audio' | 'referral';
+    };
+    CreateBookSummarySectionDto: {
+      /** @description Reader chapter for the "Read this chapter" link; a missing chapter is a warning */
+      readerChapter?: number | null;
+      /** @description Rich HTML with visible text */
+      text: string;
+      title: string;
     };
     CreateBookVersionContributorDto: {
       /** @enum {string} */
@@ -7982,6 +8200,12 @@ export interface components {
     DeleteBookResponseDto: {
       /** @description Книга удалена */
       success: boolean;
+    };
+    DeleteBookSummarySectionDto: {
+      /** @description Section ids in the order the editor saw */
+      from: string[];
+      /** Format: uuid */
+      sectionId: string;
     };
     DeleteContributorResponseDto: {
       id: string;
@@ -10221,6 +10445,12 @@ export interface components {
       /** @description Ordered list of audio chapter ids. Number is reassigned by position (1-based). */
       audioChapterIds: string[];
     };
+    ReorderBookSummarySectionsDto: {
+      /** @description Section ids in the order the editor saw */
+      from: string[];
+      /** @description The same ids in the new order */
+      to: string[];
+    };
     ReorderBookVersionContributorsDto: {
       /** @description Array of BookVersionContributor IDs in desired order */
       contributorIds: string[];
@@ -12381,6 +12611,10 @@ export interface components {
        */
       slug?: string;
     };
+    UpdateBookSummaryBriefDto: {
+      /** @description Very short summary (rich HTML, 3-5 min read); null or "" clears it */
+      brief: string | null;
+    };
     UpdateBookSummaryDto: {
       /** @description Optional analysis */
       analysis?: string;
@@ -12388,6 +12622,15 @@ export interface components {
       summary: string;
       /** @description Optional themes */
       themes?: string;
+    };
+    UpdateBookSummarySectionDto: {
+      /** Format: date-time */
+      expectedUpdatedAt: string;
+      /** @description Reader chapter for the "Read this chapter" link; a missing chapter is a warning */
+      readerChapter: number | null;
+      /** @description Rich HTML with visible text */
+      text: string;
+      title: string;
     };
     UpdateBookVersionContributorDto: {
       /** @enum {string} */
@@ -19828,6 +20071,52 @@ export interface operations {
       };
     };
   };
+  BookSummaryController_getSectionById: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        sectionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummarySectionAdminDto'];
+        };
+      };
+    };
+  };
+  BookSummaryController_updateSection: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        sectionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateBookSummarySectionDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummarySectionUpdateResponseDto'];
+        };
+      };
+    };
+  };
   TagsController_create: {
     parameters: {
       query?: never;
@@ -20741,6 +21030,149 @@ export interface operations {
       };
     };
   };
+  BookSummaryController_listSections: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummarySectionListDto'];
+        };
+      };
+    };
+  };
+  BookSummaryController_createSection: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['CreateBookSummarySectionDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummarySectionCreateResponseDto'];
+        };
+      };
+    };
+  };
+  BookSummaryController_deleteSection: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['DeleteBookSummarySectionDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummarySectionListDto'];
+        };
+      };
+    };
+  };
+  BookSummaryController_reorderSections: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ReorderBookSummarySectionsDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummarySectionListDto'];
+        };
+      };
+    };
+  };
+  BookSummaryController_getSectionByNumber: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+        number: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummarySectionPageDto'];
+        };
+      };
+    };
+  };
+  BookSummaryController_upsertBrief: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateBookSummaryBriefDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookSummaryResponseDto'];
+        };
+      };
+    };
+  };
   BookVersionController_get: {
     parameters: {
       query?: never;
@@ -21515,6 +21947,34 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['SlugRedirectResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_summarySectionsSitemap: {
+    parameters: {
+      query?: {
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['BookSummarySectionsSitemapItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
         };
       };
     };

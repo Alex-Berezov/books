@@ -75,6 +75,8 @@ model BookVersion {
   /// Разбор и анализ (F03): одна запись на версию (`@unique` на стороне анализа); списком —
   /// ради `_count.analyses` в карточке, списке книг (карта сайта) и обзоре.
   analyses        BookAnalysis[]
+  /// Разделы пересказа (F04): плоский список с номерами подряд с 1, номера ставит сервис.
+  summarySections BookSummarySection[]
   chapters        Chapter[]
   audioChapters   AudioChapter[]
   bookshelf       Bookshelf[]
@@ -212,9 +214,33 @@ model BookSummary {
   hasText       Boolean     @default(true)
   analysis      String?
   themes        String?
+  /// Очень краткий пересказ (F04, rich HTML): пишет только `PUT versions/:id/summary/brief`.
+  brief         String?
+  /// В `brief` есть видимый текст: пересчитывает та же ручка, `PUT summary` флаг не трогает.
+  briefHasText  Boolean     @default(false)
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @updatedAt
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+}
+
+/// Раздел пересказа версии (F04, `books-app-docs/features/F04-summary-variants/tech.md` §2):
+/// адрес `/summary/{number}`. Номера подряд с 1 держит сервис под замком версии; сдвиг идёт
+/// через отрицательные номера, поэтому `CHECK (number >= 1)` нет.
+model BookSummarySection {
+  id            String      @id @default(uuid())
+  bookVersionId String
+  number        Int
+  title         String
+  text          String
+  readerChapter Int?
+  createdAt     DateTime    @default(now())
+  /// Дата правки текста раздела: ставит сервис, сдвиг и перестановка не трогают (T6).
+  updatedAt     DateTime    @default(now())
+  /// Когда раздел последний раз сменил номер (удаление соседа, перестановка) — для `lastmod` (T6).
+  movedAt       DateTime?
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([bookVersionId, number])
 }
 
 /// Раздел «Разбор и анализ» версии (F03, `books-app-docs/features/F03-book-analysis/tech.md` §2-§3).

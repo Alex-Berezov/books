@@ -24,7 +24,9 @@ export const MEDIA_TEXT_COLUMNS: readonly MediaSearchedColumn[] = [
   ...['description', 'shortDescription', 'summaryShort', 'rightsLicenseAttributionTextRu'].map(
     (field) => ({ model: 'BookVersion', field }),
   ),
-  ...['summary', 'analysis', 'themes'].map((field) => ({ model: 'BookSummary', field })),
+  ...['summary', 'analysis', 'themes', 'brief'].map((field) => ({ model: 'BookSummary', field })),
+  // F04-1: текст раздела пересказа — rich HTML из редактора админки.
+  { model: 'BookSummarySection', field: 'text' },
   // F03-1: тексты анализа книги — пишет оператор импортом, адрес в них возможен.
   ...['mainIdea', 'titleMeaning', 'endingMeaning', 'context', 'reception'].map((field) => ({
     model: 'BookAnalysis',

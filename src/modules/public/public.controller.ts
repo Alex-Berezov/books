@@ -68,6 +68,12 @@ import { PublicCategoryBooksQueryDto } from './dto/public-category-books-query.d
 import { PublicAuthorDetailResponseDto } from './dto/public-author-detail-response.dto';
 import { CategoryResponse } from '../category/dto/category-response.dto';
 import { TagResponse } from '../tags/dto/tag-response.dto';
+import { BookSummarySectionsService } from '../book-summary/book-summary-sections.service';
+import {
+  BookSummarySectionsSitemapQueryDto,
+  SUMMARY_SECTIONS_SITEMAP_MAX_LIMIT,
+} from '../book-summary/dto/book-summary-sections-sitemap-query.dto';
+import { BookSummarySectionsSitemapItemDto } from '../book-summary/dto/book-summary-section-response.dto';
 import { TagBookCardsResponseDto } from '../book/dto/tag-book-cards-response.dto';
 
 // Helper to validate and coerce path lang to enum
@@ -84,6 +90,7 @@ export class PublicController {
     private readonly authors: AuthorService,
     private readonly geoIpCountryService: GeoIpCountryService,
     private readonly slugRedirects: SlugRedirectService,
+    private readonly summarySections: BookSummarySectionsService,
   ) {}
 
   /**
@@ -183,6 +190,29 @@ export class PublicController {
       { publishedOnly: true },
     );
     return paginated(data, meta);
+  }
+
+  /**
+   * Разделы пересказа для карты сайта (F04 T10): элемент — версия со своими разделами, страница —
+   * один файл карты. Ни страны, ни роли не читает: кэш как у списка книг.
+   */
+  @Get('summary-sections/sitemap')
+  @ApiOperation({
+    summary:
+      'Summary sections for the sitemap: one item per published version with open sections (paged by version)',
+  })
+  @ApiExtraModels(BookSummarySectionsSitemapItemDto, PaginationInfoDto)
+  @ApiOkResponse({ schema: paginatedSchema(BookSummarySectionsSitemapItemDto) })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  summarySectionsSitemap(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Query() query: BookSummarySectionsSitemapQueryDto,
+  ): Promise<PaginatedResult<BookSummarySectionsSitemapItemDto>> {
+    return this.summarySections.sitemap(
+      pathLang,
+      query.page ?? 1,
+      query.limit ?? SUMMARY_SECTIONS_SITEMAP_MAX_LIMIT,
+    );
   }
 
   // Related books (compact BookCard) for a book page: same-author + similar-by-category

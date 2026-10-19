@@ -14,9 +14,10 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
-import { Transform, Type } from 'class-transformer';
+import { Type } from 'class-transformer';
 import { applyDecorators } from '@nestjs/common';
 import { IsAbsoluteHttpsUrl } from '../../../shared/validators/absolute-http-url.decorator';
+import { Trim } from '../../../shared/validators/trim.decorator';
 
 /**
  * Блоки анализа книги (F03-1). Форма — `books-app-docs/features/F03-book-analysis/tech.md` §3,
@@ -73,19 +74,16 @@ export type BookAnalysisTimelineKind = (typeof BOOK_ANALYSIS_TIMELINE_KINDS)[num
 export const BOOK_ANALYSIS_ADAPTATION_KINDS = ['film', 'series', 'stage', 'other'] as const;
 export type BookAnalysisAdaptationKind = (typeof BOOK_ANALYSIS_ADAPTATION_KINDS)[number];
 
-export const trim = () =>
-  Transform(({ value }: { value: unknown }) => (typeof value === 'string' ? value.trim() : value));
-
 const isAbsent = (value: unknown) => value === undefined || value === null || value === '';
 
 /** Обязательная непустая (после обрезки) строка с пределом длины. */
 const RequiredText = (max: number) =>
-  applyDecorators(trim(), IsString(), IsNotEmpty(), MaxLength(max));
+  applyDecorators(Trim(), IsString(), IsNotEmpty(), MaxLength(max));
 
 /** Необязательная строка: `undefined`, `null` и `''` (в том числе из пробелов) — «нет значения». */
 export const OptionalText = (max: number) =>
   applyDecorators(
-    trim(),
+    Trim(),
     ValidateIf((_o, value) => !isAbsent(value)),
     IsString(),
     MaxLength(max),
@@ -93,7 +91,7 @@ export const OptionalText = (max: number) =>
 
 const Key = () =>
   applyDecorators(
-    trim(),
+    Trim(),
     IsString(),
     Matches(BOOK_ANALYSIS_KEY_REGEX, { message: '$property must match ^[a-z0-9-]{1,60}$' }),
   );
@@ -293,7 +291,7 @@ export class BookAnalysisKeyQuoteDto {
   chapter?: number | null;
 
   @ApiPropertyOptional({ type: String, nullable: true, pattern: BOOK_ANALYSIS_KEY_REGEX.source })
-  @trim()
+  @Trim()
   @ValidateIf((_o, value) => !isAbsent(value))
   @Key()
   speakerKey?: string | null;
@@ -390,7 +388,7 @@ export class BookAnalysisSourceDto {
   title!: string;
 
   @ApiProperty({ description: 'Absolute https URL' })
-  @trim()
+  @Trim()
   @IsNotEmpty()
   @IsAbsoluteHttpsUrl()
   url!: string;

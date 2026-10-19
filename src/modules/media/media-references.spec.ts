@@ -48,7 +48,7 @@ const NOT_MEDIA_REFERENCES: Record<string, string> = {
  * Исключений нет: ложное совпадение лишь оставляет файл, пропуск удаляет его необратимо.
  */
 const TEXT_NAME_PATTERN =
-  /(content|description|biography|text|summary|analysis|themes|transcript|body|idea|meaning|reception)/i;
+  /(content|description|biography|text|summary|analysis|themes|transcript|body|idea|meaning|reception|brief)/i;
 
 /**
  * Поля, подходящие под шаблон текстов, но не текст оператора. Причина — только та, что держит
@@ -71,6 +71,8 @@ const EDITOR_HTML_COLUMNS = [
   'BookSummary.summary',
   'BookSummary.analysis',
   'BookSummary.themes',
+  'BookSummary.brief',
+  'BookSummarySection.text',
   'AuthorTranslation.biography',
   'CategoryTranslation.description',
   'TagTranslation.description',

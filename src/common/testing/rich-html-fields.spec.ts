@@ -7,6 +7,8 @@ import { RICH_HTML_MAX_LENGTH } from '../../shared/validators/rich-html.decorato
 import { AuthorTranslationDto } from '../../modules/author/dto/author-translation.dto';
 import { CreateAuthorDto } from '../../modules/author/dto/create-author.dto';
 import { UpdateAuthorDto } from '../../modules/author/dto/update-author.dto';
+import { UpdateBookSummaryBriefDto } from '../../modules/book-summary/dto/update-book-summary-brief.dto';
+import { BookSummarySectionTextDto } from '../../modules/book-summary/dto/create-book-summary-section.dto';
 import { UpdateBookSummaryDto } from '../../modules/book-summary/dto/update-book-summary.dto';
 import { CreateBookVersionDto } from '../../modules/book-version/dto/create-book-version.dto';
 import { UpdateBookVersionDto } from '../../modules/book-version/dto/update-book-version.dto';
@@ -42,6 +44,9 @@ const FIELDS: ReadonlyArray<[new () => object, string, number]> = [
   [UpdateBookSummaryDto, 'summary', RICH_HTML_MAX_LENGTH.text],
   [UpdateBookSummaryDto, 'analysis', RICH_HTML_MAX_LENGTH.text],
   [UpdateBookSummaryDto, 'themes', RICH_HTML_MAX_LENGTH.text],
+  [UpdateBookSummaryBriefDto, 'brief', RICH_HTML_MAX_LENGTH.text],
+  // Добавление и правка раздела наследуют `text` — декоратор стоит один раз, на общем родителе.
+  [BookSummarySectionTextDto, 'text', RICH_HTML_MAX_LENGTH.text],
 ];
 
 // Простой текст из <input>/<textarea>: выводится JSX-ом, чистка HTML его бы портила. Только предел длины.

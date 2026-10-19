@@ -31,6 +31,8 @@ export const PUBLIC_CACHE_HANDLERS: readonly string[] = [
   'modules/public/public.controller.ts → overview',
   'modules/public/public.controller.ts → related',
   'modules/public/public.controller.ts → slugRedirect',
+  // F04-1: карта разделов пересказа — ни страны, ни роли не читает, как список книг.
+  'modules/public/public.controller.ts → summarySectionsSitemap',
   'modules/public/public.controller.ts → tagBookCards',
   'modules/public/public.controller.ts → tagsBySlug',
   'modules/public/public.controller.ts → tagsList',

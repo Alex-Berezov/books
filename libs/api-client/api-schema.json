@@ -5216,6 +5216,15 @@
           "bookVersionId": {
             "type": "string"
           },
+          "brief": {
+            "description": "Very short summary (rich HTML); written by PUT versions/:id/summary/brief only",
+            "nullable": true,
+            "type": "string"
+          },
+          "briefHasText": {
+            "description": "brief has visible text; the \"In brief\" block is shown only then",
+            "type": "boolean"
+          },
           "createdAt": {
             "format": "date-time",
             "type": "string"
@@ -5246,8 +5255,265 @@
           "hasText",
           "analysis",
           "themes",
+          "brief",
+          "briefHasText",
           "createdAt",
           "updatedAt"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionAdminDto": {
+        "properties": {
+          "contentDate": {
+            "description": "Date of the section address: the later of the text edit and the number change",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "number": {
+            "type": "number"
+          },
+          "readerChapter": {
+            "nullable": true,
+            "type": "number"
+          },
+          "text": {
+            "description": "Rich HTML",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Last edit of the section text",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "title",
+          "readerChapter",
+          "updatedAt",
+          "text",
+          "contentDate"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionCreateResponseDto": {
+        "properties": {
+          "section": {
+            "$ref": "#/components/schemas/BookSummarySectionAdminDto"
+          },
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/BookSummarySectionListItemDto"
+            },
+            "type": "array"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/BookSummarySectionWarningDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "section",
+          "sections",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionListDto": {
+        "properties": {
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/BookSummarySectionListItemDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "sections"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionListItemDto": {
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "number": {
+            "type": "number"
+          },
+          "readerChapter": {
+            "nullable": true,
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "description": "Last edit of the section text",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "title",
+          "readerChapter",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionPageDto": {
+        "properties": {
+          "briefHasText": {
+            "description": "The version has a very short summary with text",
+            "type": "boolean"
+          },
+          "contentDate": {
+            "description": "Date of the section address: the later of the text edit and the number change",
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "number": {
+            "type": "number"
+          },
+          "readerChapter": {
+            "nullable": true,
+            "type": "number"
+          },
+          "readerChapterExists": {
+            "description": "readerChapter exists in this version",
+            "type": "boolean"
+          },
+          "sections": {
+            "description": "All sections by number",
+            "items": {
+              "$ref": "#/components/schemas/BookSummarySectionTocItemDto"
+            },
+            "type": "array"
+          },
+          "text": {
+            "description": "Rich HTML",
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "number",
+          "title",
+          "text",
+          "readerChapter",
+          "readerChapterExists",
+          "contentDate",
+          "sections",
+          "briefHasText"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionTocItemDto": {
+        "properties": {
+          "number": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "title"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionUpdateResponseDto": {
+        "properties": {
+          "section": {
+            "$ref": "#/components/schemas/BookSummarySectionAdminDto"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/BookSummarySectionWarningDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "section",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionWarningDto": {
+        "properties": {
+          "code": {
+            "enum": [
+              "chapter_not_found"
+            ],
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "description": "Field path: \"readerChapter\"",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "path",
+          "message"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionsSitemapItemDto": {
+        "properties": {
+          "sections": {
+            "items": {
+              "$ref": "#/components/schemas/BookSummarySectionsSitemapSectionDto"
+            },
+            "type": "array"
+          },
+          "slug": {
+            "description": "Version slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "sections"
+        ],
+        "type": "object"
+      },
+      "BookSummarySectionsSitemapSectionDto": {
+        "properties": {
+          "lastmod": {
+            "description": "contentDate of the section",
+            "format": "date-time",
+            "type": "string"
+          },
+          "number": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "number",
+          "lastmod"
         ],
         "type": "object"
       },
@@ -5801,6 +6067,10 @@
             "type": "number"
           },
           "summaries": {
+            "type": "number"
+          },
+          "summarySections": {
+            "description": "Summary sections open to readers (full summary has text, no settled rights-claim block in any country); book overview only",
             "type": "number"
           }
         },
@@ -8407,6 +8677,30 @@
         ],
         "type": "object"
       },
+      "CreateBookSummarySectionDto": {
+        "properties": {
+          "readerChapter": {
+            "description": "Reader chapter for the \"Read this chapter\" link; a missing chapter is a warning",
+            "maximum": 10000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "number"
+          },
+          "text": {
+            "description": "Rich HTML with visible text",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "text"
+        ],
+        "type": "object"
+      },
       "CreateBookVersionContributorDto": {
         "properties": {
           "confidence": {
@@ -10309,6 +10603,26 @@
         },
         "required": [
           "success"
+        ],
+        "type": "object"
+      },
+      "DeleteBookSummarySectionDto": {
+        "properties": {
+          "from": {
+            "description": "Section ids in the order the editor saw",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "sectionId": {
+            "format": "uuid",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sectionId",
+          "from"
         ],
         "type": "object"
       },
@@ -17500,6 +17814,29 @@
         ],
         "type": "object"
       },
+      "ReorderBookSummarySectionsDto": {
+        "properties": {
+          "from": {
+            "description": "Section ids in the order the editor saw",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "to": {
+            "description": "The same ids in the new order",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
       "ReorderBookVersionContributorsDto": {
         "properties": {
           "contributorIds": {
@@ -24406,6 +24743,19 @@
         },
         "type": "object"
       },
+      "UpdateBookSummaryBriefDto": {
+        "properties": {
+          "brief": {
+            "description": "Very short summary (rich HTML, 3-5 min read); null or \"\" clears it",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "brief"
+        ],
+        "type": "object"
+      },
       "UpdateBookSummaryDto": {
         "properties": {
           "analysis": {
@@ -24423,6 +24773,36 @@
         },
         "required": [
           "summary"
+        ],
+        "type": "object"
+      },
+      "UpdateBookSummarySectionDto": {
+        "properties": {
+          "expectedUpdatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "readerChapter": {
+            "description": "Reader chapter for the \"Read this chapter\" link; a missing chapter is a warning",
+            "maximum": 10000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "number"
+          },
+          "text": {
+            "description": "Rich HTML with visible text",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "text",
+          "readerChapter",
+          "expectedUpdatedAt"
         ],
         "type": "object"
       },
@@ -39287,6 +39667,86 @@
         ]
       }
     },
+    "/summary-sections/{sectionId}": {
+      "get": {
+        "operationId": "BookSummaryController_getSectionById",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sectionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookSummarySectionAdminDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Summary section with text by id (admin tab)",
+        "tags": [
+          "summaries"
+        ]
+      },
+      "put": {
+        "operationId": "BookSummaryController_updateSection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sectionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBookSummarySectionDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookSummarySectionUpdateResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edit a summary section by id; 409 when expectedUpdatedAt is stale",
+        "tags": [
+          "summaries"
+        ]
+      }
+    },
     "/tags": {
       "post": {
         "operationId": "TagsController_create",
@@ -40939,6 +41399,268 @@
           }
         ],
         "summary": "Create or update summary for a version (upsert)",
+        "tags": [
+          "summaries"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/summary-sections": {
+      "get": {
+        "operationId": "BookSummaryController_listSections",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookSummarySectionListDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Summary sections of a version without texts (editors see all; readers get [] when the full summary has no text or a settled rights claim blocks the version anywhere)",
+        "tags": [
+          "summaries"
+        ]
+      },
+      "post": {
+        "operationId": "BookSummaryController_createSection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBookSummarySectionDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookSummarySectionCreateResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Append a summary section (the service assigns the number)",
+        "tags": [
+          "summaries"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/summary-sections/delete": {
+      "post": {
+        "operationId": "BookSummaryController_deleteSection",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteBookSummarySectionDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookSummarySectionListDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a summary section and renumber the following ones; 409 when `from` is not the current order",
+        "tags": [
+          "summaries"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/summary-sections/order": {
+      "put": {
+        "operationId": "BookSummaryController_reorderSections",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReorderBookSummarySectionsDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookSummarySectionListDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Reorder summary sections; 409 when `from` is not the current order",
+        "tags": [
+          "summaries"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/summary-sections/{number}": {
+      "get": {
+        "operationId": "BookSummaryController_getSectionByNumber",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "number",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookSummarySectionPageDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Public summary section page by number (451 under a settled rights claim, checked before existence)",
+        "tags": [
+          "summaries"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/summary/brief": {
+      "put": {
+        "operationId": "BookSummaryController_upsertBrief",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBookSummaryBriefDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookSummaryResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set the very short summary of a version (the key is required; null or \"\" clears it); 409 without a full summary",
         "tags": [
           "summaries"
         ]
@@ -42831,6 +43553,82 @@
           }
         },
         "summary": "Resolve a retired slug to its current one",
+        "tags": [
+          "public-i18n"
+        ]
+      }
+    },
+    "/{lang}/summary-sections/sitemap": {
+      "get": {
+        "operationId": "PublicController_summarySectionsSitemap",
+        "parameters": [
+          {
+            "description": "Path language",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "enum": [
+                "en",
+                "es",
+                "fr",
+                "pt",
+                "ru"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/BookSummarySectionsSitemapItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "Summary sections for the sitemap: one item per published version with open sections (paged by version)",
         "tags": [
           "public-i18n"
         ]

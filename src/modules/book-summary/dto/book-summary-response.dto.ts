@@ -27,6 +27,19 @@ export class BookSummaryResponseDto {
   @ApiProperty({ type: String, nullable: true })
   themes!: string | null;
 
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Very short summary (rich HTML); written by PUT versions/:id/summary/brief only',
+  })
+  brief!: string | null;
+
+  @ApiProperty({
+    type: Boolean,
+    description: 'brief has visible text; the "In brief" block is shown only then',
+  })
+  briefHasText!: boolean;
+
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: Date;
 

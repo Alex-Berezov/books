@@ -21,6 +21,7 @@ import {
   loadBookCardRatings,
   SUMMARIES_WITH_TEXT_COUNT,
   analysesWithCoreCount,
+  summarySectionsCount,
   toBookCardDto,
 } from './book-card';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
@@ -423,6 +424,7 @@ export class BookService {
             audioChapters: true,
             summaries: SUMMARIES_WITH_TEXT_COUNT,
             analyses: analysesWithCoreCount(new Date()),
+            summarySections: summarySectionsCount(new Date()),
           },
         },
       },
