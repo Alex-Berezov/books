@@ -19,6 +19,9 @@ describe('BookSummary sections e2e', () => {
   let userAccess: string;
   let adminAccess: string;
 
+  const createdBookIds: string[] = [];
+  const createdSeoIds: number[] = [];
+
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
   const auth = () => `Bearer ${adminAccess}`;
 
@@ -27,6 +30,7 @@ describe('BookSummary sections e2e', () => {
   ) => {
     const bookSlug = `book-ss-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const book = await createBookFixture(prisma, bookSlug);
+    createdBookIds.push(book.id);
     const version = await prisma.bookVersion.create({
       data: {
         bookId: book.id,
@@ -136,8 +140,17 @@ describe('BookSummary sections e2e', () => {
     await grantStaffRoles(app, 'admin@example.com');
   });
 
+  // База e2e общая на воркер: наборы после этого видят его книги. Набор заводит десятки опубликованных
+  // версий, и без уборки чужие проверки каталога (`draft-and-rights-exposure`: весь `en` в одной
+  // странице из 100) падали бы от порядка запуска наборов.
+  // Книга уносит каскадом версии, разделы, главы и претензии; `Seo` — после версий, что на него ссылались.
   afterAll(async () => {
-    await app.close();
+    try {
+      await prisma.book.deleteMany({ where: { id: { in: createdBookIds } } });
+      await prisma.seo.deleteMany({ where: { id: { in: createdSeoIds } } });
+    } finally {
+      await app.close();
+    }
   });
 
   describe('очень краткий пересказ', () => {
@@ -729,6 +742,7 @@ describe('BookSummary sections e2e', () => {
       for (const [value, expected] of robots) {
         const v = await versionWithSections(1, { language: lang });
         const seo = await prisma.seo.create({ data: { robots: value } });
+        createdSeoIds.push(seo.id);
         await prisma.bookVersion.update({ where: { id: v.versionId }, data: { seoId: seo.id } });
         withRobots.push({ slug: v.versionSlug, expected });
       }
