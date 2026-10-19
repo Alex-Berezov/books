@@ -87,13 +87,18 @@ export class BookAnalysisService {
       });
     }
 
-    const row = await this.prisma.bookAnalysis.findUnique({
-      where: { bookVersionId },
-      select: BOOK_ANALYSIS_SELECT,
-    });
+    // Номера глав читаются параллельно с анализом (F03-3): на ответе `null` запрос глав лишний,
+    // но дешевле второго последовательного обхода базы на каждом читаемом анализе.
+    const [row, chapterNumbers] = await Promise.all([
+      this.prisma.bookAnalysis.findUnique({
+        where: { bookVersionId },
+        select: BOOK_ANALYSIS_SELECT,
+      }),
+      loadChapterNumbers(this.prisma, bookVersionId),
+    ]);
     // Без ядра анализа для читателя нет (`product.md` §2): незаконченные блоки видит только редактор.
     if (!row || (!editor && !row.hasCore)) return null;
-    return toResponse(row, version.language, await loadChapterNumbers(this.prisma, bookVersionId));
+    return toResponse(row, version.language, chapterNumbers);
   }
 
   /**
@@ -176,8 +181,9 @@ export class BookAnalysisService {
       return { analysis: null, ...(await this.describe(this.prisma, bookVersionId, merged)) };
     }
 
+    let saved: { row: AnalysisRow; hasCore: boolean; warnings: BookAnalysisWarningDto[] };
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      saved = await this.prisma.$transaction(async (tx) => {
         await tx.$queryRaw`SELECT true AS locked
           FROM pg_advisory_xact_lock(${BOOK_ANALYSIS_LOCK_NAMESPACE}::int4, hashtext(${bookVersionId}::text))`;
         const existing = await tx.bookAnalysis.findUnique({
@@ -197,8 +203,7 @@ export class BookAnalysisService {
               data: { bookVersionId, ...data },
               select: BOOK_ANALYSIS_SELECT,
             });
-        const chapterNumbers = await loadChapterNumbers(tx, bookVersionId);
-        return { analysis: toResponse(row, version.language, chapterNumbers), ...summary };
+        return { row, ...summary };
       }, BOOK_ANALYSIS_TX_OPTIONS);
     } catch (e: unknown) {
       // Версию проверяли до транзакции и без замка: удалённая в этом окне версия даёт FK-отказ
@@ -211,6 +216,11 @@ export class BookAnalysisService {
       }
       throw e;
     }
+    // Номера глав — после коммита и вне замка (F03-3): замок держит только «прочитал — слил —
+    // записал», чтение глав версии запись не защищает и замок не удлиняет.
+    const { row, ...summary } = saved;
+    const chapterNumbers = await loadChapterNumbers(this.prisma, bookVersionId);
+    return { analysis: toResponse(row, version.language, chapterNumbers), ...summary };
   }
 
   private validateMerged(existing: AnalysisRow | null, dto: UpdateBookAnalysisDto) {

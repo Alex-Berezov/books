@@ -152,6 +152,24 @@ describe('BookAnalysisService', () => {
       });
     });
 
+    // F03-3: номера глав и анализ читаются одним обходом, а не друг за другом.
+    it('номера глав запрашиваются, не дожидаясь чтения анализа', async () => {
+      let resolveRow: (value: unknown) => void = () => undefined;
+      prisma.bookAnalysis.findUnique.mockReturnValue(
+        new Promise((resolve) => {
+          resolveRow = resolve;
+        }),
+      );
+      prisma.chapter.findMany.mockResolvedValue([{ number: 3 }]);
+
+      const pending = service.getByVersion('v1', undefined, null);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(prisma.chapter.findMany).toHaveBeenCalledTimes(1);
+
+      resolveRow(row());
+      await expect(pending).resolves.toMatchObject({ chapterNumbers: [3] });
+    });
+
     it('анализ без ядра читателю — null, редактору — запись', async () => {
       prisma.bookAnalysis.findUnique.mockResolvedValue(row({ hasCore: false }));
       await expect(service.getByVersion('v1', undefined, null)).resolves.toBeNull();
@@ -441,23 +459,48 @@ describe('BookAnalysisService', () => {
       );
     });
 
-    // F03-2: ответ сохранения несёт номера глав - через `tx`, иначе запрос ушёл бы мимо транзакции.
-    it('ответ сохранения несёт номера глав версии, прочитанные через tx', async () => {
+    // F03-3: номера глав для ответа читаются после коммита и вне замка — замок их не защищает
+    // и не должен ждать их чтения.
+    it('ответ сохранения несёт номера глав версии, прочитанные после коммита транзакции', async () => {
       tx.bookAnalysis.create.mockResolvedValue(row());
-      tx.chapter.findMany.mockResolvedValue([{ number: 1 }, { number: 4 }]);
+      let committed = false;
+      prisma.$transaction.mockImplementation(async (cb: (client: typeof tx) => unknown) => {
+        const result = await cb(tx);
+        committed = true;
+        return result;
+      });
+      const readAfterCommit: boolean[] = [];
+      prisma.chapter.findMany.mockImplementation(() => {
+        readAfterCommit.push(committed);
+        return Promise.resolve([{ number: 1 }, { number: 4 }]);
+      });
 
       const res = await service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), false);
 
       expect(res.analysis?.chapterNumbers).toEqual([1, 4]);
-      // Ссылок на главы в теле нет - запрос глав один, за номерами для ответа.
-      expect(tx.chapter.findMany).toHaveBeenCalledTimes(1);
-      expect(tx.chapter.findMany).toHaveBeenCalledWith({
+      // Ссылок на главы в теле нет - запрос глав один, за номерами для ответа, и не через `tx`.
+      expect(tx.chapter.findMany).not.toHaveBeenCalled();
+      expect(prisma.chapter.findMany).toHaveBeenCalledTimes(1);
+      expect(readAfterCommit).toEqual([true]);
+      expect(prisma.chapter.findMany).toHaveBeenCalledWith({
         where: { bookVersionId: 'v1' },
         select: { number: true },
         orderBy: { number: 'asc' },
         take: CHAPTER_NUMBERS_LIMIT,
       });
-      expect(prisma.chapter.findMany).not.toHaveBeenCalled();
+    });
+
+    // F03-3: сбой чтения глав после коммита - отказ наружу, а не пустой список: «неизвестно» не равно
+    // «глав нет» (ссылки на главы пропали бы молча). Запись при этом уже сохранена, повтор PUT
+    // безопасен - слияние того же тела даёт ту же запись.
+    it('сбой чтения глав после коммита - отказ наружу, запись не откатывается', async () => {
+      tx.bookAnalysis.create.mockResolvedValue(row());
+      prisma.chapter.findMany.mockRejectedValue(new Error('pool exhausted'));
+
+      await expect(service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), false)).rejects.toThrow(
+        'pool exhausted',
+      );
+      expect(tx.bookAnalysis.create).toHaveBeenCalledTimes(1);
     });
 
     it('запись — в транзакции с явными границами, под замком, ядро пересчитано', async () => {
