@@ -3,10 +3,24 @@ import { promisify } from 'node:util';
 import request from 'supertest';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { Language } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { TaxonomyIndexabilityService } from '../src/modules/seo/indexability/taxonomy-indexability.service';
+import { computeAnalysisCore } from '../src/modules/book-analysis/book-analysis-core';
+import {
+  BOOK_ANALYSIS_BLOCK_KEYS,
+  type StoredBookAnalysis,
+} from '../src/modules/book-analysis/book-analysis-data';
+import {
+  ANALYSIS_ACCEPTANCE,
+  ANALYSIS_ACCEPTANCE_GEO_COUNTRY,
+  ANALYSIS_FIELDS,
+  ANALYSIS_TEXT_FIELDS,
+  analysisAcceptanceBooks,
+} from '../prisma/seed-analyses';
 import { httpServerOf } from './http-server';
+import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
  * 🔴 `LEGACY-364`. Сид зовётся **асинхронно**, и это не стилистика.
@@ -640,4 +654,261 @@ describe('Seeded dataset (e2e)', () => {
       expect(t.bookCount).toBeGreaterThanOrEqual(5);
     }
   }, 60_000);
+
+  /**
+   * F03-4, решение арбитра `F03 | F03-4` (В1): книги приёмки анализа пишутся сидом мимо DTO,
+   * а `hasCore` - литералом (функция ядра в `src/`, сиду в образе недоступна). Здесь литерал
+   * сверяется с `computeAnalysisCore` и с ядром, которое насчитал бы импорт (`PUT ?dryRun=true`),
+   * а копия списка полей - с `BOOK_ANALYSIS_BLOCK_KEYS`: иначе сид засеял бы запись, которую
+   * импорт отбил бы, страницу с ложным ядром или не сбросил бы новый блок при повторном прогоне.
+   */
+  describe('книги приёмки анализа (F03-4)', () => {
+    const books = analysisAcceptanceBooks();
+    let adminAccess: string;
+    const nodeEnvBefore = process.env.NODE_ENV;
+
+    afterAll(() => {
+      // Присваивание `undefined` дало бы строку "undefined": незаданную переменную снимаем.
+      if (nodeEnvBefore === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = nodeEnvBefore;
+    });
+
+    beforeAll(async () => {
+      // `X-Geo-Country` читается только при NODE_ENV=test (LEGACY-208), а ConfigService берёт
+      // его из окружения на каждый запрос: выставляется на этот блок и возвращается после него.
+      process.env.NODE_ENV = 'test';
+      const email = `seed_analysis_${Date.now()}@example.com`;
+      const reg = await request(httpServerOf(app))
+        .post('/auth/register')
+        .send({ email, password: 'password123' })
+        .expect(201);
+      adminAccess = (reg.body as { accessToken: string }).accessToken;
+      await grantStaffRoles(app, email);
+    });
+
+    const versionOf = (slug: string, language: Language) =>
+      prisma.bookVersion.findFirstOrThrow({
+        where: { book: { slug }, language },
+        select: {
+          id: true,
+          _count: { select: { chapters: true, summaries: { where: { hasText: true } } } },
+        },
+      });
+
+    it('копия полей анализа в сиде = блоки импорта, текст и Json по колонкам базы', async () => {
+      expect([...ANALYSIS_FIELDS].sort()).toEqual([...BOOK_ANALYSIS_BLOCK_KEYS].sort());
+      // В полном анализе заполнены все поля: тип значения из базы и есть тип колонки.
+      const full = await versionOf(ANALYSIS_ACCEPTANCE.full, Language.en);
+      const row = await prisma.bookAnalysis.findUniqueOrThrow({
+        where: { bookVersionId: full.id },
+      });
+      for (const field of ANALYSIS_FIELDS) {
+        const value: unknown = row[field];
+        expect({ field, text: typeof value === 'string' }).toEqual({
+          field,
+          text: ANALYSIS_TEXT_FIELDS.has(field),
+        });
+        expect({ field, empty: value === null }).toEqual({ field, empty: false });
+      }
+    });
+
+    it.each(
+      books.flatMap((b) =>
+        b.versions.filter((v) => v.analysis).map((v) => [b.slug, v.language, v] as const),
+      ),
+    )('%s/%s: ядро литералом = computeAnalysisCore = ядро импорта', async (slug, language, v) => {
+      const version = await versionOf(slug, language);
+      const row = await prisma.bookAnalysis.findUniqueOrThrow({
+        where: { bookVersionId: version.id },
+      });
+      expect(row.hasCore).toBe(v.analysis!.hasCore);
+      expect(computeAnalysisCore(row as unknown as StoredBookAnalysis).hasCore).toBe(row.hasCore);
+      expect(version._count.chapters).toBe(v.chapters.length);
+      expect(version._count.summaries).toBe(v.summary ? 1 : 0);
+
+      const dry = await request(httpServerOf(app))
+        .put(`/versions/${version.id}/analysis?dryRun=true`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ language, ...v.analysis!.blocks })
+        .expect(200);
+      const body = dry.body as { hasCore: boolean; warnings: Array<{ code: string }> };
+      expect(body.hasCore).toBe(v.analysis!.hasCore);
+      // Импорт сливает тело с записью сида, поэтому ядро считается и по одним блокам набора.
+      expect(computeAnalysisCore(v.analysis!.blocks as StoredBookAnalysis).hasCore).toBe(
+        v.analysis!.hasCore,
+      );
+      // Ссылки на главы попадают в главы сида; у версии без глав - все мимо, это и проверяется.
+      const missingChapters = body.warnings.filter((w) => w.code === 'chapter_not_found');
+      expect(missingChapters.length > 0).toBe(v.chapters.length === 0);
+    });
+
+    it('повторный сид приводит книги приёмки к набору: лишнее снято, правка сброшена', async () => {
+      const slugs = books.map((b) => b.slug);
+      const versions = books.flatMap((b) => b.versions);
+      const where = { bookVersion: { book: { slug: { in: slugs } } } };
+
+      // «Грязь» поверх засеянного: глава и пересказ вне набора, лишнее гео-правило, ручная правка
+      // анализа и выключенное правило набора.
+      const minimal = await versionOf(ANALYSIS_ACCEPTANCE.minimal, Language.en);
+      const twoLangs = await versionOf(ANALYSIS_ACCEPTANCE.twoLangs, Language.en);
+      const full = await versionOf(ANALYSIS_ACCEPTANCE.full, Language.en);
+      await prisma.chapter.create({
+        data: { bookVersionId: minimal.id, number: 99, title: 'stray', content: 'stray' },
+      });
+      await prisma.bookSummary.create({
+        data: { bookVersionId: twoLangs.id, summary: '<p>stray</p>', hasText: true },
+      });
+      await prisma.geoBlockRule.create({
+        data: {
+          bookVersionId: twoLangs.id,
+          scope: 'TEXT_READER',
+          countryCode: 'US',
+          accessPolicy: 'BLOCK',
+          sourceFinalStatus: 'BLOCKED',
+          isActive: true,
+          generatedFrom: 'E2E_TEST',
+        },
+      });
+      // Лишнее правило на версии с правилом набора - ветка «кроме правила набора».
+      await prisma.geoBlockRule.create({
+        data: {
+          bookVersionId: full.id,
+          scope: 'TEXT_READER',
+          countryCode: 'US',
+          accessPolicy: 'BLOCK',
+          sourceFinalStatus: 'BLOCKED',
+          isActive: true,
+          generatedFrom: 'E2E_TEST',
+        },
+      });
+      await prisma.bookAnalysis.update({
+        where: { bookVersionId: minimal.id },
+        data: { context: 'stray' },
+      });
+      const twoLangsEs = await versionOf(ANALYSIS_ACCEPTANCE.twoLangs, Language.es);
+      await prisma.bookAnalysis.create({ data: { bookVersionId: twoLangsEs.id, hasCore: true } });
+      const minimalBook = await prisma.book.findUniqueOrThrow({
+        where: { slug: ANALYSIS_ACCEPTANCE.minimal },
+        select: { id: true },
+      });
+      const strayVersion = await prisma.bookVersion.create({
+        data: {
+          bookId: minimalBook.id,
+          language: Language.fr,
+          title: 'stray',
+          slug: ANALYSIS_ACCEPTANCE.minimal,
+          author: 'stray',
+          description: 'stray',
+          coverImageUrl: 'https://example.com/cover.jpg',
+          type: 'text',
+          isFree: true,
+        },
+        select: { id: true },
+      });
+      await prisma.geoBlockRule.updateMany({
+        where: { bookVersionId: full.id },
+        data: { isActive: false, reasonRu: 'stray' },
+      });
+      const fullBook = await prisma.book.findUniqueOrThrow({
+        where: { slug: ANALYSIS_ACCEPTANCE.full },
+        select: { id: true },
+      });
+      await prisma.geoBlockRule.create({
+        data: {
+          bookId: fullBook.id,
+          scope: 'ENTIRE_BOOK',
+          countryCode: ANALYSIS_ACCEPTANCE_GEO_COUNTRY,
+          accessPolicy: 'BLOCK',
+          sourceFinalStatus: 'BLOCKED',
+          isActive: true,
+          generatedFrom: 'E2E_TEST',
+        },
+      });
+
+      await runSeed('npx prisma db seed', { env: { ...process.env }, timeout: 120_000 });
+
+      expect(
+        await prisma.geoBlockRule.count({ where: { bookId: fullBook.id, bookVersionId: null } }),
+      ).toBe(0);
+
+      const minimalAnalysis = await prisma.bookAnalysis.findUniqueOrThrow({
+        where: { bookVersionId: minimal.id },
+        select: { context: true },
+      });
+      expect(minimalAnalysis.context).toBeNull();
+      expect(await prisma.bookVersion.count({ where: { id: strayVersion.id } })).toBe(0);
+      expect(await prisma.bookAnalysis.count({ where: { bookVersionId: twoLangsEs.id } })).toBe(0);
+      const rules = await prisma.geoBlockRule.findMany({
+        where,
+        select: { bookVersionId: true, countryCode: true, isActive: true, reasonRu: true },
+      });
+      expect(rules).toEqual([
+        {
+          bookVersionId: full.id,
+          countryCode: ANALYSIS_ACCEPTANCE_GEO_COUNTRY,
+          isActive: true,
+          reasonRu: null,
+        },
+      ]);
+      expect(await prisma.chapter.count({ where })).toBe(
+        versions.reduce((n, v) => n + v.chapters.length, 0),
+      );
+      expect(await prisma.bookAnalysis.count({ where })).toBe(
+        versions.filter((v) => v.analysis).length,
+      );
+      expect(await prisma.bookSummary.count({ where })).toBe(
+        versions.filter((v) => v.summary).length,
+      );
+    }, 180_000);
+
+    it('публичные ответы: счётчик анализов, номера глав, гео-правило читалки', async () => {
+      const analysesOf = async (lang: Language, slug: string) => {
+        const res = await get(`/${lang}/books/${slug}/overview`).expect(200);
+        const { versions } = res.body as {
+          versions: Array<{ language: string; _count: { analyses: number } }>;
+        };
+        return versions.find((x) => x.language === lang)?._count.analyses;
+      };
+      const counts = await Promise.all(
+        books.flatMap((b) =>
+          b.versions.map(async (v) => ({
+            key: `${b.slug}/${v.language}`,
+            count: await analysesOf(v.language, b.slug),
+          })),
+        ),
+      );
+      expect(counts).toEqual(
+        books.flatMap((b) =>
+          b.versions.map((v) => ({
+            key: `${b.slug}/${v.language}`,
+            count: v.analysis?.hasCore ? 1 : 0,
+          })),
+        ),
+      );
+
+      const chapterNumbersOf = async (slug: string, language: Language) => {
+        const { id } = await versionOf(slug, language);
+        const res = await get(`/versions/${id}/analysis`).expect(200);
+        return (res.body as { chapterNumbers: number[] }).chapterNumbers;
+      };
+      expect(await chapterNumbersOf(ANALYSIS_ACCEPTANCE.full, Language.en)).toEqual([1, 2, 3, 4]);
+      expect(await chapterNumbersOf(ANALYSIS_ACCEPTANCE.minimal, Language.en)).toEqual([1, 2, 3]);
+      expect(await chapterNumbersOf(ANALYSIS_ACCEPTANCE.noChapters, Language.en)).toEqual([]);
+
+      // Читалка `en` закрыта в стране правила и только там; анализ там же открыт (D7).
+      const full = await versionOf(ANALYSIS_ACCEPTANCE.full, Language.en);
+      const fullRu = await versionOf(ANALYSIS_ACCEPTANCE.full, Language.ru);
+      const chapters = (id: string, country: string) =>
+        get(`/versions/${id}/chapters`).set('X-Geo-Country', country);
+      await chapters(full.id, ANALYSIS_ACCEPTANCE_GEO_COUNTRY).expect(451);
+      await chapters(full.id, 'US').expect(200);
+      await chapters(fullRu.id, ANALYSIS_ACCEPTANCE_GEO_COUNTRY).expect(200);
+      // Страна неизвестна при активном правиле - отказ (fail-closed, geo-block-rule.service.ts):
+      // так читалку `en` видит и CI фронта, где страна до бэкенда не доходит.
+      await get(`/versions/${full.id}/chapters`).expect(451);
+      await get(`/versions/${full.id}/analysis`)
+        .set('X-Geo-Country', ANALYSIS_ACCEPTANCE_GEO_COUNTRY)
+        .expect(200);
+    });
+  });
 });

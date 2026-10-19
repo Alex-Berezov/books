@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { PrismaClient, Language, BookType, CategoryType, RoleName } from '@prisma/client';
 import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
+import { seedAnalysisAcceptance } from './seed-analyses';
 import { seedPageAuthors } from './seed-authors';
 
 const connectionString = process.env.DATABASE_URL;
@@ -980,6 +981,8 @@ async function main() {
   // F02-5: авторы приёмки страницы автора (Верн, Дюма, Киплинг, Стивенсон); книги каталога
   // уже заведены строкой выше.
   await seedPageAuthors(prisma, SEO_CATALOG_BOOKS);
+  // F03-4: служебные книги приёмки раздела «Разбор и анализ» - вне каталога, со своими главами.
+  await seedAnalysisAcceptance(prisma, ensureRightsChain);
 
   console.log('Seeded categories, a sample book with versions and the SEO catalog');
 }
