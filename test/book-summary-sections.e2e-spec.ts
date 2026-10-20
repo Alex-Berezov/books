@@ -487,6 +487,32 @@ describe('BookSummary sections e2e', () => {
       await edit(randomUUID(), v.sections[0].updatedAt, 'Gone').expect(404);
     });
 
+    // F04-4, `product.md` §2 п.6, §9 п.12: дата адреса соседа от чужой правки не меняется.
+    it('правка текста одного раздела не меняет дату соседних', async () => {
+      const v = await versionWithSections(3);
+      // Даты в прошлое: строгое «больше» у правленого не зависит от разрешения часов.
+      await prisma.bookSummarySection.updateMany({
+        where: { bookVersionId: v.versionId },
+        data: { updatedAt: new Date(Date.now() - 3_600_000) },
+      });
+      const before = await rows(v.versionId);
+      await request(http())
+        .put(`/summary-sections/${before[1].id}`)
+        .set('Authorization', auth())
+        .send({
+          ...section(2, { text: '<p>Edited</p>' }),
+          expectedUpdatedAt: before[1].updatedAt.toISOString(),
+        })
+        .expect(200);
+      const after = await rows(v.versionId);
+      expect(after.map((r) => [r.id, r.movedAt])).toEqual(before.map((r) => [r.id, null]));
+      // Соседи - с прежней датой, правленый - со свежей.
+      expect([after[0], after[2]].map((r) => r.updatedAt.getTime())).toEqual(
+        [before[0], before[2]].map((r) => r.updatedAt.getTime()),
+      );
+      expect(after[1].updatedAt.getTime()).toBeGreaterThan(before[1].updatedAt.getTime());
+    });
+
     it('правка по id после удаления соседа правит тот же раздел', async () => {
       const v = await versionWithSections(3);
       const ids = v.sections.map((s) => s.id);
@@ -614,10 +640,14 @@ describe('BookSummary sections e2e', () => {
         .get(`/versions/${v.versionId}/summary-sections/99`)
         .set('X-Geo-Country', 'GB')
         .expect(451);
-      await request(http())
+      // Вне страны блока раздел открыт со своей навигацией (`product.md` §2 п.7).
+      const outside = await request(http())
         .get(`/versions/${v.versionId}/summary-sections/1`)
         .set('X-Geo-Country', 'US')
         .expect(200);
+      expect((outside.body.sections as Array<{ number: number }>).map((s) => s.number)).toEqual([
+        1, 2,
+      ]);
       await request(http()).get(`/versions/${v.versionId}/summary-sections/1`).expect(200);
       await request(http())
         .get(`/versions/${v.versionId}/summary`)
@@ -694,6 +724,45 @@ describe('BookSummary sections e2e', () => {
       }
       return { items, total };
     };
+
+    // F04-4, `product.md` §9 п.9: блок по всему миру закрывает раздел в любой стране, но не пересказ.
+    it('блок на весь мир: раздел 451 в любой стране и без заголовка страны, пересказ открыт, карты нет', async () => {
+      const v = await versionWithSections(2);
+      await request(http())
+        .put(`/versions/${v.versionId}/summary/brief`)
+        .set('Authorization', auth())
+        .send({ brief: '<p>Very brief</p>' })
+        .expect(200);
+      // До блока версия в карте есть - иначе её отсутствие ниже ничего бы не доказывало.
+      expect((await readAll('en', 50)).items.map((i) => i.slug)).toContain(v.versionSlug);
+      await claimWithBlock(v, 'RESOLVED_VALID', null, true);
+      for (const country of ['GB', 'US', 'DE']) {
+        for (const n of ['1', '99']) {
+          await request(http())
+            .get(`/versions/${v.versionId}/summary-sections/${n}`)
+            .set('X-Geo-Country', country)
+            .expect(451);
+        }
+      }
+      await request(http()).get(`/versions/${v.versionId}/summary-sections/1`).expect(451);
+      const summary = await request(http())
+        .get(`/versions/${v.versionId}/summary`)
+        .set('X-Geo-Country', 'US')
+        .expect(200);
+      expect(summary.body.brief).toBe('<p>Very brief</p>');
+      const { items } = await readAll('en', 50);
+      expect(items.map((i) => i.slug)).not.toContain(v.versionSlug);
+
+      // Тот же блок на саму версию (не на книгу), без страны - тоже 451 везде.
+      const versionWide = await versionWithSections(1);
+      await claimWithBlock(versionWide, 'RESOLVED_VALID', null);
+      for (const country of ['GB', 'US']) {
+        await request(http())
+          .get(`/versions/${versionWide.versionId}/summary-sections/1`)
+          .set('X-Geo-Country', country)
+          .expect(451);
+      }
+    });
 
     it('потолок limit — 50', async () => {
       await request(http()).get('/pt/summary-sections/sitemap').query({ limit: 51 }).expect(400);

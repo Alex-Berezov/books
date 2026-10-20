@@ -19,6 +19,15 @@ import {
   ANALYSIS_TEXT_FIELDS,
   analysisAcceptanceBooks,
 } from '../prisma/seed-analyses';
+import {
+  SUMMARY_ACCEPTANCE,
+  SUMMARY_ACCEPTANCE_SECTION_MOVED_DATE,
+  SUMMARY_ACCEPTANCE_SUMMARY_DATE,
+  briefText,
+  sectionText,
+  sectionTitle,
+  summaryAcceptanceBooks,
+} from '../prisma/seed-summaries';
 import { httpServerOf } from './http-server';
 import { grantStaffRoles } from './helpers/staff-roles';
 
@@ -62,6 +71,16 @@ describe('Seeded dataset (e2e)', () => {
   let prisma: PrismaService;
 
   const get = (path: string) => request(httpServerOf(app)).get(path);
+
+  /** Версия книги приёмки по слагу и языку: блоки анализа (F03-4) и пересказа (F04-4). */
+  const versionOf = (slug: string, language: Language) =>
+    prisma.bookVersion.findFirstOrThrow({
+      where: { book: { slug }, language },
+      select: {
+        id: true,
+        _count: { select: { chapters: true, summaries: { where: { hasText: true } } } },
+      },
+    });
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -686,15 +705,6 @@ describe('Seeded dataset (e2e)', () => {
       await grantStaffRoles(app, email);
     });
 
-    const versionOf = (slug: string, language: Language) =>
-      prisma.bookVersion.findFirstOrThrow({
-        where: { book: { slug }, language },
-        select: {
-          id: true,
-          _count: { select: { chapters: true, summaries: { where: { hasText: true } } } },
-        },
-      });
-
     it('копия полей анализа в сиде = блоки импорта, текст и Json по колонкам базы', async () => {
       expect([...ANALYSIS_FIELDS].sort()).toEqual([...BOOK_ANALYSIS_BLOCK_KEYS].sort());
       // В полном анализе заполнены все поля: тип значения из базы и есть тип колонки.
@@ -910,5 +920,260 @@ describe('Seeded dataset (e2e)', () => {
         .set('X-Geo-Country', ANALYSIS_ACCEPTANCE_GEO_COUNTRY)
         .expect(200);
     });
+  });
+
+  describe('книги приёмки вариантов пересказа (F04-4)', () => {
+    const books = summaryAcceptanceBooks();
+    const published = books.flatMap((b) =>
+      b.versions.filter((v) => v.status !== 'draft').map((v) => [b.slug, v.language, v] as const),
+    );
+
+    it.each(published)(
+      '%s/%s: счётчики обзора, очень краткий, разделы и даты как в наборе',
+      async (slug, language, v) => {
+        const overview = await get(`/${language}/books/${v.slug ?? slug}/overview`).expect(200);
+        const { versions } = overview.body as {
+          versions: Array<{
+            language: string;
+            _count: { summaries: number; summarySections: number };
+          }>;
+        };
+        const count = versions.find((x) => x.language === language)!._count;
+        expect(count.summaries).toBe(v.summary ? 1 : 0);
+        // Разделы без полного пересказа не публикуются (`product.md` §3).
+        expect(count.summarySections).toBe(v.summary ? v.sections.length : 0);
+
+        const { id } = await versionOf(slug, language);
+        if (v.summary) {
+          const summary = await get(`/versions/${id}/summary`).expect(200);
+          const body = summary.body as {
+            brief: string | null;
+            briefHasText: boolean;
+            updatedAt: string;
+          };
+          expect(body.briefHasText).toBe(v.brief);
+          expect(body.brief).toBe(v.brief ? briefText(language) : null);
+          expect(body.updatedAt).toBe(SUMMARY_ACCEPTANCE_SUMMARY_DATE.toISOString());
+        }
+
+        const list = await get(`/versions/${id}/summary-sections`).expect(200);
+        const sections = (list.body as { sections: Array<{ number: number; title: string }> })
+          .sections;
+        expect(sections.map((s) => [s.number, s.title])).toEqual(
+          v.summary ? v.sections.map((_, i) => [i + 1, sectionTitle(language, i + 1)]) : [],
+        );
+        for (const [index, seeded] of v.sections.entries()) {
+          const number = index + 1;
+          const page = get(`/versions/${id}/summary-sections/${number}`);
+          if (!v.summary) {
+            await page.expect(404);
+            continue;
+          }
+          const res = await page.expect(200);
+          const body = res.body as {
+            text: string;
+            readerChapter: number | null;
+            readerChapterExists: boolean;
+            contentDate: string;
+          };
+          expect(body.text).toBe(sectionText(language, number));
+          expect(body.readerChapter).toBe(seeded.readerChapter);
+          expect(body.readerChapterExists).toBe(
+            seeded.readerChapter !== null && v.chapters.includes(seeded.readerChapter),
+          );
+          // Дата адреса - позднейшая из правки текста и смены номера (`tech.md` T6).
+          const edited = (seeded.updatedAt ?? SUMMARY_ACCEPTANCE_SUMMARY_DATE).getTime();
+          expect(new Date(body.contentDate).getTime()).toBe(
+            Math.max(edited, seeded.movedAt?.getTime() ?? edited),
+          );
+        }
+      },
+    );
+
+    it('черновик скрыт от анонима: ни обзора, ни разделов', async () => {
+      const { id } = await versionOf(SUMMARY_ACCEPTANCE.draft, Language.en);
+      const overview = await get(`/en/books/${SUMMARY_ACCEPTANCE.draft}/overview`).expect(200);
+      expect((overview.body as { versions: unknown[] }).versions).toEqual([]);
+      await get(`/versions/${id}/summary-sections`).expect(404);
+      await get(`/versions/${id}/summary-sections/1`).expect(404);
+      await get(`/versions/${id}/summary`).expect(404);
+    });
+
+    it('карта сайта разделов: только открытые версии со своими номерами и датой адреса', async () => {
+      type Item = { slug: string; sections: Array<{ number: number; lastmod: string }> };
+      const items: Item[] = [];
+      for (let page = 1; ; page += 1) {
+        const res = await get('/en/summary-sections/sitemap')
+          .query({ page, limit: 50 })
+          .expect(200);
+        const body = res.body as { items: Item[]; pagination: { totalPages: number } };
+        items.push(...body.items);
+        if (page >= body.pagination.totalPages) break;
+      }
+      const bySlug = new Map(items.map((item) => [item.slug, item.sections]));
+      // Слаг версии равен слагу книги приёмки; `noindex`, черновик, без полного, без разделов - нет.
+      for (const present of [
+        SUMMARY_ACCEPTANCE.full,
+        SUMMARY_ACCEPTANCE.sectionsOnly,
+        SUMMARY_ACCEPTANCE.noChapters,
+      ]) {
+        expect([present, bySlug.has(present)]).toEqual([present, true]);
+      }
+      for (const absent of [
+        SUMMARY_ACCEPTANCE.onlyFull,
+        SUMMARY_ACCEPTANCE.briefOnly,
+        SUMMARY_ACCEPTANCE.noFull,
+        SUMMARY_ACCEPTANCE.noindex,
+        SUMMARY_ACCEPTANCE.draft,
+      ]) {
+        expect([absent, bySlug.has(absent)]).toEqual([absent, false]);
+      }
+      const full = bySlug.get(SUMMARY_ACCEPTANCE.full)!;
+      expect(full.map((s) => s.number)).toEqual([1, 2, 3]);
+      expect(new Date(full[1].lastmod).getTime()).toBe(
+        SUMMARY_ACCEPTANCE_SECTION_MOVED_DATE.getTime(),
+      );
+    });
+
+    it('повторный сид приводит книги приёмки к набору: лишнее снято, правка сброшена', async () => {
+      const full = await versionOf(SUMMARY_ACCEPTANCE.full, Language.en);
+      const briefOnly = await versionOf(SUMMARY_ACCEPTANCE.briefOnly, Language.en);
+      const noFull = await versionOf(SUMMARY_ACCEPTANCE.noFull, Language.en);
+      const onlyFullBook = await prisma.book.findUniqueOrThrow({
+        where: { slug: SUMMARY_ACCEPTANCE.onlyFull },
+        select: { id: true },
+      });
+      // «Грязь» поверх засеянного: лишний раздел, чужой пересказ, правка текста, лишняя версия.
+      await prisma.bookSummarySection.create({
+        data: { bookVersionId: briefOnly.id, number: 1, title: 'stray', text: '<p>stray</p>' },
+      });
+      await prisma.bookSummary.create({
+        data: { bookVersionId: noFull.id, summary: '<p>stray</p>', hasText: true },
+      });
+      await prisma.bookSummarySection.update({
+        where: { bookVersionId_number: { bookVersionId: full.id, number: 1 } },
+        data: { title: 'stray', readerChapter: 3 },
+      });
+      // Даты адреса раздела, на которых стоят `dateModified` и `lastmod`, - тоже из набора.
+      await prisma.bookSummarySection.update({
+        where: { bookVersionId_number: { bookVersionId: full.id, number: 2 } },
+        data: { updatedAt: new Date(), movedAt: null },
+      });
+      // Отрицательный номер - след оборванного сдвига (`CHECK` на номер нет).
+      await prisma.bookSummarySection.create({
+        data: { bookVersionId: full.id, number: -1, title: 'stray', text: '<p>stray</p>' },
+      });
+      await prisma.bookSummary.update({
+        where: { bookVersionId: full.id },
+        data: { brief: '<p>stray</p>' },
+      });
+      const strayVersion = await prisma.bookVersion.create({
+        data: {
+          bookId: onlyFullBook.id,
+          language: Language.fr,
+          title: 'stray',
+          slug: SUMMARY_ACCEPTANCE.onlyFull,
+          author: 'stray',
+          description: 'stray',
+          coverImageUrl: 'https://example.com/cover.jpg',
+          type: 'text',
+          isFree: true,
+        },
+        select: { id: true },
+      });
+      // Редакторский noindex: снят руками с книги набора и поставлен на книгу вне его.
+      const noindex = await prisma.bookVersion.findFirstOrThrow({
+        where: { book: { slug: SUMMARY_ACCEPTANCE.noindex }, language: Language.en },
+        select: { id: true, seoId: true },
+      });
+      await prisma.seo.update({ where: { id: noindex.seoId! }, data: { robots: null } });
+      const straySeo = await prisma.seo.create({ data: { robots: 'noindex' } });
+      await prisma.bookVersion.update({ where: { id: full.id }, data: { seoId: straySeo.id } });
+      try {
+        // Гео-правила на книгу и на версию, лишняя глава у версии без текста, черновик опубликован руками.
+        const fullBook = await prisma.book.findUniqueOrThrow({
+          where: { slug: SUMMARY_ACCEPTANCE.full },
+          select: { id: true },
+        });
+        const geoRule = {
+          scope: 'TEXT_READER' as const,
+          countryCode: 'GB',
+          accessPolicy: 'BLOCK' as const,
+          sourceFinalStatus: 'BLOCKED' as const,
+          isActive: true,
+          generatedFrom: 'E2E_TEST',
+        };
+        await prisma.geoBlockRule.create({ data: { ...geoRule, bookId: fullBook.id } });
+        await prisma.geoBlockRule.create({ data: { ...geoRule, bookVersionId: full.id } });
+        const noChapters = await versionOf(SUMMARY_ACCEPTANCE.noChapters, Language.en);
+        await prisma.chapter.create({
+          data: { bookVersionId: noChapters.id, number: 1, title: 'stray', content: 'stray' },
+        });
+        const draft = await versionOf(SUMMARY_ACCEPTANCE.draft, Language.en);
+        await prisma.bookVersion.update({ where: { id: draft.id }, data: { status: 'published' } });
+
+        await runSeed('npx prisma db seed', { env: { ...process.env }, timeout: 120_000 });
+
+        const robotsOf = async (id: string) =>
+          (
+            await prisma.bookVersion.findUniqueOrThrow({
+              where: { id },
+              select: { seo: { select: { robots: true } } },
+            })
+          ).seo?.robots ?? null;
+        expect(await robotsOf(noindex.id)).toBe('noindex, follow');
+        expect(await robotsOf(full.id)).toBeNull();
+        expect(
+          await prisma.geoBlockRule.count({
+            where: { OR: [{ bookId: fullBook.id }, { bookVersion: { bookId: fullBook.id } }] },
+          }),
+        ).toBe(0);
+        expect(await prisma.chapter.count({ where: { bookVersionId: noChapters.id } })).toBe(0);
+        const draftAfter = await prisma.bookVersion.findUniqueOrThrow({
+          where: { id: draft.id },
+          select: { status: true },
+        });
+        expect(draftAfter.status).toBe('draft');
+        expect(
+          await prisma.bookSummarySection.count({ where: { bookVersionId: briefOnly.id } }),
+        ).toBe(0);
+        expect(await prisma.bookSummary.count({ where: { bookVersionId: noFull.id } })).toBe(0);
+        expect(await prisma.bookVersion.count({ where: { id: strayVersion.id } })).toBe(0);
+        const first = await prisma.bookSummarySection.findUniqueOrThrow({
+          where: { bookVersionId_number: { bookVersionId: full.id, number: 1 } },
+          select: { title: true, readerChapter: true },
+        });
+        expect(first).toEqual({ title: sectionTitle(Language.en, 1), readerChapter: 1 });
+        const seededSecond = books
+          .find((b) => b.slug === SUMMARY_ACCEPTANCE.full)!
+          .versions.find((v) => v.language === Language.en)!.sections[1];
+        const second = await prisma.bookSummarySection.findUniqueOrThrow({
+          where: { bookVersionId_number: { bookVersionId: full.id, number: 2 } },
+          select: { updatedAt: true, movedAt: true },
+        });
+        expect(second).toEqual({
+          updatedAt: seededSecond.updatedAt,
+          movedAt: seededSecond.movedAt,
+        });
+        const summary = await prisma.bookSummary.findUniqueOrThrow({
+          where: { bookVersionId: full.id },
+          select: { brief: true },
+        });
+        expect(summary.brief).toBe(briefText(Language.en));
+
+        const where = { bookVersion: { book: { slug: { in: books.map((b) => b.slug) } } } };
+        const versions = books.flatMap((b) => b.versions);
+        expect(await prisma.bookSummarySection.count({ where })).toBe(
+          versions.reduce((n, v) => n + v.sections.length, 0),
+        );
+        expect(await prisma.bookSummary.count({ where })).toBe(
+          versions.filter((v) => v.summary).length,
+        );
+      } finally {
+        // Чужой `Seo` теста снимается тестом же и при падении: сид чужие строки `Seo` не отвязывает.
+        await prisma.bookVersion.update({ where: { id: full.id }, data: { seoId: null } });
+        await prisma.seo.delete({ where: { id: straySeo.id } });
+      }
+    }, 180_000);
   });
 });

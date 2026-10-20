@@ -245,4 +245,45 @@ describe('BookSummary e2e', () => {
       prisma.bookSummary.create({ data: { bookVersionId: v.id, summary: 'bypass' } }),
     ).rejects.toMatchObject({ code: 'P2002' });
   });
+
+  // F04-4 (решение арбитра `F04 | F04-2`): страница `/summary` берёт «Обновлено» из `updatedAt`,
+  // поэтому правка одного очень краткого обязана его двигать, иначе дата на странице стоит.
+  it('PUT summary/brief moves updatedAt of GET summary', async () => {
+    const book = await createBookFixture(prisma, `book-sum-brief-date-${Date.now()}`);
+    // Опубликованная `en`-книга убирается: `draft-and-rights-exposure.e2e-spec.ts` держит
+    // весь `en` воркера в одной странице.
+    try {
+      const v = await prisma.bookVersion.create({
+        data: {
+          bookId: book.id,
+          language: 'en',
+          title: 'Version For Brief Date',
+          author: 'Author',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/c.jpg',
+          type: 'text',
+          isFree: true,
+          status: 'published',
+        },
+      });
+      await bookSummaries.upsertForVersion(v.id, { summary: '<p>Full text</p>' });
+      // Дата уходит в прошлое, чтобы строгое «больше» не зависело от разрешения часов.
+      await prisma.$executeRaw`UPDATE "BookSummary" SET "updatedAt" = "updatedAt" - interval '1 hour' WHERE "bookVersionId" = ${v.id}`;
+      const before = await request(http()).get(`/versions/${v.id}/summary`).expect(200);
+
+      await request(http())
+        .put(`/versions/${v.id}/summary/brief`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ brief: '<p>Very brief</p>' })
+        .expect(200);
+
+      const after = await request(http()).get(`/versions/${v.id}/summary`).expect(200);
+      expect(after.body.brief).toBe('<p>Very brief</p>');
+      expect(new Date(after.body.updatedAt as string).getTime()).toBeGreaterThan(
+        new Date(before.body.updatedAt as string).getTime(),
+      );
+    } finally {
+      await prisma.book.delete({ where: { id: book.id } });
+    }
+  });
 });

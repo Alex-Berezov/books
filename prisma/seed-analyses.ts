@@ -1,4 +1,11 @@
-import { BookType, Language, Prisma, type PrismaClient } from '@prisma/client';
+import { Language, Prisma, type PrismaClient } from '@prisma/client';
+import {
+  type EnsureRights,
+  pruneAcceptanceVersions,
+  upsertAcceptanceBook,
+  upsertAcceptanceChapters,
+  upsertAcceptanceVersion,
+} from './seed-acceptance';
 
 /**
  * Анализы для приёмки раздела «Разбор и анализ» (`F03-4`, `books-front/e2e/book-analysis.spec.ts`,
@@ -22,12 +29,6 @@ import { BookType, Language, Prisma, type PrismaClient } from '@prisma/client';
  * Сверку литерала с `computeAnalysisCore` и формы с DTO (`PUT ?dryRun=true`) держит
  * `test/seed-dataset.e2e-spec.ts`.
  */
-
-/** Права книги - та же цепочка, что у каталога в `seed.ts`. */
-export type EnsureRights = (
-  bookSlug: string,
-  candidate: { title: string; author: string; summaryRu: string },
-) => Promise<{ intake: { id: string }; profile: { id: string }; review: { id: string } }>;
 
 type Blocks = Partial<Record<AnalysisField, unknown>>;
 
@@ -63,8 +64,6 @@ export const ANALYSIS_TEXT_FIELDS = new Set<AnalysisField>([
   'context',
   'reception',
 ]);
-
-const ACCEPTANCE_AUTHOR = 'Bibliaris Acceptance';
 
 /** Слаги книг приёмки: один слаг на все языки версии (слаг уникален в пределах языка). */
 export const ANALYSIS_ACCEPTANCE = {
@@ -448,39 +447,21 @@ export async function seedAnalysisAcceptance(
   ensureRights: EnsureRights,
 ): Promise<void> {
   for (const bookSeed of analysisAcceptanceBooks()) {
-    const { intake, profile, review } = await ensureRights(bookSeed.slug, {
+    const rights = await upsertAcceptanceBook(prisma, ensureRights, bookSeed.slug, {
       title: WORDS.en.title,
-      author: ACCEPTANCE_AUTHOR,
       summaryRu: 'Служебная книга приёмки анализа',
-    });
-    const rights = {
-      rightsIntakeId: intake.id,
-      currentRightsProfileId: profile.id,
-      approvedRightsReviewId: review.id,
-      rightsCreatedAt: new Date(),
-    };
-
-    // Книга - сразу за цепочкой прав и вне транзакции содержимого, как у каталога (`seed.ts`):
-    // сорвись содержимое - книга с цепочкой уже есть, и следующий прогон её найдёт, а не заведёт
-    // вторую цепочку (LEGACY-200, комментарий у `ensureRightsChain`).
-    const book = await prisma.book.upsert({
-      where: { slug: bookSeed.slug },
-      update: rights,
-      create: { slug: bookSeed.slug, ...rights },
-      select: { id: true },
     });
 
     await prisma.$transaction(
       async (tx) => {
         // Версия книги приёмки на языке вне набора снимается вместе со своими строками (каскад).
-        await tx.bookVersion.deleteMany({
-          where: {
-            bookId: book.id,
-            language: { notIn: bookSeed.versions.map((seedVersion) => seedVersion.language) },
-          },
-        });
+        await pruneAcceptanceVersions(
+          tx,
+          rights.bookId,
+          bookSeed.versions.map((seedVersion) => seedVersion.language),
+        );
         // Правило на всю книгу (без версии) проверка доступа находит по `bookId`: в наборе таких нет.
-        await tx.geoBlockRule.deleteMany({ where: { bookId: book.id, bookVersionId: null } });
+        await tx.geoBlockRule.deleteMany({ where: { bookId: rights.bookId, bookVersionId: null } });
 
         for (const seedVersion of bookSeed.versions) {
           const words = WORDS[seedVersion.language];
@@ -488,48 +469,24 @@ export async function seedAnalysisAcceptance(
           // тот же, что у каталога (`seed.ts`), его читает клиренс, и сид его не трогает.
           const geoBlocked =
             bookSeed.slug === ANALYSIS_ACCEPTANCE.full && seedVersion.language === Language.en;
-          const fields = {
-            title: words.title,
+          const { id: versionId } = await upsertAcceptanceVersion(tx, rights, {
             slug: bookSeed.slug,
-            author: ACCEPTANCE_AUTHOR,
+            language: seedVersion.language,
+            title: words.title,
             description: words.service,
-            status: 'published' as const,
-            rightsProfileId: profile.id,
-            approvedRightsReviewId: review.id,
-          };
-          const version = await tx.bookVersion.upsert({
-            where: { bookId_language: { bookId: book.id, language: seedVersion.language } },
-            update: fields,
-            create: {
-              ...fields,
-              bookId: book.id,
-              language: seedVersion.language,
-              coverImageUrl: 'https://example.com/cover.jpg',
-              type: BookType.text,
-              isFree: true,
-              rightsStatus: 'APPROVED',
-              rightsAllowedCountryCodes: ['US', 'GB', 'ES', 'FR', 'PT', 'BR', 'RU'],
-              rightsBlockedCountryCodes: [],
-              rightsLicenseRequiredCountryCodes: [],
-              rightsPendingCountryCodes: [],
-            },
-            select: { id: true },
           });
 
           // Набор - вся правда о версии приёмки: строки, ушедшие из набора, снимаются той же
           // транзакцией. Удаление только по версиям книг приёмки - чужих строк здесь нет.
-          await tx.chapter.deleteMany({
-            where: { bookVersionId: version.id, number: { notIn: seedVersion.chapters } },
-          });
           if (!seedVersion.analysis) {
-            await tx.bookAnalysis.deleteMany({ where: { bookVersionId: version.id } });
+            await tx.bookAnalysis.deleteMany({ where: { bookVersionId: versionId } });
           }
           if (!seedVersion.summary) {
-            await tx.bookSummary.deleteMany({ where: { bookVersionId: version.id } });
+            await tx.bookSummary.deleteMany({ where: { bookVersionId: versionId } });
           }
           await tx.geoBlockRule.deleteMany({
             where: {
-              bookVersionId: version.id,
+              bookVersionId: versionId,
               ...(geoBlocked
                 ? {
                     NOT: { scope: 'TEXT_READER', countryCode: ANALYSIS_ACCEPTANCE_GEO_COUNTRY },
@@ -538,25 +495,17 @@ export async function seedAnalysisAcceptance(
             },
           });
 
-          for (const number of seedVersion.chapters) {
-            const chapter = {
-              title: `${words.chapter} ${number}`,
-              content: chapterContent(words, number),
-            };
-            await tx.chapter.upsert({
-              where: { bookVersionId_number: { bookVersionId: version.id, number } },
-              update: chapter,
-              create: { ...chapter, bookVersionId: version.id, number },
-              select: { id: true },
-            });
-          }
+          await upsertAcceptanceChapters(tx, versionId, seedVersion.chapters, (number) => ({
+            title: `${words.chapter} ${number}`,
+            content: chapterContent(words, number),
+          }));
 
           if (seedVersion.analysis) {
             const data = analysisData(seedVersion.analysis.blocks, seedVersion.analysis.hasCore);
             await tx.bookAnalysis.upsert({
-              where: { bookVersionId: version.id },
+              where: { bookVersionId: versionId },
               update: data,
-              create: { ...data, bookVersionId: version.id },
+              create: { ...data, bookVersionId: versionId },
               select: { id: true },
             });
           }
@@ -564,16 +513,16 @@ export async function seedAnalysisAcceptance(
           if (seedVersion.summary) {
             const summary = { summary: `<p>${words.service}</p>`, hasText: true };
             await tx.bookSummary.upsert({
-              where: { bookVersionId: version.id },
+              where: { bookVersionId: versionId },
               update: summary,
-              create: { ...summary, bookVersionId: version.id },
+              create: { ...summary, bookVersionId: versionId },
               select: { id: true },
             });
           }
 
           if (geoBlocked) {
             const rule = {
-              bookId: book.id,
+              bookId: rights.bookId,
               accessPolicy: 'BLOCK' as const,
               sourceFinalStatus: 'BLOCKED' as const,
               isActive: true,
@@ -590,7 +539,7 @@ export async function seedAnalysisAcceptance(
             await tx.geoBlockRule.upsert({
               where: {
                 bookVersionId_scope_countryCode: {
-                  bookVersionId: version.id,
+                  bookVersionId: versionId,
                   scope: 'TEXT_READER',
                   countryCode: ANALYSIS_ACCEPTANCE_GEO_COUNTRY,
                 },
@@ -598,7 +547,7 @@ export async function seedAnalysisAcceptance(
               update: rule,
               create: {
                 ...rule,
-                bookVersionId: version.id,
+                bookVersionId: versionId,
                 scope: 'TEXT_READER',
                 countryCode: ANALYSIS_ACCEPTANCE_GEO_COUNTRY,
               },
