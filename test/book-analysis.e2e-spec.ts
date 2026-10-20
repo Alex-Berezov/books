@@ -640,6 +640,22 @@ describe('BookAnalysis e2e', () => {
   });
 
   /**
+   * F04-3 (решение арбитра `F04 | F04-3`): список закрытий - это закрытия **текста**, им же
+   * middleware фронта закрывает страницы разделов пересказа. Версия без анализа в нём есть: иначе
+   * раздел пересказа книги без анализа остался бы открыт в стране блока.
+   */
+  it('GET analyses/claim-closures: версия без анализа в списке есть', async () => {
+    const noAnalysis = await createVersion();
+    await claimWithBlock(noAnalysis, 'RESOLVED_VALID', { countryCode: 'fr' });
+
+    const res = await request(http()).get('/analyses/claim-closures').expect(200);
+    const items = res.body.items as Array<{ slugs: string[] }>;
+    expect(items.filter((i) => i.slugs.includes(noAnalysis.bookSlug))).toEqual([
+      { slugs: [noAnalysis.bookSlug], language: 'en', countryCode: 'FR', expiresAt: null },
+    ]);
+  });
+
+  /**
    * F03-2f: список закрытий отдаёт адрес книге, которой его отдаёт `getOverview` (версия в языке
    * адреса, затем версия в любом языке, затем `Book.slug`). Сверка - по самой ручке обзора: каждый
    * слаг элемента ведёт на книгу блока, а чужой адрес в элемент не попадает.
