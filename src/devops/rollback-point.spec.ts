@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { shellFunctionLines } from '../common/testing/shell-function';
+
 /**
  * Сторож точки отката (`LEGACY-325`).
  *
@@ -36,40 +38,13 @@ const SCRIPT = readFileSync(join(ROOT, 'scripts', 'deploy_production.sh'), 'utf8
 const LINES = SCRIPT.split(/\r?\n/);
 
 /**
- * Тело функции: от её объявления до закрывающей скобки в первой колонке.
- *
- * ⚠️ Строки внутри heredoc пропускаются. В `save_current_state` есть `cat > ... << EOF`
- * с JSON-телом, и закрывающая скобка этого JSON стоит в первой колонке — то есть выглядит
- * ровно как конец функции. Разбор обрывался на ней, на четыре строки раньше настоящего
- * конца; сейчас всё проверяемое лежит выше обрыва, но это везение, а не расчёт: проверка
- * на хвост функции молча читала бы пустоту (`L-008`).
+ * Тело функции без закрывающей скобки и без строк-комментариев. Границы функции (с пропуском
+ * heredoc, `L-008`) считает общий `shellFunctionLines`.
  */
 const functionBody = (name: string): string => {
-  const start = LINES.findIndex((line) => line.startsWith(`${name}()`));
-  if (start === -1) return '';
-
-  let heredoc: string | null = null;
-  let end = -1;
-  for (let i = start + 1; i < LINES.length; i += 1) {
-    const line = LINES[i];
-    if (heredoc !== null) {
-      if (line.trim() === heredoc) heredoc = null;
-      continue;
-    }
-    const opened = line.match(/<<-?\s*'?([A-Za-z_][A-Za-z0-9_]*)'?/);
-    if (opened) {
-      heredoc = opened[1];
-      continue;
-    }
-    if (line === '}') {
-      end = i;
-      break;
-    }
-  }
-
-  return LINES.slice(start, end === -1 ? LINES.length : end)
-    .filter((line) => !/^\s*#/.test(line))
-    .join('\n');
+  const lines = shellFunctionLines(LINES, name);
+  const body = lines.at(-1) === '}' ? lines.slice(0, -1) : lines;
+  return body.filter((line) => !/^\s*#/.test(line)).join('\n');
 };
 
 describe('scripts/deploy_production.sh: точка отката (LEGACY-325)', () => {
@@ -281,8 +256,10 @@ describe('scripts/deploy_production.sh: точка отката (LEGACY-325)', (
     // 🔴 И значение обязано доезжать до самой команды. Проверка одного объявления —
     // половина отката: вернуть литерал `tail -n +4` при живой переменной можно, не тронув
     // строку `keep_images=5`, и уборка снова держала бы три образа при зелёной спеке.
-    expect(cleanup).toMatch(/tail -n \+\$\(\(keep_images \+ 1\)\)/);
-    expect(cleanup).not.toMatch(/tail -n \+\d+ \| awk/);
+    // С 20.10.2026 предел отбирает `awk` (уборка идёт и по имени реестра), а не `tail`.
+    expect(cleanup).toMatch(/awk -v keep="\$keep_images" /);
+    expect(cleanup).not.toMatch(/keep=\d/);
+    expect(cleanup).not.toMatch(/tail -n \+\d+/);
   });
 
   /**

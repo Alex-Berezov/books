@@ -525,6 +525,22 @@ EOF
 )
     write_state_file "$ROLLBACK_FILE" "$rollback_payload"
 
+    # 🔴 `LEGACY-328`. Образ точки отката держится собственным тегом: `cleanup_old_images`
+    # снимает версионные теги старше пяти последних (обоих имён — и `books-app`, и реестра),
+    # а после выката старого тега образ точки отката как раз старше. Без своего тега он
+    # ушёл бы в `docker image prune`, и `--rollback` ответил бы «not on this machine anymore».
+    # Не поставился тег — точка отката не защищена, и выкат дальше не идёт.
+    if [[ -n "$current_image_id" ]] && ! execute "docker tag $current_image_id books-app:rollback"; then
+        log_error "Could not tag rollback image $current_image_id as books-app:rollback"
+        return 1
+    fi
+    # Точка отката пуста (контейнера нет) — прежний `rollback` снимается, иначе он держал бы
+    # давно ненужный образ и выдавал себя за точку отката. Отказ снятия выкат не валит.
+    if [[ -z "$current_image_id" ]] && docker image inspect books-app:rollback > /dev/null 2>&1 \
+        && ! execute "docker rmi books-app:rollback"; then
+        log_warning "Could not remove stale books-app:rollback tag - continuing"
+    fi
+
     log_success "State saved for rollback"
 }
 
@@ -920,9 +936,9 @@ perform_rollback() {
     # с деревом от одной ревизии и контейнером от другой — состояние, которое никто
     # не откатывает обратно. Отсутствующий образ дороже не сам по себе, а этим следом.
     #
-    # ⚠️ Образ может исчезнуть штатно: `cleanup_old_images` держит только последние
-    # (см. `keep_images` в `cleanup_old_images`), плюс ручной `docker image prune`
-    # никто не запрещает.
+    # ⚠️ Образ может исчезнуть: с 20.10.2026 `cleanup_old_images` его не трогает
+    # (держит тег `books-app:rollback`), но точки отката, записанные до этого, тега
+    # не имеют, а ручной `docker image prune -a` никто не запрещает.
     # То есть ветка живая, а не теоретическая.
     if ! docker image inspect "$rollback_image_id" > /dev/null 2>&1; then
         log_error "Image $rollback_image_id from $ROLLBACK_FILE is not on this machine anymore."
@@ -996,16 +1012,54 @@ cleanup_old_images() {
     # запас, только на день работы, а не на час; место на диске за это платится один раз.
     # Проверку существования образа это не заменяет, она стоит в `perform_rollback`.
     local keep_images=5
+
+    # 🔴 Уборка по одному `books-app` держала диск только на машине, где образ собирается
+    # на месте. Конвейер выкатывает с `--pull`, и `build_image` кладёт каждый релиз ещё
+    # и под именем реестра (`$REGISTRY:vX.Y.Z`) — эти теги не трогал никто. К 20.10.2026
+    # на машине лежало 275 таких образов по 1,3 ГБ, диск был занят на 85 %. Поэтому
+    # уборка идёт по обоим именам, с тем же запасом на каждое.
+    local repos=("books-app")
+    if [[ "$REGISTRY" != "localhost" ]]; then
+        repos+=("$REGISTRY")
+    fi
+
+    # Старшинство — по дате сборки, отсортированной здесь же: порядок вывода `docker images`
+    # не обещан, и на другом хранилище образов «пять первых» оказались бы любыми пятью.
+    #
+    # Не удаляются никогда три тега. `prod` — на него смотрит `docker-compose.prod.yml`, и он же
+    # точка отката следующего выката. `rollback` (`LEGACY-328`) — его ставит `save_current_state`
+    # на образ точки отката этого выката. Оба образа бывают старше пяти последних — после
+    # выката старого тега. `latest` — его тянет конвейер фронта для e2e.
+    #
     # ⚠️ Отказ уборки выкат не валит — образ может быть занят работающим контейнером,
     # и это законно. Но глушить код возврата хвостом нельзя: тогда «занят» неотличимо
-    # от «команда сломалась». Отказ разбирается веткой и попадает в лог.
-    if ! execute "docker images books-app --format 'table {{.Repository}}\t{{.Tag}}\t{{.CreatedAt}}' | tail -n +2 | sort -k3 -r | tail -n +$((keep_images + 1)) | awk '{print \$1\":\"\$2}' | xargs -r docker rmi"; then
-        log_warning "Some old images could not be removed (still in use?) - continuing"
+    # от «команда сломалась». Отказ разбирается веткой и попадает в лог. Перечисление идёт
+    # отдельно от удаления: «не смог перечислить» (демон недоступен) — свой отказ.
+    local repo list old
+    for repo in "${repos[@]}"; do
+        if ! list=$(docker images "$repo" --format '{{.CreatedAt}}	{{.Repository}}:{{.Tag}}'); then
+            log_warning "Cannot list $repo images - cleanup of $repo skipped"
+            continue
+        fi
+        old=$(printf '%s\n' "$list" | LC_ALL=C sort -r | cut -f2 | awk -v keep="$keep_images" 'NF && $0 !~ /:(<none>|prod|latest|rollback)$/ && ++n > keep' | tr '\n' ' ')
+        if [[ -n "${old// /}" ]] && ! execute "docker rmi $old"; then
+            log_warning "Some old $repo images could not be removed (still in use?) - continuing"
+        fi
+    done
+
+    # Remove dangling/unused images. Фронт чистит образы на той же машине, и параллельный
+    # `prune` Docker отклоняет — выкат, уже прошедший проверки, это не валит.
+    if ! execute "docker image prune -f"; then
+        log_warning "docker image prune failed - continuing"
     fi
-    
-    # Remove dangling/unused images
-    execute "docker image prune -f"
-    
+
+    # Кэш сборки на машине нужен только ускорению следующей сборки на месте; на пути
+    # конвейера (`--pull`) он не нужен вовсе, а копился до 8,7 ГБ. При сборке на месте
+    # его не трогаем — иначе каждая следующая сборка холодная.
+    if [[ "$PULL_IMAGE" == true ]] && ! execute "docker builder prune -f"; then
+        log_warning "Build cache could not be pruned - continuing"
+    fi
+
     log_success "Cleanup completed"
 }
 
