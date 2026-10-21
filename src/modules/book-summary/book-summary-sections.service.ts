@@ -8,6 +8,7 @@ import {
 import { Language, Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { utcTimestamp } from '../../shared/prisma/utc-timestamp';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { summarySectionsVisibleWhere } from '../book/book-card';
@@ -489,15 +490,6 @@ async function chapterWarnings(
       message: `chapter ${readerChapter} is not in this version; the "Read this chapter" link will not be shown`,
     },
   ];
-}
-
-/**
- * Дата для колонки `TIMESTAMP(3)` без зоны в сыром SQL — в UTC явно, как её пишет Prisma на
- * `create`/`update`: иначе `movedAt` зависел бы от часового пояса соединения, и `contentDate`
- * сравнивал бы даты, записанные по-разному.
- */
-function utcTimestamp(date: Date): Prisma.Sql {
-  return Prisma.sql`(${date.toISOString()}::timestamptz AT TIME ZONE 'UTC')`;
 }
 
 /** Дата адреса раздела (T6): позднейшая из правки текста и смены номера. */

@@ -42,6 +42,8 @@ export interface CreateOperationInput {
 export interface CallStageOptions {
   jsonSchema?: { name: string; schema: Record<string, unknown> };
   beforeAttempt?: () => Promise<void> | void;
+  signal?: AbortSignal;
+  taskId?: string | null;
 }
 
 function money(value: Prisma.Decimal): string {
@@ -251,6 +253,8 @@ export class LlmService implements OnModuleInit {
       maxTokens: setting.maxTokens,
       jsonSchema: options.jsonSchema,
       beforeAttempt: options.beforeAttempt,
+      signal: options.signal,
+      taskId: options.taskId,
     });
   }
 }

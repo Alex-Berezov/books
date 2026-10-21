@@ -133,6 +133,48 @@ describe('Background jobs inventory (e2e)', () => {
     }
   });
 
+  // F05-1w: исполнитель LLM виден в трёх положениях - без ключа, выключателем и работающим.
+  it('reports the LLM worker: no key, kill switch, active', async () => {
+    const cases: Array<[Record<string, string>, string, RegExp]> = [
+      [
+        { OPENROUTER_API_KEY: '', TRANSLATION_WORKER_ENABLED: '1' },
+        'DISABLED',
+        /OPENROUTER_API_KEY/,
+      ],
+      [
+        { OPENROUTER_API_KEY: 'sk-or-e2e-fake', TRANSLATION_WORKER_ENABLED: '0' },
+        'DISABLED',
+        /TRANSLATION_WORKER_ENABLED=0/,
+      ],
+      [{ OPENROUTER_API_KEY: 'sk-or-e2e-fake', TRANSLATION_WORKER_ENABLED: '1' }, 'ACTIVE', /^$/],
+    ];
+    const saved = {
+      OPENROUTER_API_KEY: process.env.OPENROUTER_API_KEY,
+      TRANSLATION_WORKER_ENABLED: process.env.TRANSLATION_WORKER_ENABLED,
+    };
+    const restore = () => {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    };
+    try {
+      for (const [env, state, reason] of cases) {
+        const app = await bootApp(env);
+        try {
+          const worker = (await fetchJobs(app)).find((j) => j.name === 'llm-worker');
+          expect(worker?.state).toBe(state);
+          expect(worker?.reason ?? '').toMatch(reason);
+        } finally {
+          await app.close();
+        }
+      }
+    } finally {
+      // И при отказе `bootApp`: ключ не должен утечь в следующие тесты файла.
+      restore();
+    }
+  });
+
   /**
    * 🔴 Три состояния, а не два. Probe без очереди не умирает — он выполняется
    * синхронно внутри HTTP-запроса на загрузку, без ретраев. Слить это с ACTIVE

@@ -78,6 +78,7 @@ model BookVersion {
   /// Разделы пересказа (F04): плоский список с номерами подряд с 1, номера ставит сервис.
   summarySections BookSummarySection[]
   llmOperations   LlmOperation[]
+  llmTasks        LlmTask[]
   chapters        Chapter[]
   audioChapters   AudioChapter[]
   bookshelf       Bookshelf[]
@@ -4085,6 +4086,7 @@ model LlmOperation {
   createdAt        DateTime           @default(now())
   updatedAt        DateTime           @updatedAt
   calls            LlmCall[]
+  tasks            LlmTask[]
 
   @@index([status])
   @@index([bookVersionId])
@@ -4124,7 +4126,55 @@ model LlmCall {
   durationMs        Int?
   errorClass        String?
   reserveReleasedAt DateTime?
+  /// Задача исполнителя, ради которой сделан вызов (F05-1w); пусто - вызов вне исполнителя.
+  taskId            String?
+  task              LlmTask?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
 
   @@index([operationId])
   @@index([reserveReleasedAt, startedAt])
+  @@index([taskId])
+}
+
+enum LlmTaskStatus {
+  pending
+  running
+  done
+  failed
+  cancelled
+}
+
+/// Задача фонового исполнителя (F05-1w, Р1): захват условным UPDATE с арендой `leaseUntil` и
+/// токеном `ownerToken`; любая запись результата - условием по токену. `wait` - не статус:
+/// задача снова `pending` с `runAfter` в будущем. В `payload` нет текста книги.
+/// Одна незавершённая задача на пару «запуск, язык» - частичный уникальный индекс по `pairKey`
+/// среди `pending | running`, сырым SQL в миграции `f05_llm_worker`:
+/// drift-check: sql-only index "LlmTask_pairKey_active_key"
+model LlmTask {
+  id            String        @id @default(uuid())
+  /// Вид задачи - ключ реестра обработчиков; незнакомый вид не захватывается (решение арбитра).
+  kind          String
+  operationId   String
+  operation     LlmOperation  @relation(fields: [operationId], references: [id], onDelete: Cascade)
+  bookVersionId String?
+  bookVersion   BookVersion?  @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+  language      Language?
+  /// Кусок перевода (F05-3); ссылки нет, пока нет таблицы кусков.
+  chunkId       String?
+  status        LlmTaskStatus @default(pending)
+  leaseUntil    DateTime?
+  ownerToken    String?
+  /// Захваты подряд без завершённого шага; шаг обнуляет.
+  attempt       Int           @default(0)
+  runAfter      DateTime      @default(now())
+  lastError     String?
+  payload       Json          @default("{}")
+  /// «операция:язык» у задач пары; пусто - задача без пары.
+  pairKey       String?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  calls         LlmCall[]
+
+  @@index([status, runAfter])
+  @@index([operationId])
+  @@index([bookVersionId])
 }

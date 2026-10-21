@@ -4,7 +4,8 @@ import { ServiceUnavailableException } from '@nestjs/common';
  * Отказы модуля LLM, которые ловит вызывающий код (исполнитель `F05-1w`, этапы конвейера).
  * Наружу по HTTP они не уходят: ни одна ручка этой пачки модель не зовёт (Р25).
  *
- * Код отказа - устойчивое имя: по нему исполнитель ставит операции `pauseReason`.
+ * Код отказа - устойчивое имя: исполнитель пишет его задаче (`lastError`) и передаёт
+ * обработчику в `onFailed`, а `pauseReason` операции по нему ставит обработчик.
  * Два отказа приходят не `LlmError`, а `HttpException` 503 с `code` в теле - `LLM_DISABLED`
  * и `LLM_MODELS_UNAVAILABLE` (фабрики ниже): это HTTP-форма будущих ручек. Исполнитель
  * разбирает оба вида (решение арбитра `F05 | F05-1`, Р-Ж); новых `HttpException` в клиенте
@@ -20,7 +21,9 @@ export type LlmErrorCode =
   | 'LLM_OPERATION_NOT_ACTIVE'
   | 'LLM_STAGE_DISABLED'
   | 'LLM_UNKNOWN_STAGE'
-  | 'LLM_NO_PRICE';
+  | 'LLM_NO_PRICE'
+  /** Вызов прерван внешним сигналом (остановка исполнителя `F05-1w`): не повторяется. */
+  | 'LLM_ABORTED';
 
 export class LlmError extends Error {
   constructor(

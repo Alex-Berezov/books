@@ -1,0 +1,341 @@
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import { Language, LlmPauseReason, LlmTask, Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
+import { PrismaService } from '../../prisma/prisma.service';
+import { utcTimestamp } from '../../shared/prisma/utc-timestamp';
+import { LlmConfig } from '../llm/llm.config';
+import { LlmWorkerConfig } from './llm-worker.config';
+import { LlmTaskStepResult, TRANSLATION_RETRY_KIND } from './llm-task.types';
+import { LlmTaskLeaseLostError, llmTaskConflict } from './llm-worker.errors';
+
+/** Переход операции вместе с её задачами - короткие условные UPDATE (`L-020`). */
+const TASK_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
+
+export interface EnqueueTaskInput {
+  kind: string;
+  operationId: string;
+  bookVersionId?: string | null;
+  language?: Language | null;
+  chunkId?: string | null;
+  /** Без текста книги. */
+  payload?: Prisma.InputJsonObject;
+  /** «операция:язык» у задач пары (Р1); пусто - задача без пары. */
+  pairKey?: string | null;
+  runAfter?: Date;
+}
+
+export type EnqueueResult = { created: true; task: LlmTask } | { created: false; holder: LlmTask };
+
+/**
+ * Ключ пары «запуск, язык» (Р1): одна незавершённая задача на пару. `operationId` - операция
+ * **запуска** перевода, в том числе у задачи повтора куска (`F05-7v`): ключ от другой
+ * операции пару не удержит.
+ */
+export function pairKeyOf(operationId: string, language: Language): string {
+  return `${operationId}:${language}`;
+}
+
+/**
+ * Задачи исполнителя и переходы операции (`F05-1w`).
+ *
+ * Каждая запись - одним условным UPDATE (`L-019`): захват - по статусу, сроку и статусу
+ * операции; продление и запись результата - по `ownerToken`. 0 строк - задача ушла другому
+ * владельцу, результат не пишется.
+ *
+ * 🔴 Время аренды и `runAfter` - только время JS, без `NOW()` базы в тех же сравнениях
+ * (решение арбитра `F05 | F05-1w`): два источника времени расходятся, и аренда считалась бы
+ * не по тем часам, по которым её продлевают. В сыром SQL дата - через `utcTimestamp`.
+ *
+ * 🔴 Порядок замков везде один: строка операции, затем строки задач (`stopOperation`,
+ * `resumeOperation`, `finish`, `release`, `cancelOrphanedTasks`). Захват держит только строку
+ * задачи и операцию не запирает: обратный порядок против паузы - взаимоблокировка (L-019).
+ */
+@Injectable()
+export class LlmTaskService {
+  private readonly logger = new Logger(LlmTaskService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly llmConfig: LlmConfig,
+    private readonly config: LlmWorkerConfig,
+  ) {}
+
+  /** Аренда в два таймаута вызова: одна попытка не длиннее таймаута, продление - перед каждой. */
+  leaseMs(): number {
+    return 2 * this.llmConfig.callTimeoutMs();
+  }
+
+  /**
+   * Ставит задачу. Ключ пары уже занят незавершённой задачей - вставки нет, возвращается
+   * держатель: `ON CONFLICT DO NOTHING`, а не пойманный P2002, потому что P2002 обрывает
+   * транзакцию вызывающего (`resumeOperation`).
+   */
+  async enqueue(
+    input: EnqueueTaskInput,
+    tx: Prisma.TransactionClient = this.prisma,
+    retries = 2,
+  ): Promise<EnqueueResult> {
+    const now = new Date();
+    const id = randomUUID();
+    const inserted = await tx.$queryRaw<Array<{ id: string }>>`
+      INSERT INTO "LlmTask" ("id", "kind", "operationId", "bookVersionId", "language", "chunkId",
+                             "status", "attempt", "runAfter", "payload", "pairKey", "createdAt", "updatedAt")
+      VALUES (${id}, ${input.kind}, ${input.operationId}, ${input.bookVersionId ?? null},
+              ${input.language ?? null}::"Language", ${input.chunkId ?? null},
+              'pending', 0, ${utcTimestamp(input.runAfter ?? now)},
+              ${JSON.stringify(input.payload ?? {})}::jsonb,
+              ${input.pairKey ?? null}, ${utcTimestamp(now)}, ${utcTimestamp(now)})
+      ON CONFLICT ("pairKey") WHERE "status" IN ('pending', 'running') DO NOTHING
+      RETURNING "id"`;
+    if (inserted.length > 0) {
+      return { created: true, task: await tx.llmTask.findUniqueOrThrow({ where: { id } }) };
+    }
+    const holder = await tx.llmTask.findFirst({
+      where: { pairKey: input.pairKey ?? undefined, status: { in: ['pending', 'running'] } },
+    });
+    if (!holder) {
+      // Держатель завершился между вставкой и чтением: ключ свободен, повтор вставит.
+      if (retries > 0) return this.enqueue(input, tx, retries - 1);
+      throw llmTaskConflict('LLM_TASK_PAIR_BUSY', 'LLM task pair is busy, try again');
+    }
+    return { created: false, holder };
+  }
+
+  /** `active -> paused`; `pending`-задачи операции - `cancelled` в той же транзакции (Р19). */
+  pauseOperation(operationId: string, reason: LlmPauseReason): Promise<boolean> {
+    return this.stopOperation(operationId, 'paused', reason);
+  }
+
+  /** `active | paused -> cancelled`; `pending`-задачи - `cancelled` в той же транзакции (Р19). */
+  cancelOperation(operationId: string): Promise<boolean> {
+    return this.stopOperation(operationId, 'cancelled', null);
+  }
+
+  /**
+   * «Продолжить» (Р19): операция снова `active`, задача шага вставляется заново. Ключ пары
+   * занят шаговой задачей той же операции (шаг ещё `running`) - успех без второй задачи;
+   * задачей повтора куска - 409 `RETRY_IN_PROGRESS`, операция остаётся как была; иным
+   * держателем - нарушение инварианта (решение арбитра `F05 | F05-1w`).
+   */
+  async resumeOperation(operationId: string, task: EnqueueTaskInput): Promise<EnqueueResult> {
+    return this.prisma.$transaction(async (tx) => {
+      const resumed = await tx.llmOperation.updateMany({
+        where: { id: operationId, status: { in: ['paused', 'active'] } },
+        data: { status: 'active', pauseReason: null },
+      });
+      if (resumed.count === 0) {
+        throw llmTaskConflict('LLM_OPERATION_NOT_RESUMABLE', 'LLM operation cannot be resumed');
+      }
+      const result = await this.enqueue({ ...task, operationId }, tx);
+      if (result.created) return result;
+      if (result.holder.kind === TRANSLATION_RETRY_KIND) {
+        throw llmTaskConflict(
+          'RETRY_IN_PROGRESS',
+          'A chunk retry is in progress for this language',
+        );
+      }
+      if (result.holder.operationId === operationId) return result;
+      this.logger.error(
+        `LLM task pair ${task.pairKey ?? '-'} is held by task ${result.holder.id} ` +
+          `of operation ${result.holder.operationId} (kind ${result.holder.kind})`,
+      );
+      throw new InternalServerErrorException(
+        'LLM task pair is held by a task of another operation',
+      );
+    }, TASK_TX_OPTIONS);
+  }
+
+  /**
+   * Захват одной задачи: `pending` со сроком или `running` с истёкшей арендой, вид
+   * зарегистрирован, операция `active`. Кандидат выбирается `FOR UPDATE SKIP LOCKED`,
+   * условие повторяется в самом UPDATE: два исполнителя одну задачу не берут. Операция
+   * читается снимком без замка: задача, захваченная в момент паузы, доделывает шаг и
+   * закрывается `cancelled` в `finish` (Р19).
+   */
+  async claim(kinds: string[], ownerToken: string): Promise<LlmTask | null> {
+    const now = new Date();
+    const leaseUntil = new Date(now.getTime() + this.leaseMs());
+    // Prisma.join на пустом списке даёт битый SQL: нет обработчиков - нечего захватывать.
+    if (kinds.length === 0) return null;
+    const kindsSql = Prisma.join(kinds);
+    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
+      UPDATE "LlmTask" AS t
+      SET "status" = 'running', "ownerToken" = ${ownerToken},
+          "leaseUntil" = ${utcTimestamp(leaseUntil)},
+          "attempt" = t."attempt" + 1, "updatedAt" = ${utcTimestamp(now)}
+      FROM "LlmOperation" AS o
+      WHERE t."id" = (
+          SELECT c."id" FROM "LlmTask" AS c
+          JOIN "LlmOperation" AS co ON co."id" = c."operationId"
+          WHERE co."status" = 'active'
+            AND c."kind" IN (${kindsSql})
+            AND ((c."status" = 'pending' AND c."runAfter" <= ${utcTimestamp(now)})
+              OR (c."status" = 'running' AND c."leaseUntil" < ${utcTimestamp(now)}))
+          ORDER BY c."runAfter", c."createdAt"
+          LIMIT 1
+          FOR UPDATE OF c SKIP LOCKED)
+        AND o."id" = t."operationId"
+        AND o."status" = 'active'
+        AND ((t."status" = 'pending' AND t."runAfter" <= ${utcTimestamp(now)})
+          OR (t."status" = 'running' AND t."leaseUntil" < ${utcTimestamp(now)}))
+      RETURNING t."id"`;
+    if (rows.length === 0) return null;
+    return this.prisma.llmTask.findUnique({ where: { id: rows[0].id } });
+  }
+
+  /** Продление перед каждой попыткой вызова; 0 строк - аренда потеряна, попытки нет. */
+  async renewLease(taskId: string, ownerToken: string): Promise<void> {
+    const leaseUntil = new Date(Date.now() + this.leaseMs());
+    const renewed = await this.prisma.llmTask.updateMany({
+      where: { id: taskId, ownerToken, status: 'running' },
+      data: { leaseUntil },
+    });
+    if (renewed.count === 0) throw new LlmTaskLeaseLostError(taskId);
+  }
+
+  /**
+   * Запись итога шага условием по `ownerToken`. `continue`/`wait` при операции не `active`
+   * завершают задачу `cancelled` (Р19): шаг доделан, следующий не ставится. Завершённый шаг
+   * обнуляет `attempt`. `false` - задача уже не наша, ничего не записано.
+   */
+  async finish(task: LlmTask, ownerToken: string, result: LlmTaskStepResult): Promise<boolean> {
+    const now = new Date();
+    // `lastError` у `wait` - его причина (что ждёт задача), у `continue` - пусто.
+    const note = result.kind === 'wait' ? result.reason : null;
+    if (result.kind === 'done' || result.kind === 'fail') {
+      const done = await this.prisma.llmTask.updateMany({
+        where: { id: task.id, ownerToken, status: 'running' },
+        data:
+          result.kind === 'done'
+            ? { status: 'done', attempt: 0, leaseUntil: null, ownerToken: null, lastError: null }
+            : { status: 'failed', leaseUntil: null, ownerToken: null, lastError: result.reason },
+      });
+      return done.count > 0;
+    }
+    const runAfter =
+      result.kind === 'wait'
+        ? new Date(now.getTime() + this.config.waitMs())
+        : (result.runAfter ?? now);
+    // Статус операции читается под `FOR SHARE`: «продолжить» или пауза, идущие в своей
+    // транзакции, дожидаются друг друга, а не решаются по снимку. Иначе «продолжить», нашедшее
+    // этот шаг держателем пары, и шаг, прочитавший ещё `paused`, оставили бы операцию `active`
+    // без единой задачи (L-019, Р19). Порядок замков - операция, затем задача - как у
+    // `resumeOperation` и `stopOperation`.
+    return this.prisma.$transaction(async (tx) => {
+      const active = await this.lockOperationIsActive(tx, task.operationId);
+      const updated = await tx.llmTask.updateMany({
+        where: { id: task.id, ownerToken, status: 'running' },
+        data: {
+          status: active ? 'pending' : 'cancelled',
+          attempt: 0,
+          runAfter,
+          leaseUntil: null,
+          ownerToken: null,
+          lastError: note,
+        },
+      });
+      return updated.count > 0;
+    }, TASK_TX_OPTIONS);
+  }
+
+  /**
+   * Вернуть захваченную задачу без шага (остановка процесса): снова `pending`, захват не
+   * засчитан; у операции не `active` - `cancelled`, как закрылся бы шаг (Р19), иначе
+   * `pending`-задача остановленной операции держала бы ключ пары. Условием по токену - если
+   * аренду уже забрали, ничего не трогает. Операция под `FOR SHARE`, как в `finish`.
+   */
+  async release(task: LlmTask, ownerToken: string): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const active = await this.lockOperationIsActive(tx, task.operationId);
+      const released = await tx.llmTask.updateMany({
+        where: { id: task.id, ownerToken, status: 'running' },
+        data: {
+          status: active ? 'pending' : 'cancelled',
+          attempt: Math.max(0, task.attempt - 1),
+          leaseUntil: null,
+          ownerToken: null,
+        },
+      });
+      return released.count > 0;
+    }, TASK_TX_OPTIONS);
+  }
+
+  /** Отказ задачи, не вернувшей `fail` сама (захваты исчерпаны, исключение шага). */
+  async fail(task: LlmTask, ownerToken: string, reason: string): Promise<boolean> {
+    return this.finish(task, ownerToken, { kind: 'fail', reason });
+  }
+
+  /**
+   * Задачи `running` с истёкшей арендой у операции не `active`: владелец умер (выкат посреди
+   * шага, хуков выключения нет), а захват такую задачу не возьмёт - она держала бы ключ пары
+   * вечно. Закрываются `cancelled`, как закрылся бы шаг живого владельца (Р19). Аренда истекла,
+   * поэтому живой владелец записать уже не может: запись по токену у него не пройдёт.
+   */
+  async cancelOrphanedTasks(): Promise<number> {
+    const now = new Date();
+    // Сначала операции под `FOR SHARE`, потом их задачи - порядок замков общий. Идущее
+    // «продолжить» дожидается, и условие «не `active`» перепроверяется по его итогу - иначе
+    // чистка закрыла бы задачу, которую оно приняло держателем пары.
+    return this.prisma.$transaction(async (tx) => {
+      const ops = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT o."id" FROM "LlmOperation" AS o
+        WHERE o."status" <> 'active'
+          AND EXISTS (
+            SELECT 1 FROM "LlmTask" AS c
+            WHERE c."operationId" = o."id" AND c."status" = 'running'
+              AND c."leaseUntil" < ${utcTimestamp(now)})
+        LIMIT 100
+        FOR SHARE OF o`;
+      // Prisma.join на пустом списке даёт битый SQL: сирот нет - писать нечего.
+      if (ops.length === 0) return 0;
+      const opIds = Prisma.join(ops.map((op) => op.id));
+      return tx.$executeRaw`
+        UPDATE "LlmTask"
+        SET "status" = 'cancelled', "leaseUntil" = NULL, "ownerToken" = NULL,
+            "updatedAt" = ${utcTimestamp(now)}
+        WHERE "operationId" IN (${opIds})
+          AND "status" = 'running' AND "leaseUntil" < ${utcTimestamp(now)}`;
+    }, TASK_TX_OPTIONS);
+  }
+
+  /** Число `pending`-задач видов без обработчика - для предупреждения в логе. */
+  countUnknownKinds(kinds: string[]): Promise<number> {
+    return this.prisma.llmTask.count({
+      where: { status: 'pending', ...(kinds.length > 0 ? { kind: { notIn: kinds } } : {}) },
+    });
+  }
+
+  /** Статус операции под `FOR SHARE`: идущие «продолжить» и пауза дожидаются друг друга. */
+  private async lockOperationIsActive(
+    tx: Prisma.TransactionClient,
+    operationId: string,
+  ): Promise<boolean> {
+    const rows = await tx.$queryRaw<Array<{ status: string }>>`
+      SELECT "status"::text AS "status" FROM "LlmOperation"
+      WHERE "id" = ${operationId}
+      FOR SHARE`;
+    return rows[0]?.status === 'active';
+  }
+
+  private async stopOperation(
+    operationId: string,
+    status: 'paused' | 'cancelled',
+    reason: LlmPauseReason | null,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const stopped = await tx.llmOperation.updateMany({
+        where: {
+          id: operationId,
+          status: { in: status === 'paused' ? ['active'] : ['active', 'paused'] },
+        },
+        data: { status, pauseReason: reason },
+      });
+      if (stopped.count === 0) return false;
+      await tx.llmTask.updateMany({
+        where: { operationId, status: 'pending' },
+        data: { status: 'cancelled' },
+      });
+      return true;
+    }, TASK_TX_OPTIONS);
+  }
+}

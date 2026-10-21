@@ -141,6 +141,26 @@ describe('LlmService', () => {
       expect(model.maxPricePerMTok?.toFixed(2)).toBe('5.00');
     });
 
+    it('passes the worker options through to the client: lease renewal, signal, task id', async () => {
+      prisma.llmStageSetting.findUnique.mockResolvedValue(row({}));
+      const beforeAttempt = jest.fn();
+      const signal = new AbortController().signal;
+      await service.callStage('op', 'jev', [{ role: 'user', content: 'x' }], {
+        beforeAttempt,
+        signal,
+        taskId: 'task-1',
+      });
+      expect(client.chat).toHaveBeenCalledTimes(1);
+      const sent = client.chat.mock.calls[0][0] as {
+        beforeAttempt: unknown;
+        signal: unknown;
+        taskId: unknown;
+      };
+      expect(sent.beforeAttempt).toBe(beforeAttempt);
+      expect(sent.signal).toBe(signal);
+      expect(sent.taskId).toBe('task-1');
+    });
+
     it('a row without temperature keeps the stage default', async () => {
       prisma.llmStageSetting.findUnique.mockResolvedValue(row({ temperature: null }));
       await call();

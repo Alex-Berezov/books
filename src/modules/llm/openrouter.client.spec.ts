@@ -457,4 +457,132 @@ describe('OpenRouterClient', () => {
       ]);
     });
   });
+
+  describe('external abort (F05-1w, Р-Б)', () => {
+    const hangUntilAbort = (_url: string, init: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(init.signal?.reason as Error));
+      });
+
+    it('an abort after sending books the reserve, is not a timeout and is not retried', async () => {
+      const controller = new AbortController();
+      env.LLM_CALL_TIMEOUT_MS = '60000';
+      fetchSpy.mockImplementation((url: string, init: RequestInit) => {
+        setTimeout(() => controller.abort(), 5);
+        return hangUntilAbort(url, init);
+      });
+
+      await expect(client.chat(request({ signal: controller.signal }))).rejects.toMatchObject({
+        code: 'LLM_ABORTED',
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      const reserve = (budget.reserve.mock.calls[0][0] as { estimateUsd: Prisma.Decimal })
+        .estimateUsd;
+      expect(settled).toHaveLength(1);
+      expect(settled[0].errorClass).toBe('aborted');
+      expect(settled[0].costEstimated).toBe(true);
+      expect(settled[0].costUsd.equals(reserve)).toBe(true);
+    });
+
+    it('an abort before the attempt reserves nothing and sends nothing', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(client.chat(request({ signal: controller.signal }))).rejects.toMatchObject({
+        code: 'LLM_ABORTED',
+      });
+      expect(budget.reserve).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('an abort between the reserve and sending books fact 0', async () => {
+      const controller = new AbortController();
+      budget.reserve.mockImplementationOnce(() => {
+        controller.abort();
+        return Promise.resolve({ callId: 'call-x' });
+      });
+      await expect(client.chat(request({ signal: controller.signal }))).rejects.toMatchObject({
+        code: 'LLM_ABORTED',
+      });
+      expect(fetchSpy).not.toHaveBeenCalled();
+      expect(settled).toHaveLength(1);
+      expect(settled[0].costUsd.isZero()).toBe(true);
+      expect(settled[0].costEstimated).toBe(false);
+    });
+
+    it('an abort during the backoff stops before the next attempt', async () => {
+      const controller = new AbortController();
+      const sleep = jest
+        .spyOn(
+          client as unknown as { sleep: (ms: number, s?: AbortSignal) => Promise<void> },
+          'sleep',
+        )
+        .mockImplementation((_ms, signal) => {
+          // Пауза получает сигнал вызова - иначе остановка ждала бы её до конца.
+          expect(signal).toBe(controller.signal);
+          controller.abort();
+          return Promise.resolve();
+        });
+      fetchSpy.mockResolvedValue(fail(500));
+      await expect(client.chat(request({ signal: controller.signal }))).rejects.toMatchObject({
+        code: 'LLM_ABORTED',
+      });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(sleep).toHaveBeenCalledTimes(1);
+    });
+
+    it('the backoff sleep itself wakes up on abort', async () => {
+      const real = new OpenRouterClient(
+        new LlmConfig({ get: () => undefined } as unknown as ConfigService),
+        budget as unknown as LlmBudgetService,
+      ) as unknown as { sleep: (ms: number, signal?: AbortSignal) => Promise<void> };
+      const controller = new AbortController();
+      const started = Date.now();
+      setTimeout(() => controller.abort(), 5);
+      await real.sleep(60_000, controller.signal);
+      expect(Date.now() - started).toBeLessThan(5_000);
+    });
+
+    it('writes the task id into the reserve', async () => {
+      fetchSpy.mockResolvedValueOnce(success(0.01));
+      await client.chat(request({ taskId: 'task-7' }));
+      expect(budget.reserve).toHaveBeenCalledTimes(1);
+      expect((budget.reserve.mock.calls[0][0] as { taskId: string }).taskId).toBe('task-7');
+    });
+
+    // Тело, которое читается до прерывания: `res.json()` с внешним сигналом рвётся на чтении.
+    const bodyCutByAbort = (status: number, controller: AbortController) =>
+      ({
+        ok: status >= 200 && status < 300,
+        status,
+        json: () => {
+          controller.abort();
+          return Promise.reject(new SyntaxError('Unexpected end of JSON input'));
+        },
+      }) as unknown as Response;
+
+    it('an abort while reading a 200 body books the reserve: generation may have run', async () => {
+      const controller = new AbortController();
+      fetchSpy.mockResolvedValueOnce(bodyCutByAbort(200, controller));
+      await expect(client.chat(request({ signal: controller.signal }))).rejects.toMatchObject({
+        code: 'LLM_ABORTED',
+      });
+      const reserve = (budget.reserve.mock.calls[0][0] as { estimateUsd: Prisma.Decimal })
+        .estimateUsd;
+      expect(settled).toHaveLength(1);
+      expect(settled[0]).toMatchObject({ errorClass: 'aborted', costEstimated: true });
+      expect(settled[0].costUsd.equals(reserve)).toBe(true);
+    });
+
+    it('an abort while reading an HTTP error body books fact 0: rejected before generation', async () => {
+      const controller = new AbortController();
+      fetchSpy.mockResolvedValueOnce(bodyCutByAbort(500, controller));
+      await expect(client.chat(request({ signal: controller.signal }))).rejects.toMatchObject({
+        code: 'LLM_ABORTED',
+      });
+      expect(settled).toHaveLength(1);
+      expect(settled[0]).toMatchObject({ errorClass: 'aborted', costEstimated: false });
+      expect(settled[0].costUsd.isZero()).toBe(true);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+  });
 });

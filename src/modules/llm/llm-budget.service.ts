@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { LlmBudget, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { utcTimestamp } from '../../shared/prisma/utc-timestamp';
 import { LlmBudgetExceededError, LlmError } from './llm.errors';
 
 /** Единственная строка общего потолка; создаёт её миграция `f05_llm_core` (В4). */
@@ -12,12 +13,20 @@ export const LLM_BUDGET_ID = 1;
  */
 const BUDGET_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
 
+/** Запас сверх таймаута вызова, после которого вызов без факта считается зависшим (Р21). */
+export const STALE_CALL_GRACE_MS = 60_000;
+
+/** `LlmCall.durationMs` - `int`: возраст давно зависшего вызова в него не влезает. */
+const MAX_DURATION_MS = 2_147_483_647;
+
 export interface ReserveInput {
   operationId: string;
   stage: string;
   requestedModel: string;
   attempt: number;
   estimateUsd: Prisma.Decimal;
+  /** Задача исполнителя (`F05-1w`), ради которой сделан вызов. */
+  taskId?: string | null;
 }
 
 export interface SettleInput {
@@ -101,6 +110,7 @@ export class LlmBudgetService {
           requestedModel: input.requestedModel,
           attempt: input.attempt,
           reservedUsd: estimate,
+          taskId: input.taskId ?? null,
         },
         select: { id: true },
       });
@@ -144,5 +154,41 @@ export class LlmBudgetService {
         WHERE "id" = ${row.operationId}`;
       return true;
     }, BUDGET_TX_OPTIONS);
+  }
+
+  /**
+   * Чистка зависших вызовов (`F05-1w`, Р15, Р21): вызов без факта старше
+   * `callTimeoutMs + STALE_CALL_GRACE_MS` закрывается фактом = резерв (`costEstimated`), а не
+   * снятием резерва - провайдер мог довести генерацию. Живая попытка не длиннее таймаута, поэтому
+   * раньше срока чистка её не трогает. Запись - тем же `settle`: если живой процесс успел
+   * первым, чистка не пишет ничего. Порог и возраст - по часам процесса, как и `startedAt`
+   * (его пишет Prisma), а не по часам базы: два источника времени в одном сравнении расходятся
+   * (решение арбитра `F05 | F05-1w`). Дата - через `utcTimestamp`: колонка без пояса.
+   */
+  async releaseStaleCalls(callTimeoutMs: number): Promise<number> {
+    const staleAfterMs = Math.max(0, Math.round(callTimeoutMs)) + STALE_CALL_GRACE_MS;
+    const now = new Date();
+    const threshold = new Date(now.getTime() - staleAfterMs);
+    const stale = await this.prisma.$queryRaw<
+      Array<{ id: string; reservedUsd: string; ageMs: number }>
+    >`
+      SELECT "id", "reservedUsd"::text AS "reservedUsd",
+             (EXTRACT(EPOCH FROM (${utcTimestamp(now)} - "startedAt")) * 1000)::float8 AS "ageMs"
+      FROM "LlmCall"
+      WHERE "reserveReleasedAt" IS NULL
+        AND "startedAt" < ${utcTimestamp(threshold)}
+      ORDER BY "startedAt"
+      LIMIT 100`;
+    let released = 0;
+    for (const call of stale) {
+      const won = await this.settle(call.id, {
+        costUsd: new Prisma.Decimal(call.reservedUsd),
+        costEstimated: true,
+        durationMs: Math.min(call.ageMs, MAX_DURATION_MS),
+        errorClass: 'stale',
+      });
+      if (won) released += 1;
+    }
+    return released;
   }
 }

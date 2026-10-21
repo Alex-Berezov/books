@@ -39,6 +39,13 @@ export interface LlmChatRequest {
   jsonSchema?: { name: string; schema: Record<string, unknown> };
   /** Зовётся перед каждой попыткой (исполнитель продлевает аренду); бросило - вызова нет. */
   beforeAttempt?: () => Promise<void> | void;
+  /**
+   * Внешнее прерывание (остановка исполнителя `F05-1w`): вызов не повторяется и не считается
+   * `timeout`; до отправки - факт 0, после - факт = резерв (Р-Б). Отказ - `LLM_ABORTED`.
+   */
+  signal?: AbortSignal;
+  /** Задача исполнителя: пишется в `LlmCall.taskId`. */
+  taskId?: string | null;
 }
 
 export interface LlmChatResult {
@@ -127,7 +134,8 @@ export class OpenRouterClient {
       const model = request.models[m];
       const isLast = m === request.models.length - 1;
       for (let tryNo = 1; tryNo <= MAX_ATTEMPTS_PER_MODEL; tryNo++) {
-        if (tryNo > 1) await this.sleep(backoffMs(tryNo - 1));
+        if (tryNo > 1) await this.sleep(backoffMs(tryNo - 1), request.signal);
+        throwIfAborted(request.signal);
         attempt += 1;
         const outcome = await this.attempt(request, model, attempt, inputTokens);
         if (outcome.kind === 'ok') return outcome.result;
@@ -160,6 +168,7 @@ export class OpenRouterClient {
     inputTokens: number,
   ): Promise<AttemptOutcome> {
     await request.beforeAttempt?.();
+    throwIfAborted(request.signal);
 
     // Тело собирается до резерва: ошибка сериализации - ошибка вызывающего, а не сети;
     // считать её резервом с повтором нельзя, и резерв без вызова не остаётся висеть.
@@ -173,6 +182,7 @@ export class OpenRouterClient {
       requestedModel: model.id,
       attempt,
       estimateUsd: estimate,
+      taskId: request.taskId ?? null,
     });
 
     const startedAt = Date.now();
@@ -180,6 +190,12 @@ export class OpenRouterClient {
       this.budget.settle(callId, { ...patch, durationMs: Date.now() - startedAt });
     const zero = new Prisma.Decimal(0);
 
+    if (request.signal?.aborted) {
+      // Прервано между резервом и отправкой: наружу ничего не ушло, факт 0 (Р-Б).
+      await settle({ costUsd: zero, costEstimated: false, errorClass: 'aborted' });
+      throw aborted();
+    }
+    const timeout = AbortSignal.timeout(this.config.callTimeoutMs());
     let res: Response;
     try {
       res = await fetch(`${this.config.baseUrl()}/chat/completions`, {
@@ -190,9 +206,15 @@ export class OpenRouterClient {
           'X-Title': 'Bibliaris',
         },
         body: payload,
-        signal: AbortSignal.timeout(this.config.callTimeoutMs()),
+        signal: request.signal ? AbortSignal.any([timeout, request.signal]) : timeout,
       });
     } catch (error) {
+      if (request.signal?.aborted) {
+        // Внешнее прерывание после отправки: провайдер мог списать деньги - факт = резерв,
+        // и это не `timeout`: повтора нет, процесс останавливается.
+        await settle({ costUsd: estimate, costEstimated: true, errorClass: 'aborted' });
+        throw aborted();
+      }
       if (isLocalFailure(error)) {
         // Запрос не собран (адрес без схемы, недопустимый заголовок): наружу ничего не ушло,
         // факт 0, и повтор не поможет - это ошибка настройки, а не сети.
@@ -215,6 +237,16 @@ export class OpenRouterClient {
     }
 
     const body = await readJson(res);
+    if (body === null && request.signal?.aborted) {
+      // Тело оборвано остановкой. Ответ 200 - генерация могла пройти, факт = резерв; HTTP-отказ -
+      // до генерации, факт 0, как у отказа с прочитанным телом (Р-Б).
+      await settle({
+        costUsd: res.ok ? estimate : zero,
+        costEstimated: res.ok,
+        errorClass: 'aborted',
+      });
+      throw aborted();
+    }
     if (res.ok && body === null) {
       // Ответ 200, но тело оборвалось или не JSON: генерация могла пройти - факт = резерв,
       // и это сетевой отказ с повтором, а не ошибка содержания.
@@ -326,9 +358,27 @@ export class OpenRouterClient {
     );
   }
 
-  protected sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+  /** Пауза между повторами; внешнее прерывание её обрывает (повтор после неё не начнётся). */
+  protected sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal?.aborted) return resolve();
+      const done = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = setTimeout(done, ms);
+      signal?.addEventListener('abort', done, { once: true });
+    });
   }
+}
+
+function aborted(): LlmError {
+  return new LlmError('LLM_ABORTED', 'LLM call aborted');
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) throw aborted();
 }
 
 function backoffMs(retry: number): number {
