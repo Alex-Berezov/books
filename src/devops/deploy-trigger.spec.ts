@@ -1513,6 +1513,24 @@ describe('LEGACY-458: конвейер выката усилен', () => {
     });
   });
 
+  // 🔴 LEGACY-474. `docker pull` на сервере минутами ничего не пишет в канал, а сеть раннера
+  // рвёт TCP-соединение без трафика примерно через 4 минуты: `client_loop: send disconnect:
+  // Broken pipe` в запусках 39585565018 и 39620937042, оба раза ~4,3 мин тишины после начала
+  // `pull`. Keep-alive SSH шлёт пакет раз в 30 с - канал не простаивает. Каждый ssh-вызов
+  // воркфлоу, а не только выкат: откат так же ходит на сервер.
+  describe('keep-alive ssh', () => {
+    it('каждый вызов ssh в deploy.yml держит канал ServerAliveInterval', () => {
+      const calls = DEPLOY_CODE.split(/\r?\n/).filter((l) => /(^|[\s(|:$])ssh\s/.test(l));
+      expect(calls.length).toBeGreaterThanOrEqual(3);
+      for (const line of calls) {
+        // Интервал заметно меньше ~4 мин простоя, после которых сеть раннера рвёт канал.
+        const interval = Number(/-o ServerAliveInterval=(\d+)/.exec(line)?.[1] ?? NaN);
+        expect([line.trim(), interval > 0 && interval <= 60]).toEqual([line.trim(), true]);
+        expect([line.trim(), /-o ServerAliveCountMax=\d+/.test(line)]).toEqual([line.trim(), true]);
+      }
+    });
+  });
+
   describe('ключ хоста', () => {
     const PIN = '🔐 Pin Server Host Key';
 

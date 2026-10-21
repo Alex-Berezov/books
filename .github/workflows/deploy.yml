@@ -817,7 +817,7 @@ jobs:
       - name: ↩️ Record previous server revision
         id: previous_revision
         run: |
-          sha=$(ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} 'git -C /opt/books/app/src rev-parse HEAD' | tail -n1)
+          sha=$(ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} 'git -C /opt/books/app/src rev-parse HEAD' | tail -n1)
           if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Cannot read the server revision: '$sha'"
             exit 1
@@ -877,7 +877,7 @@ jobs:
       - name: 🚀 Deploy to Server
         run: |
           # Connect to server and execute deployment
-          ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
+          ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
             set -euo pipefail
 
             echo "🔄 Preparing deployment environment..."
@@ -1420,7 +1420,7 @@ jobs:
 
       - name: ⏪ Rollback Deployment
         run: |
-          ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
+          ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
             set -euo pipefail
             
             echo "⏪ Starting emergency rollback..."
