@@ -13095,6 +13095,201 @@
         ],
         "type": "object"
       },
+      "LlmBudgetResponseDto": {
+        "properties": {
+          "ceilingUsd": {
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "defaultRunLimitUsd": {
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "reservedUsd": {
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "spentUsd": {
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "ceilingUsd",
+          "spentUsd",
+          "reservedUsd",
+          "defaultRunLimitUsd",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "LlmModelDto": {
+        "properties": {
+          "contextLength": {
+            "nullable": true,
+            "type": "number"
+          },
+          "id": {
+            "example": "anthropic/claude-sonnet-5.5",
+            "type": "string"
+          },
+          "inputPerMTokUsd": {
+            "description": "USD per million input tokens; null - the model has no fixed price",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "outputPerMTokUsd": {
+            "description": "USD per million output tokens; null - the model has no fixed price",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "structuredOutputs": {
+            "description": "Accepts response_format with a JSON schema",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "contextLength",
+          "inputPerMTokUsd",
+          "outputPerMTokUsd",
+          "structuredOutputs"
+        ],
+        "type": "object"
+      },
+      "LlmStageSettingDto": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "fallbacks": {
+            "description": "Fallback models in order",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "maxPricePerMTok": {
+            "description": "Price cap per million tokens; required for a model without a fixed price",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "maxTokens": {
+            "description": "Upper bound of the answer; the call reserve is priced by it",
+            "type": "number"
+          },
+          "model": {
+            "type": "string"
+          },
+          "source": {
+            "description": "default - code defaults; override - a row saved from the admin",
+            "enum": [
+              "default",
+              "override"
+            ],
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          },
+          "temperature": {
+            "nullable": true,
+            "type": "number"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "model",
+          "fallbacks",
+          "temperature",
+          "maxTokens",
+          "enabled",
+          "maxPricePerMTok",
+          "source",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "LlmStatusResponseDto": {
+        "properties": {
+          "budgetConfigured": {
+            "description": "Whether the single spending-ceiling row exists; without it every call is refused",
+            "type": "boolean"
+          },
+          "ceilingUsd": {
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "defaultRunLimitUsd": {
+            "description": "Default limit offered in the run dialog",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "keyConfigured": {
+            "description": "Whether the key is configured; the key itself is never returned",
+            "type": "boolean"
+          },
+          "reservedUsd": {
+            "description": "Reserved by calls in flight",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "spentUsd": {
+            "description": "Spent in total, all operations",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "state": {
+            "description": "DISABLED - OPENROUTER_API_KEY is not set or empty: nothing can call a model",
+            "enum": [
+              "ENABLED",
+              "DISABLED"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "keyConfigured",
+          "budgetConfigured",
+          "ceilingUsd",
+          "spentUsd",
+          "reservedUsd",
+          "defaultRunLimitUsd"
+        ],
+        "type": "object"
+      },
       "LoginDto": {
         "properties": {
           "email": {
@@ -25402,6 +25597,64 @@
         },
         "type": "object"
       },
+      "UpdateLlmBudgetDto": {
+        "properties": {
+          "ceilingUsd": {
+            "description": "Spending ceiling for all operations; 0 stops every call",
+            "example": "100",
+            "format": "decimal",
+            "type": "string"
+          },
+          "defaultRunLimitUsd": {
+            "description": "Default limit offered in the run dialog; may exceed the ceiling",
+            "example": "100",
+            "format": "decimal",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "UpdateLlmStageSettingDto": {
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "fallbacks": {
+            "description": "Fallback model ids in order",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "maxPricePerMTok": {
+            "description": "Price cap per million tokens; required for a model without a fixed price",
+            "example": "100",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "maxTokens": {
+            "maximum": 200000,
+            "minimum": 1,
+            "nullable": true,
+            "type": "number"
+          },
+          "model": {
+            "description": "Model id from GET /admin/llm/models",
+            "type": "string"
+          },
+          "temperature": {
+            "maximum": 2,
+            "minimum": 0,
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "model"
+        ],
+        "type": "object"
+      },
       "UpdateMeDto": {
         "properties": {
           "avatarUrl": {
@@ -28135,6 +28388,200 @@
         "summary": "Health of the GeoIP country source (Phase 12 depends on an upstream proxy header)",
         "tags": [
           "geo-block"
+        ]
+      }
+    },
+    "/admin/llm/budget": {
+      "put": {
+        "operationId": "LlmController_updateBudget",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLlmBudgetDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmBudgetResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set the spending ceiling and the default run limit; ceilingUsd 0 stops every call",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/llm/models": {
+      "get": {
+        "operationId": "LlmController_listModels",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/LlmModelDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "OpenRouter models with prices per million tokens (cached for an hour)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/llm/stage-settings": {
+      "get": {
+        "operationId": "LlmController_listStageSettings",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/LlmStageSettingDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Model settings of every registered pipeline stage",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/llm/stage-settings/{stage}": {
+      "put": {
+        "operationId": "LlmController_updateStageSetting",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "stage",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateLlmStageSettingDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmStageSettingDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Change the model of a stage without a deploy; models must be in the OpenRouter list and priced or capped by maxPricePerMTok",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/llm/status": {
+      "get": {
+        "operationId": "LlmController_getStatus",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmStatusResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "LLM module state: whether the key is configured, ceiling, spent and reserved",
+        "tags": [
+          "admin"
         ]
       }
     },

@@ -311,6 +311,91 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/llm/budget': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Set the spending ceiling and the default run limit; ceilingUsd 0 stops every call */
+    put: operations['LlmController_updateBudget'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/llm/models': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** OpenRouter models with prices per million tokens (cached for an hour) */
+    get: operations['LlmController_listModels'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/llm/stage-settings': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Model settings of every registered pipeline stage */
+    get: operations['LlmController_listStageSettings'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/llm/stage-settings/{stage}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Change the model of a stage without a deploy; models must be in the OpenRouter list and priced or capped by maxPricePerMTok */
+    put: operations['LlmController_updateStageSetting'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/llm/status': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** LLM module state: whether the key is configured, ceiling, spent and reserved */
+    get: operations['LlmController_getStatus'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/media/cleanup-orphans': {
     parameters: {
       query?: never;
@@ -9036,6 +9121,107 @@ export interface components {
       /** @description Тег образа, с которым был запущен контейнер; "unknown", если деплой его не передал. */
       version: string;
     };
+    LlmBudgetResponseDto: {
+      /**
+       * Format: decimal
+       * @example 100.00000000
+       */
+      ceilingUsd: string;
+      /**
+       * Format: decimal
+       * @example 100.00000000
+       */
+      defaultRunLimitUsd: string;
+      /**
+       * Format: decimal
+       * @example 100.00000000
+       */
+      reservedUsd: string;
+      /**
+       * Format: decimal
+       * @example 100.00000000
+       */
+      spentUsd: string;
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    LlmModelDto: {
+      contextLength: number | null;
+      /** @example anthropic/claude-sonnet-5.5 */
+      id: string;
+      /**
+       * Format: decimal
+       * @description USD per million input tokens; null - the model has no fixed price
+       * @example 100.00000000
+       */
+      inputPerMTokUsd: string | null;
+      name: string;
+      /**
+       * Format: decimal
+       * @description USD per million output tokens; null - the model has no fixed price
+       * @example 100.00000000
+       */
+      outputPerMTokUsd: string | null;
+      /** @description Accepts response_format with a JSON schema */
+      structuredOutputs: boolean;
+    };
+    LlmStageSettingDto: {
+      enabled: boolean;
+      /** @description Fallback models in order */
+      fallbacks: string[];
+      /**
+       * Format: decimal
+       * @description Price cap per million tokens; required for a model without a fixed price
+       * @example 100.00000000
+       */
+      maxPricePerMTok: string | null;
+      /** @description Upper bound of the answer; the call reserve is priced by it */
+      maxTokens: number;
+      model: string;
+      /**
+       * @description default - code defaults; override - a row saved from the admin
+       * @enum {string}
+       */
+      source: 'default' | 'override';
+      stage: string;
+      temperature: number | null;
+      /** Format: date-time */
+      updatedAt: string | null;
+    };
+    LlmStatusResponseDto: {
+      /** @description Whether the single spending-ceiling row exists; without it every call is refused */
+      budgetConfigured: boolean;
+      /**
+       * Format: decimal
+       * @example 100.00000000
+       */
+      ceilingUsd: string | null;
+      /**
+       * Format: decimal
+       * @description Default limit offered in the run dialog
+       * @example 100.00000000
+       */
+      defaultRunLimitUsd: string | null;
+      /** @description Whether the key is configured; the key itself is never returned */
+      keyConfigured: boolean;
+      /**
+       * Format: decimal
+       * @description Reserved by calls in flight
+       * @example 100.00000000
+       */
+      reservedUsd: string | null;
+      /**
+       * Format: decimal
+       * @description Spent in total, all operations
+       * @example 100.00000000
+       */
+      spentUsd: string | null;
+      /**
+       * @description DISABLED - OPENROUTER_API_KEY is not set or empty: nothing can call a model
+       * @enum {string}
+       */
+      state: 'ENABLED' | 'DISABLED';
+    };
     LoginDto: {
       /** @example user@example.com */
       email: string;
@@ -12978,6 +13164,35 @@ export interface components {
       sourceUrl?: string;
       titleRu?: string;
     };
+    UpdateLlmBudgetDto: {
+      /**
+       * Format: decimal
+       * @description Spending ceiling for all operations; 0 stops every call
+       * @example 100
+       */
+      ceilingUsd?: string;
+      /**
+       * Format: decimal
+       * @description Default limit offered in the run dialog; may exceed the ceiling
+       * @example 100
+       */
+      defaultRunLimitUsd?: string;
+    };
+    UpdateLlmStageSettingDto: {
+      enabled?: boolean;
+      /** @description Fallback model ids in order */
+      fallbacks?: string[];
+      /**
+       * Format: decimal
+       * @description Price cap per million tokens; required for a model without a fixed price
+       * @example 100
+       */
+      maxPricePerMTok?: string | null;
+      maxTokens?: number | null;
+      /** @description Model id from GET /admin/llm/models */
+      model: string;
+      temperature?: number | null;
+    };
     UpdateMeDto: {
       /** Format: uri */
       avatarUrl?: string;
@@ -14231,6 +14446,117 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['GeoCountrySourceHealthDto'];
+        };
+      };
+    };
+  };
+  LlmController_updateBudget: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateLlmBudgetDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LlmBudgetResponseDto'];
+        };
+      };
+    };
+  };
+  LlmController_listModels: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['LlmModelDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  LlmController_listStageSettings: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['LlmStageSettingDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+    };
+  };
+  LlmController_updateStageSetting: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        stage: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateLlmStageSettingDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LlmStageSettingDto'];
+        };
+      };
+    };
+  };
+  LlmController_getStatus: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LlmStatusResponseDto'];
         };
       };
     };

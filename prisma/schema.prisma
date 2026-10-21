@@ -77,6 +77,7 @@ model BookVersion {
   analyses        BookAnalysis[]
   /// Разделы пересказа (F04): плоский список с номерами подряд с 1, номера ставит сервис.
   summarySections BookSummarySection[]
+  llmOperations   LlmOperation[]
   chapters        Chapter[]
   audioChapters   AudioChapter[]
   bookshelf       Bookshelf[]
@@ -387,6 +388,9 @@ model User {
   rightsSourceFilesUploaded   SourceEdition[]              @relation("RightsSourceFileUploadedBy")
   rightsEvidenceArchived      RightsEvidence[]             @relation("RightsEvidenceArchivedBy")
   profileContributorEvents    RightsProfileContributorEvent[] @relation("RightsProfileContributorEventCreatedBy")
+  llmStageSettingsUpdated     LlmStageSetting[]            @relation("LlmStageSettingUpdatedBy")
+  llmOperationsCreated        LlmOperation[]               @relation("LlmOperationCreatedBy")
+  llmBudgetUpdated            LlmBudget[]                  @relation("LlmBudgetUpdatedBy")
 }
 
 
@@ -4011,4 +4015,116 @@ model RightsLawyerReviewEvent {
   @@index([eventType])
   @@index([createdAt])
   @@index([createdByUserId])
+}
+
+// ---------------------------------------------------------------------------
+// LLM-конвейер (F05-1, ADR-021): настройки этапов, операции с лимитом, общий потолок и журнал
+// вызовов. Деньги - Decimal(14,8) (решение арбитра `F05 | F05-1`, В2): факт заменяет резерв
+// до цента, на float это не держится.
+// ---------------------------------------------------------------------------
+
+enum LlmOperationKind {
+  translation_run
+  dossier
+  compare
+  draft
+}
+
+enum LlmOperationStatus {
+  active
+  paused
+  cancelled
+  done
+  failed
+}
+
+enum LlmPauseReason {
+  LIMIT_REACHED
+  CEILING_REACHED
+  NO_COMPLIANT_PROVIDER
+  DOSSIER_STALE
+  DOSSIER_PAUSED
+  INSUFFICIENT_FUNDS
+  STEP_FAILED
+}
+
+/// Настройка этапа: строка переопределяет умолчание из реестра этапов в коде. Смена модели -
+/// `PUT /admin/llm/stage-settings/:stage`, без выката.
+model LlmStageSetting {
+  id              String   @id @default(uuid())
+  stage           String   @unique
+  model           String
+  /// Запасные модели по порядку: string[].
+  fallbacks       Json     @default("[]")
+  temperature     Float?
+  maxTokens       Int?
+  enabled         Boolean  @default(true)
+  /// Обязательна для модели без цены в списке OpenRouter (Р24): резерв считается по ней.
+  maxPricePerMTok Decimal? @db.Decimal(14, 8)
+  updatedAt       DateTime @updatedAt
+  updatedById     String?
+  updatedBy       User?    @relation("LlmStageSettingUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+/// Операция (запуск перевода, досье, сравнение, заготовка) со своим лимитом. Резерв и факт
+/// растут условным UPDATE: `reservedUsd + spentUsd + оценка <= limitUsd` (Р4).
+model LlmOperation {
+  id               String             @id @default(uuid())
+  kind             LlmOperationKind
+  bookVersionId    String?
+  bookVersion      BookVersion?       @relation(fields: [bookVersionId], references: [id], onDelete: SetNull)
+  limitUsd         Decimal            @db.Decimal(14, 8)
+  reservedUsd      Decimal            @default(0) @db.Decimal(14, 8)
+  spentUsd         Decimal            @default(0) @db.Decimal(14, 8)
+  status           LlmOperationStatus @default(active)
+  pauseReason      LlmPauseReason?
+  createdById      String?
+  createdBy        User?              @relation("LlmOperationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  /// Снимок настроек этапов и цен на момент создания.
+  settingsSnapshot Json?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  calls            LlmCall[]
+
+  @@index([status])
+  @@index([bookVersionId])
+}
+
+/// Общий потолок расходов - одна строка `id = 1`, создаётся миграцией (решение арбитра
+/// `F05 | F05-1`, В4). Код её не создаёт: нет строки - вызов отклоняется по потолку.
+model LlmBudget {
+  id                 Int      @id
+  ceilingUsd         Decimal  @default(100) @db.Decimal(14, 8)
+  reservedUsd        Decimal  @default(0) @db.Decimal(14, 8)
+  spentUsd           Decimal  @default(0) @db.Decimal(14, 8)
+  /// Умолчание лимита в окне запуска (`product.md` §2.2); может быть выше потолка (В1).
+  defaultRunLimitUsd Decimal  @default(10) @db.Decimal(14, 8)
+  updatedAt          DateTime @updatedAt
+  updatedById        String?
+  updatedBy          User?    @relation("LlmBudgetUpdatedBy", fields: [updatedById], references: [id], onDelete: SetNull)
+}
+
+/// Журнал вызовов: строка на каждую попытку. Ни текста книги, ни ключа.
+/// Факт пишется ровно один раз - условием `reserveReleasedAt IS NULL` (Р21).
+model LlmCall {
+  id                String       @id @default(uuid())
+  operationId       String
+  operation         LlmOperation @relation(fields: [operationId], references: [id], onDelete: Restrict)
+  stage             String
+  requestedModel    String
+  actualModel       String?
+  provider          String?
+  attempt           Int
+  inputTokens       Int?
+  outputTokens      Int?
+  reservedUsd       Decimal      @db.Decimal(14, 8)
+  costUsd           Decimal?     @db.Decimal(14, 8)
+  costEstimated     Boolean      @default(false)
+  startedAt         DateTime     @default(now())
+  durationMs        Int?
+  errorClass        String?
+  reserveReleasedAt DateTime?
+
+  @@index([operationId])
+  @@index([reserveReleasedAt, startedAt])
 }

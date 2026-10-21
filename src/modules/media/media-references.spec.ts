@@ -88,6 +88,8 @@ const NOT_MEDIA_JSON_REFERENCES: Record<string, string> = {
   'BookVersion.rightsContentHashInput':
     'снимок для правового хеша, пишет сервер (rights-content-hash.service.ts); источники проверяются своими колонками',
   'RightsActionEvent.payload': 'журнал событий, пишет сервер',
+  'LlmStageSetting.fallbacks': 'список идентификаторов моделей OpenRouter, не медиа (F05-1)',
+  'LlmOperation.settingsSnapshot': 'снимок настроек этапов и цен моделей, пишет сервер (F05-1)',
   'RightsProfileContributorEvent.payload': 'журнал событий, пишет сервер',
   'AdminAuditEvent.payload': 'журнал аудита, пишет сервер; упоминание ключа в истории — не ссылка',
   'RightsLicenseEvent.payload': 'журнал событий, пишет сервер',
