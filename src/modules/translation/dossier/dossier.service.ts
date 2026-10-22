@@ -42,6 +42,8 @@ const BUILD_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
 export interface DossierWaiter {
   operationId: string;
   waitingFor?: string | null;
+  /** Запуск ждущего (`F05-4`): операция, заведённая ради него, привязывается к нему. */
+  translationRunId?: string | null;
 }
 
 export interface DemandOptions {
@@ -384,6 +386,7 @@ export class DossierService {
       bookVersionId: input.sourceVersionId,
       limitUsd,
       createdById: input.options.createdById ?? null,
+      translationRunId: input.options.waiter?.translationRunId ?? null,
     });
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -463,6 +466,7 @@ export class DossierService {
       bookVersionId: dossier.sourceVersionId,
       limitUsd,
       createdById: options.createdById ?? null,
+      translationRunId: options.waiter?.translationRunId ?? null,
     });
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -608,6 +612,7 @@ export class DossierService {
       bookVersionId,
       limitUsd,
       createdById: options.createdById ?? null,
+      translationRunId: options.waiter?.translationRunId ?? null,
     });
     try {
       return await this.prisma.$transaction(async (tx) => {

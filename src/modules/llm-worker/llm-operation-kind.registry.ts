@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { LlmOperation, LlmOperationKind, Prisma } from '@prisma/client';
+import { LlmOperation, LlmOperationKind, LlmPauseReason, Prisma } from '@prisma/client';
 import { EnqueueTaskInput } from './llm-task.service';
 
 /**
@@ -8,8 +8,20 @@ import { EnqueueTaskInput } from './llm-task.service';
  * `LLM_OPERATION_NOT_RESUMABLE` (решение арбитра `F05 | F05-2`, В5).
  */
 export interface LlmOperationKindHandler {
-  /** Задача шага для «продолжить»; `null` - продолжать нечего. Статус операции не пишет. */
-  resumeTask(operation: LlmOperation): Promise<EnqueueTaskInput | null>;
+  /**
+   * Задачи шага для «продолжить» - по одной на пару (у запуска перевода - на каждый язык,
+   * решение арбитра `F05 | F05-4`); пусто - продолжать нечего. Статус операции не пишет; вид
+   * вправе сменить причину стоящей паузы (`LlmTaskService.repauseOperation`), если продолжать
+   * нельзя по новой причине (запуск перевода: исходник правили на другой паузе).
+   */
+  resumeTasks(operation: LlmOperation): Promise<EnqueueTaskInput[]>;
+  /** Причины паузы, с которых вид не продолжает: отказ 409 условием записи «продолжить». */
+  unresumableReasons?: readonly LlmPauseReason[];
+  /**
+   * Операцию продолжают: запись вида (сброс причин остановки) в транзакции «продолжить» -
+   * откатывается вместе с ней.
+   */
+  onResumed?(operation: LlmOperation, tx: Prisma.TransactionClient): Promise<void>;
   /** Операцию отменяют: строки, которые она строила, закрываются в той же транзакции. */
   onCancelled?(operation: LlmOperation, tx: Prisma.TransactionClient): Promise<void>;
 }

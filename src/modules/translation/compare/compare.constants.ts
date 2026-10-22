@@ -1,5 +1,3 @@
-import { LlmPauseReason } from '@prisma/client';
-
 /** Вид задачи сравнения: одна на операцию, по куску одной модели за шаг (решение арбитра `F05 | F05-3`, С8). */
 export const COMPARE_TASK_KIND = 'compare';
 
@@ -26,14 +24,3 @@ export const COMPARE_MODEL_ERRORS = new Set([
   'LLM_NO_PRICE',
   'LLM_STAGE_DISABLED',
 ]);
-
-/**
- * Отказ шага не по модели - пауза, а не `failed`: «продолжить» доводит сравнение без повторной
- * оплаты сделанных кусков (решение арбитра `F05 | F05-3`, С9). Бюджет - своей причиной, прочее -
- * `STEP_FAILED`. Код - как его пишет исполнитель (`stepFailureCode`).
- */
-export const COMPARE_PAUSE_BY_FAILURE: Readonly<Record<string, LlmPauseReason>> = {
-  'LLM_BUDGET_EXCEEDED:operation': 'LIMIT_REACHED',
-  'LLM_BUDGET_EXCEEDED:ceiling': 'CEILING_REACHED',
-  LLM_INSUFFICIENT_FUNDS: 'INSUFFICIENT_FUNDS',
-};

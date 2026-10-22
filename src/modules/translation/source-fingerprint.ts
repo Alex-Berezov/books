@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 
 export interface FingerprintChapter {
@@ -24,4 +25,9 @@ export async function sourceFingerprint(
     FROM "Chapter" AS c
     WHERE c."bookVersionId" = ${versionId}`;
   return rows[0].fingerprint;
+}
+
+/** sha256 текста одной главы: глава поменялась после нарезки - куски уже не те (`F05-3`, `F05-4`). */
+export function chapterFingerprint(content: string): string {
+  return createHash('sha256').update(content).digest('hex');
 }

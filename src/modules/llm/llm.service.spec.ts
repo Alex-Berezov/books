@@ -180,6 +180,34 @@ describe('LlmService', () => {
       expect(sent.temperature).toBe(0.3);
     });
 
+    // Снимок запуска (`F05-4a`, В1): модель и запасные снимка, а не этапа; запасная без цены
+    // пропускается, и `stageCallModels` называет ровно те модели, что ушли в вызов.
+    it('options.model with fallbacks calls them in order, skips an unpriced one, and names the same models', async () => {
+      prisma.llmStageSetting.findUnique.mockResolvedValue(
+        row({ model: 'c/dynamic', fallbacks: ['a/stage-fallback'] }),
+      );
+      const options = { model: 'a/priced', fallbacks: ['c/dynamic', 'b/second'] };
+      await service.callStage('op', 'jev', [{ role: 'user', content: 'x' }], options);
+      const sent = client.chat.mock.calls[0][0] as { models: LlmCallModel[] };
+      expect(sent.models.map((m) => m.id)).toEqual(['a/priced', 'b/second']);
+      expect(await service.stageCallModels('jev', options)).toEqual(['a/priced', 'b/second']);
+    });
+
+    it('stageFit with a model and fallbacks fits by the smallest context of them', async () => {
+      prisma.llmStageSetting.findUnique.mockResolvedValue(row({ fallbacks: [] }));
+      models.list.mockResolvedValue(
+        MODELS.map((m) => (m.id === 'b/second' ? { ...m, contextLength: 10 } : m)),
+      );
+      const request = { messages: [{ role: 'user' as const, content: 'x' }] };
+      expect((await service.stageFit('jev', request, 'a/priced')).fits).toBe(true);
+      expect((await service.stageFit('jev', request, 'a/priced', ['b/second'])).fits).toBe(false);
+      // Запасная без цены в вызов не уйдёт - её контекст куску не отказывает.
+      models.list.mockResolvedValue(
+        MODELS.map((m) => (m.id === 'c/dynamic' ? { ...m, contextLength: 10 } : m)),
+      );
+      expect((await service.stageFit('jev', request, 'a/priced', ['c/dynamic'])).fits).toBe(true);
+    });
+
     it('options.model without a price and without a stage cap is refused', async () => {
       prisma.llmStageSetting.findUnique.mockResolvedValue(row({}));
       await expect(

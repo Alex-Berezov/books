@@ -121,6 +121,28 @@ export async function planChunks(
   return chunks;
 }
 
+/**
+ * Шаг нарезки по сохранённым выборам `split` (сравнение `F05-3`, запуск `F05-4`): глава
+ * проходится заново, известные стыки берутся из `picks` (ключ - первый кандидат окна).
+ * Первый неизвестный стык - `open`: его выбирает модель следующим вызовом, и выбор пишется до
+ * конца шага, поэтому повтор после обрыва его не оплачивает. Неизвестных нет - `chunks`.
+ */
+export async function nextSplit(
+  layout: Pick<ChapterLayout, 'blocks' | 'parts' | 'format'>,
+  picks: Readonly<Record<string, number>>,
+): Promise<{ open: { key: string; window: ContestedWindow } } | { chunks: ChapterChunk[] }> {
+  let open: { key: string; window: ContestedWindow } | null = null;
+  const chunks = await planChunks(layout, (window) => {
+    const key = String(window.candidates[0].block);
+    if (key in picks) return Promise.resolve(picks[key]);
+    open ??= { key, window };
+    // Дальше по главе этот проход не пишется: стык выбирается моделью следующим шагом.
+    return Promise.resolve(fallbackBoundary(window));
+  });
+  const pending = open as { key: string; window: ContestedWindow } | null;
+  return pending ? { open: pending } : { chunks };
+}
+
 function chunkOf(info: Info[], start: number, end: number): ChapterChunk {
   return {
     firstBlock: info[start].n,

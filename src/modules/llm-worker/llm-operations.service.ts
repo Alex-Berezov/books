@@ -38,18 +38,33 @@ export class LlmOperationsService {
    * «Продолжить» с необязательным новым лимитом: после `LIMIT_REACHED` без него шаг упрётся
    * в тот же лимит. Лимит не ниже потраченного и зарезервированного - иначе 400. Без ключа
    * OpenRouter - 503 `LLM_DISABLED`: задачу некому исполнить, операция висела бы `active`.
+   * `alongside` - запись вызывающего (модели этапов запуска перевода) в той же транзакции.
    */
-  async resume(operationId: string, limitUsd?: Prisma.Decimal): Promise<LlmOperationDto> {
+  async resume(
+    operationId: string,
+    limitUsd?: Prisma.Decimal,
+    alongside?: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<LlmOperationDto> {
     const op = await this.find(operationId);
     this.llm.assertEnabled();
-    const task = op.status === 'paused' ? await this.kinds.get(op.kind)?.resumeTask(op) : null;
-    if (!task) {
+    const kind = this.kinds.get(op.kind);
+    const tasks = op.status === 'paused' ? await kind?.resumeTasks(op) : null;
+    if (!tasks || tasks.length === 0) {
       throw llmTaskConflict('LLM_OPERATION_NOT_RESUMABLE', 'LLM operation cannot be resumed');
     }
     if (limitUsd && limitUsd.lt(op.spentUsd.add(op.reservedUsd))) {
       throw new BadRequestException('limitUsd must not be below spentUsd + reservedUsd');
     }
-    await this.tasks.resumeOperation(op.id, task, limitUsd);
+    await this.tasks.resumeOperation(
+      op.id,
+      tasks,
+      limitUsd,
+      async (tx) => {
+        await kind?.onResumed?.(op, tx);
+        await alongside?.(tx);
+      },
+      kind?.unresumableReasons ?? [],
+    );
     return toOperationDto(await this.find(op.id));
   }
 

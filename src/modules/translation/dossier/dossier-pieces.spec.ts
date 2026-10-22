@@ -1,6 +1,6 @@
 import { LlmBudgetExceededError, LlmError } from '../../llm/llm.errors';
 import { stepFailureCode } from '../../llm-worker/llm-worker.service';
-import { DOSSIER_PAUSE_BY_FAILURE } from './dossier.constants';
+import { PAUSE_BY_FAILURE } from '../pause-by-failure';
 import {
   DOSSIER_PART_MAX_CHARS,
   nextPlannedPart,
@@ -218,13 +218,11 @@ describe('budget failures pause the dossier builder (Р20)', () => {
     [new LlmError('LLM_INSUFFICIENT_FUNDS', 'x'), 'INSUFFICIENT_FUNDS'],
     [new LlmError('LLM_NO_COMPLIANT_PROVIDER', 'x'), 'NO_COMPLIANT_PROVIDER'],
   ])('%s -> %s by the code the worker writes', (error, reason) => {
-    expect(DOSSIER_PAUSE_BY_FAILURE[stepFailureCode(error)]).toBe(reason);
+    expect(PAUSE_BY_FAILURE[stepFailureCode(error)]).toBe(reason);
   });
 
   it('other failures do not pause', () => {
-    expect(DOSSIER_PAUSE_BY_FAILURE[stepFailureCode(new LlmError('LLM_UNAVAILABLE', 'x'))]).toBe(
-      undefined,
-    );
-    expect(DOSSIER_PAUSE_BY_FAILURE['TOO_MANY_ATTEMPTS']).toBe(undefined);
+    expect(PAUSE_BY_FAILURE[stepFailureCode(new LlmError('LLM_UNAVAILABLE', 'x'))]).toBe(undefined);
+    expect(PAUSE_BY_FAILURE['TOO_MANY_ATTEMPTS']).toBe(undefined);
   });
 });

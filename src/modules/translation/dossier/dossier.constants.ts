@@ -1,4 +1,3 @@
-import { LlmPauseReason } from '@prisma/client';
 import { LlmStageDefinition } from '../../llm/llm-stages.registry';
 
 export const DOSSIER_STAGE = 'dossier';
@@ -36,17 +35,6 @@ export const DOSSIER_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     enabled: true,
   },
 ];
-
-/**
- * Бюджетные отказы шага ставят операцию досье на паузу, остальные - в `failed` (Р20). Код - как
- * его пишет исполнитель (`stepFailureCode`).
- */
-export const DOSSIER_PAUSE_BY_FAILURE: Readonly<Record<string, LlmPauseReason>> = {
-  'LLM_BUDGET_EXCEEDED:operation': 'LIMIT_REACHED',
-  'LLM_BUDGET_EXCEEDED:ceiling': 'CEILING_REACHED',
-  LLM_INSUFFICIENT_FUNDS: 'INSUFFICIENT_FUNDS',
-  LLM_NO_COMPLIANT_PROVIDER: 'NO_COMPLIANT_PROVIDER',
-};
 
 /** Отказ шага по ответу модели не по форме (после повтора с замечанием). */
 export const DOSSIER_INVALID_RESPONSE = 'DOSSIER_INVALID_RESPONSE';

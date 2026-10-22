@@ -41,6 +41,8 @@ import {
   TranslationCompareEstimateDto,
   TranslationCompareListItemDto,
 } from './dto/translation-compare-response.dto';
+import { ResumeTranslationRunDto } from './dto/translation-run-request.dto';
+import { TranslationRunDto } from './dto/translation-run-response.dto';
 import {
   DossierEstimateDto,
   DossierStatusDto,
@@ -48,6 +50,7 @@ import {
   TranslationSourceDto,
 } from './dto/translation-response.dto';
 import { DossierService } from './dossier/dossier.service';
+import { TranslationRunService } from './run/translation-run.service';
 import { TranslationSourceService } from './translation-source.service';
 
 interface RequestUser {
@@ -56,8 +59,9 @@ interface RequestUser {
 
 /**
  * Перевод книги в админке - только `admin` (U6): исходник по D8, досье и глоссарий
- * (`F05-2`), сравнение моделей на главе (`F05-3`). Построение досье и сравнение тратят деньги
- * под своей операцией с лимитом; модель зовёт исполнитель фоном, а не ручка.
+ * (`F05-2`), сравнение моделей на главе (`F05-3`), ход запуска перевода и его кнопки (`F05-4`).
+ * Построение досье, сравнение и перевод тратят деньги под своей операцией с лимитом; модель
+ * зовёт исполнитель фоном, а не ручка.
  */
 @ApiTags('admin')
 @ApiExtraModels(TranslationCompareListItemDto)
@@ -70,6 +74,7 @@ export class TranslationController {
     private readonly sources: TranslationSourceService,
     private readonly dossiers: DossierService,
     private readonly compares: TranslationCompareService,
+    private readonly runs: TranslationRunService,
   ) {}
 
   @Get('versions/:id/translation-source')
@@ -214,5 +219,70 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Translation compare not found' })
   getCompare(@Param('id') id: string): Promise<TranslationCompareDto> {
     return this.compares.get(id);
+  }
+
+  @Get('translation-runs/:id')
+  @ApiOperation({
+    summary:
+      'Translation run progress by language: stage, chapter N of M, pieces, flags, pause reason; spent and limit in its operation',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: TranslationRunDto })
+  @ApiNotFoundResponse({ description: 'Translation run not found' })
+  getRun(@Param('id') id: string): Promise<TranslationRunDto> {
+    return this.runs.get(id);
+  }
+
+  @Post('translation-runs/:id/pause')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Pause a running translation: the step in progress finishes, nothing more starts. Dossier and glossary operations started for it are not paused',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: TranslationRunDto })
+  @ApiNotFoundResponse({ description: 'Translation run not found' })
+  @ApiConflictResponse({ description: 'TRANSLATION_RUN_NOT_PAUSABLE: not running' })
+  pauseRun(@Param('id') id: string): Promise<TranslationRunDto> {
+    return this.runs.pause(id);
+  }
+
+  @Post('translation-runs/:id/resume')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Resume a paused translation run on every unfinished language, optionally with a new limit and stage models',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: TranslationRunDto })
+  @ApiBadRequestResponse({
+    description:
+      'limitUsd below spent + reserved; LLM_MODEL_UNKNOWN; a stage that cannot be changed',
+  })
+  @ApiNotFoundResponse({ description: 'Translation run not found' })
+  @ApiConflictResponse({
+    description:
+      'LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+  })
+  @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
+  resumeRun(
+    @Param('id') id: string,
+    @Body() dto: ResumeTranslationRunDto,
+  ): Promise<TranslationRunDto> {
+    return this.runs.resume(id, dto);
+  }
+
+  @Post('translation-runs/:id/cancel')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Cancel a translation run: unfinished languages stop and the run spends nothing more; translated pieces stay. Dossier and glossary operations started for it run on their own limit and are cancelled separately',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: TranslationRunDto })
+  @ApiNotFoundResponse({ description: 'Translation run not found' })
+  @ApiConflictResponse({ description: 'LLM_OPERATION_NOT_CANCELLABLE: already finished' })
+  cancelRun(@Param('id') id: string): Promise<TranslationRunDto> {
+    return this.runs.cancel(id);
   }
 }

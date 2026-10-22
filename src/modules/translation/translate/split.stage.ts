@@ -20,12 +20,16 @@ const PASS_THROUGH = new Set([
   'LLM_ABORTED',
 ]);
 
-/** Спорный стык главы: модель этапа `split` выбирает блок из окна, отказ - граница кодом. */
+/**
+ * Спорный стык главы: модель этапа `split` выбирает блок из окна, отказ - граница кодом.
+ * `models` - модели снимка запуска (`F05-4`); без них - модели этапа.
+ */
 export async function pickBoundary(
   llm: LlmService,
   operationId: string,
   window: ContestedWindow,
   ctx: LlmTaskContext,
+  models: { model?: string; fallbacks?: readonly string[] } = {},
 ): Promise<number> {
   const allowed = new Set(window.candidates.map((c) => c.block));
   try {
@@ -38,6 +42,8 @@ export async function pickBoundary(
       ctx,
       {
         remarks: 1,
+        model: models.model,
+        fallbacks: models.fallbacks,
         extraErrors: (value) => {
           const block = (value as { boundaryBlock: number }).boundaryBlock;
           return allowed.has(block) ? [] : [`$.boundaryBlock: ${block} is not a candidate`];

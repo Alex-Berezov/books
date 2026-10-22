@@ -26,6 +26,12 @@ import { LlmWorkerService } from './llm-worker.service';
     LlmOperationsService,
     LlmWorkerService,
   ],
-  exports: [LlmTaskHandlerRegistry, LlmOperationKindRegistry, LlmTaskService],
+  exports: [
+    LlmTaskHandlerRegistry,
+    LlmOperationKindRegistry,
+    LlmTaskService,
+    // «Продолжить» и «отменить» запуска перевода - те же переходы, что у общих ручек (`F05-4`).
+    LlmOperationsService,
+  ],
 })
 export class LlmWorkerModule {}

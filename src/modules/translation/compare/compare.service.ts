@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import {
   BadRequestException,
   ConflictException,
@@ -29,6 +28,8 @@ import {
   TranslationCompareEstimateDto,
   TranslationCompareListItemDto,
 } from '../dto/translation-compare-response.dto';
+import { chapterFingerprint } from '../source-fingerprint';
+import { assertKnownModels, stageEstimatorFor } from '../llm-model-checks';
 import { TranslationSourceService } from '../translation-source.service';
 import {
   SPLIT_STAGE,
@@ -41,10 +42,6 @@ import { COMPARE_TASK_KIND, COMPARE_TX_OPTIONS } from './compare.constants';
 
 /** Множитель лимита сравнения по умолчанию - как у досье (`F05-2`, шаг 7). */
 const COMPARE_LIMIT_FACTOR = '1.5';
-
-export function chapterFingerprint(content: string): string {
-  return createHash('sha256').update(content).digest('hex');
-}
 
 /** Задача сравнения: ключ пары «операция:compare» - «продолжить» второй задачи не поставит. */
 export function compareTaskInput(
@@ -231,7 +228,7 @@ export class TranslationCompareService {
   ): Promise<Estimate> {
     const sourceLanguage = await this.assertTarget(versionId, query.targetLanguage);
     const chapter = await this.chapterOf(versionId, query.chapterNumber);
-    await this.assertModels(query.models);
+    await assertKnownModels(this.llm, query.models);
     const layout = splitChapter(chapter.content);
     // Переводить нечего (только `hr` и картинки без подписей): колонки вышли бы «готовыми»
     // с исходным текстом.
@@ -263,7 +260,7 @@ export class TranslationCompareService {
     const models: Array<{ model: string; estimateUsd: string }> = [];
     let translationsUsd = splitUsd;
     for (const model of query.models) {
-      const call = await this.estimator(TRANSLATE_STAGE, model);
+      const call = await stageEstimatorFor(this.llm, TRANSLATE_STAGE, model);
       let total = new Prisma.Decimal(0);
       for (let index = 0; index < chunks.length; index++) {
         const request = translateRequest(
@@ -373,20 +370,6 @@ export class TranslationCompareService {
     return chapter;
   }
 
-  /** Модели сравнения - из каталога OpenRouter (С6); цену проверяет оценщик. */
-  private async assertModels(models: readonly string[]): Promise<void> {
-    const known = new Set((await this.llm.listModels()).map((m) => m.id));
-    const unknown = models.filter((m) => !known.has(m));
-    if (unknown.length > 0) {
-      throw new BadRequestException({
-        statusCode: 400,
-        error: 'Bad Request',
-        message: `Unknown models: ${unknown.join(', ')}`,
-        code: 'LLM_MODEL_UNKNOWN',
-      });
-    }
-  }
-
   private async readyContext(
     sourceVersionId: string,
     language: Language,
@@ -410,24 +393,6 @@ export class TranslationCompareService {
       this.llm.getStageSetting(GLOSSARY_STAGE),
     ]);
     return (dossier.maxTokens + glossary.maxTokens) * CHARS_PER_TOKEN;
-  }
-
-  /**
-   * Оценщик перевода моделью для ручки: без цены - 409 `LLM_NO_PRICE` (С6), выключенный этап -
-   * 409 `LLM_STAGE_DISABLED`.
-   */
-  private async estimator(stage: string, model: string): Promise<StageCallEstimator> {
-    let call: StageCallEstimator;
-    try {
-      call = await this.llm.stageCallEstimator(stage, model);
-    } catch (error) {
-      if (error instanceof LlmError) throw llmTaskConflict(error.code, error.message);
-      throw error;
-    }
-    if (!call.enabled) {
-      throw llmTaskConflict('LLM_STAGE_DISABLED', `LLM stage "${stage}" is disabled`);
-    }
-    return call;
   }
 
   /** `split` выключен или без цены - не отказ: стыки ставит код (Р7), оценка - ноль. */

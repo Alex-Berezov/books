@@ -10,12 +10,12 @@ import { sourceFingerprint } from '../source-fingerprint';
 import {
   DOSSIER_INVALID_RESPONSE,
   DOSSIER_MAX_CHAPTERS,
-  DOSSIER_PAUSE_BY_FAILURE,
   DOSSIER_SOURCE_CHANGED,
   DOSSIER_STAGE,
   DOSSIER_TOO_LONG,
   GLOSSARY_STAGE,
 } from './dossier.constants';
+import { PAUSE_BY_FAILURE } from '../pause-by-failure';
 import {
   DOSSIER_FORMAT_VERSION,
   DOSSIER_PART_SHAPE,
@@ -69,23 +69,20 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
   };
 
   /** «Продолжить» операцию вида `dossier`: шаг строки, которую она строит (В5). */
-  async resumeTask(op: LlmOperation): Promise<EnqueueTaskInput | null> {
+  async resumeTasks(op: LlmOperation): Promise<EnqueueTaskInput[]> {
     const dossier = await this.prisma.bookDossier.findFirst({
       where: { operationId: op.id, status: 'building' },
       select: { id: true, sourceVersionId: true },
     });
-    if (dossier) return dossierTaskInput(dossier.id, dossier.sourceVersionId, op.id);
+    if (dossier) return [dossierTaskInput(dossier.id, dossier.sourceVersionId, op.id)];
     const glossary = await this.prisma.bookGlossary.findFirst({
       where: { operationId: op.id, status: 'building' },
       select: { id: true, language: true, dossier: { select: { sourceVersionId: true } } },
     });
-    if (!glossary) return null;
-    return glossaryTaskInput(
-      glossary.id,
-      glossary.language,
-      glossary.dossier.sourceVersionId,
-      op.id,
-    );
+    if (!glossary) return [];
+    return [
+      glossaryTaskInput(glossary.id, glossary.language, glossary.dossier.sourceVersionId, op.id),
+    ];
   }
 
   /** Отменённый строитель: строка `failed`, перехвата нет (Р20). */
@@ -317,7 +314,7 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
     reason: string,
     model: 'bookDossier' | 'bookGlossary',
   ): Promise<void> {
-    const pause = DOSSIER_PAUSE_BY_FAILURE[reason];
+    const pause = PAUSE_BY_FAILURE[reason];
     if (pause) {
       await this.tasks.pauseOperation(task.operationId, pause);
       return;

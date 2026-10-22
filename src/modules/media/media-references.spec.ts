@@ -104,6 +104,14 @@ const NOT_MEDIA_JSON_REFERENCES: Record<string, string> = {
     'выборы модели split по стыкам - номера блоков, пишет сервер (F05-3)',
   'TranslationCompareChunk.blocks':
     'перевод блоков куска - ответ модели после белого списка разметки, пишет сервер (F05-3)',
+  'TranslationRun.stageModels': 'модели этапов запуска перевода - id моделей, пишет сервер (F05-4)',
+  'TranslationRunLanguage.splitPicks':
+    'выборы модели split по стыкам главы - номера блоков, пишет сервер (F05-4)',
+  'TranslationChunk.rawResponse':
+    'ответ модели перевода по форме, пишет сервер; в главу идут только blocks (F05-4)',
+  'TranslationChunk.blocks':
+    'перевод блоков куска - картинки только с src исходного блока, пишет сервер (F05-4)',
+  'TranslationChunk.verdict': 'вердикт проверки куска, пишет сервер (F05-5)',
   'RightsProfileContributorEvent.payload': 'журнал событий, пишет сервер',
   'AdminAuditEvent.payload': 'журнал аудита, пишет сервер; упоминание ключа в истории — не ссылка',
   'RightsLicenseEvent.payload': 'журнал событий, пишет сервер',

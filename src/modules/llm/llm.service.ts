@@ -48,6 +48,8 @@ export interface CreateOperationInput {
   createdById?: string | null;
   /** Модели вне настроек этапов, которые операция позовёт сама (сравнение `F05-3`): их цены - в снимке. */
   models?: readonly string[];
+  /** Запуск перевода, ради которого заведена операция (`F05-4`): отчёт и история запуска. */
+  translationRunId?: string | null;
 }
 
 /**
@@ -76,6 +78,11 @@ export interface CallStageOptions {
    * `F05 | F05-3`, С7): запасные подменили бы текст колонки чужим. Остальное - из настройки этапа.
    */
   model?: string;
+  /**
+   * Запасные модели вместо запасных этапа - только вместе с `model` (снимок запуска перевода
+   * `F05-4`, решение арбитра `F05 | F05-4a`, В1); без `model` не читается.
+   */
+  fallbacks?: readonly string[];
 }
 
 /**
@@ -255,10 +262,19 @@ export class LlmService implements OnModuleInit {
     stage: string,
     request: Pick<LlmChatRequest, 'messages' | 'jsonSchema'>,
     modelId?: string,
+    fallbacks: readonly string[] = [],
   ): Promise<{ fits: boolean; model: string }> {
     const setting = await this.getStageSetting(stage);
-    const known = new Map((await this.models.list()).map((m) => [m.id, m]));
-    const contexts = (modelId ? [modelId] : [setting.model, ...setting.fallbacks])
+    const known = await this.known();
+    // Модели - ровно те, что уйдут в вызов (`callModels`, как в `callStage`): запасная без цены
+    // туда не попадёт, и её контекст не должен отказывать куску (`F05-4a`).
+    const { primaryId, fallbacks: called } = this.callModels(
+      stage,
+      setting,
+      { model: modelId, fallbacks },
+      known,
+    );
+    const contexts = [primaryId, ...called.map((m) => m.id)]
       .map((id) => known.get(id)?.contextLength)
       .filter((c): c is number => typeof c === 'number');
     // Вход - в настоящих токенах (символы / CHARS_PER_TOKEN), а не верхней границей резерва:
@@ -311,8 +327,52 @@ export class LlmService implements OnModuleInit {
       bookVersionId: input.bookVersionId ?? null,
       limitUsd,
       createdById: input.createdById ?? null,
+      translationRunId: input.translationRunId ?? null,
       settingsSnapshot: snapshot as unknown as Prisma.InputJsonValue,
     };
+  }
+
+  /**
+   * Модели, которые позовёт `callStage` с теми же `model`/`fallbacks`: основная и запасные с
+   * ценой - запасная без цены пропускается так же, как в вызове (модели отказа запуска
+   * перевода, `F05-4a`, В4).
+   */
+  async stageCallModels(
+    stage: string,
+    options: { model?: string; fallbacks?: readonly string[] } = {},
+  ): Promise<string[]> {
+    const setting = await this.getStageSetting(stage);
+    const { primaryId, fallbacks } = this.callModels(stage, setting, options, await this.known());
+    return [primaryId, ...fallbacks.map((m) => m.id)];
+  }
+
+  private async known(): Promise<Map<string, LlmModelInfo>> {
+    return new Map((await this.models.list()).map((m) => [m.id, m]));
+  }
+
+  /**
+   * Модели вызова этапа - одно правило на `callStage` и `stageCallModels`. Основная без цены -
+   * отказ при вызове; запасная без цены (снята с OpenRouter, цена стала динамической)
+   * пропускается, а не роняет вызов, пока основная работает. `model` - ровно она с `fallbacks`
+   * (без них - без запасных: модель сравнения `F05-3`, `stageModels` запуска `F05-4`).
+   */
+  private callModels(
+    stage: string,
+    setting: EffectiveStageSetting,
+    options: { model?: string; fallbacks?: readonly string[] },
+    known: Map<string, LlmModelInfo>,
+  ): { primaryId: string; fallbacks: LlmCallModel[] } {
+    const primaryId = options.model ?? setting.model;
+    const fallbackIds = options.model ? (options.fallbacks ?? []) : setting.fallbacks;
+    const fallbacks = fallbackIds.flatMap((id) => {
+      try {
+        return [priced(id, known.get(id), setting.maxPricePerMTok)];
+      } catch {
+        this.logger.warn(`LLM stage ${stage}: fallback ${id} has no price, skipped`);
+        return [];
+      }
+    });
+    return { primaryId, fallbacks };
   }
 
   /** Вызов этапа на текущих настройках: смена модели `PUT` действует со следующего вызова. */
@@ -327,23 +387,9 @@ export class LlmService implements OnModuleInit {
     if (!setting.enabled)
       throw new LlmError('LLM_STAGE_DISABLED', `LLM stage "${stage}" is disabled`);
 
-    const known = new Map((await this.models.list()).map((m) => [m.id, m]));
-    // Основная без цены - отказ; запасная без цены (снята с OpenRouter, цена стала
-    // динамической) пропускается, а не роняет вызов, пока основная работает. Модель сравнения -
-    // ровно она, без запасных, с тем же отказом без цены, что у основной.
-    const primary = priced(
-      options.model ?? setting.model,
-      known.get(options.model ?? setting.model),
-      setting.maxPricePerMTok,
-    );
-    const fallbacks = (options.model ? [] : setting.fallbacks).flatMap((id) => {
-      try {
-        return [priced(id, known.get(id), setting.maxPricePerMTok)];
-      } catch {
-        this.logger.warn(`LLM stage ${stage}: fallback ${id} has no price, skipped`);
-        return [];
-      }
-    });
+    const known = await this.known();
+    const { primaryId, fallbacks } = this.callModels(stage, setting, options, known);
+    const primary = priced(primaryId, known.get(primaryId), setting.maxPricePerMTok);
     const models = [primary, ...fallbacks];
     return this.client.chat({
       operationId,

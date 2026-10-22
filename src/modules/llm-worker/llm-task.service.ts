@@ -109,15 +109,74 @@ export class LlmTaskService {
     return { created: false, holder };
   }
 
-  /** `active -> paused`; `pending`-задачи операции - `cancelled` в той же транзакции (Р19). */
+  /**
+   * `active -> paused`; `pending`-задачи операции - `cancelled` в той же транзакции (Р19).
+   * Причина `null` - пауза кнопкой (запуск перевода `F05-4`), а не остановка по отказу.
+   */
   pauseOperation(
     operationId: string,
-    reason: LlmPauseReason,
+    reason: LlmPauseReason | null,
     alongside?: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<boolean> {
     // `alongside` - запись, которая идёт вместе с паузой одной транзакцией и пишется, даже
     // если операция уже не `active` (ждущий на паузе узнаёт, что его строка закрыта).
     return this.stopOperation(operationId, 'paused', reason, undefined, alongside);
+  }
+
+  /**
+   * Причина паузы стоящей операции сменилась (запуск перевода: исходник правили, пока он стоял
+   * на другой паузе, `F05-4a`). Операция остаётся `paused`, задач не ставит; не на паузе - `false`.
+   */
+  async repauseOperation(
+    operationId: string,
+    reason: LlmPauseReason,
+    alongside?: (tx: Prisma.TransactionClient) => Promise<void>,
+    keep: readonly LlmPauseReason[] = [],
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      // `keep` - причины, которые эта смена не перекрывает (тупик важнее отказа провайдеров).
+      const changed = await tx.llmOperation.updateMany({
+        where: { id: operationId, status: 'paused', ...notIn(keep) },
+        data: { pauseReason: reason },
+      });
+      if (changed.count === 0) return false;
+      await alongside?.(tx);
+      return true;
+    }, TASK_TX_OPTIONS);
+  }
+
+  /**
+   * Остановка, которую нашёл шаг (запуск перевода `F05-4a`): `active -> paused` с причиной, а если
+   * операция уже стоит (кнопка «пауза» пришла, пока шёл шаг) - смена причины, кроме `keep`.
+   * Запись вида - той же транзакцией и только если операция действительно остановлена этой
+   * причиной: отменённой или законченной операции шаг ничего не пишет.
+   */
+  async stopOrRepause(
+    operationId: string,
+    reason: LlmPauseReason,
+    write: (tx: Prisma.TransactionClient) => Promise<void>,
+    keep: readonly LlmPauseReason[] = [],
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const paused = await tx.llmOperation.updateMany({
+        where: { id: operationId, status: 'active' },
+        data: { status: 'paused', pauseReason: reason },
+      });
+      if (paused.count > 0) {
+        await tx.llmTask.updateMany({
+          where: { operationId, status: 'pending' },
+          data: { status: 'cancelled' },
+        });
+      } else {
+        const changed = await tx.llmOperation.updateMany({
+          where: { id: operationId, status: 'paused', ...notIn(keep) },
+          data: { pauseReason: reason },
+        });
+        if (changed.count === 0) return false;
+      }
+      await write(tx);
+      return true;
+    }, TASK_TX_OPTIONS);
   }
 
   /**
@@ -152,16 +211,24 @@ export class LlmTaskService {
   }
 
   /**
-   * «Продолжить» (Р19): операция снова `active`, задача шага вставляется заново. Ключ пары
-   * занят шаговой задачей той же операции (шаг ещё `running`) - успех без второй задачи;
+   * «Продолжить» (Р19): операция снова `active`, задачи шага вставляются заново - все в одной
+   * транзакции (у запуска перевода - по задаче на язык, решение арбитра `F05 | F05-4`). Ключ
+   * пары занят шаговой задачей той же операции (шаг ещё `running`) - успех без второй задачи;
    * задачей повтора куска - 409 `RETRY_IN_PROGRESS`, операция остаётся как была; иным
    * держателем - нарушение инварианта (решение арбитра `F05 | F05-1w`).
+   *
+   * `alongside` - запись вида операции (модели этапов запуска, сброс причин), которая идёт
+   * той же транзакцией после перевода в `active`: отказ «продолжить» откатывает и её.
+   * `refuse` - причины паузы, с которых вид не продолжает (запуск перевода: `DOSSIER_STALE`):
+   * условием в той же записи, а не проверкой снимка до неё - причину мог сменить шаг в полёте.
    */
   async resumeOperation(
     operationId: string,
-    task: EnqueueTaskInput,
+    tasks: readonly EnqueueTaskInput[],
     limitUsd?: Prisma.Decimal,
-  ): Promise<EnqueueResult> {
+    alongside?: (tx: Prisma.TransactionClient) => Promise<void>,
+    refuse: readonly LlmPauseReason[] = [],
+  ): Promise<EnqueueResult[]> {
     return this.prisma.$transaction(async (tx) => {
       // Новый лимит - в той же записи, что и `active`, условием «не ниже потраченного и
       // зарезервированного» (решение арбитра `F05 | F05-2`): проверка до записи - не проверка.
@@ -173,43 +240,51 @@ export class LlmTaskService {
                   "limitUsd" = ${limitUsd.toFixed(8)}::numeric,
                   "updatedAt" = ${utcTimestamp(new Date())}
               WHERE "id" = ${operationId} AND "status" IN ('paused', 'active')
-                AND "spentUsd" + "reservedUsd" <= ${limitUsd.toFixed(8)}::numeric`,
+                AND "spentUsd" + "reservedUsd" <= ${limitUsd.toFixed(8)}::numeric
+                ${refuseSql(refuse)}`,
           }
         : await tx.llmOperation.updateMany({
-            where: { id: operationId, status: { in: ['paused', 'active'] } },
+            where: { id: operationId, status: { in: ['paused', 'active'] }, ...notIn(refuse) },
             data: { status: 'active', pauseReason: null },
           });
       if (resumed.count === 0) {
         const op = limitUsd
           ? await tx.llmOperation.findUnique({
               where: { id: operationId },
-              select: { status: true },
+              select: { status: true, pauseReason: true },
             })
           : null;
         // Операция продолжаема, а запись не прошла по условию лимита: траты выросли после
         // проверки сервиса - тот же отказ, что у проверки.
-        if (op && (op.status === 'paused' || op.status === 'active')) {
+        const refused = op?.pauseReason ? refuse.includes(op.pauseReason) : false;
+        if (op && !refused && (op.status === 'paused' || op.status === 'active')) {
           throw new BadRequestException('limitUsd must not be below spentUsd + reservedUsd');
         }
         throw llmTaskConflict('LLM_OPERATION_NOT_RESUMABLE', 'LLM operation cannot be resumed');
       }
-      const result = await this.enqueue({ ...task, operationId }, tx);
-      if (result.created) return result;
-      if (result.holder.kind === TRANSLATION_RETRY_KIND) {
-        throw llmTaskConflict(
-          'RETRY_IN_PROGRESS',
-          'A chunk retry is in progress for this language',
-        );
-      }
-      if (result.holder.operationId === operationId) return result;
-      this.logger.error(
-        `LLM task pair ${task.pairKey ?? '-'} is held by task ${result.holder.id} ` +
-          `of operation ${result.holder.operationId} (kind ${result.holder.kind})`,
-      );
-      throw new InternalServerErrorException(
-        'LLM task pair is held by a task of another operation',
-      );
+      await alongside?.(tx);
+      const results: EnqueueResult[] = [];
+      for (const task of tasks) results.push(await this.resumeOne(tx, operationId, task));
+      return results;
     }, TASK_TX_OPTIONS);
+  }
+
+  private async resumeOne(
+    tx: Prisma.TransactionClient,
+    operationId: string,
+    task: EnqueueTaskInput,
+  ): Promise<EnqueueResult> {
+    const result = await this.enqueue({ ...task, operationId }, tx);
+    if (result.created) return result;
+    if (result.holder.kind === TRANSLATION_RETRY_KIND) {
+      throw llmTaskConflict('RETRY_IN_PROGRESS', 'A chunk retry is in progress for this language');
+    }
+    if (result.holder.operationId === operationId) return result;
+    this.logger.error(
+      `LLM task pair ${task.pairKey ?? '-'} is held by task ${result.holder.id} ` +
+        `of operation ${result.holder.operationId} (kind ${result.holder.kind})`,
+    );
+    throw new InternalServerErrorException('LLM task pair is held by a task of another operation');
   }
 
   /**
@@ -413,4 +488,17 @@ export class LlmTaskService {
       return true;
     }, TASK_TX_OPTIONS);
   }
+}
+
+/** Причина паузы не из `reasons` (пустая - тоже); пустой список - без условия. */
+function notIn(reasons: readonly LlmPauseReason[]): Prisma.LlmOperationWhereInput {
+  return reasons.length > 0
+    ? { OR: [{ pauseReason: null }, { pauseReason: { notIn: [...reasons] } }] }
+    : {};
+}
+
+/** То же условием сырого SQL; `Prisma.join` на пустом списке дал бы битый SQL - тогда пусто. */
+function refuseSql(reasons: readonly LlmPauseReason[]): Prisma.Sql {
+  if (reasons.length === 0) return Prisma.empty;
+  return Prisma.sql`AND ("pauseReason" IS NULL OR "pauseReason"::text NOT IN (${Prisma.join([...reasons])}))`;
 }

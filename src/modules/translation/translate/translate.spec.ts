@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { LlmBudgetExceededError, LlmError } from '../../llm/llm.errors';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskContext } from '../../llm-worker/llm-task.types';
@@ -6,7 +7,14 @@ import { callShaped } from '../llm-shaped-call';
 import { pickBoundary } from './split.stage';
 import { TRANSLATE_REMARKS } from './translate.constants';
 import { shapeErrors } from '../dossier/dossier.format';
-import { blockText, TRANSLATE_SHAPE, translateBlockErrors } from './translate.format';
+import {
+  blockText,
+  GLOSSARY_FINDING_TERM_MAX,
+  GLOSSARY_FINDINGS_MAX,
+  glossaryFindingsOf,
+  TRANSLATE_SHAPE,
+  translateBlockErrors,
+} from './translate.format';
 import { glossaryFor, lastTranslated, tailOf } from './translate-piece';
 import { translateRequest } from './translate.prompts';
 
@@ -21,6 +29,7 @@ const answer = (json: unknown) => ({
   content: JSON.stringify(json),
   model: 'm/one',
   callId: 'call',
+  costUsd: new Prisma.Decimal('0.01'),
 });
 
 describe('translate answer', () => {
@@ -39,7 +48,8 @@ describe('translate answer', () => {
       ctx,
       { remarks: TRANSLATE_REMARKS, extraErrors: (v) => translateBlockErrors(v, [1, 2]) },
     );
-    expect(result).toEqual({ ok: false });
+    // Отказ несёт стоимость всех трёх ответов (В7).
+    expect(result).toEqual({ ok: false, costUsd: new Prisma.Decimal('0.03') });
     // Первая попытка и два повтора с замечанием о недостающем блоке.
     expect(llm.callStage).toHaveBeenCalledTimes(3);
     const remark = (llm.callStage.mock.calls[1][2] as Array<{ content: string }>).at(-1);
@@ -235,5 +245,49 @@ describe('pickBoundary (split stage)', () => {
     await expect(
       pickBoundary(llm as unknown as LlmService, 'op', window, ctx),
     ).rejects.toBeInstanceOf(LlmBudgetExceededError);
+  });
+});
+
+describe('glossary findings of a translation answer (F05-4)', () => {
+  it('takes only findings with both spellings from the answer', () => {
+    expect(
+      glossaryFindingsOf({
+        blocks: [],
+        glossaryFindings: [
+          { source: ' Town ', target: 'Pueblo', kind: 'place' },
+          { source: 'River', target: '' },
+          { source: 3, target: 'x' },
+          'junk',
+          null,
+        ],
+      }),
+    ).toEqual([{ source: 'Town', target: 'Pueblo', kind: 'place', note: '' }]);
+    expect(glossaryFindingsOf({ blocks: [] })).toEqual([]);
+  });
+
+  it('drops overlong findings and keeps at most the limit; no answer - no findings', () => {
+    const long = 'x'.repeat(GLOSSARY_FINDING_TERM_MAX + 1);
+    const many = Array.from({ length: GLOSSARY_FINDINGS_MAX + 5 }, (_, i) => ({
+      source: `Term${i}`,
+      target: `t${i}`,
+    }));
+    expect(glossaryFindingsOf({ glossaryFindings: [{ source: long, target: 'x' }] })).toEqual([]);
+    expect(glossaryFindingsOf({ glossaryFindings: many })).toHaveLength(GLOSSARY_FINDINGS_MAX);
+    expect(glossaryFindingsOf(null)).toEqual([]);
+    // Одна-две буквы - не термин: подстрокой нашлись бы в каждом куске.
+    expect(glossaryFindingsOf({ glossaryFindings: [{ source: 'an', target: 'un' }] })).toEqual([]);
+    expect(glossaryFindingsOf({ glossaryFindings: [{ source: 'I', target: 'Yo' }] })).toEqual([]);
+    // Имя из двух букв - герой, а не служебное слово: в глоссарий кусков оно идёт только там,
+    // где встречено целым словом.
+    const glossary = {
+      entries: [{ key: 'found:li', source: 'Li', target: 'Ли' }],
+      address: [],
+      phrases: [],
+    };
+    expect(glossaryFor(glossary, {}, 'she would like a little tea').entries).toEqual([]);
+    expect(glossaryFor(glossary, {}, 'and li smiled').entries).toHaveLength(1);
+    expect(
+      glossaryFindingsOf({ glossaryFindings: [{ source: 'Li', target: 'Ли', kind: 'name' }] }),
+    ).toEqual([{ source: 'Li', target: 'Ли', kind: 'name', note: '' }]);
   });
 });

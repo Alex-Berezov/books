@@ -86,6 +86,7 @@ model BookVersion {
   dossiers        BookDossier[]
   /// Сравнения моделей на главе этой версии (F05-3).
   translationCompares TranslationCompare[]
+  translationRuns     TranslationRun[]
   chapters        Chapter[]
   audioChapters   AudioChapter[]
   bookshelf       Bookshelf[]
@@ -4099,9 +4100,16 @@ model LlmOperation {
   glossaries       BookGlossary[]
   /// Сравнение моделей, которое ведёт эта операция (F05-3, вид `compare`).
   translationCompare TranslationCompare?
+  /// Запуск перевода, который ведёт эта операция (F05-4, вид `translation_run`).
+  translationRun     TranslationRun?    @relation("TranslationRunOperation")
+  /// Запуск, ради которого заведена операция (досье, глоссарий, повтор куска) - для отчёта
+  /// и истории (F05-4); у операции самого запуска тоже.
+  translationRunId   String?
+  forTranslationRun  TranslationRun?    @relation("LlmOperationTranslationRun", fields: [translationRunId], references: [id], onDelete: SetNull)
 
   @@index([status])
   @@index([bookVersionId])
+  @@index([translationRunId])
 }
 
 /// Общий потолок расходов - одна строка `id = 1`, создаётся миграцией (решение арбитра
@@ -4237,6 +4245,7 @@ model BookDossier {
   updatedAt       DateTime          @updatedAt
   parts           BookDossierPart[]
   glossaries      BookGlossary[]
+  translationRuns TranslationRun[]
 
   @@unique([bookId, sourceVersionId, generation])
   @@index([sourceVersionId, generation])
@@ -4279,6 +4288,8 @@ model BookGlossary {
   takeovers   Int               @default(0)
   createdAt   DateTime          @default(now())
   updatedAt   DateTime          @updatedAt
+
+  runLanguages TranslationRunLanguage[]
 
   @@unique([dossierId, language])
   @@index([operationId])
@@ -4359,4 +4370,126 @@ model TranslationCompareChunk {
   createdAt      DateTime                @default(now())
 
   @@unique([compareModelId, chunkIndex])
+}
+
+enum TranslationRunLanguageStatus {
+  pending
+  running
+  done
+  failed
+  cancelled
+}
+
+enum TranslationChunkStatus {
+  pending
+  translated
+  checked
+  done
+  flagged
+}
+
+/// Запуск перевода (F05-4): исходник, языки и операция `translation_run`. Ход и пауза - только
+/// `LlmOperation.status`/`pauseReason` (`F05-1w`, шаг 7), своего статуса паузы у запуска нет.
+/// Шаг - задача исполнителя на пару «операция, язык», по куску за шаг (Р1).
+model TranslationRun {
+  id                 String                   @id @default(uuid())
+  operationId        String                   @unique
+  operation          LlmOperation             @relation("TranslationRunOperation", fields: [operationId], references: [id], onDelete: Restrict)
+  /// Исходник по D8, с которого переводят. Cascade, как у всех производных от версии (В7).
+  bookVersionId      String
+  bookVersion        BookVersion              @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+  /// Язык исходника на старте: шаги переводят с него, а не перечитывают его по ходу.
+  sourceLanguage     Language
+  /// Досье, с которым переводят (Р18); пусто, пока не готово. `NoAction`, а не `Restrict` из В7
+  /// (решение арбитра `F05 | F05-4a`, В2): досье под запуском не удалить, но версия-исходник
+  /// удаляется вместе с обоими - проверка в конце оператора, а не на первой каскадной строке.
+  /// Не «чинить» на `Restrict`: каскадное удаление версии с запуском упадёт.
+  dossierId          String?
+  dossier            BookDossier?             @relation(fields: [dossierId], references: [id], onDelete: NoAction)
+  /// Отпечаток исходника у досье на привязке: текущий другой - пауза `DOSSIER_STALE` (Р13).
+  dossierFingerprint String?
+  /// Модели этапов поверх снимка операции `{ "<этап>": "<модель>" }` - «продолжить» с
+  /// `stageModels` после `NO_COMPLIANT_PROVIDER`; модель отсюда зовётся одна, без запасных.
+  /// Снимок настроек и автор запуска - `LlmOperation.settingsSnapshot`/`createdById` его
+  /// операции: шаги берут модели этапов оттуда (решение арбитра `F05 | F05-4a`, В1).
+  stageModels        Json                     @default("{}")
+  createdAt          DateTime                 @default(now())
+  updatedAt          DateTime                 @updatedAt
+  languages          TranslationRunLanguage[]
+  /// Операции, заведённые ради запуска (`LlmOperation.translationRunId`).
+  operations         LlmOperation[]           @relation("LlmOperationTranslationRun")
+
+  @@index([bookVersionId, createdAt])
+  @@index([dossierId])
+}
+
+/// Язык запуска: глоссарий, которым переводят, и где язык сейчас. Главы и куски идут строго
+/// по порядку (`tech.md` §2): находки куска N в глоссарии до куска N+1.
+model TranslationRunLanguage {
+  id                   String                       @id @default(uuid())
+  runId                String
+  run                  TranslationRun               @relation(fields: [runId], references: [id], onDelete: Cascade)
+  language             Language
+  /// Глоссарий пары (досье, язык); пусто, пока не готов. `NoAction` - как у досье запуска (В2).
+  glossaryId           String?
+  glossary             BookGlossary?                @relation(fields: [glossaryId], references: [id], onDelete: NoAction)
+  status               TranslationRunLanguageStatus @default(pending)
+  /// Код последней остановки шага языка (причина паузы операции, отказ шага); «продолжить»
+  /// очищает.
+  reason               String?
+  /// Модели, которые отказали все (`NO_COMPLIANT_PROVIDER`, Р7, В4); «продолжить» очищает.
+  reasonModels         String[]
+  /// Глава читалки, которую язык переводит; пусто до первой.
+  chapterNumber        Int?
+  /// Выборы модели `split` по спорным стыкам текущей главы `{ "<первый кандидат>": блок }`.
+  splitPicks           Json                         @default("{}")
+  /// Строка досье или глоссария, которую шаг ждал прошлым шагом (`DossierWaiter.waitingFor`).
+  waitingFor           String?
+  /// Операция досье или глоссария на паузе, из-за которой стоит запуск (`DOSSIER_PAUSED`).
+  blockedByOperationId String?
+  /// Кусков с флагом (`F05-5`).
+  flaggedChunks        Int                          @default(0)
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
+  chunks               TranslationChunk[]
+
+  @@unique([runId, language])
+  @@index([glossaryId])
+}
+
+/// Кусок главы языка запуска. Ответ модели пишется до смены статуса: повтор шага после падения
+/// находит его сохранённым и модель не зовёт (`tech.md` §5). Аренды на куске нет - она у задачи.
+/// Стоимость - `costUsd` шага; `callId` - последний вызов, давший ответ.
+model TranslationChunk {
+  id                 String                 @id @default(uuid())
+  runLanguageId      String
+  runLanguage        TranslationRunLanguage @relation(fields: [runLanguageId], references: [id], onDelete: Cascade)
+  chapterNumber      Int
+  /// Порядок куска в главе с 0.
+  chunkIndex         Int
+  firstBlock         Int
+  lastBlock          Int
+  words              Int
+  /// sha256 текста главы при нарезке: глава поменялась - куски уже не те (`DOSSIER_STALE`).
+  chapterFingerprint String
+  status             TranslationChunkStatus @default(pending)
+  /// Ответ модели по форме как пришёл: блоки и находки глоссария.
+  rawResponse        Json?
+  /// `[{ n, text }]` - перевод блоков после белого списка разметки.
+  blocks             Json?
+  /// Шагов перевода куска, дошедших до вызова модели.
+  attempts           Int                    @default(0)
+  /// Вердикт проверки (`F05-5`); пусто - кусок не проверен.
+  verdict            Json?
+  flagReason         String?
+  /// Модель, давшая ответ.
+  model              String?
+  callId             String?
+  /// Факт всех ответов шага перевода, с повторами по замечанию (В7); попытка, оборвавшаяся
+  /// ошибкой без разобранного ответа, не входит.
+  costUsd            Decimal?               @db.Decimal(14, 8)
+  createdAt          DateTime               @default(now())
+  updatedAt          DateTime               @updatedAt
+
+  @@unique([runLanguageId, chapterNumber, chunkIndex])
 }

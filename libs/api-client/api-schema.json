@@ -19115,6 +19115,25 @@
         },
         "type": "object"
       },
+      "ResumeTranslationRunDto": {
+        "properties": {
+          "limitUsd": {
+            "description": "New operation limit; not below spent + reserved. Omitted - the limit stays",
+            "example": "100",
+            "format": "decimal",
+            "type": "string"
+          },
+          "stageModels": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunStageModelsDto"
+              }
+            ],
+            "description": "Stage models of this run over its snapshot, one model without fallbacks: the way out of NO_COMPLIANT_PROVIDER"
+          }
+        },
+        "type": "object"
+      },
       "ReviewChainDiffDto": {
         "properties": {
           "changedCountryCount": {
@@ -25930,6 +25949,180 @@
           "cancelled"
         ],
         "type": "string"
+      },
+      "TranslationRunDto": {
+        "properties": {
+          "bookVersionId": {
+            "description": "Translation source version",
+            "format": "uuid",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "dossierId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationRunLanguageDto"
+            },
+            "type": "array"
+          },
+          "operation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationDto"
+              }
+            ],
+            "description": "Progress and pause live here: status, pauseReason, spent and limit"
+          },
+          "sourceLanguage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "stageModels": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunStageModelsDto"
+              }
+            ],
+            "description": "Stage models of this run over its snapshot"
+          }
+        },
+        "required": [
+          "id",
+          "bookVersionId",
+          "sourceLanguage",
+          "dossierId",
+          "stageModels",
+          "operation",
+          "languages",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "TranslationRunLanguageDto": {
+        "properties": {
+          "blockedByOperationId": {
+            "description": "Paused dossier or glossary operation this language waits for (DOSSIER_PAUSED)",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "chapterNumber": {
+            "description": "Reader chapter being translated",
+            "nullable": true,
+            "type": "number"
+          },
+          "chapterPosition": {
+            "description": "«Chapter N of M»: N, from 1",
+            "nullable": true,
+            "type": "number"
+          },
+          "chaptersTotal": {
+            "description": "«Chapter N of M»: M",
+            "type": "number"
+          },
+          "chunksDone": {
+            "description": "Closed pieces of the current chapter",
+            "type": "number"
+          },
+          "chunksTotal": {
+            "description": "Pieces of the current chapter; 0 before its split",
+            "type": "number"
+          },
+          "flaggedChunks": {
+            "type": "number"
+          },
+          "glossaryId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "reason": {
+            "description": "Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE...)",
+            "nullable": true,
+            "type": "string"
+          },
+          "reasonModels": {
+            "description": "Models that all refused by the data policy (NO_COMPLIANT_PROVIDER): pick another one in stageModels; empty otherwise",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "stage": {
+            "enum": [
+              "dossier",
+              "glossary",
+              "translate",
+              "done",
+              "failed",
+              "cancelled"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunLanguageStatus"
+              }
+            ]
+          }
+        },
+        "required": [
+          "language",
+          "status",
+          "stage",
+          "reason",
+          "reasonModels",
+          "chapterNumber",
+          "chapterPosition",
+          "chaptersTotal",
+          "chunksDone",
+          "chunksTotal",
+          "flaggedChunks",
+          "glossaryId",
+          "blockedByOperationId"
+        ],
+        "type": "object"
+      },
+      "TranslationRunLanguageStatus": {
+        "enum": [
+          "pending",
+          "running",
+          "done",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "TranslationRunStageModelsDto": {
+        "properties": {
+          "translate": {
+            "example": "anthropic/claude-sonnet-5.5",
+            "type": "string"
+          }
+        },
+        "type": "object"
       },
       "TranslationSourceDto": {
         "properties": {
@@ -37277,6 +37470,191 @@
           }
         ],
         "summary": "Model comparison: the original chapter and a column per model with its text, cost, tokens, duration and error",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/translation-runs/{id}": {
+      "get": {
+        "operationId": "TranslationController_getRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationRunDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Translation run not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Translation run progress by language: stage, chapter N of M, pieces, flags, pause reason; spent and limit in its operation",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/translation-runs/{id}/cancel": {
+      "post": {
+        "operationId": "TranslationController_cancelRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationRunDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Translation run not found"
+          },
+          "409": {
+            "description": "LLM_OPERATION_NOT_CANCELLABLE: already finished"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cancel a translation run: unfinished languages stop and the run spends nothing more; translated pieces stay. Dossier and glossary operations started for it run on their own limit and are cancelled separately",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/translation-runs/{id}/pause": {
+      "post": {
+        "operationId": "TranslationController_pauseRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationRunDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Translation run not found"
+          },
+          "409": {
+            "description": "TRANSLATION_RUN_NOT_PAUSABLE: not running"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Pause a running translation: the step in progress finishes, nothing more starts. Dossier and glossary operations started for it are not paused",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/translation-runs/{id}/resume": {
+      "post": {
+        "operationId": "TranslationController_resumeRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeTranslationRunDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationRunDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "limitUsd below spent + reserved; LLM_MODEL_UNKNOWN; a stage that cannot be changed"
+          },
+          "404": {
+            "description": "Translation run not found"
+          },
+          "409": {
+            "description": "LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          },
+          "503": {
+            "description": "LLM_DISABLED: no OpenRouter key"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resume a paused translation run on every unfinished language, optionally with a new limit and stage models",
         "tags": [
           "admin"
         ]

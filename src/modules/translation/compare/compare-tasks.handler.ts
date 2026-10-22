@@ -1,4 +1,4 @@
-import { HttpException, Injectable } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import {
   LlmOperation,
   LlmTask,
@@ -15,52 +15,31 @@ import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.reg
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
 import { assembleChapter, ChapterLayout, splitChapter } from '../chapter-blocks';
-import {
-  ChapterChunk,
-  ContestedWindow,
-  fallbackBoundary,
-  planChunks,
-} from '../chunking/chapter-chunks';
-import { Demand, DossierService } from '../dossier/dossier.service';
-import { callShaped, ShapedAnswer } from '../llm-shaped-call';
+import { ChapterChunk, nextSplit } from '../chunking/chapter-chunks';
+import { demandContext } from '../dossier/context-demand';
+import { DossierService } from '../dossier/dossier.service';
+import { BUDGET_PAUSE_BY_FAILURE } from '../pause-by-failure';
+import { chapterFingerprint } from '../source-fingerprint';
 import { pickBoundary } from '../translate/split.stage';
-import { TRANSLATE_REMARKS, TRANSLATE_STAGE } from '../translate/translate.constants';
-import {
-  blockText,
-  cleanedBlockErrors,
-  TranslatedBlock,
-  TRANSLATE_SHAPE,
-  translateBlockErrors,
-} from '../translate/translate.format';
+import { TranslatedBlock } from '../translate/translate.format';
 import { lastTranslated, pieceInput, tailOf } from '../translate/translate-piece';
-import { translateRequest } from '../translate/translate.prompts';
+import { PieceTranslation, translatePiece } from '../translate/translate-step';
 import {
   COMPARE_CHAPTER_CHANGED,
   COMPARE_CHAPTER_TOO_LONG,
   COMPARE_INVALID_RESPONSE,
   COMPARE_MODEL_ERRORS,
-  COMPARE_PAUSE_BY_FAILURE,
   COMPARE_TOO_LONG,
 } from './compare.constants';
-import { chapterFingerprint, compareTaskInput } from './compare.service';
+import { compareTaskInput } from './compare.service';
 
 type CompareRow = TranslationCompare & { models: TranslationCompareModel[] };
 
 const UNFINISHED = ['queued', 'running'] as const;
 
-/** Отказы `demandDossier`/`demandGlossary` «изменено одновременно, повторить»: ожидание, не пауза. */
-const CONTEXT_RETRY_CODES = new Set(['DOSSIER_BUSY', 'GLOSSARY_BUSY']);
-
 function compareIdOf(task: LlmTask): string | null {
   const id = (task.payload as Record<string, unknown> | null)?.compareId;
   return typeof id === 'string' ? id : null;
-}
-
-/** Код отказа ручки досье (409/503 с `code` в теле), которым шаг ставит свою операцию на паузу. */
-function httpCode(error: HttpException): string {
-  const body = error.getResponse();
-  const code = typeof body === 'object' && body !== null ? (body as { code?: unknown }).code : null;
-  return typeof code === 'string' && code ? code : `HTTP_${error.getStatus()}`;
 }
 
 /**
@@ -87,12 +66,12 @@ export class CompareTasksHandler implements LlmOperationKindHandler {
     onFailed: (task, reason) => this.onFailed(task, reason),
   };
 
-  async resumeTask(op: LlmOperation): Promise<EnqueueTaskInput | null> {
+  async resumeTasks(op: LlmOperation): Promise<EnqueueTaskInput[]> {
     const row = await this.prisma.translationCompare.findUnique({
       where: { operationId: op.id },
       select: { id: true, bookVersionId: true, language: true },
     });
-    return row ? compareTaskInput(row.id, row.bookVersionId, row.language, op.id) : null;
+    return row ? [compareTaskInput(row.id, row.bookVersionId, row.language, op.id)] : [];
   }
 
   /** Отменённое сравнение: недоделанные колонки `cancelled` в той же транзакции. */
@@ -187,48 +166,23 @@ export class CompareTasksHandler implements LlmOperationKindHandler {
       chapterNumber: row.chapterNumber,
       previousTail: previous ? tailOf(previous) : null,
     });
-    const expected = input.blocks.map((b) => b.n);
-    // Кусок без переводимых блоков (только `hr` и картинки без подписей): модель не зовётся.
-    if (expected.length === 0) return this.saveChunk(current, index, [], null, ctx);
-    const request = translateRequest(input);
-    const fit = await this.llm.stageFit(TRANSLATE_STAGE, request, current.model);
-    if (!fit.fits) return this.failModel(current, COMPARE_TOO_LONG);
-
-    const kinds = new Map(layout.blocks.map((b) => [b.n, b]));
-    let answer: ShapedAnswer;
+    let piece: PieceTranslation;
     try {
-      answer = await callShaped(
-        this.llm,
-        row.operationId,
-        TRANSLATE_STAGE,
-        request,
-        TRANSLATE_SHAPE,
-        ctx,
-        {
-          remarks: TRANSLATE_REMARKS,
-          model: current.model,
-          extraErrors: (value) => {
-            const numbers = translateBlockErrors(value, expected);
-            return numbers.length > 0 ? numbers : cleanedBlockErrors(value, kinds);
-          },
-        },
-      );
+      piece = await translatePiece(this.llm, row.operationId, input, layout, ctx, {
+        model: current.model,
+      });
     } catch (error) {
       if (error instanceof LlmError && COMPARE_MODEL_ERRORS.has(error.code)) {
         return this.failModel(current, error.code);
       }
       throw error;
     }
-    if (!answer.ok) return this.failModel(current, COMPARE_INVALID_RESPONSE);
-
-    // Только `n` и `text` блоков куска: прочее в ответе не хранится.
-    const blocks = (answer.value as { blocks: TranslatedBlock[] }).blocks
-      .filter((b) => expected.includes(b.n))
-      .map((b) => ({
-        n: b.n,
-        text: blockText(kinds.get(b.n) ?? { kind: 'p' as const, html: '' }, b.text),
-      }));
-    return this.saveChunk(current, index, blocks, answer.callId, ctx);
+    // Кусок без переводимых блоков (только `hr` и картинки без подписей): модель не звалась.
+    if (piece.kind === 'empty') return this.saveChunk(current, index, [], null, ctx);
+    if (piece.kind === 'too_long') return this.failModel(current, COMPARE_TOO_LONG);
+    if (piece.kind === 'invalid') return this.failModel(current, COMPARE_INVALID_RESPONSE);
+    // Находки глоссария сравнение не пишет (С2): хранятся только блоки.
+    return this.saveChunk(current, index, piece.blocks, piece.callId, ctx);
   }
 
   private async saveChunk(
@@ -264,17 +218,9 @@ export class CompareTasksHandler implements LlmOperationKindHandler {
     ctx: LlmTaskContext,
   ): Promise<LlmTaskStepResult> {
     const picks = { ...((row.splitPicks ?? {}) as Record<string, number>) };
-    let open: { key: string; window: ContestedWindow } | null = null;
-    const chunks = await planChunks(layout, (window) => {
-      const key = String(window.candidates[0].block);
-      if (key in picks) return Promise.resolve(picks[key]);
-      open ??= { key, window };
-      // Дальше по главе этот проход не пишется: стык выбирается моделью следующим шагом.
-      return Promise.resolve(fallbackBoundary(window));
-    });
-    const pending = open as { key: string; window: ContestedWindow } | null;
-    if (pending) {
-      picks[pending.key] = await pickBoundary(this.llm, row.operationId, pending.window, ctx);
+    const split = await nextSplit(layout, picks);
+    if ('open' in split) {
+      picks[split.open.key] = await pickBoundary(this.llm, row.operationId, split.open.window, ctx);
       await ctx.renewLease();
       await this.prisma.translationCompare.update({
         where: { id: row.id },
@@ -285,7 +231,7 @@ export class CompareTasksHandler implements LlmOperationKindHandler {
     await ctx.renewLease();
     await this.prisma.translationCompare.update({
       where: { id: row.id },
-      data: { chunks: chunks as unknown as Prisma.InputJsonValue },
+      data: { chunks: split.chunks as unknown as Prisma.InputJsonValue },
     });
     return { kind: 'continue' };
   }
@@ -340,47 +286,45 @@ export class CompareTasksHandler implements LlmOperationKindHandler {
    * с кодом в задаче, а не безымянный `STEP_ERROR`.
    */
   private async awaitContext(row: CompareRow): Promise<LlmTaskStepResult> {
-    const options = { waiter: { operationId: row.operationId, waitingFor: row.waitingFor } };
-    try {
-      const dossier = await this.dossiers.demandDossier(row.bookVersionId, options);
-      if (dossier.status !== 'ready') return await this.notReady(row, dossier, 'DOSSIER_BUILDING');
-      const glossary = await this.dossiers.demandGlossary(dossier.row.id, row.language, options);
-      if (glossary.status !== 'ready')
-        return await this.notReady(row, glossary, 'GLOSSARY_BUILDING');
-      await this.prisma.translationCompare.update({
-        where: { id: row.id },
-        data: { dossierId: dossier.row.id, glossaryId: glossary.row.id, waitingFor: null },
-      });
-      return { kind: 'continue' };
-    } catch (error) {
-      if (!(error instanceof HttpException)) throw error;
-      const code = httpCode(error);
+    const context = await demandContext(this.dossiers, this.tasks, {
+      versionId: row.bookVersionId,
+      language: row.language,
+      operationId: row.operationId,
+      waitingFor: row.waitingFor,
+    });
+    switch (context.kind) {
+      case 'ready':
+        await this.prisma.translationCompare.update({
+          where: { id: row.id },
+          data: {
+            dossierId: context.dossier.id,
+            glossaryId: context.glossary.id,
+            waitingFor: null,
+          },
+        });
+        return { kind: 'continue' };
+      case 'wait':
+        if (row.waitingFor !== context.waitingFor) {
+          await this.prisma.translationCompare.update({
+            where: { id: row.id },
+            data: { waitingFor: context.waitingFor },
+          });
+        }
+        return { kind: 'wait', reason: context.reason };
+      case 'stopped':
+        return { kind: 'continue' };
       // Строку меняли одновременно - «повторить позже», а не отказ: шаг ждёт и перепроверит.
-      if (CONTEXT_RETRY_CODES.has(code)) return { kind: 'wait', reason: code };
-      await this.tasks.pauseOperation(row.operationId, 'STEP_FAILED');
-      return { kind: 'fail', reason: code };
+      case 'retry':
+        return { kind: 'wait', reason: context.code };
+      case 'failed':
+        return { kind: 'fail', reason: context.code };
     }
-  }
-
-  private async notReady<Row extends { id: string }>(
-    row: CompareRow,
-    demand: Exclude<Demand<Row>, { status: 'ready' }>,
-    reason: string,
-  ): Promise<LlmTaskStepResult> {
-    if (demand.status !== 'wait') return { kind: 'continue' };
-    if (row.waitingFor !== demand.row.id) {
-      await this.prisma.translationCompare.update({
-        where: { id: row.id },
-        data: { waitingFor: demand.row.id },
-      });
-    }
-    return { kind: 'wait', reason };
   }
 
   private async onFailed(task: LlmTask, reason: string): Promise<void> {
     await this.tasks.pauseOperation(
       task.operationId,
-      COMPARE_PAUSE_BY_FAILURE[reason] ?? 'STEP_FAILED',
+      BUDGET_PAUSE_BY_FAILURE[reason] ?? 'STEP_FAILED',
     );
   }
 }

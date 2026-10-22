@@ -830,7 +830,13 @@ describe('Translation source and dossier (e2e)', () => {
       await expect(
         tasks.resumeOperation(
           opId,
-          { kind: DOSSIER_TASK_KIND, operationId: opId, payload: { dossierId: rowOf(started).id } },
+          [
+            {
+              kind: DOSSIER_TASK_KIND,
+              operationId: opId,
+              payload: { dossierId: rowOf(started).id },
+            },
+          ],
           new Prisma.Decimal('0.4'),
         ),
       ).rejects.toMatchObject({ status: 400 });

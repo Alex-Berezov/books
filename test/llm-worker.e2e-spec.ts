@@ -386,11 +386,13 @@ describe('LLM worker (e2e)', () => {
       const claimed = (await tasks.claim([KIND], 'owner')) as LlmTask;
       await tasks.pauseOperation(op.id, 'LIMIT_REACHED');
 
-      const resumed = await tasks.resumeOperation(op.id, {
-        kind: KIND,
-        operationId: op.id,
-        pairKey,
-      });
+      const [resumed] = await tasks.resumeOperation(op.id, [
+        {
+          kind: KIND,
+          operationId: op.id,
+          pairKey,
+        },
+      ]);
 
       expect(resumed).toMatchObject({ created: false, holder: { id: task.id } });
       expect(await prisma.llmTask.count({ where: { pairKey } })).toBe(1);
@@ -456,11 +458,13 @@ describe('LLM worker (e2e)', () => {
       await created(op.id, pairKey);
       await tasks.pauseOperation(op.id, 'LIMIT_REACHED');
 
-      const resumed = await tasks.resumeOperation(op.id, {
-        kind: KIND,
-        operationId: op.id,
-        pairKey,
-      });
+      const [resumed] = await tasks.resumeOperation(op.id, [
+        {
+          kind: KIND,
+          operationId: op.id,
+          pairKey,
+        },
+      ]);
 
       expect(resumed.created).toBe(true);
       expect(await prisma.llmTask.count({ where: { pairKey, status: 'pending' } })).toBe(1);
@@ -472,11 +476,111 @@ describe('LLM worker (e2e)', () => {
       await enqueue(op.id, { kind: TRANSLATION_RETRY_KIND, pairKey });
 
       await expect(
-        tasks.resumeOperation(op.id, { kind: KIND, operationId: op.id, pairKey }),
+        tasks.resumeOperation(op.id, [{ kind: KIND, operationId: op.id, pairKey }]),
       ).rejects.toMatchObject({ status: 409, response: { code: 'RETRY_IN_PROGRESS' } });
       expect((await prisma.llmOperation.findUniqueOrThrow({ where: { id: op.id } })).status).toBe(
         'paused',
       );
+    });
+
+    it('resume of several pairs is one transaction: a retry on the second pair leaves no task for the first', async () => {
+      const op = await operation('paused');
+      const first = pairKeyOf(op.id, 'es');
+      const second = pairKeyOf(op.id, 'fr');
+      await enqueue(op.id, { kind: TRANSLATION_RETRY_KIND, pairKey: second });
+
+      await expect(
+        tasks.resumeOperation(op.id, [
+          { kind: KIND, operationId: op.id, pairKey: first },
+          { kind: KIND, operationId: op.id, pairKey: second },
+        ]),
+      ).rejects.toMatchObject({ status: 409, response: { code: 'RETRY_IN_PROGRESS' } });
+      expect(await prisma.llmTask.count({ where: { pairKey: first } })).toBe(0);
+      expect((await prisma.llmOperation.findUniqueOrThrow({ where: { id: op.id } })).status).toBe(
+        'paused',
+      );
+    });
+
+    it('resume refuses a pause reason of the kind in the same write: no task, the pause stays', async () => {
+      const op = await operation('paused');
+      await prisma.llmOperation.update({
+        where: { id: op.id },
+        data: { pauseReason: 'DOSSIER_STALE' },
+      });
+      const pairKey = pairKeyOf(op.id, 'es');
+
+      await expect(
+        tasks.resumeOperation(
+          op.id,
+          [{ kind: KIND, operationId: op.id, pairKey }],
+          undefined,
+          undefined,
+          ['DOSSIER_STALE'],
+        ),
+      ).rejects.toMatchObject({ status: 409, response: { code: 'LLM_OPERATION_NOT_RESUMABLE' } });
+      await expect(
+        tasks.resumeOperation(
+          op.id,
+          [{ kind: KIND, operationId: op.id, pairKey }],
+          new Prisma.Decimal(10),
+          undefined,
+          ['DOSSIER_STALE'],
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(await prisma.llmOperation.findUniqueOrThrow({ where: { id: op.id } })).toMatchObject({
+        status: 'paused',
+        pauseReason: 'DOSSIER_STALE',
+      });
+      expect(await prisma.llmTask.count({ where: { pairKey } })).toBe(0);
+    });
+
+    it('a stop found by a step: pauses an active operation, re-reasons a paused one except kept reasons, writes nothing to a cancelled one', async () => {
+      const writes: string[] = [];
+      const write = (tag: string) => () => {
+        writes.push(tag);
+        return Promise.resolve();
+      };
+      const active = await operation();
+      await enqueue(active.id);
+      expect(await tasks.stopOrRepause(active.id, 'STEP_FAILED', write('active'))).toBe(true);
+      expect(
+        await prisma.llmOperation.findUniqueOrThrow({ where: { id: active.id } }),
+      ).toMatchObject({
+        status: 'paused',
+        pauseReason: 'STEP_FAILED',
+      });
+      expect(
+        await prisma.llmTask.count({ where: { operationId: active.id, status: 'pending' } }),
+      ).toBe(0);
+
+      const stale = await operation('paused');
+      await prisma.llmOperation.update({
+        where: { id: stale.id },
+        data: { pauseReason: 'DOSSIER_STALE' },
+      });
+      expect(
+        await tasks.stopOrRepause(stale.id, 'NO_COMPLIANT_PROVIDER', write('stale'), [
+          'DOSSIER_STALE',
+        ]),
+      ).toBe(false);
+      expect(
+        (await prisma.llmOperation.findUniqueOrThrow({ where: { id: stale.id } })).pauseReason,
+      ).toBe('DOSSIER_STALE');
+
+      const button = await operation('paused');
+      expect(await tasks.stopOrRepause(button.id, 'NO_COMPLIANT_PROVIDER', write('button'))).toBe(
+        true,
+      );
+      expect(
+        (await prisma.llmOperation.findUniqueOrThrow({ where: { id: button.id } })).pauseReason,
+      ).toBe('NO_COMPLIANT_PROVIDER');
+
+      const cancelled = await operation();
+      await tasks.cancelOperation(cancelled.id);
+      expect(await tasks.stopOrRepause(cancelled.id, 'DOSSIER_STALE', write('cancelled'))).toBe(
+        false,
+      );
+      expect(writes).toEqual(['active', 'button']);
     });
 
     it('a pair held by a task of another operation is an invariant breach, not a success', async () => {
@@ -486,7 +590,7 @@ describe('LLM worker (e2e)', () => {
       await created(other.id, pairKey);
 
       await expect(
-        tasks.resumeOperation(op.id, { kind: KIND, operationId: op.id, pairKey }),
+        tasks.resumeOperation(op.id, [{ kind: KIND, operationId: op.id, pairKey }]),
       ).rejects.toMatchObject({ status: 500 });
       expect((await prisma.llmOperation.findUniqueOrThrow({ where: { id: op.id } })).status).toBe(
         'paused',
@@ -602,7 +706,7 @@ describe('LLM worker (e2e)', () => {
       const op = await operation();
       await tasks.cancelOperation(op.id);
       await expect(
-        tasks.resumeOperation(op.id, { kind: KIND, operationId: op.id }),
+        tasks.resumeOperation(op.id, [{ kind: KIND, operationId: op.id }]),
       ).rejects.toMatchObject({ status: 409, response: { code: 'LLM_OPERATION_NOT_RESUMABLE' } });
     });
   });

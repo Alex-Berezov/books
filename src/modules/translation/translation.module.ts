@@ -14,15 +14,19 @@ import {
 } from './dossier/dossier.constants';
 import { DossierService } from './dossier/dossier.service';
 import { DossierTasksHandler } from './dossier/dossier-tasks.handler';
+import { TRANSLATION_RUN_TASK_KIND } from './run/translation-run.constants';
+import { TranslationRunService } from './run/translation-run.service';
+import { TranslationRunTasksHandler } from './run/translation-run-tasks.handler';
 import { TranslationController } from './translation.controller';
 import { TranslationSourceService } from './translation-source.service';
 import { TRANSLATE_STAGE_DEFINITIONS } from './translate/translate.constants';
 
 /**
  * Автоперевод книги (F05): исходник по D8, блоки главы, отпечаток текста, досье и глоссарий
- * (`F05-2`), нарезка, перевод куска и сравнение моделей на главе (`F05-3`). Этапы, виды задач
- * и виды операций `dossier` и `compare` регистрируются здесь: исполнитель стартует
- * в `onApplicationBootstrap`, после этого `onModuleInit`.
+ * (`F05-2`), нарезка, перевод куска и сравнение моделей на главе (`F05-3`), шаги запуска
+ * перевода по языкам (`F05-4`). Этапы, виды задач и виды операций `dossier`, `compare`
+ * и `translation_run` регистрируются здесь: исполнитель стартует в `onApplicationBootstrap`,
+ * после этого `onModuleInit`.
  */
 @Module({
   imports: [LlmModule, LlmWorkerModule],
@@ -33,6 +37,8 @@ import { TRANSLATE_STAGE_DEFINITIONS } from './translate/translate.constants';
     DossierTasksHandler,
     TranslationCompareService,
     CompareTasksHandler,
+    TranslationRunService,
+    TranslationRunTasksHandler,
   ],
 })
 export class TranslationModule implements OnModuleInit {
@@ -42,6 +48,7 @@ export class TranslationModule implements OnModuleInit {
     private readonly kinds: LlmOperationKindRegistry,
     private readonly dossierTasks: DossierTasksHandler,
     private readonly compareTasks: CompareTasksHandler,
+    private readonly runTasks: TranslationRunTasksHandler,
   ) {}
 
   onModuleInit(): void {
@@ -52,5 +59,7 @@ export class TranslationModule implements OnModuleInit {
     for (const definition of TRANSLATE_STAGE_DEFINITIONS) this.stages.register(definition);
     this.handlers.register(COMPARE_TASK_KIND, this.compareTasks.handler);
     this.kinds.register('compare', this.compareTasks);
+    this.handlers.register(TRANSLATION_RUN_TASK_KIND, this.runTasks.handler);
+    this.kinds.register('translation_run', this.runTasks);
   }
 }

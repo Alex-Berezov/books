@@ -437,14 +437,17 @@ describe('Draft and rights exposure (e2e)', () => {
      * который их перечисляет.
      */
     it('total публичного списка согласован с выдачей', async () => {
-      // `LEGACY-298`: маршрут зажат `PAGINATION_MAX_LIMIT`, `?limit=1000` теперь
-      // отбивается 400. Тестовый каталог этого набора укладывается в потолок,
-      // поэтому равенство `total === items.length` продолжает проверяться на
-      // единственной странице.
-      const page = await request(http()).get(`/en/books?limit=${PAGINATION_MAX_LIMIT}`).expect(200);
-      const body = page.body as { items: unknown[]; pagination: { total: number } };
+      // `LEGACY-298`: маршрут зажат `PAGINATION_MAX_LIMIT`, `?limit=1000` отбивается 400.
+      // Каталог воркера e2e растёт с сидами и соседними наборами и в одну страницу не
+      // укладывается (было 117 при потолке 100): `total` сверяется с суммой всех страниц.
+      const pageOf = async (n: number) =>
+        (await request(http()).get(`/en/books?limit=${PAGINATION_MAX_LIMIT}&page=${n}`).expect(200))
+          .body as { items: unknown[]; pagination: { total: number; totalPages: number } };
+      const first = await pageOf(1);
+      let seen = first.items.length;
+      for (let n = 2; n <= first.pagination.totalPages; n++) seen += (await pageOf(n)).items.length;
 
-      expect(body.pagination.total).toBe(body.items.length);
+      expect(first.pagination.total).toBe(seen);
     });
   });
 

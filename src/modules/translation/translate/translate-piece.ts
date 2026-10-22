@@ -65,6 +65,26 @@ function chunkText(layout: Pick<ChapterLayout, 'blocks'>, chunk: ChapterChunk | 
     .join(' ');
 }
 
+/** Короче - ищется целым словом: «Li» и «Ed» иначе нашлись бы в «like» и «walked» каждого куска. */
+const WHOLE_WORD_BELOW = 3;
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Встречено ли написание в тексте куска (`lower` - текст в нижнем регистре). Подстрокой - ради
+ * словоформ («Анна» в «Анны»), короткое - целым словом.
+ */
+function wordSeen(lower: string, word: string): boolean {
+  const needle = word.trim().toLowerCase();
+  if (needle === '') return false;
+  if (needle.length >= WHOLE_WORD_BELOW) return lower.includes(needle);
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(needle)}(?![\\p{L}\\p{N}])`, 'u').test(
+    lower,
+  );
+}
+
 /**
  * Записи глоссария куска: встреченные в куске и соседних (по написанию и вариантам имени) плюс
  * главные; обращения - между персонажами из этих записей.
@@ -77,7 +97,7 @@ export function glossaryFor(
   const g = (glossary ?? {}) as GlossaryLike;
   const characters = ((dossier ?? {}) as DossierLike).characters ?? [];
   const lower = text.toLowerCase();
-  const seen = (word: string) => word.trim() !== '' && lower.includes(word.toLowerCase());
+  const seen = (word: string) => wordSeen(lower, word);
   const main = new Set(characters.filter((c) => c.role === 'main').map((c) => c.key));
   const variants = new Map(characters.map((c) => [c.key, [c.name, ...c.variants]]));
   const entries = (g.entries ?? []).filter(

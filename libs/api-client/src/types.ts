@@ -2350,6 +2350,74 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/translation-runs/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Translation run progress by language: stage, chapter N of M, pieces, flags, pause reason; spent and limit in its operation */
+    get: operations['TranslationController_getRun'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/translation-runs/{id}/cancel': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Cancel a translation run: unfinished languages stop and the run spends nothing more; translated pieces stay. Dossier and glossary operations started for it run on their own limit and are cancelled separately */
+    post: operations['TranslationController_cancelRun'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/translation-runs/{id}/pause': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Pause a running translation: the step in progress finishes, nothing more starts. Dossier and glossary operations started for it are not paused */
+    post: operations['TranslationController_pauseRun'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/translation-runs/{id}/resume': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Resume a paused translation run on every unfinished language, optionally with a new limit and stage models */
+    post: operations['TranslationController_resumeRun'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/versions/{bookVersionId}/audio-chapters': {
     parameters: {
       query?: never;
@@ -11148,6 +11216,16 @@ export interface components {
        */
       limitUsd?: string;
     };
+    ResumeTranslationRunDto: {
+      /**
+       * Format: decimal
+       * @description New operation limit; not below spent + reserved. Omitted - the limit stays
+       * @example 100
+       */
+      limitUsd?: string;
+      /** @description Stage models of this run over its snapshot, one model without fallbacks: the way out of NO_COMPLIANT_PROVIDER */
+      stageModels?: components['schemas']['TranslationRunStageModelsDto'];
+    };
     ReviewChainDiffDto: {
       changedCountryCount: number;
       confidenceChanged: boolean;
@@ -13269,6 +13347,59 @@ export interface components {
      * @enum {string}
      */
     TranslationCompareModelStatus: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+    TranslationRunDto: {
+      /**
+       * Format: uuid
+       * @description Translation source version
+       */
+      bookVersionId: string;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: uuid */
+      dossierId: string | null;
+      /** Format: uuid */
+      id: string;
+      languages: components['schemas']['TranslationRunLanguageDto'][];
+      /** @description Progress and pause live here: status, pauseReason, spent and limit */
+      operation: components['schemas']['LlmOperationDto'];
+      sourceLanguage: components['schemas']['Language'];
+      /** @description Stage models of this run over its snapshot */
+      stageModels: components['schemas']['TranslationRunStageModelsDto'];
+    };
+    TranslationRunLanguageDto: {
+      /**
+       * Format: uuid
+       * @description Paused dossier or glossary operation this language waits for (DOSSIER_PAUSED)
+       */
+      blockedByOperationId: string | null;
+      /** @description Reader chapter being translated */
+      chapterNumber: number | null;
+      /** @description «Chapter N of M»: N, from 1 */
+      chapterPosition: number | null;
+      /** @description «Chapter N of M»: M */
+      chaptersTotal: number;
+      /** @description Closed pieces of the current chapter */
+      chunksDone: number;
+      /** @description Pieces of the current chapter; 0 before its split */
+      chunksTotal: number;
+      flaggedChunks: number;
+      /** Format: uuid */
+      glossaryId: string | null;
+      language: components['schemas']['Language'];
+      /** @description Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE...) */
+      reason: string | null;
+      /** @description Models that all refused by the data policy (NO_COMPLIANT_PROVIDER): pick another one in stageModels; empty otherwise */
+      reasonModels: string[];
+      /** @enum {string} */
+      stage: 'dossier' | 'glossary' | 'translate' | 'done' | 'failed' | 'cancelled';
+      status: components['schemas']['TranslationRunLanguageStatus'];
+    };
+    /** @enum {string} */
+    TranslationRunLanguageStatus: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+    TranslationRunStageModelsDto: {
+      /** @example anthropic/claude-sonnet-5.5 */
+      translate?: string;
+    };
     TranslationSourceDto: {
       canTranslate: boolean;
       /** @description Versions of the book disagree on the original language */
@@ -18680,6 +18811,157 @@ export interface operations {
       };
       /** @description Translation compare not found */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_getRun: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationRunDto'];
+        };
+      };
+      /** @description Translation run not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_cancelRun: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationRunDto'];
+        };
+      };
+      /** @description Translation run not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_OPERATION_NOT_CANCELLABLE: already finished */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_pauseRun: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationRunDto'];
+        };
+      };
+      /** @description Translation run not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description TRANSLATION_RUN_NOT_PAUSABLE: not running */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_resumeRun: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ResumeTranslationRunDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationRunDto'];
+        };
+      };
+      /** @description limitUsd below spent + reserved; LLM_MODEL_UNKNOWN; a stage that cannot be changed */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Translation run not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_DISABLED: no OpenRouter key */
+      503: {
         headers: {
           [name: string]: unknown;
         };
