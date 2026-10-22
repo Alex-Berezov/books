@@ -251,7 +251,11 @@ describe('Translation run (e2e)', () => {
 
   /** Проходы исполнителя до конца; ожидание `wait` сдвигается в «сейчас», чтобы не ждать таймер. */
   const drain = async (until?: () => Promise<boolean>) => {
-    for (let i = 0; i < 120; i++) {
+    // Предел проходов с запасом: тест на четыре языка (досье, четыре глоссария, нарезка и
+    // находки на каждый кусок) берёт локально 107 проходов при двух слотах по умолчанию и 68
+    // при одном (замер 22.10.2026, дело F05-4a). При 120 медленный CI не уложился (ci.yml
+    // 39832636974): проход, совпавший с захватом фонового таймера, возвращается пустым.
+    for (let i = 0; i < 600; i++) {
       await prisma.llmTask.updateMany({
         where: { status: 'pending', runAfter: { gt: new Date() } },
         data: { runAfter: new Date(Date.now() - 1000) },
@@ -501,6 +505,10 @@ describe('Translation run (e2e)', () => {
     await prisma.llmOperation.update({ where: { id: warm.opId }, data: { status: 'cancelled' } });
     calls.length = 0;
 
+    // Перевод по 0,01 при резерве вызова около 0,035: лимит 0,05 достигается и одновременными
+    // резервами двух слотов, и последовательными вызовами одного - после одного-двух оплаченных
+    // кусков. Иначе при последовательных вызовах факт по 0,0001 лимита не достигал бы вовсе.
+    costOf = (name) => (name === 'translation' ? 0.01 : 0.0001);
     const limit = '0.05';
     const { runId, opId } = await createRun(versionId, four, limit);
     await drain();
@@ -508,6 +516,9 @@ describe('Translation run (e2e)', () => {
     const paused = await opOf(opId);
     expect(paused).toMatchObject({ status: 'paused', pauseReason: 'LIMIT_REACHED' });
     expect(paused.spentUsd.add(paused.reservedUsd).lte(new Prisma.Decimal(limit))).toBe(true);
+    // Пауза пришла после оплаченных кусков, а не на первом резерве.
+    expect(translations().length).toBeGreaterThan(0);
+    expect(translations().length).toBeLessThan(8);
     expect(await prisma.llmTask.count({ where: { operationId: opId, status: 'pending' } })).toBe(0);
 
     await auth(http().post(`/admin/translation-runs/${runId}/resume`))
