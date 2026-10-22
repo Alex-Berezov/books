@@ -7896,6 +7896,50 @@
         ],
         "type": "object"
       },
+      "CompareContextLineDto": {
+        "properties": {
+          "estimateUsd": {
+            "description": "Upper estimate of the build",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "suggestedLimitUsd": {
+            "description": "Limit of its own operation: estimate × 1.5; must fit the compare limit",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "upperBound": {
+            "description": "The dossier is not ready yet: an upper bound by the dossier answer size",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "estimateUsd",
+          "suggestedLimitUsd",
+          "upperBound"
+        ],
+        "type": "object"
+      },
+      "CompareModelEstimateDto": {
+        "properties": {
+          "estimateUsd": {
+            "description": "Upper estimate: one call per piece",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "model",
+          "estimateUsd"
+        ],
+        "type": "object"
+      },
       "CompleteRecheckTaskDto": {
         "properties": {
           "completedReviewId": {
@@ -24122,6 +24166,43 @@
         },
         "type": "object"
       },
+      "StartTranslationCompareDto": {
+        "properties": {
+          "chapterNumber": {
+            "description": "Reader chapter number",
+            "minimum": 1,
+            "type": "number"
+          },
+          "limitUsd": {
+            "description": "Limit of the compare operation; it covers the translations and must also fit a dossier and a glossary that are built first. Default - the suggested limit of the estimate",
+            "example": "100",
+            "format": "decimal",
+            "type": "string"
+          },
+          "models": {
+            "description": "OpenRouter model ids, each once; in a query - repeated or comma-separated",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 2,
+            "type": "array"
+          },
+          "targetLanguage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          }
+        },
+        "required": [
+          "chapterNumber",
+          "targetLanguage",
+          "models"
+        ],
+        "type": "object"
+      },
       "SupersedeRightsEvidenceDto": {
         "properties": {
           "supersededById": {
@@ -25570,6 +25651,285 @@
           "totalVersions"
         ],
         "type": "object"
+      },
+      "TranslationCompareDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "chapterNumber": {
+            "type": "number"
+          },
+          "chapterTitle": {
+            "description": "Chapter title of the source",
+            "nullable": true,
+            "type": "string"
+          },
+          "chunks": {
+            "description": "Pieces; null - not split yet",
+            "nullable": true,
+            "type": "number"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/LlmOperationDto"
+          },
+          "originalHtml": {
+            "description": "Current chapter text of the source; null - the chapter is gone",
+            "nullable": true,
+            "type": "string"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationCompareModelDto"
+            },
+            "type": "array"
+          },
+          "splitCostUsd": {
+            "description": "Split stage calls; null - none",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "waitingForContext": {
+            "description": "Waiting for the dossier or glossary to be built",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "bookVersionId",
+          "chapterNumber",
+          "language",
+          "operation",
+          "models",
+          "createdAt",
+          "chapterTitle",
+          "originalHtml",
+          "chunks",
+          "waitingForContext",
+          "splitCostUsd",
+          "results"
+        ],
+        "type": "object"
+      },
+      "TranslationCompareEstimateDto": {
+        "properties": {
+          "chapterNumber": {
+            "type": "number"
+          },
+          "chunks": {
+            "description": "Pieces by code boundaries",
+            "type": "number"
+          },
+          "dossier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CompareContextLineDto"
+              }
+            ],
+            "description": "The dossier is built first under its own operation; null - ready or building",
+            "nullable": true,
+            "type": "object"
+          },
+          "glossary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CompareContextLineDto"
+              }
+            ],
+            "description": "The glossary is built first under its own operation; null - ready or building",
+            "nullable": true,
+            "type": "object"
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/CompareModelEstimateDto"
+            },
+            "type": "array"
+          },
+          "splitUsd": {
+            "description": "Contested joints by the split stage",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "suggestedLimitUsd": {
+            "description": "Default compare limit: translations × 1.5, and not less than the limit of a dossier or glossary built first",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "targetLanguage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "translationsUsd": {
+            "description": "Split plus all models",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "upperBound": {
+            "description": "Model estimates include an upper bound for a dossier and glossary not built yet",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "chapterNumber",
+          "targetLanguage",
+          "chunks",
+          "dossier",
+          "glossary",
+          "splitUsd",
+          "models",
+          "upperBound",
+          "translationsUsd",
+          "suggestedLimitUsd"
+        ],
+        "type": "object"
+      },
+      "TranslationCompareListItemDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "chapterNumber": {
+            "type": "number"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/LlmOperationDto"
+          }
+        },
+        "required": [
+          "id",
+          "bookVersionId",
+          "chapterNumber",
+          "language",
+          "operation",
+          "models",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "TranslationCompareModelDto": {
+        "properties": {
+          "chunksDone": {
+            "type": "number"
+          },
+          "costUsd": {
+            "description": "Sum of its settled calls",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "durationMs": {
+            "description": "Sum of call durations, ms",
+            "type": "number"
+          },
+          "error": {
+            "description": "Why the model failed: COMPARE_INVALID_RESPONSE, COMPARE_TOO_LONG, COMPARE_CHAPTER_TOO_LONG, COMPARE_CHAPTER_CHANGED, an LLM_* code or a worker reason",
+            "nullable": true,
+            "type": "string"
+          },
+          "html": {
+            "description": "Translated chapter HTML when done; no partial text",
+            "nullable": true,
+            "type": "string"
+          },
+          "inputTokens": {
+            "type": "number"
+          },
+          "model": {
+            "type": "string"
+          },
+          "outputTokens": {
+            "type": "number"
+          },
+          "position": {
+            "description": "Column and translation order from 0",
+            "type": "number"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationCompareModelStatus"
+              }
+            ],
+            "description": "queued models of a paused operation are stopped by its pauseReason"
+          }
+        },
+        "required": [
+          "model",
+          "position",
+          "status",
+          "chunksDone",
+          "html",
+          "error",
+          "costUsd",
+          "inputTokens",
+          "outputTokens",
+          "durationMs"
+        ],
+        "type": "object"
+      },
+      "TranslationCompareModelStatus": {
+        "description": "queued models of a paused operation are stopped by its pauseReason",
+        "enum": [
+          "queued",
+          "running",
+          "done",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
       },
       "TranslationSourceDto": {
         "properties": {
@@ -36882,6 +37242,46 @@
         ]
       }
     },
+    "/admin/translation-compares/{id}": {
+      "get": {
+        "operationId": "TranslationController_getCompare",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationCompareDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Translation compare not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Model comparison: the original chapter and a column per model with its text, cost, tokens, duration and error",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/versions/{bookVersionId}/audio-chapters": {
       "get": {
         "operationId": "AudioChapterController_listAdmin",
@@ -38037,6 +38437,221 @@
         "summary": "Mark geo-block as configured for a version",
         "tags": [
           "book-versions"
+        ]
+      }
+    },
+    "/admin/versions/{id}/translation-compare": {
+      "post": {
+        "operationId": "TranslationController_startCompare",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartTranslationCompareDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationCompareDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "COMPARE_TARGET_IS_SOURCE; LLM_MODEL_UNKNOWN; 2-4 distinct models; limitUsd"
+          },
+          "404": {
+            "description": "Version or chapter not found"
+          },
+          "409": {
+            "description": "LLM_CEILING_REACHED: the spending ceiling is reached; the version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          },
+          "503": {
+            "description": "LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Compare 2-4 models on one chapter in the background under its own operation; no version is created and the glossary is not changed",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/translation-compare/estimate": {
+      "get": {
+        "operationId": "TranslationController_compareEstimate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Reader chapter number",
+            "in": "query",
+            "name": "chapterNumber",
+            "required": true,
+            "schema": {
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "targetLanguage",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Language"
+            }
+          },
+          {
+            "description": "OpenRouter model ids, each once; in a query - repeated or comma-separated",
+            "in": "query",
+            "name": "models",
+            "required": true,
+            "schema": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 4,
+              "minItems": 2,
+              "type": "array"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationCompareEstimateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "COMPARE_TARGET_IS_SOURCE; LLM_MODEL_UNKNOWN; 2-4 distinct models"
+          },
+          "404": {
+            "description": "Version or chapter not found"
+          },
+          "409": {
+            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          },
+          "503": {
+            "description": "LLM_MODELS_UNAVAILABLE"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upper cost estimate of comparing 2-4 models on one chapter: dossier, glossary, split and each model",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/translation-compares": {
+      "get": {
+        "operationId": "TranslationController_listCompares",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page number",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "example": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Number of records per page",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "example": 10,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/TranslationCompareListItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Model comparisons of this version, newest first",
+        "tags": [
+          "admin"
         ]
       }
     },

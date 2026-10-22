@@ -2333,6 +2333,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/translation-compares/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Model comparison: the original chapter and a column per model with its text, cost, tokens, duration and error */
+    get: operations['TranslationController_getCompare'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/versions/{bookVersionId}/audio-chapters': {
     parameters: {
       query?: never;
@@ -2733,6 +2750,57 @@ export interface paths {
      * @description Deprecated compatibility wrapper. Verification now requires generated active rules.
      */
     patch: operations['BookVersionController_updateRightsGeoBlock'];
+    trace?: never;
+  };
+  '/admin/versions/{id}/translation-compare': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Compare 2-4 models on one chapter in the background under its own operation; no version is created and the glossary is not changed */
+    post: operations['TranslationController_startCompare'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/translation-compare/estimate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Upper cost estimate of comparing 2-4 models on one chapter: dossier, glossary, split and each model */
+    get: operations['TranslationController_compareEstimate'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/translation-compares': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Model comparisons of this version, newest first */
+    get: operations['TranslationController_listCompares'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   '/admin/versions/{id}/translation-source': {
@@ -7091,6 +7159,31 @@ export interface components {
       id: string;
       name?: string | null;
       nickname?: string | null;
+    };
+    CompareContextLineDto: {
+      /**
+       * Format: decimal
+       * @description Upper estimate of the build
+       * @example 100.00000000
+       */
+      estimateUsd: string;
+      /**
+       * Format: decimal
+       * @description Limit of its own operation: estimate × 1.5; must fit the compare limit
+       * @example 100.00000000
+       */
+      suggestedLimitUsd: string;
+      /** @description The dossier is not ready yet: an upper bound by the dossier answer size */
+      upperBound: boolean;
+    };
+    CompareModelEstimateDto: {
+      /**
+       * Format: decimal
+       * @description Upper estimate: one call per piece
+       * @example 100.00000000
+       */
+      estimateUsd: string;
+      model: string;
     };
     CompleteRecheckTaskDto: {
       /** @description The review that closed this task */
@@ -12593,6 +12686,19 @@ export interface components {
        */
       limitUsd?: string;
     };
+    StartTranslationCompareDto: {
+      /** @description Reader chapter number */
+      chapterNumber: number;
+      /**
+       * Format: decimal
+       * @description Limit of the compare operation; it covers the translations and must also fit a dossier and a glossary that are built first. Default - the suggested limit of the estimate
+       * @example 100
+       */
+      limitUsd?: string;
+      /** @description OpenRouter model ids, each once; in a query - repeated or comma-separated */
+      models: string[];
+      targetLanguage: components['schemas']['Language'];
+    };
     SupersedeRightsEvidenceDto: {
       /** @description Id доказательства, которое приходит на смену */
       supersededById: string;
@@ -13066,6 +13172,103 @@ export interface components {
       items: components['schemas']['TopViewsItemDto'][];
       totalVersions: number;
     };
+    TranslationCompareDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      chapterNumber: number;
+      /** @description Chapter title of the source */
+      chapterTitle: string | null;
+      /** @description Pieces; null - not split yet */
+      chunks: number | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: uuid */
+      id: string;
+      language: components['schemas']['Language'];
+      models: string[];
+      operation: components['schemas']['LlmOperationDto'];
+      /** @description Current chapter text of the source; null - the chapter is gone */
+      originalHtml: string | null;
+      results: components['schemas']['TranslationCompareModelDto'][];
+      /**
+       * Format: decimal
+       * @description Split stage calls; null - none
+       * @example 100.00000000
+       */
+      splitCostUsd: string | null;
+      /** @description Waiting for the dossier or glossary to be built */
+      waitingForContext: boolean;
+    };
+    TranslationCompareEstimateDto: {
+      chapterNumber: number;
+      /** @description Pieces by code boundaries */
+      chunks: number;
+      /** @description The dossier is built first under its own operation; null - ready or building */
+      dossier: components['schemas']['CompareContextLineDto'] | null;
+      /** @description The glossary is built first under its own operation; null - ready or building */
+      glossary: components['schemas']['CompareContextLineDto'] | null;
+      models: components['schemas']['CompareModelEstimateDto'][];
+      /**
+       * Format: decimal
+       * @description Contested joints by the split stage
+       * @example 100.00000000
+       */
+      splitUsd: string;
+      /**
+       * Format: decimal
+       * @description Default compare limit: translations × 1.5, and not less than the limit of a dossier or glossary built first
+       * @example 100.00000000
+       */
+      suggestedLimitUsd: string;
+      targetLanguage: components['schemas']['Language'];
+      /**
+       * Format: decimal
+       * @description Split plus all models
+       * @example 100.00000000
+       */
+      translationsUsd: string;
+      /** @description Model estimates include an upper bound for a dossier and glossary not built yet */
+      upperBound: boolean;
+    };
+    TranslationCompareListItemDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      chapterNumber: number;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: uuid */
+      id: string;
+      language: components['schemas']['Language'];
+      models: string[];
+      operation: components['schemas']['LlmOperationDto'];
+    };
+    TranslationCompareModelDto: {
+      chunksDone: number;
+      /**
+       * Format: decimal
+       * @description Sum of its settled calls
+       * @example 100.00000000
+       */
+      costUsd: string;
+      /** @description Sum of call durations, ms */
+      durationMs: number;
+      /** @description Why the model failed: COMPARE_INVALID_RESPONSE, COMPARE_TOO_LONG, COMPARE_CHAPTER_TOO_LONG, COMPARE_CHAPTER_CHANGED, an LLM_* code or a worker reason */
+      error: string | null;
+      /** @description Translated chapter HTML when done; no partial text */
+      html: string | null;
+      inputTokens: number;
+      model: string;
+      outputTokens: number;
+      /** @description Column and translation order from 0 */
+      position: number;
+      /** @description queued models of a paused operation are stopped by its pauseReason */
+      status: components['schemas']['TranslationCompareModelStatus'];
+    };
+    /**
+     * @description queued models of a paused operation are stopped by its pauseReason
+     * @enum {string}
+     */
+    TranslationCompareModelStatus: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
     TranslationSourceDto: {
       canTranslate: boolean;
       /** @description Versions of the book disagree on the original language */
@@ -18456,6 +18659,34 @@ export interface operations {
       };
     };
   };
+  TranslationController_getCompare: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationCompareDto'];
+        };
+      };
+      /** @description Translation compare not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   AudioChapterController_listAdmin: {
     parameters: {
       query?: {
@@ -19057,6 +19288,143 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['GeoBlockRulesResponseDto'];
+        };
+      };
+    };
+  };
+  TranslationController_startCompare: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StartTranslationCompareDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationCompareDto'];
+        };
+      };
+      /** @description COMPARE_TARGET_IS_SOURCE; LLM_MODEL_UNKNOWN; 2-4 distinct models; limitUsd */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Version or chapter not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_CEILING_REACHED: the spending ceiling is reached; the version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_compareEstimate: {
+    parameters: {
+      query: {
+        /** @description Reader chapter number */
+        chapterNumber: number;
+        targetLanguage: components['schemas']['Language'];
+        /** @description OpenRouter model ids, each once; in a query - repeated or comma-separated */
+        models: string[];
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationCompareEstimateDto'];
+        };
+      };
+      /** @description COMPARE_TARGET_IS_SOURCE; LLM_MODEL_UNKNOWN; 2-4 distinct models */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Version or chapter not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_MODELS_UNAVAILABLE */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_listCompares: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['TranslationCompareListItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
         };
       };
     };

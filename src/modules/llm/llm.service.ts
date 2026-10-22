@@ -46,6 +46,8 @@ export interface CreateOperationInput {
   /** Не задан - умолчание лимита запуска из `LlmBudget` (В1). */
   limitUsd?: Prisma.Decimal;
   createdById?: string | null;
+  /** Модели вне настроек этапов, которые операция позовёт сама (сравнение `F05-3`): их цены - в снимке. */
+  models?: readonly string[];
 }
 
 /**
@@ -69,6 +71,11 @@ export interface CallStageOptions {
   beforeAttempt?: () => Promise<void> | void;
   signal?: AbortSignal;
   taskId?: string | null;
+  /**
+   * Одна модель вместо модели и запасных этапа (сравнение `F05-3`, решение арбитра
+   * `F05 | F05-3`, С7): запасные подменили бы текст колонки чужим. Остальное - из настройки этапа.
+   */
+  model?: string;
 }
 
 /**
@@ -221,12 +228,13 @@ export class LlmService implements OnModuleInit {
    * токенов, выход - `maxTokens` этапа, цена основной модели (Р4, Р24). Для окна запуска
    * и лимита операции, а не для расчёта факта. Настройка и цена читаются один раз на оценку.
    */
-  async stageCallEstimator(stage: string): Promise<StageCallEstimator> {
+  async stageCallEstimator(stage: string, modelId?: string): Promise<StageCallEstimator> {
     const setting = await this.getStageSetting(stage);
     const known = new Map((await this.models.list()).map((m) => [m.id, m]));
-    const model = priced(setting.model, known.get(setting.model), setting.maxPricePerMTok);
+    const primary = modelId ?? setting.model;
+    const model = priced(primary, known.get(primary), setting.maxPricePerMTok);
     const output = model.outputPrice.mul(setting.maxTokens);
-    const contexts = [setting.model, ...setting.fallbacks]
+    const contexts = (modelId ? [modelId] : [setting.model, ...setting.fallbacks])
       .map((id) => known.get(id)?.contextLength)
       .filter((c): c is number => typeof c === 'number');
     return {
@@ -246,16 +254,20 @@ export class LlmService implements OnModuleInit {
   async stageFit(
     stage: string,
     request: Pick<LlmChatRequest, 'messages' | 'jsonSchema'>,
+    modelId?: string,
   ): Promise<{ fits: boolean; model: string }> {
     const setting = await this.getStageSetting(stage);
     const known = new Map((await this.models.list()).map((m) => [m.id, m]));
-    const contexts = [setting.model, ...setting.fallbacks]
+    const contexts = (modelId ? [modelId] : [setting.model, ...setting.fallbacks])
       .map((id) => known.get(id)?.contextLength)
       .filter((c): c is number => typeof c === 'number');
     // Вход - в настоящих токенах (символы / CHARS_PER_TOKEN), а не верхней границей резерва:
     // символ за токен ложно отказал бы книге, которая влезает (решение арбитра `F05 | F05-2`).
     const need = Math.ceil(estimateInputTokens(request) / CHARS_PER_TOKEN) + setting.maxTokens;
-    return { fits: contexts.length === 0 || need <= Math.min(...contexts), model: setting.model };
+    return {
+      fits: contexts.length === 0 || need <= Math.min(...contexts),
+      model: modelId ?? setting.model,
+    };
   }
 
   /** Ключа нет - 503 `LLM_DISABLED` до любой другой проверки ручки, которая заведёт операцию. */
@@ -288,7 +300,10 @@ export class LlmService implements OnModuleInit {
     ]);
     // Нет строки потолка - лимит 0: вызов всё равно отклонится по потолку (В4).
     const limitUsd = input.limitUsd ?? budget?.defaultRunLimitUsd ?? new Prisma.Decimal(0);
-    const used = new Set(stages.flatMap((s) => [s.model, ...s.fallbacks]));
+    const used = new Set([
+      ...stages.flatMap((s) => [s.model, ...s.fallbacks]),
+      ...(input.models ?? []),
+    ]);
     const prices = catalog ? catalog.filter((m) => used.has(m.id)) : null;
     const snapshot = { takenAt: new Date().toISOString(), stages, prices };
     return {
@@ -314,9 +329,14 @@ export class LlmService implements OnModuleInit {
 
     const known = new Map((await this.models.list()).map((m) => [m.id, m]));
     // Основная без цены - отказ; запасная без цены (снята с OpenRouter, цена стала
-    // динамической) пропускается, а не роняет вызов, пока основная работает.
-    const primary = priced(setting.model, known.get(setting.model), setting.maxPricePerMTok);
-    const fallbacks = setting.fallbacks.flatMap((id) => {
+    // динамической) пропускается, а не роняет вызов, пока основная работает. Модель сравнения -
+    // ровно она, без запасных, с тем же отказом без цены, что у основной.
+    const primary = priced(
+      options.model ?? setting.model,
+      known.get(options.model ?? setting.model),
+      setting.maxPricePerMTok,
+    );
+    const fallbacks = (options.model ? [] : setting.fallbacks).flatMap((id) => {
       try {
         return [priced(id, known.get(id), setting.maxPricePerMTok)];
       } catch {

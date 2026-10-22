@@ -1,12 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { LlmOperation, LlmTask, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { LlmError } from '../../llm/llm.errors';
 import { LlmService } from '../../llm/llm.service';
-import { LlmChatResult } from '../../llm/openrouter.client';
 import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.registry';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
+import { callShaped, ShapedAnswer } from '../llm-shaped-call';
 import { sourceFingerprint } from '../source-fingerprint';
 import {
   DOSSIER_INVALID_RESPONSE,
@@ -23,21 +22,16 @@ import {
   DOSSIER_SHAPE,
   dossierChapterErrors,
   GLOSSARY_SHAPE,
-  shapeErrors,
+  Shape,
 } from './dossier.format';
 import { nextPlannedPart, partKey, planChapterParts, readPlan } from './dossier-parts';
 import {
   dossierPartRequest,
   dossierSummaryRequest,
   glossaryRequest,
-  shapeRemark,
   ShapedRequest,
 } from './dossier.prompts';
 import { DossierService, dossierTaskInput, glossaryTaskInput } from './dossier.service';
-
-type ShapeOf = Parameters<typeof shapeErrors>[1];
-
-type Shaped = { ok: true; value: unknown; model: string; callId: string } | { ok: false };
 
 function payloadId(task: LlmTask, key: 'dossierId' | 'glossaryId'): string | null {
   const payload = task.payload as Record<string, unknown> | null;
@@ -289,41 +283,18 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
    * Вызов с ответом по форме: не по форме или не JSON - один повтор с замечанием, затем отказ.
    * Прочие отказы модуля LLM уходят исполнителю: бюджет - пауза, остальное - `failed`.
    */
-  private async callShaped(
+  private callShaped(
     operationId: string,
     stage: string,
     request: ShapedRequest,
-    shape: ShapeOf,
+    shape: Shape,
     ctx: LlmTaskContext,
-    extraErrors: (value: unknown) => string[] = () => [],
-  ): Promise<Shaped> {
-    const { messages, jsonSchema } = request;
-    let conversation = messages;
-    for (let attempt = 0; attempt < 2; attempt++) {
-      let result: LlmChatResult;
-      try {
-        result = await this.llm.callStage(operationId, stage, conversation, {
-          ...ctx.callOptions,
-          jsonSchema,
-        });
-      } catch (error) {
-        if (!(error instanceof LlmError) || error.code !== 'LLM_INVALID_RESPONSE') throw error;
-        if (attempt > 0) return { ok: false };
-        conversation = [
-          ...messages,
-          { role: 'user', content: 'The answer was not valid JSON. Answer with JSON only.' },
-        ];
-        continue;
-      }
-      const formErrors = shapeErrors(result.json, shape);
-      const errors = formErrors.length > 0 ? formErrors : extraErrors(result.json);
-      if (errors.length === 0) {
-        return { ok: true, value: result.json, model: result.model, callId: result.callId };
-      }
-      if (attempt > 0) return { ok: false };
-      conversation = [...messages, ...shapeRemark(result.content, errors)];
-    }
-    return { ok: false };
+    extraErrors?: (value: unknown) => string[],
+  ): Promise<ShapedAnswer> {
+    return callShaped(this.llm, operationId, stage, request, shape, ctx, {
+      remarks: 1,
+      extraErrors,
+    });
   }
 
   /**

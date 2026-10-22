@@ -166,6 +166,50 @@ describe('LlmService', () => {
       await call();
       expect(client.chat.mock.calls[0][0]).toMatchObject({ temperature: 0.3, maxTokens: 100 });
     });
+
+    // Сравнение (`F05-3`, С7): колонка модели - текст ровно этой модели, запасные этапа не идут.
+    it('options.model calls only that model, without the stage fallbacks', async () => {
+      prisma.llmStageSetting.findUnique.mockResolvedValue(
+        row({ model: 'a/priced', fallbacks: ['b/second'] }),
+      );
+      await service.callStage('op', 'jev', [{ role: 'user', content: 'x' }], {
+        model: 'b/second',
+      });
+      const sent = client.chat.mock.calls[0][0] as { models: LlmCallModel[]; temperature: unknown };
+      expect(sent.models.map((m) => m.id)).toEqual(['b/second']);
+      expect(sent.temperature).toBe(0.3);
+    });
+
+    it('options.model without a price and without a stage cap is refused', async () => {
+      prisma.llmStageSetting.findUnique.mockResolvedValue(row({}));
+      await expect(
+        service.callStage('op', 'jev', [{ role: 'user', content: 'x' }], { model: 'c/dynamic' }),
+      ).rejects.toMatchObject({ code: 'LLM_NO_PRICE' });
+      expect(client.chat).not.toHaveBeenCalled();
+    });
+
+    it('stageCallEstimator with a model prices that model and takes only its context', async () => {
+      prisma.llmStageSetting.findUnique.mockResolvedValue(row({ stage: 'on', fallbacks: [] }));
+      models.list.mockResolvedValue(
+        MODELS.map((m) => (m.id === 'b/second' ? { ...m, contextLength: 1000 } : m)),
+      );
+      const call = await service.stageCallEstimator('on', 'b/second');
+      expect(call.contextLength).toBe(1000);
+      // `b/second` бесплатна: оценка - ноль, а не цена основной модели этапа.
+      expect(call.estimate({ messages: [{ role: 'user', content: 'x' }] }).toFixed(8)).toBe(
+        '0.00000000',
+      );
+    });
+
+    it('operationData puts the prices of the compared models into the snapshot', async () => {
+      const data = await service.operationData({
+        kind: 'compare',
+        limitUsd: D(1),
+        models: ['b/second'],
+      });
+      const snapshot = data.settingsSnapshot as { prices: Array<{ id: string }> };
+      expect(snapshot.prices.map((p) => p.id)).toContain('b/second');
+    });
   });
 
   describe('updateStageSetting', () => {
@@ -312,6 +356,29 @@ describe('LlmService', () => {
     await service.callStage('op', 'router', [{ role: 'user', content: 'x' }]);
     const [model] = (client.chat.mock.calls[0][0] as { models: LlmCallModel[] }).models;
     expect(model.maxPricePerMTok?.toFixed(2)).toBe('2.00');
+  });
+
+  describe('stageFit with one model (compare, F05-3)', () => {
+    it('checks the context of that model only, not of the stage model and fallbacks', async () => {
+      prisma.llmStageSetting.findUnique.mockResolvedValue(
+        row({ stage: 'on', model: 'a/priced', fallbacks: [] }),
+      );
+      models.list.mockResolvedValue(
+        MODELS.map((m) =>
+          m.id === 'a/priced'
+            ? { ...m, contextLength: 1_000_000 }
+            : m.id === 'b/second'
+              ? { ...m, contextLength: 1_000 }
+              : m,
+        ),
+      );
+      const request = { messages: [{ role: 'user' as const, content: 'x'.repeat(40_000) }] };
+      await expect(service.stageFit('on', request, 'b/second')).resolves.toEqual({
+        fits: false,
+        model: 'b/second',
+      });
+      await expect(service.stageFit('on', request)).resolves.toMatchObject({ fits: true });
+    });
   });
 
   describe('stageFit (context check of a stage call)', () => {

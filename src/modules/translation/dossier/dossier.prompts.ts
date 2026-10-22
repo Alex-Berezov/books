@@ -119,7 +119,7 @@ export function glossaryMessages(input: {
 }
 
 /** Полное название языка цели: код `pt` рядом с `es` модель путает (`product.md` §3 п.1). */
-const LANGUAGE_NAMES: Record<Language, string> = {
+export const LANGUAGE_NAMES: Record<Language, string> = {
   en: 'English',
   es: 'Spanish',
   fr: 'French',

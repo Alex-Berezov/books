@@ -99,6 +99,11 @@ const NOT_MEDIA_JSON_REFERENCES: Record<string, string> = {
   'BookGlossary.data':
     'глоссарий перевода - ответ модели после проверки формы, пишет сервер (F05-2)',
   'BookGlossary.history': 'дополнения глоссария по ходу перевода, пишет сервер (F05-2, F05-4)',
+  'TranslationCompare.chunks': 'границы кусков главы сравнения, пишет сервер (F05-3)',
+  'TranslationCompare.splitPicks':
+    'выборы модели split по стыкам - номера блоков, пишет сервер (F05-3)',
+  'TranslationCompareChunk.blocks':
+    'перевод блоков куска - ответ модели после белого списка разметки, пишет сервер (F05-3)',
   'RightsProfileContributorEvent.payload': 'журнал событий, пишет сервер',
   'AdminAuditEvent.payload': 'журнал аудита, пишет сервер; упоминание ключа в истории — не ссылка',
   'RightsLicenseEvent.payload': 'журнал событий, пишет сервер',

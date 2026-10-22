@@ -13,13 +13,18 @@ export const DOSSIER_FORMAT_VERSION = 1;
 // Проверка формы: описание поля - тип; ошибки - пути, которые уходят модели в замечании.
 // ---------------------------------------------------------------------------
 
-type Shape =
+export type Shape =
   | 'string'
   | 'int'
   | 'boolean'
   | { enum: readonly string[] }
   | { array: Shape }
-  | { object: Record<string, Shape> };
+  | { object: Record<string, Shape> }
+  /**
+   * Схема уходит модели как есть (`response_format` строгий: поле обязательно), а код ответ по
+   * ней не проверяет: часть, которую вызывающий не хранит, не стоит платных повторов.
+   */
+  | { unchecked: Shape };
 
 const str = 'string' as const;
 const int = 'int' as const;
@@ -98,6 +103,7 @@ export function shapeErrors(value: unknown, shape: Shape, path = '$'): string[] 
       : [`${path}: expected non-negative integer`];
   }
   if (shape === 'boolean') return typeof value === 'boolean' ? [] : [`${path}: expected boolean`];
+  if ('unchecked' in shape) return [];
   if ('enum' in shape) {
     return typeof value === 'string' && shape.enum.includes(value)
       ? []
@@ -121,6 +127,7 @@ export function jsonSchemaOf(shape: Shape): Record<string, unknown> {
   if (shape === 'string') return { type: 'string' };
   if (shape === 'int') return { type: 'integer', minimum: 0 };
   if (shape === 'boolean') return { type: 'boolean' };
+  if ('unchecked' in shape) return jsonSchemaOf(shape.unchecked);
   if ('enum' in shape) return { type: 'string', enum: [...shape.enum] };
   if ('array' in shape) return { type: 'array', items: jsonSchemaOf(shape.array) };
   return {

@@ -76,6 +76,21 @@ export interface DossierEstimate {
   suggestedLimitUsd: Prisma.Decimal;
 }
 
+/**
+ * Что построится перед переводом и во что обойдётся (решение арбитра `F05 | F05-3`, С10): `null` -
+ * строить не нужно (готово или уже строится). Глоссарий до готового досье - оценка сверху: вход
+ * - досье размером в `maxTokens` этапа `dossier` (`upperBound`).
+ */
+export interface ContextEstimate {
+  sourceVersionId: string;
+  dossier: DossierEstimate | null;
+  glossary: {
+    estimateUsd: Prisma.Decimal;
+    suggestedLimitUsd: Prisma.Decimal;
+    upperBound: boolean;
+  } | null;
+}
+
 function isUniqueViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
@@ -199,6 +214,37 @@ export class DossierService {
   /** Оценка построения сверху: куски по `maxTokens` этапа плюс сводка по их ответам. */
   async estimate(versionId: string): Promise<DossierEstimateDto> {
     return toEstimateDto(await this.estimateOf(versionId));
+  }
+
+  async contextEstimate(versionId: string, language: Language): Promise<ContextEstimate> {
+    const { sourceVersionId } = await this.dossierSourceOf(versionId);
+    const latest = await this.latestDossier(sourceVersionId);
+    const glossaryLine = (estimateUsd: Prisma.Decimal, upperBound: boolean) => ({
+      estimateUsd,
+      suggestedLimitUsd: estimateUsd.mul(DOSSIER_LIMIT_FACTOR),
+      upperBound,
+    });
+    if (latest?.status === 'ready') {
+      const row = await this.prisma.bookGlossary.findUnique({
+        where: { dossierId_language: { dossierId: latest.id, language } },
+        select: { status: true },
+      });
+      const glossary =
+        row?.status === 'ready' || row?.status === 'building'
+          ? null
+          : glossaryLine(await this.estimateGlossary(latest, language), false);
+      return { sourceVersionId, dossier: null, glossary };
+    }
+    const [dossier, call, dossierCall] = await Promise.all([
+      latest?.status === 'building' ? null : this.estimateOf(versionId),
+      this.estimator(GLOSSARY_STAGE),
+      this.estimator(DOSSIER_STAGE),
+    ]);
+    const upper = call.estimate(
+      glossaryRequest({ dossier: null, language }),
+      dossierCall.maxTokens * CHARS_PER_TOKEN,
+    );
+    return { sourceVersionId, dossier, glossary: glossaryLine(upper, true) };
   }
 
   private async estimateOf(versionId: string): Promise<DossierEstimate> {

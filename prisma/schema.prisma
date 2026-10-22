@@ -84,6 +84,8 @@ model BookVersion {
   llmTasks        LlmTask[]
   /// Досье, построенные по этой версии как по исходнику (F05-2, Р5).
   dossiers        BookDossier[]
+  /// Сравнения моделей на главе этой версии (F05-3).
+  translationCompares TranslationCompare[]
   chapters        Chapter[]
   audioChapters   AudioChapter[]
   bookshelf       Bookshelf[]
@@ -4095,6 +4097,8 @@ model LlmOperation {
   /// Строки досье и глоссария, которые строит эта операция (F05-2, вид `dossier`).
   dossiers         BookDossier[]
   glossaries       BookGlossary[]
+  /// Сравнение моделей, которое ведёт эта операция (F05-3, вид `compare`).
+  translationCompare TranslationCompare?
 
   @@index([status])
   @@index([bookVersionId])
@@ -4278,4 +4282,81 @@ model BookGlossary {
 
   @@unique([dossierId, language])
   @@index([operationId])
+}
+
+enum TranslationCompareModelStatus {
+  queued
+  running
+  done
+  failed
+  cancelled
+}
+
+/// Сравнение моделей перевода на одной главе (F05-3): версия не создаётся, находки глоссария
+/// не пишутся. Ход - одна задача операции `compare`, по куску одной модели за шаг (решение
+/// арбитра `F05 | F05-3`, С8). Стоимость, токены и длительность модели - из `LlmCall`.
+model TranslationCompare {
+  id                 String                    @id @default(uuid())
+  operationId        String                    @unique
+  operation          LlmOperation              @relation(fields: [operationId], references: [id], onDelete: Restrict)
+  bookVersionId      String
+  /// Cascade, как у всех производных от версии (решение арбитра `F05 | F05-2`, В7).
+  bookVersion        BookVersion               @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+  chapterNumber      Int
+  language           Language
+  /// Язык исходника на старте: шаги переводят с него, а не перечитывают его по ходу.
+  sourceLanguage     Language
+  /// sha256 текста главы на старте: глава поменялась - сравнение отказывает, а не смешивает тексты.
+  chapterFingerprint String
+  /// Куски главы `[{ firstBlock, lastBlock, words }]`; пусто до нарезки.
+  chunks             Json?
+  /// Выборы модели `split` по спорным стыкам `{ "<первый кандидат>": блок }`: стык за шаг,
+  /// сделанный выбор при повторе не оплачивается.
+  splitPicks         Json                      @default("{}")
+  /// Досье и глоссарий, на которых идёт перевод; пусто, пока не готовы.
+  dossierId          String?
+  glossaryId         String?
+  /// Строка досье или глоссария, которую шаг ждал прошлым шагом (`DossierWaiter.waitingFor`).
+  waitingFor         String?
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+  models             TranslationCompareModel[]
+
+  @@index([bookVersionId, createdAt])
+}
+
+/// Колонка сравнения: одна модель, её куски и собранная глава.
+model TranslationCompareModel {
+  id        String                        @id @default(uuid())
+  compareId String
+  compare   TranslationCompare            @relation(fields: [compareId], references: [id], onDelete: Cascade)
+  /// Порядок колонки и порядок перевода с 0.
+  position  Int
+  model     String
+  status    TranslationCompareModelStatus @default(queued)
+  /// Глава, собранная из переведённых кусков; пусто, пока не готова или если модель упала.
+  html      String?
+  error     String?
+  createdAt DateTime                      @default(now())
+  updatedAt DateTime                      @updatedAt
+  chunks    TranslationCompareChunk[]
+
+  @@unique([compareId, model])
+  @@unique([compareId, position])
+}
+
+/// Переведённый кусок модели: пишется до записи итога шага, поэтому повтор шага после падения
+/// модель не зовёт и не платит дважды (как `BookDossierPart`, решение арбитра `F05 | F05-2`, В3).
+model TranslationCompareChunk {
+  id             String                  @id @default(uuid())
+  compareModelId String
+  compareModel   TranslationCompareModel @relation(fields: [compareModelId], references: [id], onDelete: Cascade)
+  /// Номер куска в `TranslationCompare.chunks` с 0.
+  chunkIndex     Int
+  /// `[{ n, text }]` - перевод блоков куска после белого списка разметки.
+  blocks         Json
+  callId         String?
+  createdAt      DateTime                @default(now())
+
+  @@unique([compareModelId, chunkIndex])
 }
