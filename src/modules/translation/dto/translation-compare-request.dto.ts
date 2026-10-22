@@ -19,8 +19,8 @@ import { MONEY_DOC, MONEY_PATTERN, notUndefined, toMoneyString } from '../../llm
 export const COMPARE_MIN_MODELS = 2;
 export const COMPARE_MAX_MODELS = 4;
 
-/** Одна модель - строкой, несколько - повтором параметра или через запятую. */
-const toModelList = ({ value }: { value: unknown }): unknown =>
+/** Один элемент списка из query - строкой, несколько - повтором параметра или через запятую. */
+export const toQueryList = ({ value }: { value: unknown }): unknown =>
   typeof value === 'string' ? value.split(',').filter((m) => m !== '') : value;
 
 /** Глава, язык и 2-4 модели сравнения (`F05-3`, шаг 3); общая часть оценки и запуска. */
@@ -41,7 +41,7 @@ export class TranslationCompareEstimateQueryDto {
     maxItems: COMPARE_MAX_MODELS,
     description: 'OpenRouter model ids, each once; in a query - repeated or comma-separated',
   })
-  @Transform(toModelList)
+  @Transform(toQueryList)
   @IsArray()
   @ArrayMinSize(COMPARE_MIN_MODELS)
   @ArrayMaxSize(COMPARE_MAX_MODELS)

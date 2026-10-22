@@ -24222,6 +24222,32 @@
         ],
         "type": "object"
       },
+      "StartTranslationRunDto": {
+        "properties": {
+          "languages": {
+            "description": "Target languages, each once; in a query - repeated or comma-separated",
+            "items": {
+              "$ref": "#/components/schemas/Language"
+            },
+            "type": "array"
+          },
+          "limitUsd": {
+            "description": "Limit of the run operation; must fit the dossier and glossaries built first. Default - LlmBudget.defaultRunLimitUsd",
+            "example": "100",
+            "format": "decimal",
+            "type": "string"
+          },
+          "translateModel": {
+            "description": "Translate model of this run only, one model without fallbacks; settings are not changed. Default - the translate stage model",
+            "example": "anthropic/claude-sonnet-5.5",
+            "type": "string"
+          }
+        },
+        "required": [
+          "languages"
+        ],
+        "type": "object"
+      },
       "SupersedeRightsEvidenceDto": {
         "properties": {
           "supersededById": {
@@ -26012,6 +26038,87 @@
         ],
         "type": "object"
       },
+      "TranslationRunEstimateDto": {
+        "properties": {
+          "chapters": {
+            "description": "Source chapters with text to translate",
+            "type": "number"
+          },
+          "chunks": {
+            "description": "Pieces by code boundaries, per language",
+            "type": "number"
+          },
+          "defaultLimitUsd": {
+            "description": "Default run limit (LlmBudget.defaultRunLimitUsd)",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "dossier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CompareContextLineDto"
+              }
+            ],
+            "description": "The dossier is built first under its own operation (also a stale one); null - fresh and ready, or building",
+            "nullable": true,
+            "type": "object"
+          },
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationRunLanguageEstimateDto"
+            },
+            "type": "array"
+          },
+          "minLimitUsd": {
+            "description": "The run limit cannot be lower: suggested limits of the dossier and glossaries built first",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "nearLimitChapters": {
+            "description": "Source chapters at 80% of the chapter length limit or longer (R8): a translation may not fit",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "totalUsd": {
+            "description": "Translations plus the dossier and glossaries built first",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "translateModel": {
+            "description": "Translate model of the estimate",
+            "type": "string"
+          },
+          "translationsUsd": {
+            "description": "All languages: split plus translate",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "upperBound": {
+            "description": "Translation estimates include an upper bound for a dossier and glossary not built yet",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "translateModel",
+          "chapters",
+          "chunks",
+          "dossier",
+          "languages",
+          "upperBound",
+          "translationsUsd",
+          "totalUsd",
+          "minLimitUsd",
+          "defaultLimitUsd",
+          "nearLimitChapters"
+        ],
+        "type": "object"
+      },
       "TranslationRunLanguageDto": {
         "properties": {
           "blockedByOperationId": {
@@ -26105,6 +26212,53 @@
         ],
         "type": "object"
       },
+      "TranslationRunLanguageEstimateDto": {
+        "properties": {
+          "glossary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CompareContextLineDto"
+              }
+            ],
+            "description": "The glossary of this language is built first under its own operation; null - ready or building",
+            "nullable": true,
+            "type": "object"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "splitUsd": {
+            "description": "Contested joints by the split stage",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "totalUsd": {
+            "description": "Split plus translate of this language",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "translateUsd": {
+            "description": "Upper estimate: one call per piece",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "language",
+          "glossary",
+          "splitUsd",
+          "translateUsd",
+          "totalUsd"
+        ],
+        "type": "object"
+      },
       "TranslationRunLanguageStatus": {
         "enum": [
           "pending",
@@ -26114,6 +26268,62 @@
           "cancelled"
         ],
         "type": "string"
+      },
+      "TranslationRunListItemDto": {
+        "properties": {
+          "bookVersionId": {
+            "description": "Translation source version",
+            "format": "uuid",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/Language"
+            },
+            "type": "array"
+          },
+          "operation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationDto"
+              }
+            ],
+            "description": "Status, pause reason, spent and limit of the run"
+          },
+          "sourceLanguage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "stageModels": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunStageModelsDto"
+              }
+            ],
+            "description": "Stage models of this run over its snapshot"
+          }
+        },
+        "required": [
+          "id",
+          "bookVersionId",
+          "sourceLanguage",
+          "languages",
+          "stageModels",
+          "operation",
+          "createdAt"
+        ],
+        "type": "object"
       },
       "TranslationRunStageModelsDto": {
         "properties": {
@@ -26200,6 +26410,7 @@
             "enum": [
               "IS_SOURCE",
               "VERSION_EXISTS",
+              "TRANSLATION_IN_PROGRESS",
               "NOT_IN_INTAKE"
             ],
             "nullable": true,
@@ -29358,6 +29569,84 @@
         "summary": "Отменить действующее решение «Разрешить публикацию» (только admin)",
         "tags": [
           "rights-override"
+        ]
+      }
+    },
+    "/admin/books/{bookId}/translation-runs": {
+      "get": {
+        "operationId": "TranslationController_listRuns",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Page number",
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "example": 1,
+              "type": "number"
+            }
+          },
+          {
+            "description": "Number of records per page",
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 10,
+              "example": 10,
+              "maximum": 100,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/TranslationRunListItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Book not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Translation runs of the book, newest first",
+        "tags": [
+          "admin"
         ]
       }
     },
@@ -39028,6 +39317,136 @@
           }
         ],
         "summary": "Model comparisons of this version, newest first",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/translation-runs": {
+      "post": {
+        "operationId": "TranslationController_startRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartTranslationRunDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationRunDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "TRANSLATION_RUN_LIMIT_TOO_LOW: limitUsd below the dossier and glossaries built first; LLM_MODEL_UNKNOWN; 1-5 distinct languages; limitUsd"
+          },
+          "404": {
+            "description": "Book version not found"
+          },
+          "409": {
+            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          },
+          "503": {
+            "description": "LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Start translating the book into the given languages in the background under one run operation; a language with a version or an unfinished run is refused, the whole request with it",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/translation-runs/estimate": {
+      "get": {
+        "operationId": "TranslationController_runEstimate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Target languages, each once; in a query - repeated or comma-separated",
+            "in": "query",
+            "name": "languages",
+            "required": true,
+            "schema": {
+              "items": {
+                "$ref": "#/components/schemas/Language"
+              },
+              "type": "array"
+            }
+          },
+          {
+            "description": "Translate model of this run only, one model without fallbacks; settings are not changed. Default - the translate stage model",
+            "in": "query",
+            "name": "translateModel",
+            "required": false,
+            "schema": {
+              "example": "anthropic/claude-sonnet-5.5",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationRunEstimateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "LLM_MODEL_UNKNOWN; 1-5 distinct languages"
+          },
+          "404": {
+            "description": "Book version not found"
+          },
+          "409": {
+            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          },
+          "503": {
+            "description": "LLM_MODELS_UNAVAILABLE"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upper cost estimate of translating the book into the given languages: per language and total, the dossier and glossaries built first, chapters near the length limit",
         "tags": [
           "admin"
         ]

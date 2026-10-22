@@ -206,6 +206,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/books/{bookId}/translation-runs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Translation runs of the book, newest first */
+    get: operations['TranslationController_listRuns'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/books/{id}/rights-claims': {
     parameters: {
       query?: never;
@@ -2863,6 +2880,40 @@ export interface paths {
     };
     /** Model comparisons of this version, newest first */
     get: operations['TranslationController_listCompares'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/translation-runs': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Start translating the book into the given languages in the background under one run operation; a language with a version or an unfinished run is refused, the whole request with it */
+    post: operations['TranslationController_startRun'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/translation-runs/estimate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Upper cost estimate of translating the book into the given languages: per language and total, the dossier and glossaries built first, chapters near the length limit */
+    get: operations['TranslationController_runEstimate'];
     put?: never;
     post?: never;
     delete?: never;
@@ -12777,6 +12828,21 @@ export interface components {
       models: string[];
       targetLanguage: components['schemas']['Language'];
     };
+    StartTranslationRunDto: {
+      /** @description Target languages, each once; in a query - repeated or comma-separated */
+      languages: components['schemas']['Language'][];
+      /**
+       * Format: decimal
+       * @description Limit of the run operation; must fit the dossier and glossaries built first. Default - LlmBudget.defaultRunLimitUsd
+       * @example 100
+       */
+      limitUsd?: string;
+      /**
+       * @description Translate model of this run only, one model without fallbacks; settings are not changed. Default - the translate stage model
+       * @example anthropic/claude-sonnet-5.5
+       */
+      translateModel?: string;
+    };
     SupersedeRightsEvidenceDto: {
       /** @description Id доказательства, которое приходит на смену */
       supersededById: string;
@@ -13366,6 +13432,45 @@ export interface components {
       /** @description Stage models of this run over its snapshot */
       stageModels: components['schemas']['TranslationRunStageModelsDto'];
     };
+    TranslationRunEstimateDto: {
+      /** @description Source chapters with text to translate */
+      chapters: number;
+      /** @description Pieces by code boundaries, per language */
+      chunks: number;
+      /**
+       * Format: decimal
+       * @description Default run limit (LlmBudget.defaultRunLimitUsd)
+       * @example 100.00000000
+       */
+      defaultLimitUsd: string;
+      /** @description The dossier is built first under its own operation (also a stale one); null - fresh and ready, or building */
+      dossier: components['schemas']['CompareContextLineDto'] | null;
+      languages: components['schemas']['TranslationRunLanguageEstimateDto'][];
+      /**
+       * Format: decimal
+       * @description The run limit cannot be lower: suggested limits of the dossier and glossaries built first
+       * @example 100.00000000
+       */
+      minLimitUsd: string;
+      /** @description Source chapters at 80% of the chapter length limit or longer (R8): a translation may not fit */
+      nearLimitChapters: number[];
+      /**
+       * Format: decimal
+       * @description Translations plus the dossier and glossaries built first
+       * @example 100.00000000
+       */
+      totalUsd: string;
+      /** @description Translate model of the estimate */
+      translateModel: string;
+      /**
+       * Format: decimal
+       * @description All languages: split plus translate
+       * @example 100.00000000
+       */
+      translationsUsd: string;
+      /** @description Translation estimates include an upper bound for a dossier and glossary not built yet */
+      upperBound: boolean;
+    };
     TranslationRunLanguageDto: {
       /**
        * Format: uuid
@@ -13394,8 +13499,48 @@ export interface components {
       stage: 'dossier' | 'glossary' | 'translate' | 'done' | 'failed' | 'cancelled';
       status: components['schemas']['TranslationRunLanguageStatus'];
     };
+    TranslationRunLanguageEstimateDto: {
+      /** @description The glossary of this language is built first under its own operation; null - ready or building */
+      glossary: components['schemas']['CompareContextLineDto'] | null;
+      language: components['schemas']['Language'];
+      /**
+       * Format: decimal
+       * @description Contested joints by the split stage
+       * @example 100.00000000
+       */
+      splitUsd: string;
+      /**
+       * Format: decimal
+       * @description Split plus translate of this language
+       * @example 100.00000000
+       */
+      totalUsd: string;
+      /**
+       * Format: decimal
+       * @description Upper estimate: one call per piece
+       * @example 100.00000000
+       */
+      translateUsd: string;
+    };
     /** @enum {string} */
     TranslationRunLanguageStatus: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
+    TranslationRunListItemDto: {
+      /**
+       * Format: uuid
+       * @description Translation source version
+       */
+      bookVersionId: string;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: uuid */
+      id: string;
+      languages: components['schemas']['Language'][];
+      /** @description Status, pause reason, spent and limit of the run */
+      operation: components['schemas']['LlmOperationDto'];
+      sourceLanguage: components['schemas']['Language'];
+      /** @description Stage models of this run over its snapshot */
+      stageModels: components['schemas']['TranslationRunStageModelsDto'];
+    };
     TranslationRunStageModelsDto: {
       /** @example anthropic/claude-sonnet-5.5 */
       translate?: string;
@@ -13429,7 +13574,7 @@ export interface components {
       available: boolean;
       language: components['schemas']['Language'];
       /** @enum {string|null} */
-      reason: 'IS_SOURCE' | 'VERSION_EXISTS' | 'NOT_IN_INTAKE' | null;
+      reason: 'IS_SOURCE' | 'VERSION_EXISTS' | 'TRANSLATION_IN_PROGRESS' | 'NOT_IN_INTAKE' | null;
     };
     UnlinkRightsLicenseResponseDto: {
       /** @example true */
@@ -14916,6 +15061,42 @@ export interface operations {
       };
       /** @description RIGHTS_OVERRIDE_NOT_ACTIVE — действующего решения нет */
       409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_listRuns: {
+    parameters: {
+      query?: {
+        /** @description Page number */
+        page?: number;
+        /** @description Number of records per page */
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        bookId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['TranslationRunListItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
+        };
+      };
+      /** @description Book not found */
+      404: {
         headers: {
           [name: string]: unknown;
         };
@@ -19708,6 +19889,113 @@ export interface operations {
             pagination: components['schemas']['PaginationInfoDto'];
           };
         };
+      };
+    };
+  };
+  TranslationController_startRun: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StartTranslationRunDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationRunDto'];
+        };
+      };
+      /** @description TRANSLATION_RUN_LIMIT_TOO_LOW: limitUsd below the dossier and glossaries built first; LLM_MODEL_UNKNOWN; 1-5 distinct languages; limitUsd */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_runEstimate: {
+    parameters: {
+      query: {
+        /** @description Target languages, each once; in a query - repeated or comma-separated */
+        languages: components['schemas']['Language'][];
+        /** @description Translate model of this run only, one model without fallbacks; settings are not changed. Default - the translate stage model */
+        translateModel?: string;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationRunEstimateDto'];
+        };
+      };
+      /** @description LLM_MODEL_UNKNOWN; 1-5 distinct languages */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_MODELS_UNAVAILABLE */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

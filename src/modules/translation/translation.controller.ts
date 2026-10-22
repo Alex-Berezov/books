@@ -41,8 +41,16 @@ import {
   TranslationCompareEstimateDto,
   TranslationCompareListItemDto,
 } from './dto/translation-compare-response.dto';
-import { ResumeTranslationRunDto } from './dto/translation-run-request.dto';
-import { TranslationRunDto } from './dto/translation-run-response.dto';
+import {
+  ResumeTranslationRunDto,
+  StartTranslationRunDto,
+  TranslationRunEstimateQueryDto,
+} from './dto/translation-run-request.dto';
+import {
+  TranslationRunDto,
+  TranslationRunEstimateDto,
+  TranslationRunListItemDto,
+} from './dto/translation-run-response.dto';
 import {
   DossierEstimateDto,
   DossierStatusDto,
@@ -59,12 +67,13 @@ interface RequestUser {
 
 /**
  * Перевод книги в админке - только `admin` (U6): исходник по D8, досье и глоссарий
- * (`F05-2`), сравнение моделей на главе (`F05-3`), ход запуска перевода и его кнопки (`F05-4`).
+ * (`F05-2`), сравнение моделей на главе (`F05-3`), оценка, старт и ход запуска перевода и его
+ * кнопки (`F05-4`).
  * Построение досье, сравнение и перевод тратят деньги под своей операцией с лимитом; модель
  * зовёт исполнитель фоном, а не ручка.
  */
 @ApiTags('admin')
-@ApiExtraModels(TranslationCompareListItemDto)
+@ApiExtraModels(TranslationCompareListItemDto, TranslationRunListItemDto)
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin)
@@ -85,7 +94,7 @@ export class TranslationController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: TranslationSourceDto })
   async translationSource(@Param('id') id: string): Promise<TranslationSourceDto> {
-    return (await this.sources.forVersion(id)).source;
+    return (await this.sources.forVersion(id, { withRunsInProgress: true })).source;
   }
 
   @Get('versions/:id/dossier/estimate')
@@ -219,6 +228,68 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Translation compare not found' })
   getCompare(@Param('id') id: string): Promise<TranslationCompareDto> {
     return this.compares.get(id);
+  }
+
+  // Литеральный `estimate` - выше любого динамического сегмента после `translation-runs`.
+  @Get('versions/:id/translation-runs/estimate')
+  @ApiOperation({
+    summary:
+      'Upper cost estimate of translating the book into the given languages: per language and total, the dossier and glossaries built first, chapters near the length limit',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: TranslationRunEstimateDto })
+  @ApiBadRequestResponse({ description: 'LLM_MODEL_UNKNOWN; 1-5 distinct languages' })
+  @ApiNotFoundResponse({ description: 'Book version not found' })
+  @ApiConflictResponse({
+    description:
+      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+  })
+  @ApiServiceUnavailableResponse({ description: 'LLM_MODELS_UNAVAILABLE' })
+  runEstimate(
+    @Param('id') id: string,
+    @Query() query: TranslationRunEstimateQueryDto,
+  ): Promise<TranslationRunEstimateDto> {
+    return this.runs.estimate(id, query);
+  }
+
+  @Post('versions/:id/translation-runs')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary:
+      'Start translating the book into the given languages in the background under one run operation; a language with a version or an unfinished run is refused, the whole request with it',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiAcceptedResponse({ type: TranslationRunDto })
+  @ApiBadRequestResponse({
+    description:
+      'TRANSLATION_RUN_LIMIT_TOO_LOW: limitUsd below the dossier and glossaries built first; LLM_MODEL_UNKNOWN; 1-5 distinct languages; limitUsd',
+  })
+  @ApiNotFoundResponse({ description: 'Book version not found' })
+  @ApiConflictResponse({
+    description:
+      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE',
+  })
+  startRun(
+    @Param('id') id: string,
+    @Body() dto: StartTranslationRunDto,
+    @Req() req: { user: RequestUser },
+  ): Promise<TranslationRunDto> {
+    return this.runs.start(id, dto, req.user.userId);
+  }
+
+  @Get('books/:bookId/translation-runs')
+  @ApiOperation({ summary: 'Translation runs of the book, newest first' })
+  @ApiParam({ name: 'bookId', format: 'uuid' })
+  @ApiOkResponse({ schema: paginatedSchema(TranslationRunListItemDto) })
+  @ApiNotFoundResponse({ description: 'Book not found' })
+  listRuns(
+    @Param('bookId') bookId: string,
+    @Query() query: PaginationDto,
+  ): Promise<PaginatedResult<TranslationRunListItemDto>> {
+    return this.runs.listForBook(bookId, query.page ?? 1, query.limit ?? 10);
   }
 
   @Get('translation-runs/:id')

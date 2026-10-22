@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import {
-  Language,
   LlmOperation,
   LlmPauseReason,
   LlmTask,
@@ -13,7 +12,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmError } from '../../llm/llm.errors';
 import { LlmService } from '../../llm/llm.service';
 import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.registry';
-import { EnqueueTaskInput, LlmTaskService, pairKeyOf } from '../../llm-worker/llm-task.service';
+import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
 import { ChapterLayout, splitChapter } from '../chapter-blocks';
 import { ChapterChunk, nextSplit } from '../chunking/chapter-chunks';
@@ -28,6 +27,7 @@ import { lastTranslated, pieceInput, tailOf } from '../translate/translate-piece
 import { PieceTranslation, translatePiece } from '../translate/translate-step';
 import { mergeFindings } from './glossary-findings';
 import { runStageModels, StageModels } from './run-models';
+import { runTaskInput } from './translation-run.service';
 import {
   RUN_CHAPTER_CHUNKS_MAX,
   CHUNK_CLOSED_STATUSES,
@@ -35,7 +35,6 @@ import {
   CHUNK_STATUS_UNEXPECTED,
   CHUNK_TOO_LONG,
   RUN_TX_OPTIONS,
-  TRANSLATION_RUN_TASK_KIND,
 } from './translation-run.constants';
 
 type RunRow = TranslationRun & { operation: Pick<LlmOperation, 'settingsSnapshot'> };
@@ -49,25 +48,6 @@ const CLOSED = new Set<TranslationChunk['status']>(CHUNK_CLOSED_STATUSES);
 const UNRESUMABLE: readonly LlmPauseReason[] = ['DOSSIER_STALE'];
 /** Сброс остановки языка: «продолжить» и готовый контекст. */
 const CLEAR_STOP = { reason: null, reasonModels: [], blockedByOperationId: null };
-
-/**
- * Задача языка запуска: ключ пары «операция:язык» (Р1). Без `bookVersionId`: задача от версии
- * каскадом не удаляется, и удаление исходника посреди запуска доходит до шага - тот закрывает
- * операцию `failed`, а не оставляет её `active` без задач.
- */
-export function runTaskInput(
-  runLanguageId: string,
-  language: Language,
-  operationId: string,
-): EnqueueTaskInput {
-  return {
-    kind: TRANSLATION_RUN_TASK_KIND,
-    operationId,
-    language,
-    payload: { runLanguageId },
-    pairKey: pairKeyOf(operationId, language),
-  };
-}
 
 function runLanguageIdOf(task: LlmTask): string | null {
   const id = (task.payload as Record<string, unknown> | null)?.runLanguageId;

@@ -227,6 +227,25 @@ describe('selectTranslationSource (D8, product.md §2.1)', () => {
     expect(r.targets.filter((t) => t.available).map((t) => t.language)).toEqual(['ru']);
   });
 
+  it('a language with an unfinished run is unavailable: TRANSLATION_IN_PROGRESS before NOT_IN_INTAKE (Р23)', () => {
+    const r = selectTranslationSource({
+      versionId: 'v-en',
+      versions: [version('en', 'English'), version('es', 'English')],
+      intakeTargets: ['en', 'es', 'fr'],
+      inProgress: ['es', 'fr', 'ru'],
+    });
+    expect(reasons(r)).toEqual({
+      en: 'IS_SOURCE',
+      es: 'VERSION_EXISTS',
+      fr: 'TRANSLATION_IN_PROGRESS',
+      pt: 'NOT_IN_INTAKE',
+      // Анкету правили после старта: язык всё равно занят запуском.
+      ru: 'TRANSLATION_IN_PROGRESS',
+    });
+    // Последний свободный язык занят запуском - переводить не на что.
+    expect(r.reason).toBe('NO_AVAILABLE_TARGETS');
+  });
+
   it('dossier source: the D8 source with text, else the version itself (Р5, В10)', () => {
     const versions = [version('ru', 'русский'), version('en', 'Russian')];
     expect(dossierSourceVersionId(select('v-en', versions), versions, 'v-en')).toBe('v-ru');

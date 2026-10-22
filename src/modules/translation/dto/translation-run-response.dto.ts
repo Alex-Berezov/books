@@ -1,6 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Language, TranslationRunLanguageStatus } from '@prisma/client';
+import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
+import { CompareContextLineDto } from './translation-compare-response.dto';
 import { TranslationRunStageModelsDto } from './translation-run-request.dto';
 
 /**
@@ -103,4 +105,114 @@ export class TranslationRunDto {
 
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: string;
+}
+
+/** Строка запуска в списке книги: без хода по языкам - он в `GET /admin/translation-runs/:id`. */
+export class TranslationRunListItemDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ type: String, format: 'uuid', description: 'Translation source version' })
+  bookVersionId!: string;
+
+  @ApiProperty({ enum: Language, enumName: 'Language' })
+  sourceLanguage!: Language;
+
+  @ApiProperty({ enum: Language, enumName: 'Language', isArray: true })
+  languages!: Language[];
+
+  @ApiProperty({
+    type: () => TranslationRunStageModelsDto,
+    description: 'Stage models of this run over its snapshot',
+  })
+  stageModels!: TranslationRunStageModelsDto;
+
+  @ApiProperty({
+    type: () => LlmOperationDto,
+    description: 'Status, pause reason, spent and limit of the run',
+  })
+  operation!: LlmOperationDto;
+
+  @ApiProperty({ type: String, format: 'date-time' })
+  createdAt!: string;
+}
+
+export class TranslationRunLanguageEstimateDto {
+  @ApiProperty({ enum: Language, enumName: 'Language' })
+  language!: Language;
+
+  @ApiProperty({
+    type: () => CompareContextLineDto,
+    nullable: true,
+    description:
+      'The glossary of this language is built first under its own operation; null - ready or building',
+  })
+  glossary!: CompareContextLineDto | null;
+
+  @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'Contested joints by the split stage' })
+  splitUsd!: string;
+
+  @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'Upper estimate: one call per piece' })
+  translateUsd!: string;
+
+  @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'Split plus translate of this language' })
+  totalUsd!: string;
+}
+
+export class TranslationRunEstimateDto {
+  @ApiProperty({ type: String, description: 'Translate model of the estimate' })
+  translateModel!: string;
+
+  @ApiProperty({ type: Number, description: 'Source chapters with text to translate' })
+  chapters!: number;
+
+  @ApiProperty({ type: Number, description: 'Pieces by code boundaries, per language' })
+  chunks!: number;
+
+  @ApiProperty({
+    type: () => CompareContextLineDto,
+    nullable: true,
+    description:
+      'The dossier is built first under its own operation (also a stale one); null - fresh and ready, or building',
+  })
+  dossier!: CompareContextLineDto | null;
+
+  @ApiProperty({ type: () => [TranslationRunLanguageEstimateDto] })
+  languages!: TranslationRunLanguageEstimateDto[];
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'Translation estimates include an upper bound for a dossier and glossary not built yet',
+  })
+  upperBound!: boolean;
+
+  @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'All languages: split plus translate' })
+  translationsUsd!: string;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description: 'Translations plus the dossier and glossaries built first',
+  })
+  totalUsd!: string;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'The run limit cannot be lower: suggested limits of the dossier and glossaries built first',
+  })
+  minLimitUsd!: string;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description: 'Default run limit (LlmBudget.defaultRunLimitUsd)',
+  })
+  defaultLimitUsd!: string;
+
+  @ApiProperty({
+    type: [Number],
+    description:
+      'Source chapters at 80% of the chapter length limit or longer (R8): a translation may not fit',
+  })
+  nearLimitChapters!: number[];
 }

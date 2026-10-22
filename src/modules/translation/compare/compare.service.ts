@@ -9,15 +9,10 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../../shared/dto/paginated-response.dto';
 import { moneyUsd } from '../../llm/dto/llm-money';
 import { LlmBudgetService } from '../../llm/llm-budget.service';
-import { LlmError } from '../../llm/llm.errors';
-import { LlmService, StageCallEstimator } from '../../llm/llm.service';
-import { CHARS_PER_TOKEN } from '../../llm/openrouter.client';
+import { LlmService } from '../../llm/llm.service';
 import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
-import { splitChapter } from '../chapter-blocks';
-import { ContestedWindow, fallbackBoundary, planChunks } from '../chunking/chapter-chunks';
-import { DOSSIER_STAGE, GLOSSARY_STAGE } from '../dossier/dossier.constants';
 import { DossierService } from '../dossier/dossier.service';
 import {
   StartTranslationCompareDto,
@@ -31,13 +26,16 @@ import {
 import { chapterFingerprint } from '../source-fingerprint';
 import { assertKnownModels, stageEstimatorFor } from '../llm-model-checks';
 import { TranslationSourceService } from '../translation-source.service';
+import { SPLIT_STAGE, TRANSLATE_STAGE } from '../translate/translate.constants';
 import {
-  SPLIT_STAGE,
-  TRANSLATE_STAGE,
-  TRANSLATE_TAIL_MAX_CHARS,
-} from '../translate/translate.constants';
-import { pieceInput } from '../translate/translate-piece';
-import { splitRequest, translateRequest } from '../translate/translate.prompts';
+  chapterSplitUsd,
+  chapterTranslateUsd,
+  contextUpperChars,
+  hasTranslatableText,
+  planChapter,
+  readyContext,
+  splitEstimator,
+} from '../translate/translate-estimate';
 import { COMPARE_TASK_KIND, COMPARE_TX_OPTIONS } from './compare.constants';
 
 /** Множитель лимита сравнения по умолчанию - как у досье (`F05-2`, шаг 7). */
@@ -229,55 +227,37 @@ export class TranslationCompareService {
     const sourceLanguage = await this.assertTarget(versionId, query.targetLanguage);
     const chapter = await this.chapterOf(versionId, query.chapterNumber);
     await assertKnownModels(this.llm, query.models);
-    const layout = splitChapter(chapter.content);
+    const plan = await planChapter(query.chapterNumber, chapter.content);
     // Переводить нечего (только `hr` и картинки без подписей): колонки вышли бы «готовыми»
     // с исходным текстом.
-    if (!layout.blocks.some((b) => b.translatable)) {
+    if (!hasTranslatableText(plan)) {
       throw llmTaskConflict('COMPARE_CHAPTER_EMPTY', 'The chapter has no text to translate');
     }
-    // Спорные стыки по границам кода: каждый - вызов `split` в оценке сверху.
-    const windows: ContestedWindow[] = [];
-    const chunks = await planChunks(layout, (w) => {
-      windows.push(w);
-      return Promise.resolve(fallbackBoundary(w));
-    });
 
     const context = await this.dossiers.contextEstimate(versionId, query.targetLanguage);
-    const { dossierData, glossaryData } = await this.readyContext(
+    const { dossierData, glossaryData } = await readyContext(
+      this.prisma,
+      this.dossiers,
       context.sourceVersionId,
       query.targetLanguage,
     );
     // Досье или глоссарий ещё не готовы: их вход в переводе - сверху по размеру ответа этапов.
     const upperBound = dossierData === null || glossaryData === null;
-    const extra = upperBound ? await this.contextUpperChars() : 0;
+    const extra = upperBound ? await contextUpperChars(this.llm) : 0;
 
-    let splitUsd = new Prisma.Decimal(0);
-    const split = await this.splitEstimator();
-    if (split) {
-      for (const w of windows) splitUsd = splitUsd.add(split.estimate(splitRequest(w)));
-    }
+    const splitUsd = chapterSplitUsd(await splitEstimator(this.llm), plan);
 
     const models: Array<{ model: string; estimateUsd: string }> = [];
     let translationsUsd = splitUsd;
     for (const model of query.models) {
       const call = await stageEstimatorFor(this.llm, TRANSLATE_STAGE, model);
-      let total = new Prisma.Decimal(0);
-      for (let index = 0; index < chunks.length; index++) {
-        const request = translateRequest(
-          pieceInput({
-            layout,
-            chunks,
-            index,
-            dossier: dossierData,
-            glossary: glossaryData,
-            sourceLanguage,
-            targetLanguage: query.targetLanguage,
-            chapterNumber: query.chapterNumber,
-            previousTail: index > 0 ? 'x'.repeat(TRANSLATE_TAIL_MAX_CHARS) : null,
-          }),
-        );
-        total = total.add(call.estimate(request, extra));
-      }
+      const total = chapterTranslateUsd(call, plan, {
+        dossier: dossierData,
+        glossary: glossaryData,
+        sourceLanguage,
+        targetLanguage: query.targetLanguage,
+        extra,
+      });
       models.push({ model, estimateUsd: moneyUsd(total) });
       translationsUsd = translationsUsd.add(total);
     }
@@ -298,7 +278,7 @@ export class TranslationCompareService {
       dto: {
         chapterNumber: query.chapterNumber,
         targetLanguage: query.targetLanguage,
-        chunks: chunks.length,
+        chunks: plan.chunks.length,
         dossier: context.dossier
           ? {
               estimateUsd: moneyUsd(context.dossier.estimateUsd),
@@ -368,42 +348,6 @@ export class TranslationCompareService {
       throw llmTaskConflict('COMPARE_CHAPTER_EMPTY', 'The chapter has no text');
     }
     return chapter;
-  }
-
-  private async readyContext(
-    sourceVersionId: string,
-    language: Language,
-  ): Promise<{ dossierData: unknown; glossaryData: unknown }> {
-    const dossier = await this.dossiers.latestDossier(sourceVersionId);
-    if (dossier?.status !== 'ready') return { dossierData: null, glossaryData: null };
-    const glossary = await this.prisma.bookGlossary.findUnique({
-      where: { dossierId_language: { dossierId: dossier.id, language } },
-      select: { status: true, data: true },
-    });
-    return {
-      dossierData: dossier.data,
-      glossaryData: glossary?.status === 'ready' ? glossary.data : null,
-    };
-  }
-
-  /** Сверху: досье и глоссарий размером в `maxTokens` своих этапов, в символах. */
-  private async contextUpperChars(): Promise<number> {
-    const [dossier, glossary] = await Promise.all([
-      this.llm.getStageSetting(DOSSIER_STAGE),
-      this.llm.getStageSetting(GLOSSARY_STAGE),
-    ]);
-    return (dossier.maxTokens + glossary.maxTokens) * CHARS_PER_TOKEN;
-  }
-
-  /** `split` выключен или без цены - не отказ: стыки ставит код (Р7), оценка - ноль. */
-  private async splitEstimator(): Promise<StageCallEstimator | null> {
-    try {
-      const call = await this.llm.stageCallEstimator(SPLIT_STAGE);
-      return call.enabled ? call : null;
-    } catch (error) {
-      if (error instanceof LlmError) return null;
-      throw error;
-    }
   }
 }
 

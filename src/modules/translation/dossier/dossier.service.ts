@@ -93,6 +93,13 @@ export interface ContextEstimate {
   } | null;
 }
 
+/** Оценка контекста на несколько языков: досье одно, глоссарий на язык (`null` - строить не нужно). */
+export interface ContextEstimates {
+  sourceVersionId: string;
+  dossier: DossierEstimate | null;
+  glossaries: Map<Language, ContextEstimate['glossary']>;
+}
+
 function isUniqueViolation(error: unknown): boolean {
   return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
 }
@@ -157,7 +164,8 @@ export class DossierService {
   /**
    * Состояние досье версии для админки: старшее поколение её исходника (Р5), свежесть по
    * отпечатку и операция строителя. Версия, созданная переводом, возьмёт досье своего запуска
-   * без признака «устарел» (Р18) - вместе с запусками в `F05-4`.
+   * без признака «устарел» (Р18) - вместе со ссылкой версии на запуск в `F05-6` (решение арбитра
+   * `F05 | F05-4b`).
    */
   async status(versionId: string): Promise<DossierStatusDto> {
     const { sourceVersionId } = await this.dossierSourceOf(versionId);
@@ -218,35 +226,74 @@ export class DossierService {
     return toEstimateDto(await this.estimateOf(versionId));
   }
 
-  async contextEstimate(versionId: string, language: Language): Promise<ContextEstimate> {
+  /**
+   * Досье и глоссарий, которые ещё предстоит построить, - строками оценки. `rebuildStale` - как
+   * у `demandDossier`: готовое устаревшее досье ждущий строит новым поколением (запуск до
+   * привязки досье), и оценка показывает его строкой (решение арбитра `F05 | F05-4b`).
+   */
+  async contextEstimate(
+    versionId: string,
+    language: Language,
+    options: { rebuildStale?: boolean } = {},
+  ): Promise<ContextEstimate> {
+    const { sourceVersionId, dossier, glossaries } = await this.contextEstimates(
+      versionId,
+      [language],
+      options,
+    );
+    return { sourceVersionId, dossier, glossary: glossaries.get(language) ?? null };
+  }
+
+  /** То же на несколько языков (запуск): досье считается один раз на книгу, глоссарий - на язык. */
+  async contextEstimates(
+    versionId: string,
+    languages: readonly Language[],
+    options: { rebuildStale?: boolean } = {},
+  ): Promise<ContextEstimates> {
     const { sourceVersionId } = await this.dossierSourceOf(versionId);
-    const latest = await this.latestDossier(sourceVersionId);
+    const found = await this.latestDossier(sourceVersionId);
+    const latest =
+      found?.status === 'ready' &&
+      options.rebuildStale &&
+      found.fingerprint !== (await sourceFingerprint(this.prisma, sourceVersionId))
+        ? null
+        : found;
     const glossaryLine = (estimateUsd: Prisma.Decimal, upperBound: boolean) => ({
       estimateUsd,
       suggestedLimitUsd: estimateUsd.mul(DOSSIER_LIMIT_FACTOR),
       upperBound,
     });
+    const glossaries = new Map<Language, ContextEstimate['glossary']>();
     if (latest?.status === 'ready') {
-      const row = await this.prisma.bookGlossary.findUnique({
-        where: { dossierId_language: { dossierId: latest.id, language } },
-        select: { status: true },
+      // Языков не больше пяти: строка глоссария на каждый.
+      const rows = await this.prisma.bookGlossary.findMany({
+        where: { dossierId: latest.id, language: { in: [...languages] } },
+        select: { language: true, status: true },
       });
-      const glossary =
-        row?.status === 'ready' || row?.status === 'building'
-          ? null
-          : glossaryLine(await this.estimateGlossary(latest, language), false);
-      return { sourceVersionId, dossier: null, glossary };
+      for (const language of languages) {
+        const row = rows.find((r) => r.language === language);
+        glossaries.set(
+          language,
+          row?.status === 'ready' || row?.status === 'building'
+            ? null
+            : glossaryLine(await this.estimateGlossary(latest, language), false),
+        );
+      }
+      return { sourceVersionId, dossier: null, glossaries };
     }
     const [dossier, call, dossierCall] = await Promise.all([
       latest?.status === 'building' ? null : this.estimateOf(versionId),
       this.estimator(GLOSSARY_STAGE),
       this.estimator(DOSSIER_STAGE),
     ]);
-    const upper = call.estimate(
-      glossaryRequest({ dossier: null, language }),
-      dossierCall.maxTokens * CHARS_PER_TOKEN,
-    );
-    return { sourceVersionId, dossier, glossary: glossaryLine(upper, true) };
+    for (const language of languages) {
+      const upper = call.estimate(
+        glossaryRequest({ dossier: null, language }),
+        dossierCall.maxTokens * CHARS_PER_TOKEN,
+      );
+      glossaries.set(language, glossaryLine(upper, true));
+    }
+    return { sourceVersionId, dossier, glossaries };
   }
 
   private async estimateOf(versionId: string): Promise<DossierEstimate> {

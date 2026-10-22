@@ -111,6 +111,10 @@ interface PrismaStub {
   authorTranslation: {
     findFirst: jest.Mock;
   };
+  // Незавершённые запуски перевода на язык (Р23): `create` спрашивает их под замком языка.
+  translationRunLanguage: {
+    findMany: jest.Mock;
+  };
   $queryRaw: jest.Mock;
   $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
 }
@@ -180,6 +184,9 @@ const createPrismaStub = (): PrismaStub => {
       // По умолчанию совпадения нет — тогда ключ остаётся пустым, и поведение
       // прежних тестов не меняется.
       findFirst: jest.fn().mockResolvedValue(null),
+    },
+    translationRunLanguage: {
+      findMany: jest.fn().mockResolvedValue([]),
     },
     // Снимок под замком: `unpublish` читает его внутри транзакции сырым запросом.
     // Стенд отдаёт одну строку — иначе метод сочтёт версию удалённой.
@@ -2150,9 +2157,11 @@ describe('BookVersionService', () => {
    * транзакционным замком слага, а при правке — только при смене слага.
    */
   describe('version slug on write: conflict rule, own book, lock', () => {
+    // Замок языка книги (`F05-4b`) - тоже `pg_advisory_xact_lock`, но с ключом «книга:язык».
     const slugLocks = () =>
-      (prisma.$queryRaw.mock.calls as [readonly string[], ...unknown[]][]).filter(([parts]) =>
-        parts.join('?').includes('pg_advisory_xact_lock'),
+      (prisma.$queryRaw.mock.calls as [readonly string[], ...unknown[]][]).filter(
+        ([parts, ...values]) =>
+          parts.join('?').includes('pg_advisory_xact_lock') && !values.includes('b1:en'),
       );
 
     const arrangeCurrentWithBook = (slug: string | null) =>
@@ -3378,6 +3387,63 @@ describe('BookVersionService', () => {
 
       await expect(service.create('b1', createDto)).rejects.toThrow(
         'Version for this language already exists for this book',
+      );
+    });
+
+    it('create: на язык идёт перевод — свой текст и код, а не «язык занят», версия не пишется (Р23)', async () => {
+      arrangeSimpleCreate();
+      prisma.translationRunLanguage.findMany.mockResolvedValue([{ language: Language.en }]);
+
+      const error = await service.create('b1', createDto).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(BadRequestException);
+      expect((error as BadRequestException).getResponse()).toMatchObject({
+        statusCode: 400,
+        message: 'Translation to this language is in progress',
+        code: 'TRANSLATION_IN_PROGRESS',
+      });
+      expect(prisma.bookVersion.create).not.toHaveBeenCalled();
+    });
+
+    it('create: замок языка — первым оператором транзакции, дубль языка и запуск проверяются под ним (Р6)', async () => {
+      arrangeSimpleCreate();
+      const order: string[] = [];
+      const queryRaw = prisma.$queryRaw.getMockImplementation() as (
+        parts: readonly string[],
+        ...values: unknown[]
+      ) => unknown;
+      prisma.$queryRaw.mockImplementation((parts: readonly string[], ...values: unknown[]) => {
+        if (values.includes('b1:en')) order.push('lock');
+        return queryRaw(parts, ...values);
+      });
+      (prisma.bookVersion.findFirst as jest.Mock).mockImplementation(() => {
+        order.push('findFirst');
+        return Promise.resolve(null);
+      });
+      prisma.translationRunLanguage.findMany.mockImplementation(() => {
+        order.push('runs');
+        return Promise.resolve([]);
+      });
+      const transaction = jest.spyOn(prisma, '$transaction').mockImplementation((fn) => {
+        order.push('transaction');
+        return Promise.resolve(fn(prisma));
+      });
+
+      await service.create('b1', createDto);
+
+      expect(order.slice(0, 4)).toEqual(['transaction', 'lock', 'findFirst', 'runs']);
+      expect(transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.translationRunLanguage.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.translationRunLanguage.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            language: { in: [Language.en] },
+            run: {
+              bookVersion: { bookId: 'b1' },
+              operation: { status: { in: ['active', 'paused'] } },
+            },
+          },
+        }),
       );
     });
 

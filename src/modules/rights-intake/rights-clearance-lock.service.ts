@@ -15,7 +15,8 @@ export const CLEARANCE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as cons
  * `RightsProfile.id` и `RightsReview.id` — разные строки, и совпадение хешей двух разных
  * сущностей не должно ставить их в одну очередь. С `TAG_KEY_LOCK_NAMESPACE` (`831_427_002`),
  * `CATEGORY_SLUG_LOCK_NAMESPACE` (`831_427_003`), `BOOK_SUMMARY_LOCK_NAMESPACE` (`831_427_004`),
- * `BOOK_ANALYSIS_LOCK_NAMESPACE` (`831_427_006`) и `CATEGORY_TREE_LOCK_KEY` не пересекаются.
+ * `BOOK_ANALYSIS_LOCK_NAMESPACE` (`831_427_006`), `BOOK_LANGUAGE_LOCK_NAMESPACE` (`831_427_007`)
+ * и `CATEGORY_TREE_LOCK_KEY` не пересекаются.
  */
 export const RIGHTS_PROFILE_LOCK_NAMESPACE = 831_427_101;
 const RIGHTS_REVIEW_LOCK_NAMESPACE = 831_427_102;

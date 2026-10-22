@@ -29,7 +29,8 @@ export async function assertKnownModels(llm: LlmService, models: readonly string
 export async function stageEstimatorFor(
   llm: LlmService,
   stage: string,
-  model: string,
+  /** Не задана - основная модель этапа из настроек. */
+  model?: string,
 ): Promise<StageCallEstimator> {
   let call: StageCallEstimator;
   try {

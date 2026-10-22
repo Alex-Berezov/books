@@ -10,14 +10,19 @@ import { LlmService } from '../src/modules/llm/llm.service';
 import { LlmTaskService, pairKeyOf } from '../src/modules/llm-worker/llm-task.service';
 import { TRANSLATION_RETRY_KIND } from '../src/modules/llm-worker/llm-task.types';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
-import { runTaskInput } from '../src/modules/translation/run/translation-run-tasks.handler';
+import { lockBookLanguages } from '../src/modules/book-version/book-language-lock';
+import {
+  ContextEstimates,
+  DossierService,
+} from '../src/modules/translation/dossier/dossier.service';
+import { runTaskInput } from '../src/modules/translation/run/translation-run.service';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
- * F05-4a: шаги запуска перевода по языкам. Ручки старта в этой пачке нет (решение арбитра
- * `F05 | F05-4`): запуск заводится здесь напрямую - операция, строки, задача на язык. Исполнитель
+ * F05-4a: шаги запуска перевода по языкам - запуск заводится напрямую (`createRun`): операция,
+ * строки, задача на язык. F05-4b: оценка, старт ручкой, замок языка, запуски книги. Исполнитель
  * настоящий, его проходы зовутся руками (таймер в e2e не заведён, Р25); `fetch` подменён всегда,
  * ответ модели выбирается по имени схемы ответа.
  */
@@ -217,7 +222,7 @@ describe('Translation run (e2e)', () => {
     return { bookId: book.id, versionId: version.id };
   };
 
-  /** Запуск, как его заведёт старт `F05-4b`: операция, строки и задача на язык. */
+  /** Запуск в обход ручки старта: то же, что пишет `TranslationRunService.start`, без проверок. */
   const createRun = async (versionId: string, languages: Language[], limitUsd = '10') => {
     const opData = await llm.operationData({
       kind: 'translation_run',
@@ -351,6 +356,9 @@ describe('Translation run (e2e)', () => {
       ['post', `/admin/translation-runs/${id}/pause`],
       ['post', `/admin/translation-runs/${id}/resume`],
       ['post', `/admin/translation-runs/${id}/cancel`],
+      ['get', `/admin/versions/${id}/translation-runs/estimate?languages=es`],
+      ['post', `/admin/versions/${id}/translation-runs`],
+      ['get', `/admin/books/${id}/translation-runs`],
     ];
     for (const [method, path] of routes) {
       await http()[method](path).expect(401);
@@ -1028,5 +1036,474 @@ describe('Translation run (e2e)', () => {
     expect(res.body.languages).toEqual([
       expect.objectContaining({ language: 'es', status: 'failed', stage: 'failed' }),
     ]);
+  });
+  // ---------------------------------------------------------------------------
+  // F05-4b: оценка, старт, замок языка, запуски книги.
+
+  const manualVersion = (bookId: string, language: Language) =>
+    auth(http().post(`/books/${bookId}/versions`)).send({
+      language,
+      title: `Book ${language}`,
+      author: 'Author',
+      type: 'text',
+      isFree: true,
+    });
+
+  const startRun = (versionId: string, body: Record<string, unknown>) =>
+    auth(http().post(`/admin/versions/${versionId}/translation-runs`)).send(body);
+
+  const runsOf = (bookId: string) =>
+    prisma.translationRun.count({ where: { bookVersion: { bookId } } });
+
+  it('start: one transaction - run operation by the admin with a snapshot, source and its language, a task per language without a version', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+
+    const res = await startRun(versionId, { languages: ['fr', 'es'], translateModel: ALT }).expect(
+      202,
+    );
+
+    const runId = res.body.id as string;
+    expect(res.body).toMatchObject({
+      bookVersionId: versionId,
+      sourceLanguage: 'en',
+      stageModels: { translate: ALT },
+      operation: { kind: 'translation_run', status: 'active' },
+    });
+    const op = await prisma.llmOperation.findUniqueOrThrow({
+      where: { id: res.body.operation.id as string },
+      include: { createdBy: { select: { email: true } } },
+    });
+    expect(op).toMatchObject({
+      bookVersionId: versionId,
+      translationRunId: runId,
+      createdBy: { email: `f054-admin-${stamp}@test.com` },
+    });
+    // Лимит не задан - умолчание бюджета; цена модели запуска - в снимке.
+    expect(op.limitUsd.toString()).toBe('10');
+    const snapshot = op.settingsSnapshot as { prices: Array<{ id: string }> };
+    expect(snapshot.prices.map((p) => p.id)).toContain(ALT);
+    const queued = await prisma.llmTask.findMany({
+      where: { operationId: op.id },
+      orderBy: { language: 'asc' },
+    });
+    expect(queued.map((t) => [t.pairKey, t.bookVersionId])).toEqual([
+      [pairKeyOf(op.id, 'es'), null],
+      [pairKeyOf(op.id, 'fr'), null],
+    ]);
+    expect(await runsOf(bookId)).toBe(1);
+
+    await drain();
+
+    expect((await opOf(op.id)).status).toBe('done');
+    expect(new Set(translations().map((c) => c.model))).toEqual(new Set([ALT]));
+  });
+
+  it('start refuses the whole request: a language closed by its reason, not a source, unknown model, low limit, no key', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+
+    const own = await startRun(versionId, { languages: ['es', 'en'] }).expect(409);
+    expect(own.body).toMatchObject({
+      code: 'TRANSLATION_TARGET_UNAVAILABLE',
+      languages: [{ language: 'en', reason: 'IS_SOURCE' }],
+    });
+    await manualVersion(bookId, 'ru').expect(201);
+    const taken = await startRun(versionId, { languages: ['es', 'ru'] }).expect(409);
+    expect(taken.body.languages).toEqual([{ language: 'ru', reason: 'VERSION_EXISTS' }]);
+    const ru = await prisma.bookVersion.findFirstOrThrow({ where: { bookId, language: 'ru' } });
+    const notSource = await startRun(ru.id, { languages: ['es'] }).expect(409);
+    expect(notSource.body).toMatchObject({
+      code: 'NOT_ORIGINAL_VERSION',
+      sourceVersionId: versionId,
+    });
+    const unknown = await startRun(versionId, {
+      languages: ['es'],
+      translateModel: 'z/missing',
+    }).expect(400);
+    expect(unknown.body.code).toBe('LLM_MODEL_UNKNOWN');
+    await startRun(versionId, { languages: [] }).expect(400);
+    await startRun(versionId, { languages: ['es', 'es'] }).expect(400);
+    // Досье и глоссарий не построены: лимит запуска обязан вместить их лимиты.
+    const low = await startRun(versionId, { languages: ['es'], limitUsd: '0' }).expect(400);
+    expect(low.body.code).toBe('TRANSLATION_RUN_LIMIT_TOO_LOW');
+    process.env.OPENROUTER_API_KEY = '';
+    await startRun(versionId, { languages: ['es'] }).expect(503);
+
+    expect(await runsOf(bookId)).toBe(0);
+    expect(await prisma.llmOperation.count({ where: { bookVersionId: versionId } })).toBe(0);
+  });
+
+  it('start with the spending ceiling reached and no dossier: the run waits DOSSIER_PAUSED for the dossier stopped on the ceiling, nothing is paid', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    await prisma.llmBudget.update({ where: { id: LLM_BUDGET_ID }, data: { spentUsd: 100 } });
+
+    const res = await startRun(versionId, { languages: ['es'] }).expect(202);
+    await drain();
+
+    // Первый шаг - досье своей операцией: она встаёт на потолке, запуск ждёт её (Р20).
+    expect(await opOf(res.body.operation.id as string)).toMatchObject({
+      status: 'paused',
+      pauseReason: 'DOSSIER_PAUSED',
+    });
+    const lang = await langOf(res.body.id as string, 'es');
+    expect(await opOf(lang.blockedByOperationId as string)).toMatchObject({
+      kind: 'dossier',
+      status: 'paused',
+      pauseReason: 'CEILING_REACHED',
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('start with the spending ceiling reached and a ready dossier and glossary: the run itself pauses CEILING_REACHED, nothing is paid', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    await startRun(versionId, { languages: ['es'] }).expect(202);
+    await drain();
+    await prisma.llmBudget.update({ where: { id: LLM_BUDGET_ID }, data: { spentUsd: 100 } });
+    calls.length = 0;
+
+    const res = await startRun(versionId, { languages: ['es'] }).expect(202);
+    await drain();
+
+    expect(await opOf(res.body.operation.id as string)).toMatchObject({
+      status: 'paused',
+      pauseReason: 'CEILING_REACHED',
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('start of a version deleted after its estimate: 404, nothing is created', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const dossiers = app.get<DossierService>(DossierService);
+    const real: DossierService['contextEstimates'] = (...args) =>
+      DossierService.prototype.contextEstimates.apply(dossiers, args) as Promise<ContextEstimates>;
+    jest
+      .spyOn(dossiers, 'contextEstimates')
+      .mockImplementationOnce(async (...args: Parameters<DossierService['contextEstimates']>) => {
+        const estimate = await real(...args);
+        await prisma.bookVersion.delete({ where: { id: versionId } });
+        return estimate;
+      });
+
+    await startRun(versionId, { languages: ['es'] }).expect(404);
+
+    expect(await runsOf(bookId)).toBe(0);
+  });
+
+  it('estimate refuses a bad query with 400: an unknown language, a repeated one, an unknown model', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const estimate = (query: Record<string, string | string[]>) =>
+      auth(http().get(`/admin/versions/${versionId}/translation-runs/estimate`).query(query));
+
+    await estimate({ languages: 'xx' }).expect(400);
+    await estimate({ languages: ['es', 'es'] }).expect(400);
+    await estimate({ languages: 'es,fr,pt,ru,en,es' }).expect(400);
+    const unknown = await estimate({ languages: 'es', translateModel: 'z/missing' }).expect(400);
+    expect(unknown.body.code).toBe('LLM_MODEL_UNKNOWN');
+    // Повтор параметра - тот же список, что через запятую.
+    const repeated = await estimate({ languages: ['es', 'fr'] }).expect(200);
+    expect(repeated.body.languages.map((l: { language: string }) => l.language)).toEqual([
+      'es',
+      'fr',
+    ]);
+  });
+
+  it('an unfinished run holds its languages (Р23): source, a second start and a manual version are refused while active or paused; cancel frees them', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const res = await startRun(versionId, { languages: ['es'] }).expect(202);
+    const runId = res.body.id as string;
+
+    const expectHeld = async () => {
+      const source = await auth(
+        http().get(`/admin/versions/${versionId}/translation-source`),
+      ).expect(200);
+      expect(source.body.targets).toContainEqual({
+        language: 'es',
+        available: false,
+        reason: 'TRANSLATION_IN_PROGRESS',
+      });
+      const second = await startRun(versionId, { languages: ['fr', 'es'] }).expect(409);
+      expect(second.body.languages).toEqual([
+        { language: 'es', reason: 'TRANSLATION_IN_PROGRESS' },
+      ]);
+      const manual = await manualVersion(bookId, 'es').expect(400);
+      expect(manual.body).toMatchObject({
+        message: 'Translation to this language is in progress',
+        code: 'TRANSLATION_IN_PROGRESS',
+      });
+    };
+
+    await expectHeld();
+    await auth(http().post(`/admin/translation-runs/${runId}/pause`)).expect(200);
+    await expectHeld();
+    await auth(http().post(`/admin/translation-runs/${runId}/cancel`)).expect(200);
+
+    expect(await runsOf(bookId)).toBe(1);
+    await manualVersion(bookId, 'es').expect(201);
+  });
+
+  it('a start and a manual version on one language at once: exactly one passes', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+
+    const [started, manual] = await Promise.all([
+      startRun(versionId, { languages: ['es'] }),
+      manualVersion(bookId, 'es'),
+    ]);
+
+    // Первым взял замок старт - ручная версия отказывает «идёт перевод»; ручная - старт
+    // отказывает «версия есть».
+    expect([started.status, manual.status]).toEqual(
+      started.status === 202 ? [202, 400] : [409, 201],
+    );
+    const versions = await prisma.bookVersion.count({ where: { bookId, language: 'es' } });
+    expect(versions + (await runsOf(bookId))).toBe(1);
+  });
+
+  it('two crossing starts on the same languages: one passes, the other is refused, no deadlock', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+
+    const results = await Promise.all(
+      [
+        ['es', 'fr'],
+        ['fr', 'es'],
+      ].map((languages) => startRun(versionId, { languages })),
+    );
+
+    expect(results.map((r) => r.status).sort()).toEqual([202, 409]);
+    expect(await runsOf(bookId)).toBe(1);
+  });
+
+  /**
+   * Держит замок языка `es` транзакцией, которая пишет под ним запуск, и пускает навстречу запрос.
+   * Встал ли запрос в очередь, видно по `pg_blocking_pids` против соединения держателя; без замка
+   * он прошёл бы сразу по проверке до запуска.
+   */
+  const probeLanguageLock = async (
+    send: (book: { bookId: string; versionId: string }) => Promise<request.Response>,
+    underLock?: (tx: Prisma.TransactionClient, bookId: string) => Promise<unknown>,
+  ) => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const opData = await llm.operationData({
+      kind: 'translation_run',
+      bookVersionId: versionId,
+      limitUsd: new Prisma.Decimal(10),
+    });
+    let release: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let entered: (pid: number) => void = () => undefined;
+    const inside = new Promise<number>((resolve) => {
+      entered = resolve;
+    });
+    // Держатель - тот же замок, что у старта: пара (книга, язык); запуск пишется под ним.
+    const holder = prisma.$transaction(
+      async (tx) => {
+        await lockBookLanguages(tx, bookId, ['es']);
+        if (underLock) {
+          await underLock(tx, bookId);
+        } else {
+          const op = await tx.llmOperation.create({ data: opData });
+          await tx.translationRun.create({
+            data: {
+              operationId: op.id,
+              bookVersionId: versionId,
+              sourceLanguage: 'en',
+              languages: { create: [{ language: 'es' }] },
+            },
+          });
+        }
+        const [row] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
+        entered(row.pid);
+        await held;
+      },
+      { timeout: 30_000, maxWait: 10_000 },
+    );
+    const holderPid = await inside;
+    const counter = send({ bookId, versionId });
+    let blocked = false;
+    try {
+      for (let i = 0; i < 100 && !blocked; i++) {
+        const [row] = await prisma.$queryRaw<Array<{ n: number }>>`
+          SELECT count(*)::int AS n FROM pg_stat_activity
+          WHERE datname = current_database() AND ${holderPid}::int = ANY(pg_blocking_pids(pid))`;
+        blocked = row.n > 0;
+        if (!blocked) await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    } finally {
+      release();
+    }
+    await holder;
+    return { blocked, res: await counter };
+  };
+
+  it('a manual version waits for the language lock and sees the run committed while it waited', async () => {
+    const { blocked, res } = await probeLanguageLock(({ bookId }) =>
+      manualVersion(bookId, 'es').then((r) => r),
+    );
+
+    expect(blocked).toBe(true);
+    expect(res.status).toBe(400);
+    expect(res.body.code).toBe('TRANSLATION_IN_PROGRESS');
+  }, 60_000);
+
+  it('a start waits for the language lock and rechecks the languages under it', async () => {
+    const { blocked, res } = await probeLanguageLock(({ versionId }) =>
+      startRun(versionId, { languages: ['es'] }).then((r) => r),
+    );
+
+    expect(blocked).toBe(true);
+    expect(res.status).toBe(409);
+    expect(res.body.languages).toEqual([{ language: 'es', reason: 'TRANSLATION_IN_PROGRESS' }]);
+  }, 60_000);
+
+  it('a start waits for the language lock and rechecks the rights intake under it', async () => {
+    const { blocked, res } = await probeLanguageLock(
+      ({ versionId }) => startRun(versionId, { languages: ['es'] }).then((r) => r),
+      async (tx, bookId) => {
+        const book = await tx.book.findUniqueOrThrow({
+          where: { id: bookId },
+          select: { rightsIntakeId: true },
+        });
+        await tx.rightsIntake.update({
+          where: { id: book.rightsIntakeId as string },
+          data: { targetLanguages: ['en', 'fr'] },
+        });
+      },
+    );
+
+    expect(blocked).toBe(true);
+    expect(res.status).toBe(409);
+    expect(res.body.languages).toEqual([{ language: 'es', reason: 'NOT_IN_INTAKE' }]);
+  }, 60_000);
+
+  it('a source without text to translate is refused: no dossier and glossaries are paid for nothing', async () => {
+    const { bookId, versionId } = await englishBook([
+      { number: 1, title: 'One', content: '<hr><hr>' },
+    ]);
+
+    const est = await auth(
+      http()
+        .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+        .query({ languages: 'es' }),
+    ).expect(409);
+    expect(est.body.code).toBe('TRANSLATION_SOURCE_EMPTY');
+    await startRun(versionId, { languages: ['es'] }).expect(409);
+
+    expect(await runsOf(bookId)).toBe(0);
+  });
+
+  it('start with the limit exactly at the floor of the dossier and glossaries passes and keeps that limit', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const est = await auth(
+      http()
+        .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+        .query({ languages: 'es' }),
+    ).expect(200);
+    const floor = new Prisma.Decimal(est.body.minLimitUsd as string);
+
+    const low = await startRun(versionId, {
+      languages: ['es'],
+      limitUsd: floor.sub('0.00000001').toString(),
+    }).expect(400);
+    expect(low.body.code).toBe('TRANSLATION_RUN_LIMIT_TOO_LOW');
+    const res = await startRun(versionId, { languages: ['es'], limitUsd: floor.toString() }).expect(
+      202,
+    );
+
+    expect(new Prisma.Decimal(res.body.operation.limitUsd as string).eq(floor)).toBe(true);
+  });
+
+  it('estimate: per language and total, the dossier and glossaries to build, a stale dossier, chapters near the length limit, default limit', async () => {
+    const { versionId } = await englishBook([
+      { number: 1, title: 'One', content: LONG },
+      { number: 2, title: 'Two', content: SHORT },
+    ]);
+    const estimate = async () =>
+      (
+        await auth(
+          http()
+            .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+            .query({ languages: 'es,fr' }),
+        ).expect(200)
+      ).body as {
+        dossier: { suggestedLimitUsd: string } | null;
+        languages: Array<{
+          language: string;
+          glossary: { suggestedLimitUsd: string } | null;
+          totalUsd: string;
+        }>;
+        translationsUsd: string;
+        minLimitUsd: string;
+        defaultLimitUsd: string;
+        nearLimitChapters: number[];
+      };
+    const sum = (values: string[]) =>
+      values.reduce((s, v) => s.add(v), new Prisma.Decimal(0)).toString();
+
+    const before = await estimate();
+    expect(before).toMatchObject({
+      translateModel: MODEL,
+      chapters: 2,
+      chunks: 3,
+      upperBound: true,
+      nearLimitChapters: [],
+    });
+    expect(new Prisma.Decimal(before.defaultLimitUsd).toString()).toBe('10');
+    expect(before.dossier).not.toBeNull();
+    expect(before.languages.map((l) => l.language)).toEqual(['es', 'fr']);
+    expect(sum(before.languages.map((l) => l.totalUsd))).toBe(
+      new Prisma.Decimal(before.translationsUsd).toString(),
+    );
+    expect(
+      sum([
+        before.dossier?.suggestedLimitUsd ?? '0',
+        ...before.languages.map((l) => l.glossary?.suggestedLimitUsd ?? 'x'),
+      ]),
+    ).toBe(new Prisma.Decimal(before.minLimitUsd).toString());
+
+    // Досье и глоссарии построены запуском - строк нет, оценка не «сверху».
+    await startRun(versionId, { languages: ['es', 'fr'] }).expect(202);
+    await drain();
+    const after = await estimate();
+    expect(after).toMatchObject({ dossier: null, upperBound: false });
+    expect(new Prisma.Decimal(after.minLimitUsd).isZero()).toBe(true);
+    expect(after.languages.map((l) => l.glossary)).toEqual([null, null]);
+
+    // Исходник правили - готовое досье устарело, запуск построит его заново: строка снова есть.
+    await prisma.chapter.update({
+      where: { bookVersionId_number: { bookVersionId: versionId, number: 2 } },
+      data: { content: `${SHORT}<p>${'x'.repeat(400_001)}</p>` },
+    });
+    const stale = await estimate();
+    expect(stale.dossier).not.toBeNull();
+    expect(stale.nearLimitChapters).toEqual([2]);
+  });
+
+  it('runs of the book: paginated, newest first, only this book', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const other = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const first = await startRun(versionId, { languages: ['es'] }).expect(202);
+    await auth(http().post(`/admin/translation-runs/${first.body.id as string}/cancel`)).expect(
+      200,
+    );
+    const second = await startRun(versionId, { languages: ['fr', 'es'] }).expect(202);
+    await startRun(other.versionId, { languages: ['es'] }).expect(202);
+
+    const res = await auth(http().get(`/admin/books/${bookId}/translation-runs`)).expect(200);
+
+    expect(res.body.pagination).toEqual({ page: 1, limit: 10, total: 2, totalPages: 1 });
+    expect(res.body.items.map((r: { id: string }) => r.id)).toEqual([
+      second.body.id,
+      first.body.id,
+    ]);
+    expect(res.body.items[0]).toMatchObject({
+      bookVersionId: versionId,
+      sourceLanguage: 'en',
+      languages: ['es', 'fr'],
+      operation: { status: 'active' },
+    });
+    expect(res.body.items[1].operation.status).toBe('cancelled');
+    await auth(
+      http().get(`/admin/books/00000000-0000-0000-0000-000000000000/translation-runs`),
+    ).expect(404);
   });
 });

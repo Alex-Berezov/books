@@ -128,13 +128,49 @@ export function cleanedBlockErrors(
 const TAG = /<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^>]*>/g;
 
 const IMG = /<img\b[^>]*>/gi;
-const SRC = /\ssrc="([^"]*)"/i;
+const LINK_OPEN = /<a(?=[\s>/])[^>]*>/gi;
+const LINK_TAG = new RegExp(`${LINK_OPEN.source}|<\\/a\\s*>`, 'gi');
+/**
+ * Атрибуты тега по порядку: значение в двойных, одинарных кавычках или без них. Разбор подряд,
+ * а не поиск ` href=` по тексту тега: иначе `href` внутри значения соседнего атрибута
+ * (`rel="x href=…"`) прочитался бы как настоящий (`L-008`). `sanitizeRichHtml` отдаёт чистый
+ * ввод байт в байт - кавычки бывают любые.
+ */
+const ATTR = /\s([^\s"'>/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/g;
+
+/** Значение атрибута тега (первое, как у браузера); `&amp;` и `&` - одно и то же. */
+function attrOf(tag: string, name: string): string | undefined {
+  // Срезается только `>`: `/` перед ним - часть значения без кавычек (`href=/docs/`), а одинокий
+  // `/` самозакрытого тега атрибутом не разбирается.
+  const body = tag.replace(/^<[a-zA-Z][a-zA-Z0-9]*/, '').replace(/>$/, '');
+  for (const m of body.matchAll(ATTR)) {
+    if (m[1].toLowerCase() === name) return (m[2] ?? m[3] ?? m[4] ?? '').replace(/&amp;/g, '&');
+  }
+  return undefined;
+}
+
+/**
+ * Ссылка остаётся, только если её `href` был в исходном блоке; иначе снимается тег, текст ссылки
+ * остаётся (решение арбитра `F05 | F05-4b`). Оставленная ссылка получает открывающий тег
+ * исходника, а не ответа модели: ни чужой `href`, ни выдуманные `target`/`rel` в главу не идут.
+ * Закрывающий тег снимается вместе со своим открывающим.
+ */
+function keepSourceLinks(html: string, sourceTags: ReadonlyMap<string, string>): string {
+  const kept: boolean[] = [];
+  return html.replace(LINK_TAG, (tag) => {
+    if (tag.startsWith('</')) return kept.pop() ? tag : '';
+    const own = sourceTags.get(attrOf(tag, 'href') ?? '');
+    kept.push(own !== undefined);
+    return own ?? '';
+  });
+}
 
 /**
  * Перевод блока для сборки: строчная разметка белого списка (`sanitizeRichHtml`, затем только
  * строчные теги - блочный тег внутри блока сломал бы оболочку главы). Картинка остаётся, только
  * если её `src` был в исходном блоке: чужой адрес из ответа модели в главу не попадает (решение
- * арбитра `F05 | F05-3`, круг 3). Атрибут картинки - текст без тегов с экранированными кавычками.
+ * арбитра `F05 | F05-3`, круг 3); ссылка - так же по `href` (`F05 | F05-4b`). Атрибут картинки -
+ * текст без тегов с экранированными кавычками.
  */
 export function blockText(block: Pick<ChapterBlock, 'kind' | 'html'>, text: string): string {
   if (block.kind === 'img-alt' || block.kind === 'img-title') {
@@ -145,11 +181,19 @@ export function blockText(block: Pick<ChapterBlock, 'kind' | 'html'>, text: stri
       .replace(/</g, '&lt;')
       .trim();
   }
+  const source = sanitizeRichHtml(block.html);
   const sources = new Set(
-    [...block.html.matchAll(IMG)].map((m) => SRC.exec(m[0])?.[1]).filter(Boolean),
+    // Пустой `src` исходника ничего не разрешает: иначе прошла бы картинка модели без адреса.
+    [...source.matchAll(IMG)].map((m) => attrOf(m[0], 'src')).filter((s) => !!s),
   );
-  return sanitizeRichHtml(text)
+  // Первый тег на адрес: одинаковые ссылки исходника различаются разве что `target`/`rel`.
+  const sourceTags = new Map<string, string>();
+  for (const m of source.matchAll(LINK_OPEN)) {
+    const href = attrOf(m[0], 'href');
+    if (href && !sourceTags.has(href)) sourceTags.set(href, m[0]);
+  }
+  const inline = sanitizeRichHtml(text)
     .replace(TAG, (tag, name: string) => (INLINE_TAGS.has(name.toLowerCase()) ? tag : ''))
-    .replace(IMG, (img) => (sources.has(SRC.exec(img)?.[1]) ? img : ''))
-    .trim();
+    .replace(IMG, (img) => (sources.has(attrOf(img, 'src') ?? '') ? img : ''));
+  return keepSourceLinks(inline, sourceTags).trim();
 }

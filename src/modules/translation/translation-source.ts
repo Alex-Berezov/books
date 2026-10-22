@@ -18,8 +18,17 @@ export const TRANSLATION_BLOCK_REASONS = [
 ] as const;
 export type TranslationBlockReason = (typeof TRANSLATION_BLOCK_REASONS)[number];
 
-/** Почему недоступен язык цели. Причину «на язык идёт перевод» добавит `F05-4`. */
-export const TRANSLATION_TARGET_REASONS = ['IS_SOURCE', 'VERSION_EXISTS', 'NOT_IN_INTAKE'] as const;
+/**
+ * Почему недоступен язык цели. `TRANSLATION_IN_PROGRESS` - на язык идёт перевод: незавершённый
+ * запуск (Р23); стоит раньше `NOT_IN_INTAKE` - язык занят запуском, даже если анкету с тех пор
+ * правили.
+ */
+export const TRANSLATION_TARGET_REASONS = [
+  'IS_SOURCE',
+  'VERSION_EXISTS',
+  'TRANSLATION_IN_PROGRESS',
+  'NOT_IN_INTAKE',
+] as const;
 export type TranslationTargetReason = (typeof TRANSLATION_TARGET_REASONS)[number];
 
 export interface SourceCandidate {
@@ -97,8 +106,11 @@ export function selectTranslationSource(input: {
   versionId: string;
   versions: readonly SourceCandidate[];
   intakeTargets: readonly unknown[] | null;
+  /** Языки с незавершённым запуском перевода (Р23); не передан - причину не ставит. */
+  inProgress?: readonly Language[];
 }): TranslationSource {
   const { versions, intakeTargets } = input;
+  const inProgress = new Set(input.inProgress ?? []);
   const original = resolveBookOriginalLanguage(versions);
   const sourceLanguage = sourceLanguageOf(original.language);
   const source = sourceLanguage ? versions.find((v) => v.language === sourceLanguage) : undefined;
@@ -117,6 +129,7 @@ export function selectTranslationSource(input: {
   const targetReason = (language: Language): TranslationTargetReason | null => {
     if (language === sourceLanguage) return 'IS_SOURCE';
     if (existing.has(language)) return 'VERSION_EXISTS';
+    if (inProgress.has(language)) return 'TRANSLATION_IN_PROGRESS';
     if (!intakeTargets?.includes(language)) return 'NOT_IN_INTAKE';
     return null;
   };
@@ -149,7 +162,7 @@ function sourceLanguageOf(original: OriginalLanguage): Language | null {
  * Версия, по которой строится досье (Р5): исходник D8 с текстом глав - его; исходника нет или
  * у него нет глав с текстом - сама версия (решение арбитра `F05 | F05-2`, В10): заготовка
  * работает на любой версии с текстом (`product.md` §5.1 п.1). Версия, созданная переводом,
- * берёт досье своего запуска (Р18) - это `F05-4`.
+ * берёт досье своего запуска (Р18) - это `F05-6` (решение арбитра `F05 | F05-4b`).
  */
 export function dossierSourceVersionId(
   source: TranslationSource,

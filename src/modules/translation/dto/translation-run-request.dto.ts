@@ -1,7 +1,64 @@
-import { ApiPropertyOptional } from '@nestjs/swagger';
-import { Type } from 'class-transformer';
-import { IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { Language } from '@prisma/client';
+import { Transform, Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  ArrayUnique,
+  IsArray,
+  IsEnum,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  ValidateIf,
+  ValidateNested,
+} from 'class-validator';
+import { MONEY_DOC, MONEY_PATTERN, notUndefined, toMoneyString } from '../../llm/dto/llm-money';
 import { ResumeLlmOperationDto } from '../../llm-worker/dto/resume-llm-operation.dto';
+import { toQueryList } from './translation-compare-request.dto';
+
+/** Языки и модель перевода запуска (`F05-4b`, шаги 2-3); общая часть оценки и старта. */
+export class TranslationRunEstimateQueryDto {
+  @ApiProperty({
+    enum: Language,
+    enumName: 'Language',
+    isArray: true,
+    description: 'Target languages, each once; in a query - repeated or comma-separated',
+  })
+  @Transform(toQueryList)
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(Object.values(Language).length)
+  @ArrayUnique({ message: 'languages must not repeat' })
+  @IsEnum(Language, { each: true })
+  languages!: Language[];
+
+  @ApiPropertyOptional({
+    type: String,
+    example: 'anthropic/claude-sonnet-5.5',
+    description:
+      'Translate model of this run only, one model without fallbacks; settings are not changed. Default - the translate stage model',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  translateModel?: string;
+}
+
+export class StartTranslationRunDto extends TranslationRunEstimateQueryDto {
+  @ApiPropertyOptional({
+    ...MONEY_DOC,
+    description:
+      'Limit of the run operation; must fit the dossier and glossaries built first. Default - LlmBudget.defaultRunLimitUsd',
+  })
+  @ValidateIf(notUndefined)
+  @Transform(toMoneyString)
+  @Matches(MONEY_PATTERN, {
+    message: 'limitUsd must be a non-negative amount with up to 8 decimals',
+  })
+  limitUsd?: string;
+}
 
 /**
  * Модели этапов запуска поверх снимка: одна модель без запасных (решение арбитра

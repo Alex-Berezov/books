@@ -48,6 +48,11 @@ import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexa
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { AuthorService } from '../author/author.service';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
+import {
+  BOOK_LANGUAGE_TX_OPTIONS,
+  lockBookLanguages,
+  unfinishedRunLanguages,
+} from './book-language-lock';
 import { isBookSlugLive } from '../../shared/slug/book-slug-liveness';
 import { assertChangedSlugLength } from '../../shared/validators/slug';
 import {
@@ -101,6 +106,12 @@ const BOOK_VERSION_LANGUAGE_IMMUTABLE_MESSAGE =
 const BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE =
   'Version for this language already exists for this book';
 
+/**
+ * На язык идёт перевод (незавершённый запуск, Р23): свой текст, а не «версия уже есть» - версии ещё
+ * нет, она появится в конце запуска (решение арбитра `F05 | F05-4b`).
+ */
+const BOOK_VERSION_TRANSLATION_IN_PROGRESS_MESSAGE = 'Translation to this language is in progress';
+
 /** Один текст на «слаг занят» (`@@unique([language, slug])`) в `create` и в `update`. */
 const BOOK_VERSION_SLUG_TAKEN_MESSAGE = 'Slug is already used by another version in this language';
 
@@ -112,8 +123,8 @@ const BOOK_VERSION_CONFLICT_MESSAGE =
  * `P2002` записи версии — в 400 по индексу, на котором упал (`LEGACY-400`, пачка `T61`). До пачки `create`
  * и запасная ветка `update` отвечали «язык занят» и на занятый слаг. В обоих индексах есть `language`,
  * поэтому различает их второе поле: `slug` или `bookId`. Поля не разобрались или не из этих индексов —
- * общий текст: предпроверка языка в `create` идёт вне транзакции, так что гонка по языку и занятый слаг
- * неотличимы. `P2002` чужой таблицы в той же транзакции (журнал, история слагов) дублем версии
+ * общий текст: по пустым полям гонку по языку и занятый слаг не различить (в `create` дубль языка
+ * проверяется под замком языка, `P2002` по языку там — запасной путь). `P2002` чужой таблицы в той же транзакции (журнал, история слагов) дублем версии
  * не называется — уходит как есть, как у страниц (`pageWriteError`).
  */
 function bookVersionUniqueViolation(e: unknown): unknown {
@@ -143,13 +154,6 @@ function bookVersionUniqueViolation(e: unknown): unknown {
  * как гейт публикацию уже пропустил.
  */
 const BOOK_VERSION_VISIBILITY_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
-
-/**
- * Явный дедлайн создания версии (`L-020`): транзакция ждёт замок слага (`assertVersionSlugFree`),
- * который встречная правка слага держит до своего коммита. На дефолтных 5 секундах создание
- * получило бы `P2028` и 500 вместо отказа или успеха.
- */
-const BOOK_VERSION_CREATE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 
 @Injectable()
 export class BookVersionService {
@@ -292,14 +296,6 @@ export class BookVersionService {
       );
     }
 
-    const existing = await this.prisma.bookVersion.findFirst({
-      where: { bookId, language: effectiveLanguage },
-      select: { id: true },
-    });
-    if (existing) {
-      throw new BadRequestException(BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE);
-    }
-
     // Аннотация обязательна: `let` без типа и без инициализатора — «развивающийся
     // any», и всё, что читается из него ниже (`rightsProfileId`, `id`,
     // `approvedRightsReviewId`), проверку типов не проходит вовсе. Пока файл был
@@ -307,6 +303,25 @@ export class BookVersionService {
     let version: BookVersionWithSeo;
     try {
       version = await this.prisma.$transaction(async (tx) => {
+        // Замок языка - первым оператором: дубль языка и идущий перевод проверяются под ним,
+        // встречный старт запуска на тот же язык ждёт коммита (Р6, `F05-4b`).
+        await lockBookLanguages(tx, bookId, [effectiveLanguage]);
+        const existing = await tx.bookVersion.findFirst({
+          where: { bookId, language: effectiveLanguage },
+          select: { id: true },
+        });
+        if (existing) {
+          throw new BadRequestException(BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE);
+        }
+        if ((await unfinishedRunLanguages(tx, bookId, [effectiveLanguage])).length > 0) {
+          throw new BadRequestException({
+            statusCode: 400,
+            error: 'Bad Request',
+            message: BOOK_VERSION_TRANSLATION_IN_PROGRESS_MESSAGE,
+            code: 'TRANSLATION_IN_PROGRESS',
+          });
+        }
+
         let seoId: number | undefined;
         if (dto.seoMetaTitle || dto.seoMetaDescription) {
           const seo = await tx.seo.create({
@@ -449,7 +464,7 @@ export class BookVersionService {
         );
 
         return newVersion;
-      }, BOOK_VERSION_CREATE_TX_OPTIONS);
+      }, BOOK_LANGUAGE_TX_OPTIONS);
     } catch (e: unknown) {
       throw bookVersionUniqueViolation(e);
     }

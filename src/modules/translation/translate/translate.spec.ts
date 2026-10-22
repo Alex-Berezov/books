@@ -131,6 +131,72 @@ describe('translate answer', () => {
     ).toBe('Sin');
   });
 
+  it('a link stays only with an href the source block had: a foreign one loses its tag, not its text', () => {
+    const source = {
+      kind: 'p' as const,
+      html: 'See <a href="https://site.example/a?x=1&amp;y=2">the map</a>',
+    };
+    expect(
+      blockText(
+        source,
+        'Ver <a href="https://site.example/a?x=1&y=2">el mapa</a> y <a href="https://evil.example/">aquí</a>.',
+      ),
+    ).toBe('Ver <a href="https://site.example/a?x=1&amp;y=2">el mapa</a> y aquí.');
+    // Ссылка внутри чужой: закрывающие теги снимаются в паре со своими открывающими.
+    expect(
+      blockText(
+        source,
+        '<a href="https://evil.example/"><a href="https://site.example/a?x=1&amp;y=2">mapa</a> malo</a>',
+      ),
+    ).toBe('<a href="https://site.example/a?x=1&amp;y=2">mapa</a> malo');
+    // Чистый исходник `sanitizeRichHtml` отдаёт байт в байт: `href` в одинарных кавычках - та же ссылка.
+    expect(
+      blockText(
+        { kind: 'p', html: "See <a href='https://site.example/b'>it</a>" },
+        'Ver <a href="https://site.example/b">eso</a>',
+      ),
+    ).toBe("Ver <a href='https://site.example/b'>eso</a>");
+    expect(blockText({ kind: 'p', html: 'No link' }, '<a href="https://site.example/">x</a>')).toBe(
+      'x',
+    );
+  });
+
+  it('a link keeps the opening tag of the source: an href hidden in another attribute or invented target/rel do not pass', () => {
+    const source = { kind: 'p' as const, html: 'See <a href="https://site.example/b">it</a>' };
+    // `href` исходника внутри значения `rel`, настоящий `href` - чужой: ссылка снимается.
+    expect(
+      blockText(
+        source,
+        'Ver <a rel="x href=https://site.example/b" href="https://evil.example/">eso</a>',
+      ),
+    ).toBe('Ver eso');
+    // Настоящий `href` - исходника: тег берётся из исходника, атрибуты модели не проходят.
+    expect(
+      blockText(
+        source,
+        'Ver <a href="https://site.example/b" target="_blank" rel="nofollow">eso</a>',
+      ),
+    ).toBe('Ver <a href="https://site.example/b">eso</a>');
+    // Картинка - тот же разбор: `src` исходника внутри `title` чужой картинке не помогает.
+    expect(
+      blockText(
+        { kind: 'p', html: 'A <img src="https://cdn.example/a.png"> cat' },
+        'Un <img title=\' src="https://cdn.example/a.png"\' src="https://evil.example/x.png"> gato',
+      ),
+    ).toBe('Un  gato');
+    // Значение без кавычек с `/` на конце - тот же адрес, что в кавычках.
+    expect(
+      blockText({ kind: 'p', html: 'See <a href=/docs/>docs</a>' }, 'Ver <a href="/docs/">doc</a>'),
+    ).toBe('Ver <a href=/docs/>doc</a>');
+    // Пустой `src` или `href` исходника ничего не разрешает: картинка и ссылка модели без адреса снимаются.
+    expect(
+      blockText(
+        { kind: 'p', html: 'A <img src=""> <a href="">x</a>' },
+        'Un <img alt="y"> <a>eso</a>',
+      ),
+    ).toBe('Un  eso');
+  });
+
   it('glossary findings are not checked by the form: incomplete or missing ones are no reason to retry', () => {
     const blocks = [{ n: 1, text: 'Uno' }];
     expect(

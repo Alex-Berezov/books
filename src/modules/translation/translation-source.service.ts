@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { unfinishedRunLanguages } from '../book-version/book-language-lock';
 import { approvedTargetLanguages } from '../book-version/intake-target-languages';
 import {
   dossierSourceVersionId,
@@ -26,7 +27,14 @@ export interface VersionTranslationSource {
 export class TranslationSourceService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async forVersion(versionId: string): Promise<VersionTranslationSource> {
+  /**
+   * `withRunsInProgress` - причина «на язык идёт перевод» (ручка, оценка и старт запуска): лишний запрос, поэтому
+   * не по умолчанию - шаги исполнителя зовут метод ради досье (`dossierSourceOf`) на каждом шаге.
+   */
+  async forVersion(
+    versionId: string,
+    options: { withRunsInProgress?: boolean } = {},
+  ): Promise<VersionTranslationSource> {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: versionId },
       select: {
@@ -57,7 +65,10 @@ export class TranslationSourceService {
       chaptersWithText: v._count.chapters,
     }));
     const intakeTargets = approvedTargetLanguages(version.book.rightsIntake?.targetLanguages);
-    const source = selectTranslationSource({ versionId, versions, intakeTargets });
+    const inProgress = options.withRunsInProgress
+      ? await unfinishedRunLanguages(this.prisma, version.bookId)
+      : undefined;
+    const source = selectTranslationSource({ versionId, versions, intakeTargets, inProgress });
     return {
       bookId: version.bookId,
       source,
