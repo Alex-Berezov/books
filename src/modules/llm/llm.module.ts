@@ -22,8 +22,9 @@ import { OpenRouterClient } from './openrouter.client';
     OpenRouterClient,
     LlmService,
   ],
-  // Бюджет и конфиг - для исполнителя `F05-1w` (чистка зависших вызовов, состояние воркера):
-  // деньги пишутся только здесь, второй копии SQL не будет.
+  // Бюджет и конфиг - для исполнителя `F05-1w` (чистка зависших вызовов, состояние воркера) и
+  // для отказа кнопки досье на исчерпанном потолке (`F05-2`, `ceilingReached`): деньги пишутся
+  // только здесь, второй копии SQL не будет.
   exports: [LlmService, LlmStageRegistry, LlmBudgetService, LlmConfig],
 })
 export class LlmModule {}

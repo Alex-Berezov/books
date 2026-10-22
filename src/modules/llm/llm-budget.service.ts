@@ -70,6 +70,19 @@ export class LlmBudgetService {
     return this.getBudget();
   }
 
+  /**
+   * Потолок исчерпан для любого платного вызова: то же правило, что у резерва ниже, с оценкой
+   * больше нуля. Для отказа на входе без операции (кнопка досье, В11), а не вместо резерва.
+   */
+  async ceilingReached(): Promise<boolean> {
+    const budget = await this.getBudget();
+    return (
+      !budget ||
+      budget.ceilingUsd.lte(0) ||
+      budget.reservedUsd.add(budget.spentUsd).gte(budget.ceilingUsd)
+    );
+  }
+
   async reserve(input: ReserveInput): Promise<{ callId: string }> {
     // Вверх до восьми знаков: оценка - верхняя граница, округление вниз дало бы резерв 0
     // у копеечной цены, и потолок такой вызов бы не держал.

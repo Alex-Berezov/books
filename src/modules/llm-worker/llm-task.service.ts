@@ -1,4 +1,9 @@
-import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+} from '@nestjs/common';
 import { Language, LlmPauseReason, LlmTask, Prisma } from '@prisma/client';
 import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -19,7 +24,10 @@ export interface EnqueueTaskInput {
   chunkId?: string | null;
   /** Без текста книги. */
   payload?: Prisma.InputJsonObject;
-  /** «операция:язык» у задач пары (Р1); пусто - задача без пары. */
+  /**
+   * «операция:язык» у задач пары (Р1), «операция:строка» у досье и глоссария (`F05-2`); пусто -
+   * задача без пары.
+   */
   pairKey?: string | null;
   runAfter?: Date;
 }
@@ -102,13 +110,45 @@ export class LlmTaskService {
   }
 
   /** `active -> paused`; `pending`-задачи операции - `cancelled` в той же транзакции (Р19). */
-  pauseOperation(operationId: string, reason: LlmPauseReason): Promise<boolean> {
-    return this.stopOperation(operationId, 'paused', reason);
+  pauseOperation(
+    operationId: string,
+    reason: LlmPauseReason,
+    alongside?: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<boolean> {
+    // `alongside` - запись, которая идёт вместе с паузой одной транзакцией и пишется, даже
+    // если операция уже не `active` (ждущий на паузе узнаёт, что его строка закрыта).
+    return this.stopOperation(operationId, 'paused', reason, undefined, alongside);
   }
 
-  /** `active | paused -> cancelled`; `pending`-задачи - `cancelled` в той же транзакции (Р19). */
-  cancelOperation(operationId: string): Promise<boolean> {
-    return this.stopOperation(operationId, 'cancelled', null);
+  /**
+   * `active | paused -> cancelled`; `pending`-задачи - `cancelled` в той же транзакции (Р19).
+   * `afterCancel` - запись вида операции (строки, которые она строила) в той же транзакции.
+   */
+  cancelOperation(
+    operationId: string,
+    afterCancel?: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<boolean> {
+    return this.stopOperation(operationId, 'cancelled', null, afterCancel);
+  }
+
+  /**
+   * `active -> failed` (решение арбитра `F05 | F05-2`, В4): шаг операции отказал не по
+   * бюджету - досье с ответом не по форме, исчерпанные захваты. Причина - в `lastError`
+   * задачи, `pauseReason` не ставится; `pending`-задачи - `cancelled` в той же транзакции.
+   */
+  failOperation(
+    operationId: string,
+    afterFail?: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<boolean> {
+    return this.stopOperation(operationId, 'failed', null, afterFail);
+  }
+
+  /** `active -> done`: последний шаг операции сделан, оставшиеся `pending`-задачи - `cancelled`. */
+  completeOperation(
+    operationId: string,
+    afterComplete?: (tx: Prisma.TransactionClient) => Promise<void>,
+  ): Promise<boolean> {
+    return this.stopOperation(operationId, 'done', null, afterComplete);
   }
 
   /**
@@ -117,13 +157,40 @@ export class LlmTaskService {
    * задачей повтора куска - 409 `RETRY_IN_PROGRESS`, операция остаётся как была; иным
    * держателем - нарушение инварианта (решение арбитра `F05 | F05-1w`).
    */
-  async resumeOperation(operationId: string, task: EnqueueTaskInput): Promise<EnqueueResult> {
+  async resumeOperation(
+    operationId: string,
+    task: EnqueueTaskInput,
+    limitUsd?: Prisma.Decimal,
+  ): Promise<EnqueueResult> {
     return this.prisma.$transaction(async (tx) => {
-      const resumed = await tx.llmOperation.updateMany({
-        where: { id: operationId, status: { in: ['paused', 'active'] } },
-        data: { status: 'active', pauseReason: null },
-      });
+      // Новый лимит - в той же записи, что и `active`, условием «не ниже потраченного и
+      // зарезервированного» (решение арбитра `F05 | F05-2`): проверка до записи - не проверка.
+      const resumed = limitUsd
+        ? {
+            count: await tx.$executeRaw`
+              UPDATE "LlmOperation"
+              SET "status" = 'active', "pauseReason" = NULL,
+                  "limitUsd" = ${limitUsd.toFixed(8)}::numeric,
+                  "updatedAt" = ${utcTimestamp(new Date())}
+              WHERE "id" = ${operationId} AND "status" IN ('paused', 'active')
+                AND "spentUsd" + "reservedUsd" <= ${limitUsd.toFixed(8)}::numeric`,
+          }
+        : await tx.llmOperation.updateMany({
+            where: { id: operationId, status: { in: ['paused', 'active'] } },
+            data: { status: 'active', pauseReason: null },
+          });
       if (resumed.count === 0) {
+        const op = limitUsd
+          ? await tx.llmOperation.findUnique({
+              where: { id: operationId },
+              select: { status: true },
+            })
+          : null;
+        // Операция продолжаема, а запись не прошла по условию лимита: траты выросли после
+        // проверки сервиса - тот же отказ, что у проверки.
+        if (op && (op.status === 'paused' || op.status === 'active')) {
+          throw new BadRequestException('limitUsd must not be below spentUsd + reservedUsd');
+        }
         throw llmTaskConflict('LLM_OPERATION_NOT_RESUMABLE', 'LLM operation cannot be resumed');
       }
       const result = await this.enqueue({ ...task, operationId }, tx);
@@ -319,22 +386,30 @@ export class LlmTaskService {
 
   private async stopOperation(
     operationId: string,
-    status: 'paused' | 'cancelled',
+    status: 'paused' | 'cancelled' | 'failed' | 'done',
     reason: LlmPauseReason | null,
+    after?: (tx: Prisma.TransactionClient) => Promise<void>,
+    alongside?: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       const stopped = await tx.llmOperation.updateMany({
         where: {
           id: operationId,
-          status: { in: status === 'paused' ? ['active'] : ['active', 'paused'] },
+          // Отменить можно и стоящую на паузе; отказ, пауза и завершение - только идущую.
+          status: { in: status === 'cancelled' ? ['active', 'paused'] : ['active'] },
         },
         data: { status, pauseReason: reason },
       });
-      if (stopped.count === 0) return false;
+      if (stopped.count === 0) {
+        await alongside?.(tx);
+        return false;
+      }
       await tx.llmTask.updateMany({
         where: { operationId, status: 'pending' },
         data: { status: 'cancelled' },
       });
+      await after?.(tx);
+      await alongside?.(tx);
       return true;
     }, TASK_TX_OPTIONS);
   }

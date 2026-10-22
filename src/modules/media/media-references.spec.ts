@@ -28,7 +28,8 @@ const NOT_MEDIA_REFERENCES: Record<string, string> = {
   'MediaAsset.key': 'собственный ключ ассета, а не ссылка на него',
   'Category.key': 'идентификатор записи, не адрес',
   'Tag.key': 'идентификатор записи, не адрес',
-  'LlmTask.pairKey': 'ключ пары «операция:язык» исполнителя LLM, пишет сервер (F05-1w)',
+  'LlmTask.pairKey':
+    'ключ пары исполнителя LLM («операция:язык», у досье «операция:строка»), пишет сервер (F05-1w, F05-2)',
   'Page.systemKey': 'идентификатор системной страницы, не адрес',
   'RightsLicense.licenseKey': 'идентификатор лицензии, не адрес',
   'RightsIntake.manifestStorageKey':
@@ -92,6 +93,12 @@ const NOT_MEDIA_JSON_REFERENCES: Record<string, string> = {
   'LlmStageSetting.fallbacks': 'список идентификаторов моделей OpenRouter, не медиа (F05-1)',
   'LlmOperation.settingsSnapshot': 'снимок настроек этапов и цен моделей, пишет сервер (F05-1)',
   'LlmTask.payload': 'параметры задачи исполнителя LLM без текста книги, пишет сервер (F05-1w)',
+  'BookDossier.data': 'досье книги - ответ модели после проверки формы, пишет сервер (F05-2)',
+  'BookDossier.plan': 'план кусков первого прохода досье, пишет сервер (F05-2)',
+  'BookDossierPart.data': 'частичное досье главы - ответ модели, пишет сервер (F05-2)',
+  'BookGlossary.data':
+    'глоссарий перевода - ответ модели после проверки формы, пишет сервер (F05-2)',
+  'BookGlossary.history': 'дополнения глоссария по ходу перевода, пишет сервер (F05-2, F05-4)',
   'RightsProfileContributorEvent.payload': 'журнал событий, пишет сервер',
   'AdminAuditEvent.payload': 'журнал аудита, пишет сервер; упоминание ключа в истории — не ссылка',
   'RightsLicenseEvent.payload': 'журнал событий, пишет сервер',

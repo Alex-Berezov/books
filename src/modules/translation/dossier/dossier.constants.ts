@@ -1,0 +1,60 @@
+import { LlmPauseReason } from '@prisma/client';
+import { LlmStageDefinition } from '../../llm/llm-stages.registry';
+
+export const DOSSIER_STAGE = 'dossier';
+export const GLOSSARY_STAGE = 'glossary';
+
+/** Виды задач исполнителя: досье (куски глав по одному, затем сводка) и глоссарий пары. */
+export const DOSSIER_TASK_KIND = 'dossier';
+export const GLOSSARY_TASK_KIND = 'glossary';
+
+/** Лимит операции досье - оценка × 1,5 (`F05-2`, шаг 7), если редактор не задал свой. */
+export const DOSSIER_LIMIT_FACTOR = '1.5';
+
+/** Глав в исходнике досье: больше - 409 `SOURCE_TOO_MANY_CHAPTERS`, выборка без потолка не пишется. */
+export const DOSSIER_MAX_CHAPTERS = 2_000;
+
+/**
+ * Умолчания этапов (`tech.md` §3: Claude, длинный контекст). Запасных в коде нет: их ставит
+ * редактор на экране «LLM settings», модель перевода и запасные выбирает `F05-R`.
+ */
+export const DOSSIER_STAGE_DEFINITIONS: LlmStageDefinition[] = [
+  {
+    stage: DOSSIER_STAGE,
+    model: 'anthropic/claude-sonnet-5.5',
+    fallbacks: [],
+    temperature: 0.2,
+    maxTokens: 16_000,
+    enabled: true,
+  },
+  {
+    stage: GLOSSARY_STAGE,
+    model: 'anthropic/claude-sonnet-5.5',
+    fallbacks: [],
+    temperature: 0.2,
+    maxTokens: 16_000,
+    enabled: true,
+  },
+];
+
+/**
+ * Бюджетные отказы шага ставят операцию досье на паузу, остальные - в `failed` (Р20). Код - как
+ * его пишет исполнитель (`stepFailureCode`).
+ */
+export const DOSSIER_PAUSE_BY_FAILURE: Readonly<Record<string, LlmPauseReason>> = {
+  'LLM_BUDGET_EXCEEDED:operation': 'LIMIT_REACHED',
+  'LLM_BUDGET_EXCEEDED:ceiling': 'CEILING_REACHED',
+  LLM_INSUFFICIENT_FUNDS: 'INSUFFICIENT_FUNDS',
+  LLM_NO_COMPLIANT_PROVIDER: 'NO_COMPLIANT_PROVIDER',
+};
+
+/** Отказ шага по ответу модели не по форме (после повтора с замечанием). */
+export const DOSSIER_INVALID_RESPONSE = 'DOSSIER_INVALID_RESPONSE';
+/**
+ * Вход сводки с ответом не влезает в контекст модели этапа: строка `failed` без вызова и без
+ * перехвата (решение арбитра `F05 | F05-2`); ту же строку автоматически не перестраивают.
+ */
+export const DOSSIER_TOO_LONG = 'DOSSIER_TOO_LONG';
+
+/** Текст исходника поменялся посреди построения: куски уже не те, что в отпечатке. */
+export const DOSSIER_SOURCE_CHANGED = 'DOSSIER_SOURCE_CHANGED';

@@ -13,6 +13,7 @@ import {
   LlmStageSettingDto,
   LlmStatusResponseDto,
 } from './dto/llm-response.dto';
+import { moneyUsd } from './dto/llm-money';
 import { UpdateLlmBudgetDto } from './dto/update-llm-budget.dto';
 import { UpdateLlmStageSettingDto } from './dto/update-llm-stage-setting.dto';
 import { LlmBudgetService } from './llm-budget.service';
@@ -20,7 +21,15 @@ import { LlmModelInfo, LlmModelsService } from './llm-models.service';
 import { LlmStageDefinition, LlmStageRegistry } from './llm-stages.registry';
 import { LlmConfig } from './llm.config';
 import { LlmError, llmDisabled } from './llm.errors';
-import { LlmCallModel, LlmChatMessage, LlmChatResult, OpenRouterClient } from './openrouter.client';
+import {
+  CHARS_PER_TOKEN,
+  estimateInputTokens,
+  LlmCallModel,
+  LlmChatMessage,
+  LlmChatRequest,
+  LlmChatResult,
+  OpenRouterClient,
+} from './openrouter.client';
 
 const PER_MTOK = new Prisma.Decimal(1_000_000);
 
@@ -39,6 +48,22 @@ export interface CreateOperationInput {
   createdById?: string | null;
 }
 
+/**
+ * Оценка вызова этапа: вход по той же оценке токенов, что у резерва клиента, выход - `maxTokens`.
+ * `extraInputTokens` - вход, которого в запросе ещё нет (ответы прошлых шагов).
+ */
+export interface StageCallEstimator {
+  maxTokens: number;
+  /** Этап выключен на экране «LLM settings»: вызов отказал бы `LLM_STAGE_DISABLED`. */
+  enabled: boolean;
+  /** Наименьший контекст основной и запасных моделей в токенах; `null` - неизвестен. */
+  contextLength: number | null;
+  estimate(
+    request: Pick<LlmChatRequest, 'messages' | 'jsonSchema'>,
+    extraInputTokens?: number,
+  ): Prisma.Decimal;
+}
+
 export interface CallStageOptions {
   jsonSchema?: { name: string; schema: Record<string, unknown> };
   beforeAttempt?: () => Promise<void> | void;
@@ -46,14 +71,12 @@ export interface CallStageOptions {
   taskId?: string | null;
 }
 
-function money(value: Prisma.Decimal): string {
-  return value.toFixed(8);
-}
-
 /**
- * Вход модуля LLM для остальных модулей и ручек админки. Модель зовут только `createOperation`
- * и `callStage` - оба отказывают 503 `LLM_DISABLED` без ключа. Ни одна ручка их не вызывает:
- * операции ставят пачки конвейера, начиная с `F05-1w` (Р25).
+ * Вход модуля LLM для остальных модулей и ручек админки. Операцию заводят `createOperation`
+ * и `operationData` (строка для короткой транзакции модуля, который её строит), модель зовёт
+ * `callStage`; все трое отказывают 503 `LLM_DISABLED` без ключа. Оценка вызова этапа -
+ * `stageCallEstimator`. Модель не зовёт ни одна ручка; операцию из ручки заводит только кнопка
+ * досье (`POST /admin/versions/:id/dossier`, `F05-2`), сам вызов идёт фоном исполнителя (Р25).
  */
 @Injectable()
 export class LlmService implements OnModuleInit {
@@ -84,10 +107,10 @@ export class LlmService implements OnModuleInit {
       state: enabled ? 'ENABLED' : 'DISABLED',
       keyConfigured: enabled,
       budgetConfigured: budget !== null,
-      ceilingUsd: budget ? money(budget.ceilingUsd) : null,
-      spentUsd: budget ? money(budget.spentUsd) : null,
-      reservedUsd: budget ? money(budget.reservedUsd) : null,
-      defaultRunLimitUsd: budget ? money(budget.defaultRunLimitUsd) : null,
+      ceilingUsd: budget ? moneyUsd(budget.ceilingUsd) : null,
+      spentUsd: budget ? moneyUsd(budget.spentUsd) : null,
+      reservedUsd: budget ? moneyUsd(budget.reservedUsd) : null,
+      defaultRunLimitUsd: budget ? moneyUsd(budget.defaultRunLimitUsd) : null,
     };
   }
 
@@ -97,8 +120,8 @@ export class LlmService implements OnModuleInit {
       id: m.id,
       name: m.name,
       contextLength: m.contextLength,
-      inputPerMTokUsd: m.price.input ? money(m.price.input.mul(PER_MTOK)) : null,
-      outputPerMTokUsd: m.price.output ? money(m.price.output.mul(PER_MTOK)) : null,
+      inputPerMTokUsd: m.price.input ? moneyUsd(m.price.input.mul(PER_MTOK)) : null,
+      outputPerMTokUsd: m.price.output ? moneyUsd(m.price.output.mul(PER_MTOK)) : null,
       structuredOutputs: m.structuredOutputs,
     }));
   }
@@ -193,8 +216,69 @@ export class LlmService implements OnModuleInit {
     return toStageDto(merge(def, row));
   }
 
+  /**
+   * Оценка одного вызова этапа сверху - так же, как его резерв в клиенте: вход по оценке
+   * токенов, выход - `maxTokens` этапа, цена основной модели (Р4, Р24). Для окна запуска
+   * и лимита операции, а не для расчёта факта. Настройка и цена читаются один раз на оценку.
+   */
+  async stageCallEstimator(stage: string): Promise<StageCallEstimator> {
+    const setting = await this.getStageSetting(stage);
+    const known = new Map((await this.models.list()).map((m) => [m.id, m]));
+    const model = priced(setting.model, known.get(setting.model), setting.maxPricePerMTok);
+    const output = model.outputPrice.mul(setting.maxTokens);
+    const contexts = [setting.model, ...setting.fallbacks]
+      .map((id) => known.get(id)?.contextLength)
+      .filter((c): c is number => typeof c === 'number');
+    return {
+      maxTokens: setting.maxTokens,
+      enabled: setting.enabled,
+      contextLength: contexts.length > 0 ? Math.min(...contexts) : null,
+      estimate: (request, extraInputTokens = 0) =>
+        model.inputPrice.mul(estimateInputTokens(request) + extraInputTokens).add(output),
+    };
+  }
+
+  /**
+   * Влезет ли вызов этапа в контекст: вход в токенах (символы / `CHARS_PER_TOKEN`) плюс
+   * `maxTokens` против наименьшего контекста основной и запасных моделей (вызов может уйти на
+   * любую). Контекст неизвестен ни у одной - влезает, решает провайдер. Цена не нужна.
+   */
+  async stageFit(
+    stage: string,
+    request: Pick<LlmChatRequest, 'messages' | 'jsonSchema'>,
+  ): Promise<{ fits: boolean; model: string }> {
+    const setting = await this.getStageSetting(stage);
+    const known = new Map((await this.models.list()).map((m) => [m.id, m]));
+    const contexts = [setting.model, ...setting.fallbacks]
+      .map((id) => known.get(id)?.contextLength)
+      .filter((c): c is number => typeof c === 'number');
+    // Вход - в настоящих токенах (символы / CHARS_PER_TOKEN), а не верхней границей резерва:
+    // символ за токен ложно отказал бы книге, которая влезает (решение арбитра `F05 | F05-2`).
+    const need = Math.ceil(estimateInputTokens(request) / CHARS_PER_TOKEN) + setting.maxTokens;
+    return { fits: contexts.length === 0 || need <= Math.min(...contexts), model: setting.model };
+  }
+
+  /** Ключа нет - 503 `LLM_DISABLED` до любой другой проверки ручки, которая заведёт операцию. */
+  assertEnabled(): void {
+    if (!this.config.enabled()) throw llmDisabled();
+  }
+
   /** Операция с лимитом: всё, что тратит деньги, тратит их на операцию. */
   async createOperation(input: CreateOperationInput): Promise<{ id: string }> {
+    return this.prisma.llmOperation.create({
+      data: await this.operationData(input),
+      select: { id: true },
+    });
+  }
+
+  /**
+   * Строка операции без записи: лимит и снимок настроек. Отдельно от `createOperation` - для
+   * операции, которая заводится в одной короткой транзакции со строкой, которую она строит
+   * (досье `F05-2`): каталог моделей читается до транзакции, а не внутри неё (`L-020`).
+   */
+  async operationData(
+    input: CreateOperationInput,
+  ): Promise<Prisma.LlmOperationUncheckedCreateInput> {
     if (!this.config.enabled()) throw llmDisabled();
     const [budget, stages, catalog] = await Promise.all([
       input.limitUsd ? null : this.budget.getBudget(),
@@ -207,16 +291,13 @@ export class LlmService implements OnModuleInit {
     const used = new Set(stages.flatMap((s) => [s.model, ...s.fallbacks]));
     const prices = catalog ? catalog.filter((m) => used.has(m.id)) : null;
     const snapshot = { takenAt: new Date().toISOString(), stages, prices };
-    return this.prisma.llmOperation.create({
-      data: {
-        kind: input.kind,
-        bookVersionId: input.bookVersionId ?? null,
-        limitUsd,
-        createdById: input.createdById ?? null,
-        settingsSnapshot: snapshot as unknown as Prisma.InputJsonValue,
-      },
-      select: { id: true },
-    });
+    return {
+      kind: input.kind,
+      bookVersionId: input.bookVersionId ?? null,
+      limitUsd,
+      createdById: input.createdById ?? null,
+      settingsSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+    };
   }
 
   /** Вызов этапа на текущих настройках: смена модели `PUT` действует со следующего вызова. */
@@ -327,7 +408,7 @@ function toStageDto(s: EffectiveStageSetting): LlmStageSettingDto {
     temperature: s.temperature,
     maxTokens: s.maxTokens,
     enabled: s.enabled,
-    maxPricePerMTok: s.maxPricePerMTok ? money(s.maxPricePerMTok) : null,
+    maxPricePerMTok: s.maxPricePerMTok ? moneyUsd(s.maxPricePerMTok) : null,
     source: s.source,
     updatedAt: s.updatedAt ? s.updatedAt.toISOString() : null,
   };
@@ -335,10 +416,10 @@ function toStageDto(s: EffectiveStageSetting): LlmStageSettingDto {
 
 function toBudgetDto(b: LlmBudget): LlmBudgetResponseDto {
   return {
-    ceilingUsd: money(b.ceilingUsd),
-    spentUsd: money(b.spentUsd),
-    reservedUsd: money(b.reservedUsd),
-    defaultRunLimitUsd: money(b.defaultRunLimitUsd),
+    ceilingUsd: moneyUsd(b.ceilingUsd),
+    spentUsd: moneyUsd(b.spentUsd),
+    reservedUsd: moneyUsd(b.reservedUsd),
+    defaultRunLimitUsd: moneyUsd(b.defaultRunLimitUsd),
     updatedAt: b.updatedAt.toISOString(),
   };
 }

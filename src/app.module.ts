@@ -17,6 +17,7 @@ import { BookSummaryModule } from './modules/book-summary/book-summary.module';
 import { BookAnalysisModule } from './modules/book-analysis/book-analysis.module';
 import { LlmModule } from './modules/llm/llm.module';
 import { LlmWorkerModule } from './modules/llm-worker/llm-worker.module';
+import { TranslationModule } from './modules/translation/translation.module';
 import { CategoryModule } from './modules/category/category.module';
 import { BookshelfModule } from './modules/bookshelf/bookshelf.module';
 import { CommentsModule } from './modules/comments/comments.module';
@@ -86,6 +87,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     BookAnalysisModule,
     LlmModule,
     LlmWorkerModule,
+    TranslationModule,
     CategoryModule,
     BookshelfModule,
     CommentsModule,

@@ -313,4 +313,50 @@ describe('LlmService', () => {
     const [model] = (client.chat.mock.calls[0][0] as { models: LlmCallModel[] }).models;
     expect(model.maxPricePerMTok?.toFixed(2)).toBe('2.00');
   });
+
+  describe('stageFit (context check of a stage call)', () => {
+    const ctxModels = (contextLength: number | null): LlmModelInfo[] =>
+      MODELS.map((m) => (m.id === 'a/priced' ? { ...m, contextLength } : m));
+    const request = (chars: number) => ({
+      messages: [{ role: 'user' as const, content: 'x'.repeat(chars) }],
+    });
+
+    it('counts the input in tokens, not characters: 250k chars fit a 200k context', async () => {
+      models.list.mockResolvedValue(ctxModels(200_000));
+      await expect(service.stageFit('on', request(250_000))).resolves.toMatchObject({
+        fits: true,
+      });
+    });
+
+    it('900k chars do not fit a 200k context', async () => {
+      models.list.mockResolvedValue(ctxModels(200_000));
+      await expect(service.stageFit('on', request(900_000))).resolves.toMatchObject({
+        fits: false,
+        model: 'a/priced',
+      });
+    });
+
+    it('the smallest context among the model and its fallbacks decides; unknown context fits', async () => {
+      prisma.llmStageSetting.findUnique.mockResolvedValue(
+        row({ stage: 'on', model: 'a/priced', fallbacks: ['b/second'] }),
+      );
+      models.list.mockResolvedValue(
+        MODELS.map((m) =>
+          m.id === 'a/priced'
+            ? { ...m, contextLength: 1_000_000 }
+            : m.id === 'b/second'
+              ? { ...m, contextLength: 50_000 }
+              : m,
+        ),
+      );
+      await expect(service.stageFit('on', request(250_000))).resolves.toMatchObject({
+        fits: false,
+      });
+      models.list.mockResolvedValue(ctxModels(null));
+      prisma.llmStageSetting.findUnique.mockResolvedValue(null);
+      await expect(service.stageFit('on', request(5_000_000))).resolves.toMatchObject({
+        fits: true,
+      });
+    });
+  });
 });

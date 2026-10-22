@@ -56,6 +56,7 @@ import {
   lockBookSlugs,
 } from '../../shared/slug/book-slug-conflict';
 import { uniqueViolationFields, violationModelName } from '../../shared/prisma/prisma-error.util';
+import { approvedTargetLanguages } from './intake-target-languages';
 
 interface BookWithRights {
   id: string;
@@ -277,8 +278,8 @@ export class BookVersionService {
       );
     }
 
-    const targetLanguages = rightsIntake.targetLanguages;
-    if (!Array.isArray(targetLanguages) || targetLanguages.length === 0) {
+    const targetLanguages = approvedTargetLanguages(rightsIntake.targetLanguages);
+    if (!targetLanguages) {
       throw new BadRequestException(
         'Cannot create version: the rights intake of this book has no approved target languages',
       );

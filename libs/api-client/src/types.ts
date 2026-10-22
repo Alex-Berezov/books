@@ -294,6 +294,23 @@ export interface paths {
     patch: operations['ContributorsController_update'];
     trace?: never;
   };
+  '/admin/dossiers/{id}/glossaries/{lang}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Glossary of the dossier for a target language */
+    get: operations['TranslationController_glossary'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/geo-block/country-source': {
     parameters: {
       query?: never;
@@ -339,6 +356,40 @@ export interface paths {
     get: operations['LlmController_listModels'];
     put?: never;
     post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/llm/operations/{id}/cancel': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Cancel an active or paused LLM operation: pending tasks stop, nothing more is spent */
+    post: operations['LlmOperationsController_cancel'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/llm/operations/{id}/resume': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Resume a paused LLM operation from its next step, optionally with a new limit */
+    post: operations['LlmOperationsController_resume'];
     delete?: never;
     options?: never;
     head?: never;
@@ -2406,6 +2457,41 @@ export interface paths {
     patch: operations['BookVersionController_updateVersionContributor'];
     trace?: never;
   };
+  '/admin/versions/{id}/dossier': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Dossier of this version (its translation source, Р5): status, freshness and data */
+    get: operations['TranslationController_status'];
+    put?: never;
+    /** Build the dossier in the background under its own operation; a stale one is rebuilt as a new generation */
+    post: operations['TranslationController_build'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/dossier/estimate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Upper cost estimate of building the dossier of this version */
+    get: operations['TranslationController_estimate'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/versions/{id}/geo-block-check': {
     parameters: {
       query?: never;
@@ -2647,6 +2733,23 @@ export interface paths {
      * @description Deprecated compatibility wrapper. Verification now requires generated active rules.
      */
     patch: operations['BookVersionController_updateRightsGeoBlock'];
+    trace?: never;
+  };
+  '/admin/versions/{id}/translation-source': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Translation source of the book by the original language (D8): whether this version can be translated and into which languages */
+    get: operations['TranslationController_translationSource'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
     trace?: never;
   };
   '/admin/{lang}/books/{bookId}/versions': {
@@ -5626,6 +5729,8 @@ export interface components {
       /** Format: date-time */
       updatedAt: string;
     };
+    /** @enum {string} */
+    BookDossierStatus: 'building' | 'ready' | 'failed';
     BookEntityDto: {
       approvedRightsReviewId?: string | null;
       /** Format: date-time */
@@ -8309,6 +8414,148 @@ export interface components {
       /** @description Why the task does not apply. Mandatory — dismissals are audited. */
       reasonRu: string;
     };
+    DossierAddressDto: {
+      form: string;
+      to: string;
+    };
+    DossierChapterDto: {
+      number: number;
+      summary: string;
+      title: string;
+    };
+    DossierCharacterDto: {
+      address: components['schemas']['DossierAddressDto'][];
+      fate: string;
+      firstChapter: number;
+      gender: string;
+      key: string;
+      name: string;
+      relations: components['schemas']['DossierRelationDto'][];
+      /** @enum {string} */
+      role: 'main' | 'secondary' | 'episodic';
+      variants: string[];
+      whoIs: string;
+    };
+    DossierChronologyDto: {
+      chapter: number;
+      event: string;
+      orderNote: string;
+    };
+    DossierDataDto: {
+      chapters: components['schemas']['DossierChapterDto'][];
+      characters: components['schemas']['DossierCharacterDto'][];
+      chronology: components['schemas']['DossierChronologyDto'][];
+      entities: components['schemas']['DossierEntityDto'][];
+      motifs: components['schemas']['DossierMotifDto'][];
+      narration: components['schemas']['DossierNarrationDto'];
+      setting: components['schemas']['DossierSettingDto'];
+      structure: components['schemas']['DossierStructureDto'];
+      /** @description Sections plan of the retelling */
+      summaryPlan: components['schemas']['DossierSummarySectionDto'][];
+      voice: components['schemas']['DossierVoiceDto'];
+    };
+    DossierDeviceDto: {
+      chapter: number;
+      example: string;
+      howShown: string;
+      name: string;
+    };
+    DossierEntityDto: {
+      firstChapter: number;
+      key: string;
+      /** @enum {string} */
+      kind: 'place' | 'object' | 'organization' | 'term';
+      name: string;
+      whatIs: string;
+    };
+    DossierEstimateDto: {
+      /** @description Chapters with text */
+      chapters: number;
+      /**
+       * Format: decimal
+       * @description Upper estimate of the build
+       * @example 100.00000000
+       */
+      estimateUsd: string;
+      /** @description Chapter pieces read by the first pass */
+      parts: number;
+      /** Format: uuid */
+      sourceVersionId: string;
+      /**
+       * Format: decimal
+       * @description Default operation limit: estimate × 1.5
+       * @example 100.00000000
+       */
+      suggestedLimitUsd: string;
+    };
+    DossierMotifDto: {
+      /** @description Reader chapter numbers */
+      chapters: number[];
+      image: string;
+    };
+    DossierNarrationDto: {
+      form: string;
+      notes: string;
+      person: string;
+    };
+    DossierRelationDto: {
+      label: string;
+      to: string;
+    };
+    DossierSettingDto: {
+      place: string;
+      time: string;
+    };
+    DossierStatusDto: {
+      /** @description Dossier v1 when ready */
+      data: components['schemas']['DossierDataDto'] | null;
+      /** @description Why a failed dossier was closed without a summary: DOSSIER_TOO_LONG (does not fit the model context) or DOSSIER_SOURCE_CHANGED (source text was edited mid-build; the next request builds a new generation) */
+      failedReason: string | null;
+      formatVersion: number | null;
+      /** @description The source text still matches the fingerprint of the dossier */
+      fresh: boolean | null;
+      generation: number | null;
+      /** Format: uuid */
+      id: string | null;
+      model: string | null;
+      operation: components['schemas']['LlmOperationDto'] | null;
+      /** @description Chapter pieces already read */
+      partsDone: number;
+      /** @description Builder before the takeover; the cost of the row is spent of both operations */
+      previousOperation: components['schemas']['LlmOperationDto'] | null;
+      /**
+       * Format: uuid
+       * @description Version the dossier is built from
+       */
+      sourceVersionId: string;
+      /** @enum {string} */
+      status: 'building' | 'ready' | 'failed' | 'missing';
+      /** Format: date-time */
+      updatedAt: string | null;
+    };
+    DossierStructureDto: {
+      notes: string;
+      parts: components['schemas']['DossierStructurePartDto'][];
+    };
+    DossierStructurePartDto: {
+      /** @description Reader chapter numbers */
+      chapters: number[];
+      title: string;
+    };
+    DossierSummarySectionDto: {
+      /** @description Reader chapter numbers */
+      chapters: number[];
+      number: number;
+      title: string;
+      why: string;
+    };
+    DossierVoiceDto: {
+      devices: components['schemas']['DossierDeviceDto'][];
+      irony: string;
+      lexicon: string;
+      pace: string;
+      sentenceLength: string;
+    };
     EditionRightsDto: {
       createdAt: string;
       id: string;
@@ -8507,6 +8754,49 @@ export interface components {
        */
       windowStartedAt: string;
     };
+    GlossaryAddressDto: {
+      form: string;
+      from: string;
+      to: string;
+    };
+    GlossaryDataDto: {
+      address: components['schemas']['GlossaryAddressDto'][];
+      entries: components['schemas']['GlossaryEntryDto'][];
+      phrases: components['schemas']['GlossaryPhraseDto'][];
+    };
+    GlossaryDto: {
+      data: components['schemas']['GlossaryDataDto'] | null;
+      /** Format: uuid */
+      dossierId: string;
+      /** @description Additions made while translating, with the source chunk */
+      history: components['schemas']['GlossaryHistoryItemDto'][];
+      /** Format: uuid */
+      id: string;
+      language: components['schemas']['Language'];
+      model: string | null;
+      operation: components['schemas']['LlmOperationDto'] | null;
+      /** @description Builder before the takeover; the cost of the row is spent of both operations */
+      previousOperation: components['schemas']['LlmOperationDto'] | null;
+      status: components['schemas']['BookDossierStatus'];
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    GlossaryEntryDto: {
+      keepOriginal: boolean;
+      key: string;
+      kind: string;
+      note: string;
+      source: string;
+      target: string;
+    };
+    GlossaryHistoryItemDto: {
+      chunkId: string | null;
+      entries: components['schemas']['GlossaryEntryDto'][];
+    };
+    GlossaryPhraseDto: {
+      source: string;
+      target: string;
+    };
     GrantRightsPublicationOverrideDto: {
       /** @description Почему администратор снимает правовые ограничения с книги. Обязательно: решение последней инстанции пишется в журнал вместе с автором. */
       reasonRu: string;
@@ -8566,6 +8856,8 @@ export interface components {
        */
       translations: Record<string, never>;
     };
+    /** @enum {string} */
+    Language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
     LawyerConditionDto: {
       affectedCountryCodes: string[];
       code: string;
@@ -9165,6 +9457,47 @@ export interface components {
       /** @description Accepts response_format with a JSON schema */
       structuredOutputs: boolean;
     };
+    LlmOperationDto: {
+      /** Format: uuid */
+      bookVersionId: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      /** Format: uuid */
+      id: string;
+      kind: components['schemas']['LlmOperationKind'];
+      /**
+       * Format: decimal
+       * @example 100.00000000
+       */
+      limitUsd: string;
+      pauseReason: components['schemas']['LlmPauseReason'] | null;
+      /**
+       * Format: decimal
+       * @example 100.00000000
+       */
+      reservedUsd: string;
+      /**
+       * Format: decimal
+       * @example 100.00000000
+       */
+      spentUsd: string;
+      status: components['schemas']['LlmOperationStatus'];
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    /** @enum {string} */
+    LlmOperationKind: 'translation_run' | 'dossier' | 'compare' | 'draft';
+    /** @enum {string} */
+    LlmOperationStatus: 'active' | 'paused' | 'cancelled' | 'done' | 'failed';
+    /** @enum {string} */
+    LlmPauseReason:
+      | 'LIMIT_REACHED'
+      | 'CEILING_REACHED'
+      | 'NO_COMPLIANT_PROVIDER'
+      | 'DOSSIER_STALE'
+      | 'DOSSIER_PAUSED'
+      | 'INSUFFICIENT_FUNDS'
+      | 'STEP_FAILED';
     LlmStageSettingDto: {
       enabled: boolean;
       /** @description Fallback models in order */
@@ -10714,6 +11047,14 @@ export interface components {
         | 'OTHER';
       resolutionNotesRu: string;
     };
+    ResumeLlmOperationDto: {
+      /**
+       * Format: decimal
+       * @description New operation limit; not below spent + reserved. Omitted - the limit stays
+       * @example 100
+       */
+      limitUsd?: string;
+    };
     ReviewChainDiffDto: {
       changedCountryCount: number;
       confidenceChanged: boolean;
@@ -12244,6 +12585,14 @@ export interface components {
       status: string;
       updatedAt: string;
     };
+    StartDossierDto: {
+      /**
+       * Format: decimal
+       * @description Limit of the dossier operation; default - the estimate × 1.5
+       * @example 100
+       */
+      limitUsd?: string;
+    };
     SupersedeRightsEvidenceDto: {
       /** @description Id доказательства, которое приходит на смену */
       supersededById: string;
@@ -12716,6 +13065,37 @@ export interface components {
     TopViewsResponseDto: {
       items: components['schemas']['TopViewsItemDto'][];
       totalVersions: number;
+    };
+    TranslationSourceDto: {
+      canTranslate: boolean;
+      /** @description Versions of the book disagree on the original language */
+      originalLanguageMismatch: boolean;
+      /** @description Original language as written */
+      originalLanguageRaw: string | null;
+      /**
+       * @description Why translating from this version is unavailable; labels live on the front
+       * @enum {string|null}
+       */
+      reason:
+        | 'SOURCE_LANGUAGE_UNKNOWN'
+        | 'ORIGINAL_VERSION_MISSING'
+        | 'ENGLISH_VERSION_MISSING'
+        | 'NOT_ORIGINAL_VERSION'
+        | 'NOT_ENGLISH_VERSION'
+        | 'SOURCE_HAS_NO_CHAPTERS'
+        | 'INTAKE_TARGETS_MISSING'
+        | 'NO_AVAILABLE_TARGETS'
+        | null;
+      sourceLanguage: components['schemas']['Language'] | null;
+      /** Format: uuid */
+      sourceVersionId: string | null;
+      targets: components['schemas']['TranslationTargetDto'][];
+    };
+    TranslationTargetDto: {
+      available: boolean;
+      language: components['schemas']['Language'];
+      /** @enum {string|null} */
+      reason: 'IS_SOURCE' | 'VERSION_EXISTS' | 'NOT_IN_INTAKE' | null;
     };
     UnlinkRightsLicenseResponseDto: {
       /** @example true */
@@ -14431,6 +14811,28 @@ export interface operations {
       };
     };
   };
+  TranslationController_glossary: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['GlossaryDto'];
+        };
+      };
+    };
+  };
   GeoCountrySourceController_getCountrySource: {
     parameters: {
       query?: never;
@@ -14492,6 +14894,73 @@ export interface operations {
             pagination: components['schemas']['PaginationInfoDto'];
           };
         };
+      };
+    };
+  };
+  LlmOperationsController_cancel: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LlmOperationDto'];
+        };
+      };
+      /** @description LLM_OPERATION_NOT_CANCELLABLE: already finished */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  LlmOperationsController_resume: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['ResumeLlmOperationDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['LlmOperationDto'];
+        };
+      };
+      /** @description limitUsd below spent + reserved */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_OPERATION_NOT_RESUMABLE: not paused, or its kind cannot resume */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };
@@ -18210,6 +18679,94 @@ export interface operations {
       };
     };
   };
+  TranslationController_status: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DossierStatusDto'];
+        };
+      };
+    };
+  };
+  TranslationController_build: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StartDossierDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DossierStatusDto'];
+        };
+      };
+      /** @description DOSSIER_FRESH: a fresh dossier exists; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_DISABLED: no OpenRouter key */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_estimate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['DossierEstimateDto'];
+        };
+      };
+      /** @description SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   GeoBlockController_checkAccess: {
     parameters: {
       query?: never;
@@ -18500,6 +19057,27 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['GeoBlockRulesResponseDto'];
+        };
+      };
+    };
+  };
+  TranslationController_translationSource: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationSourceDto'];
         };
       };
     };

@@ -31,3 +31,39 @@ describe('LLM budget without the ceiling row', () => {
     expect(tx.llmCall.create).not.toHaveBeenCalled();
   });
 });
+
+describe('ceilingReached (refusal at the entry, В11)', () => {
+  const withBudget = (row: object | null) =>
+    new LlmBudgetService({
+      llmBudget: { findUnique: jest.fn().mockResolvedValue(row) },
+    } as unknown as PrismaService);
+  const d = (v: string) => new Prisma.Decimal(v);
+
+  it('no ceiling row or a zero ceiling is reached', async () => {
+    expect(await withBudget(null).ceilingReached()).toBe(true);
+    expect(
+      await withBudget({
+        ceilingUsd: d('0'),
+        reservedUsd: d('0'),
+        spentUsd: d('0'),
+      }).ceilingReached(),
+    ).toBe(true);
+  });
+
+  it('reserved money counts as spent, like the reserve itself', async () => {
+    expect(
+      await withBudget({
+        ceilingUsd: d('10'),
+        reservedUsd: d('6'),
+        spentUsd: d('4'),
+      }).ceilingReached(),
+    ).toBe(true);
+    expect(
+      await withBudget({
+        ceilingUsd: d('10'),
+        reservedUsd: d('5'),
+        spentUsd: d('4'),
+      }).ceilingReached(),
+    ).toBe(false);
+  });
+});

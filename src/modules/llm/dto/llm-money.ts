@@ -14,3 +14,8 @@ export const notUndefined = (_: object, value: unknown) => value !== undefined;
 
 /** В документации - строка; число тоже принимается и приводится к строке. */
 export const MONEY_DOC = { type: String, format: 'decimal', example: '100' } as const;
+
+/** Деньги в ответе - строка с восемью знаками (В2): одна функция на все ответы конвейера. */
+export function moneyUsd(value: Prisma.Decimal): string {
+  return value.toFixed(8);
+}

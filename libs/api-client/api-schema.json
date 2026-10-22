@@ -3499,6 +3499,14 @@
         ],
         "type": "object"
       },
+      "BookDossierStatus": {
+        "enum": [
+          "building",
+          "ready",
+          "failed"
+        ],
+        "type": "string"
+      },
       "BookEntityDto": {
         "properties": {
           "approvedRightsReviewId": {
@@ -10681,6 +10689,539 @@
         ],
         "type": "object"
       },
+      "DossierAddressDto": {
+        "properties": {
+          "form": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "form"
+        ],
+        "type": "object"
+      },
+      "DossierChapterDto": {
+        "properties": {
+          "number": {
+            "type": "number"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "title",
+          "summary"
+        ],
+        "type": "object"
+      },
+      "DossierCharacterDto": {
+        "properties": {
+          "address": {
+            "items": {
+              "$ref": "#/components/schemas/DossierAddressDto"
+            },
+            "type": "array"
+          },
+          "fate": {
+            "type": "string"
+          },
+          "firstChapter": {
+            "type": "number"
+          },
+          "gender": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/DossierRelationDto"
+            },
+            "type": "array"
+          },
+          "role": {
+            "enum": [
+              "main",
+              "secondary",
+              "episodic"
+            ],
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "whoIs": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "variants",
+          "gender",
+          "whoIs",
+          "address",
+          "relations",
+          "firstChapter",
+          "fate",
+          "role"
+        ],
+        "type": "object"
+      },
+      "DossierChronologyDto": {
+        "properties": {
+          "chapter": {
+            "type": "number"
+          },
+          "event": {
+            "type": "string"
+          },
+          "orderNote": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "event",
+          "chapter",
+          "orderNote"
+        ],
+        "type": "object"
+      },
+      "DossierDataDto": {
+        "properties": {
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/DossierChapterDto"
+            },
+            "type": "array"
+          },
+          "characters": {
+            "items": {
+              "$ref": "#/components/schemas/DossierCharacterDto"
+            },
+            "type": "array"
+          },
+          "chronology": {
+            "items": {
+              "$ref": "#/components/schemas/DossierChronologyDto"
+            },
+            "type": "array"
+          },
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/DossierEntityDto"
+            },
+            "type": "array"
+          },
+          "motifs": {
+            "items": {
+              "$ref": "#/components/schemas/DossierMotifDto"
+            },
+            "type": "array"
+          },
+          "narration": {
+            "$ref": "#/components/schemas/DossierNarrationDto"
+          },
+          "setting": {
+            "$ref": "#/components/schemas/DossierSettingDto"
+          },
+          "structure": {
+            "$ref": "#/components/schemas/DossierStructureDto"
+          },
+          "summaryPlan": {
+            "description": "Sections plan of the retelling",
+            "items": {
+              "$ref": "#/components/schemas/DossierSummarySectionDto"
+            },
+            "type": "array"
+          },
+          "voice": {
+            "$ref": "#/components/schemas/DossierVoiceDto"
+          }
+        },
+        "required": [
+          "characters",
+          "entities",
+          "narration",
+          "setting",
+          "structure",
+          "chronology",
+          "chapters",
+          "summaryPlan",
+          "voice",
+          "motifs"
+        ],
+        "type": "object"
+      },
+      "DossierDeviceDto": {
+        "properties": {
+          "chapter": {
+            "type": "number"
+          },
+          "example": {
+            "type": "string"
+          },
+          "howShown": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "howShown",
+          "example",
+          "chapter"
+        ],
+        "type": "object"
+      },
+      "DossierEntityDto": {
+        "properties": {
+          "firstChapter": {
+            "type": "number"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "place",
+              "object",
+              "organization",
+              "term"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "whatIs": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "kind",
+          "whatIs",
+          "firstChapter"
+        ],
+        "type": "object"
+      },
+      "DossierEstimateDto": {
+        "properties": {
+          "chapters": {
+            "description": "Chapters with text",
+            "type": "number"
+          },
+          "estimateUsd": {
+            "description": "Upper estimate of the build",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "parts": {
+            "description": "Chapter pieces read by the first pass",
+            "type": "number"
+          },
+          "sourceVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "suggestedLimitUsd": {
+            "description": "Default operation limit: estimate × 1.5",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sourceVersionId",
+          "chapters",
+          "parts",
+          "estimateUsd",
+          "suggestedLimitUsd"
+        ],
+        "type": "object"
+      },
+      "DossierMotifDto": {
+        "properties": {
+          "chapters": {
+            "description": "Reader chapter numbers",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "image": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "image",
+          "chapters"
+        ],
+        "type": "object"
+      },
+      "DossierNarrationDto": {
+        "properties": {
+          "form": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "person": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "person",
+          "form",
+          "notes"
+        ],
+        "type": "object"
+      },
+      "DossierRelationDto": {
+        "properties": {
+          "label": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "label"
+        ],
+        "type": "object"
+      },
+      "DossierSettingDto": {
+        "properties": {
+          "place": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "place",
+          "time"
+        ],
+        "type": "object"
+      },
+      "DossierStatusDto": {
+        "properties": {
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DossierDataDto"
+              }
+            ],
+            "description": "Dossier v1 when ready",
+            "nullable": true,
+            "type": "object"
+          },
+          "failedReason": {
+            "description": "Why a failed dossier was closed without a summary: DOSSIER_TOO_LONG (does not fit the model context) or DOSSIER_SOURCE_CHANGED (source text was edited mid-build; the next request builds a new generation)",
+            "nullable": true,
+            "type": "string"
+          },
+          "formatVersion": {
+            "nullable": true,
+            "type": "number"
+          },
+          "fresh": {
+            "description": "The source text still matches the fingerprint of the dossier",
+            "nullable": true,
+            "type": "boolean"
+          },
+          "generation": {
+            "nullable": true,
+            "type": "number"
+          },
+          "id": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "operation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "partsDone": {
+            "description": "Chapter pieces already read",
+            "type": "number"
+          },
+          "previousOperation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationDto"
+              }
+            ],
+            "description": "Builder before the takeover; the cost of the row is spent of both operations",
+            "nullable": true,
+            "type": "object"
+          },
+          "sourceVersionId": {
+            "description": "Version the dossier is built from",
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "building",
+              "ready",
+              "failed",
+              "missing"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "id",
+          "sourceVersionId",
+          "generation",
+          "fresh",
+          "formatVersion",
+          "model",
+          "partsDone",
+          "failedReason",
+          "operation",
+          "previousOperation",
+          "data",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "DossierStructureDto": {
+        "properties": {
+          "notes": {
+            "type": "string"
+          },
+          "parts": {
+            "items": {
+              "$ref": "#/components/schemas/DossierStructurePartDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "parts",
+          "notes"
+        ],
+        "type": "object"
+      },
+      "DossierStructurePartDto": {
+        "properties": {
+          "chapters": {
+            "description": "Reader chapter numbers",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "chapters"
+        ],
+        "type": "object"
+      },
+      "DossierSummarySectionDto": {
+        "properties": {
+          "chapters": {
+            "description": "Reader chapter numbers",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "number": {
+            "type": "number"
+          },
+          "title": {
+            "type": "string"
+          },
+          "why": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "number",
+          "title",
+          "chapters",
+          "why"
+        ],
+        "type": "object"
+      },
+      "DossierVoiceDto": {
+        "properties": {
+          "devices": {
+            "items": {
+              "$ref": "#/components/schemas/DossierDeviceDto"
+            },
+            "type": "array"
+          },
+          "irony": {
+            "type": "string"
+          },
+          "lexicon": {
+            "type": "string"
+          },
+          "pace": {
+            "type": "string"
+          },
+          "sentenceLength": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "pace",
+          "sentenceLength",
+          "lexicon",
+          "irony",
+          "devices"
+        ],
+        "type": "object"
+      },
       "EditionRightsDto": {
         "properties": {
           "createdAt": {
@@ -11162,6 +11703,200 @@
         ],
         "type": "object"
       },
+      "GlossaryAddressDto": {
+        "properties": {
+          "form": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string"
+          },
+          "to": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "form"
+        ],
+        "type": "object"
+      },
+      "GlossaryDataDto": {
+        "properties": {
+          "address": {
+            "items": {
+              "$ref": "#/components/schemas/GlossaryAddressDto"
+            },
+            "type": "array"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/GlossaryEntryDto"
+            },
+            "type": "array"
+          },
+          "phrases": {
+            "items": {
+              "$ref": "#/components/schemas/GlossaryPhraseDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "entries",
+          "address",
+          "phrases"
+        ],
+        "type": "object"
+      },
+      "GlossaryDto": {
+        "properties": {
+          "data": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/GlossaryDataDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "dossierId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "history": {
+            "description": "Additions made while translating, with the source chunk",
+            "items": {
+              "$ref": "#/components/schemas/GlossaryHistoryItemDto"
+            },
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "operation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "previousOperation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationDto"
+              }
+            ],
+            "description": "Builder before the takeover; the cost of the row is spent of both operations",
+            "nullable": true,
+            "type": "object"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookDossierStatus"
+              }
+            ]
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "dossierId",
+          "language",
+          "status",
+          "data",
+          "history",
+          "model",
+          "operation",
+          "previousOperation",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "GlossaryEntryDto": {
+        "properties": {
+          "keepOriginal": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "source",
+          "target",
+          "kind",
+          "keepOriginal",
+          "note"
+        ],
+        "type": "object"
+      },
+      "GlossaryHistoryItemDto": {
+        "properties": {
+          "chunkId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "entries": {
+            "items": {
+              "$ref": "#/components/schemas/GlossaryEntryDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "chunkId",
+          "entries"
+        ],
+        "type": "object"
+      },
+      "GlossaryPhraseDto": {
+        "properties": {
+          "source": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "target"
+        ],
+        "type": "object"
+      },
       "GrantRightsPublicationOverrideDto": {
         "properties": {
           "reasonRu": {
@@ -11304,6 +12039,16 @@
           "translations"
         ],
         "type": "object"
+      },
+      "Language": {
+        "enum": [
+          "en",
+          "es",
+          "fr",
+          "pt",
+          "ru"
+        ],
+        "type": "string"
       },
       "LawyerConditionDto": {
         "properties": {
@@ -13172,6 +13917,108 @@
           "structuredOutputs"
         ],
         "type": "object"
+      },
+      "LlmOperationDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "kind": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationKind"
+              }
+            ]
+          },
+          "limitUsd": {
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "pauseReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmPauseReason"
+              }
+            ],
+            "nullable": true
+          },
+          "reservedUsd": {
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "spentUsd": {
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationStatus"
+              }
+            ]
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "pauseReason",
+          "bookVersionId",
+          "limitUsd",
+          "reservedUsd",
+          "spentUsd",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "LlmOperationKind": {
+        "enum": [
+          "translation_run",
+          "dossier",
+          "compare",
+          "draft"
+        ],
+        "type": "string"
+      },
+      "LlmOperationStatus": {
+        "enum": [
+          "active",
+          "paused",
+          "cancelled",
+          "done",
+          "failed"
+        ],
+        "type": "string"
+      },
+      "LlmPauseReason": {
+        "enum": [
+          "LIMIT_REACHED",
+          "CEILING_REACHED",
+          "NO_COMPLIANT_PROVIDER",
+          "DOSSIER_STALE",
+          "DOSSIER_PAUSED",
+          "INSUFFICIENT_FUNDS",
+          "STEP_FAILED"
+        ],
+        "type": "string"
       },
       "LlmStageSettingDto": {
         "properties": {
@@ -18211,6 +19058,17 @@
           "resolution",
           "resolutionNotesRu"
         ],
+        "type": "object"
+      },
+      "ResumeLlmOperationDto": {
+        "properties": {
+          "limitUsd": {
+            "description": "New operation limit; not below spent + reserved. Omitted - the limit stays",
+            "example": "100",
+            "format": "decimal",
+            "type": "string"
+          }
+        },
         "type": "object"
       },
       "ReviewChainDiffDto": {
@@ -23253,6 +24111,17 @@
         ],
         "type": "object"
       },
+      "StartDossierDto": {
+        "properties": {
+          "limitUsd": {
+            "description": "Limit of the dossier operation; default - the estimate × 1.5",
+            "example": "100",
+            "format": "decimal",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "SupersedeRightsEvidenceDto": {
         "properties": {
           "supersededById": {
@@ -24699,6 +25568,95 @@
         "required": [
           "items",
           "totalVersions"
+        ],
+        "type": "object"
+      },
+      "TranslationSourceDto": {
+        "properties": {
+          "canTranslate": {
+            "type": "boolean"
+          },
+          "originalLanguageMismatch": {
+            "description": "Versions of the book disagree on the original language",
+            "type": "boolean"
+          },
+          "originalLanguageRaw": {
+            "description": "Original language as written",
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why translating from this version is unavailable; labels live on the front",
+            "enum": [
+              "SOURCE_LANGUAGE_UNKNOWN",
+              "ORIGINAL_VERSION_MISSING",
+              "ENGLISH_VERSION_MISSING",
+              "NOT_ORIGINAL_VERSION",
+              "NOT_ENGLISH_VERSION",
+              "SOURCE_HAS_NO_CHAPTERS",
+              "INTAKE_TARGETS_MISSING",
+              "NO_AVAILABLE_TARGETS"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "sourceLanguage": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ],
+            "nullable": true
+          },
+          "sourceVersionId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "targets": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationTargetDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "canTranslate",
+          "reason",
+          "sourceVersionId",
+          "sourceLanguage",
+          "originalLanguageRaw",
+          "originalLanguageMismatch",
+          "targets"
+        ],
+        "type": "object"
+      },
+      "TranslationTargetDto": {
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "reason": {
+            "enum": [
+              "IS_SOURCE",
+              "VERSION_EXISTS",
+              "NOT_IN_INTAKE"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "language",
+          "available",
+          "reason"
         ],
         "type": "object"
       },
@@ -28364,6 +29322,58 @@
         ]
       }
     },
+    "/admin/dossiers/{id}/glossaries/{lang}": {
+      "get": {
+        "operationId": "TranslationController_glossary",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "enum": [
+                "en",
+                "es",
+                "fr",
+                "pt",
+                "ru"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GlossaryDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Glossary of the dossier for a target language",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/geo-block/country-source": {
       "get": {
         "operationId": "GeoCountrySourceController_getCountrySource",
@@ -28465,6 +29475,99 @@
           }
         ],
         "summary": "OpenRouter models with prices per million tokens (cached for an hour)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/llm/operations/{id}/cancel": {
+      "post": {
+        "operationId": "LlmOperationsController_cancel",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmOperationDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "description": "LLM_OPERATION_NOT_CANCELLABLE: already finished"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Cancel an active or paused LLM operation: pending tasks stop, nothing more is spent",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/llm/operations/{id}/resume": {
+      "post": {
+        "operationId": "LlmOperationsController_resume",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResumeLlmOperationDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LlmOperationDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "limitUsd below spent + reserved"
+          },
+          "409": {
+            "description": "LLM_OPERATION_NOT_RESUMABLE: not paused, or its kind cannot resume"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Resume a paused LLM operation from its next step, optionally with a new limit",
         "tags": [
           "admin"
         ]
@@ -36263,6 +37366,134 @@
         ]
       }
     },
+    "/admin/versions/{id}/dossier": {
+      "get": {
+        "operationId": "TranslationController_status",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DossierStatusDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Dossier of this version (its translation source, Р5): status, freshness and data",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "TranslationController_build",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartDossierDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DossierStatusDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "description": "DOSSIER_FRESH: a fresh dossier exists; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again"
+          },
+          "503": {
+            "description": "LLM_DISABLED: no OpenRouter key"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Build the dossier in the background under its own operation; a stale one is rebuilt as a new generation",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/dossier/estimate": {
+      "get": {
+        "operationId": "TranslationController_estimate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DossierEstimateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "description": "SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upper cost estimate of building the dossier of this version",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/versions/{id}/geo-block-check": {
       "post": {
         "operationId": "GeoBlockController_checkAccess",
@@ -36806,6 +38037,43 @@
         "summary": "Mark geo-block as configured for a version",
         "tags": [
           "book-versions"
+        ]
+      }
+    },
+    "/admin/versions/{id}/translation-source": {
+      "get": {
+        "operationId": "TranslationController_translationSource",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationSourceDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Translation source of the book by the original language (D8): whether this version can be translated and into which languages",
+        "tags": [
+          "admin"
         ]
       }
     },

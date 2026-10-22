@@ -48,6 +48,9 @@ model Book {
   // Решение владельца 27.09.2026: «Разрешить публикацию» — последняя инстанция по правам.
   publicationOverrides RightsPublicationOverride[]
 
+  /// Досье книги по исходнику (F05-2, D1): поколения на версию-исходник.
+  dossiers BookDossier[]
+
   @@index([rightsIntakeId])
   @@index([currentRightsProfileId])
   @@index([approvedRightsReviewId])
@@ -79,6 +82,8 @@ model BookVersion {
   summarySections BookSummarySection[]
   llmOperations   LlmOperation[]
   llmTasks        LlmTask[]
+  /// Досье, построенные по этой версии как по исходнику (F05-2, Р5).
+  dossiers        BookDossier[]
   chapters        Chapter[]
   audioChapters   AudioChapter[]
   bookshelf       Bookshelf[]
@@ -4087,6 +4092,9 @@ model LlmOperation {
   updatedAt        DateTime           @updatedAt
   calls            LlmCall[]
   tasks            LlmTask[]
+  /// Строки досье и глоссария, которые строит эта операция (F05-2, вид `dossier`).
+  dossiers         BookDossier[]
+  glossaries       BookGlossary[]
 
   @@index([status])
   @@index([bookVersionId])
@@ -4177,4 +4185,97 @@ model LlmTask {
   @@index([status, runAfter])
   @@index([operationId])
   @@index([bookVersionId])
+}
+
+// ---------------------------------------------------------------------------
+// Досье и глоссарий (F05-2, `features/F05-book-translation/tech.md` §2а): факты по тексту
+// исходника для перевода, пересказа и анализа. Строит фон исполнителя под операцией вида
+// `dossier`; строитель строки один - уникальная строка `building` (Р20).
+// ---------------------------------------------------------------------------
+
+enum BookDossierStatus {
+  building
+  ready
+  failed
+}
+
+/// Досье по версии-исходнику. Перестройка - новая строка `generation + 1`, а не перезапись:
+/// глоссарии старого поколения к новому не переходят. Действующее - старшее поколение: `ready` -
+/// отдать, `building` - ждать, `failed` - строить следующее (решение арбитра `F05 | F05-2`).
+model BookDossier {
+  id              String            @id @default(uuid())
+  bookId          String
+  book            Book              @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  sourceVersionId String
+  /// Cascade, как у всех производных от версии (решение арбитра `F05 | F05-2`, В7).
+  sourceVersion   BookVersion       @relation(fields: [sourceVersionId], references: [id], onDelete: Cascade)
+  generation      Int
+  formatVersion   Int               @default(1)
+  status          BookDossierStatus @default(building)
+  /// Досье v1 (`DossierV1`); пусто, пока строится.
+  data            Json?
+  /// Отпечаток глав исходника на старте построения: не совпал с текущим - досье устарело.
+  fingerprint     String
+  /// План первого прохода на старте: `[{ chapterNumber, parts }]` - шаг читает только свою главу.
+  plan            Json              @default("[]")
+  /// Модель, собравшая досье из частичных.
+  model           String?
+  /// Операция строителя; перехват (Р20) меняет её один раз.
+  operationId     String?
+  operation       LlmOperation?     @relation(fields: [operationId], references: [id], onDelete: SetNull)
+  /// Строитель до перехвата (Р20): стоимость строки - траты обеих операций.
+  previousOperationId String?
+  /// Сколько раз строку перехватили после отказа строителя: не больше одного (Р20).
+  takeovers       Int               @default(0)
+  /// Причина, по которой строка `failed` закрыта без сводки: `DOSSIER_TOO_LONG`, `DOSSIER_SOURCE_CHANGED`.
+  failedReason    String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  parts           BookDossierPart[]
+  glossaries      BookGlossary[]
+
+  @@unique([bookId, sourceVersionId, generation])
+  @@index([sourceVersionId, generation])
+  @@index([operationId])
+}
+
+/// Частичное досье главы (первый проход): пишется до смены статуса задачи, поэтому повтор шага
+/// после падения модель не зовёт (решение арбитра `F05 | F05-2`, В3).
+model BookDossierPart {
+  id            String      @id @default(uuid())
+  dossierId     String
+  dossier       BookDossier @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  /// Номер главы читалки.
+  chapterNumber Int
+  /// Часть длинной главы с 0.
+  partIndex     Int
+  data          Json
+  /// Вызов, давший ответ (`LlmCall.id`); ссылки нет - журнал вызовов живёт отдельно.
+  callId        String?
+  createdAt     DateTime    @default(now())
+
+  @@unique([dossierId, chapterNumber, partIndex])
+}
+
+/// Глоссарий пары (досье, язык): один на пару, общий для перевода и заготовок этого языка.
+model BookGlossary {
+  id          String            @id @default(uuid())
+  dossierId   String
+  dossier     BookDossier       @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  language    Language
+  status      BookDossierStatus @default(building)
+  data        Json?
+  /// Дополнения по ходу перевода с куском-источником (`F05-4`): `[{ chunkId, entries }]`.
+  history     Json              @default("[]")
+  model       String?
+  operationId String?
+  operation   LlmOperation?     @relation(fields: [operationId], references: [id], onDelete: SetNull)
+  /// Строитель до перехвата (Р20): стоимость строки - траты обеих операций.
+  previousOperationId String?
+  takeovers   Int               @default(0)
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@unique([dossierId, language])
+  @@index([operationId])
 }

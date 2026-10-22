@@ -74,12 +74,21 @@ const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 8_000;
 
 /**
+ * Символов на токен для латиницы и кириллицы - для сверки с контекстом модели и для входа,
+ * которого в запросе ещё нет. Резерв считает вход сверху (токен на символ, `estimateInputTokens`)
+ * и этим числом не пользуется. Калибровка по `usage.prompt_tokens` - `F05-R`.
+ */
+export const CHARS_PER_TOKEN = 4;
+
+/**
  * Оценка токенов входа без токенизатора: токен на символ плюс служебные токены сообщения
  * (решение арбитра `F05 | F05-1`, Р-Д). Оценка сверху для латиницы и кириллицы - источники
  * перевода по D8; не строгая по байтам, для других письменностей не проверена. Калибровка по
  * `usage.prompt_tokens` - в `F05-R`.
  */
-function estimateInputTokens(request: LlmChatRequest): number {
+export function estimateInputTokens(
+  request: Pick<LlmChatRequest, 'messages' | 'jsonSchema'>,
+): number {
   const messages = request.messages.reduce((sum, m) => sum + m.content.length + 16, 0);
   // Схема ответа уходит провайдеру в `response_format` и тоже оплачивается как вход.
   const schema = request.jsonSchema ? JSON.stringify(request.jsonSchema.schema).length : 0;

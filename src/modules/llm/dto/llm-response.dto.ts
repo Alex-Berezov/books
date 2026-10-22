@@ -12,6 +12,9 @@ const MONEY = {
   example: '100.00000000',
 } as const;
 
+/** Та же форма денег для ответов соседних модулей конвейера (операции, досье). */
+export const LLM_MONEY_PROPERTY = MONEY;
+
 export class LlmStatusResponseDto {
   @ApiProperty({
     enum: ['ENABLED', 'DISABLED'],
