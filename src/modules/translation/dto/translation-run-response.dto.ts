@@ -7,13 +7,14 @@ import { TranslationRunStageModelsDto } from './translation-run-request.dto';
 
 /**
  * Этап языка (`product.md` §2.3): строится досье, строится глоссарий, перевод кусков (с нарезкой
- * главы); у закончившего - его статус.
+ * главы), проверка, сборка глав и полей версии (`F05-6`); у закончившего - его статус.
  */
 export const TRANSLATION_RUN_STAGES = [
   'dossier',
   'glossary',
   'translate',
   'check',
+  'assemble',
   'done',
   'failed',
   'cancelled',
@@ -165,7 +166,14 @@ export class TranslationRunLanguageEstimateDto {
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
-    description: 'Split, translate and check of this language',
+    description:
+      'Upper estimate: one call of the metadata stage (title, description, author, chapter titles)',
+  })
+  metadataUsd!: string;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description: 'Split, translate, check and metadata of this language',
   })
   totalUsd!: string;
 }

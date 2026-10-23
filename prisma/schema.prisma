@@ -87,6 +87,8 @@ model BookVersion {
   /// Сравнения моделей на главе этой версии (F05-3).
   translationCompares TranslationCompare[]
   translationRuns     TranslationRun[]
+  /// Язык запуска перевода, создавший эту версию (F05-6, Р18); пусто у ручной.
+  translatedBy        TranslationRunLanguage?
   chapters        Chapter[]
   audioChapters   AudioChapter[]
   bookshelf       Bookshelf[]
@@ -293,6 +295,8 @@ model Chapter {
   createdAt     DateTime    @default(now())
   bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
   comments      Comment[]
+  /// Главы перевода, записанные в эту главу (F05-6).
+  translationChapters TranslationChapter[]
 
   @@unique([bookVersionId, number])
 }
@@ -4388,6 +4392,16 @@ enum TranslationChunkStatus {
   flagged
 }
 
+/// Глава перевода (`F05-6`): `assembled` - собрана и пойдёт в черновик (флаг стыка или куска - в
+/// `flagReason` и `findings`, решение арбитра `F05 | F05-6`); `written` - записана в черновик;
+/// `flagged` - не пишется: длиннее предела (Р8), кусок без перевода, куски не сходятся с главой.
+enum TranslationChapterStatus {
+  pending
+  assembled
+  written
+  flagged
+}
+
 /// Запуск перевода (F05-4): исходник, языки и операция `translation_run`. Ход и пауза - только
 /// `LlmOperation.status`/`pauseReason` (`F05-1w`, шаг 7), своего статуса паузы у запуска нет.
 /// Шаг - задача исполнителя на пару «операция, язык», по куску за шаг (Р1).
@@ -4449,9 +4463,22 @@ model TranslationRunLanguage {
   blockedByOperationId String?
   /// Кусков с флагом (`F05-5`).
   flaggedChunks        Int                          @default(0)
+  /// Глав с флагом (`F05-6`): `TranslationChapter.flagReason` не пуст.
+  flaggedChapters      Int                          @default(0)
+  /// Черновик версии, созданный языком (`F05-6`, Р18); пусто до создания. `SetNull`: удалённый
+  /// черновик не уносит историю запуска.
+  bookVersionId        String?                      @unique
+  bookVersion          BookVersion?                 @relation(fields: [bookVersionId], references: [id], onDelete: SetNull)
+  /// Этап `metadata` (`F05-6`, форма - `MetadataState` в `translation/metadata/metadata-state.ts`):
+  /// попытки с моделью, стоимостью и замечаниями, принятый ответ. Пишется до решения шага: повтор
+  /// после падения ответ не оплачивает (`tech.md` §5).
+  metadata             Json?
+  /// Итоговая проверка книги (`F05-6`, этап `final_check`); пусто - не проводилась.
+  finalCheck           Json?
   createdAt            DateTime                     @default(now())
   updatedAt            DateTime                     @updatedAt
   chunks               TranslationChunk[]
+  chapters             TranslationChapter[]
 
   @@unique([runId, language])
   @@index([glossaryId])
@@ -4494,4 +4521,34 @@ model TranslationChunk {
   updatedAt          DateTime               @updatedAt
 
   @@unique([runLanguageId, chapterNumber, chunkIndex])
+}
+
+/// Глава языка запуска после сборки из кусков (`F05-6`, шаги 2-3, 7). Строка одна на главу
+/// исходника: повтор шага сборки её не дублирует.
+model TranslationChapter {
+  id            String                   @id @default(uuid())
+  runLanguageId String
+  runLanguage   TranslationRunLanguage   @relation(fields: [runLanguageId], references: [id], onDelete: Cascade)
+  /// Номер главы исходника; глава черновика получает тот же.
+  chapterNumber Int
+  status        TranslationChapterStatus @default(pending)
+  /// Код первой причины флага (`ASSEMBLY_FLAG_REASONS`); пусто - флага нет.
+  flagReason    String?
+  /// Длина собранной главы после санитайзера и предел (Р8).
+  length        Int?
+  lengthLimit   Int?
+  /// Номер стыка с 1 (между кусками N-1 и N) у флага стыка.
+  seamIndex     Int?
+  /// Находки сборки и итоговой проверки `[{ code, seam?, chunkIndex? }]`.
+  findings      Json?
+  /// Глава черновика, записанная конвейером (`F05-6`, 6b).
+  chapterId     String?
+  chapter       Chapter?                 @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  /// sha256 записанного очищенного `content` (Р9).
+  writtenHash   String?
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  @@unique([runLanguageId, chapterNumber])
+  @@index([chapterId])
 }

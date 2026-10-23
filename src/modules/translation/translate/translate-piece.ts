@@ -51,7 +51,7 @@ export function chapterSummary(dossier: unknown, chapterNumber: number): string 
 /** Переводимые блоки куска с номерами - то, что уходит модели. */
 export function chunkBlocks(
   layout: Pick<ChapterLayout, 'blocks'>,
-  chunk: ChapterChunk,
+  chunk: Pick<ChapterChunk, 'firstBlock' | 'lastBlock'>,
 ): Array<{ n: number; html: string }> {
   return layout.blocks
     .filter((b) => b.translatable && b.n >= chunk.firstBlock && b.n <= chunk.lastBlock)

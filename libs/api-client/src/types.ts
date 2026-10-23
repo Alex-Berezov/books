@@ -13496,7 +13496,15 @@ export interface components {
       /** @description Models that all refused by the data policy (NO_COMPLIANT_PROVIDER): pick another one in stageModels; empty otherwise */
       reasonModels: string[];
       /** @enum {string} */
-      stage: 'dossier' | 'glossary' | 'translate' | 'check' | 'done' | 'failed' | 'cancelled';
+      stage:
+        | 'dossier'
+        | 'glossary'
+        | 'translate'
+        | 'check'
+        | 'assemble'
+        | 'done'
+        | 'failed'
+        | 'cancelled';
       status: components['schemas']['TranslationRunLanguageStatus'];
     };
     TranslationRunLanguageEstimateDto: {
@@ -13511,13 +13519,19 @@ export interface components {
       language: components['schemas']['Language'];
       /**
        * Format: decimal
+       * @description Upper estimate: one call of the metadata stage (title, description, author, chapter titles)
+       * @example 100.00000000
+       */
+      metadataUsd: string;
+      /**
+       * Format: decimal
        * @description Contested joints by the split stage
        * @example 100.00000000
        */
       splitUsd: string;
       /**
        * Format: decimal
-       * @description Split, translate and check of this language
+       * @description Split, translate, check and metadata of this language
        * @example 100.00000000
        */
       totalUsd: string;
@@ -13553,6 +13567,11 @@ export interface components {
        * @example deepseek/deepseek-v4-pro
        */
       check_semantic?: string;
+      /**
+       * @description Model of the version fields (title, description, author, chapter titles)
+       * @example anthropic/claude-sonnet-5.5
+       */
+      metadata?: string;
       /** @example anthropic/claude-sonnet-5.5 */
       translate?: string;
     };
@@ -19940,7 +19959,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model */
+      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model */
       409: {
         headers: {
           [name: string]: unknown;
@@ -19994,7 +20013,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model */
+      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model */
       409: {
         headers: {
           [name: string]: unknown;

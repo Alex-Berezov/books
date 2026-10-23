@@ -30,6 +30,8 @@ import { TranslationSourceService } from '../translation-source.service';
 import { chapterCheckUsd, checkEstimator } from '../check/check-estimate';
 import { CHECK_NO_COMPLIANT_PROVIDER, CHECK_SEMANTIC_STAGE } from '../check/check.constants';
 import { independentCheckModels } from '../check/check-models';
+import { METADATA_STAGE } from '../metadata/metadata.constants';
+import { metadataSourceFields, metadataUsd } from '../metadata/metadata-step';
 import { TRANSLATE_STAGE } from '../translate/translate.constants';
 import {
   chapterSplitUsd,
@@ -356,7 +358,7 @@ export class TranslationRunService {
   /**
    * Оценка сверху по всей книге (`F05-4b`, шаг 2): куски каждой главы по границам кода, на язык -
    * `split` по спорным стыкам, `translate` и `check_semantic` по кускам (сверка смысла - решение
-   * арбитра `F05 | F05-5`); досье одно на книгу, глоссарий на язык -
+   * арбитра `F05 | F05-5`), `metadata` - вызов на язык (`F05-6`); досье одно на книгу, глоссарий на язык -
    * строками, если их строить (устаревшее досье тоже: запуск строит его заново). Выход вызова -
    * `maxTokens` этапа, без коэффициента длины языка (решения арбитра `F05 | F05-4b`).
    */
@@ -392,6 +394,8 @@ export class TranslationRunService {
       throw llmTaskConflict('TRANSLATION_SOURCE_EMPTY', 'The source has no text to translate');
     }
 
+    const fields = await metadataSourceFields(this.prisma, versionId, sourceLanguage);
+    if (!fields) throw new NotFoundException('Book version not found');
     const context = await this.dossiers.contextEstimates(versionId, query.languages, {
       rebuildStale: true,
     });
@@ -399,6 +403,7 @@ export class TranslationRunService {
     const translateModel =
       query.translateModel ?? (await this.llm.getStageSetting(TRANSLATE_STAGE)).model;
     const check = await checkEstimator(this.llm, translateModel);
+    const metadata = await stageEstimatorFor(this.llm, METADATA_STAGE);
     // Нарезка - на каждый язык своя (выборы стыков хранит язык запуска).
     const splitUsd = plans.reduce((sum, p) => sum.add(chapterSplitUsd(split, p)), zero());
     let upperBound = false;
@@ -443,7 +448,12 @@ export class TranslationRunService {
           ),
         zero(),
       );
-      const totalUsd = splitUsd.add(translateUsd).add(checkUsd);
+      const languageMetadataUsd = metadataUsd(
+        metadata,
+        { ...fields, targetLanguage: language },
+        { glossary: ready.glossaryData, dossier: ready.dossierData, extra },
+      );
+      const totalUsd = splitUsd.add(translateUsd).add(checkUsd).add(languageMetadataUsd);
       translationsUsd = translationsUsd.add(totalUsd);
       if (glossary) {
         minLimitUsd = minLimitUsd.add(glossary.suggestedLimitUsd);
@@ -455,6 +465,7 @@ export class TranslationRunService {
         splitUsd: moneyUsd(splitUsd),
         translateUsd: moneyUsd(translateUsd),
         checkUsd: moneyUsd(checkUsd),
+        metadataUsd: moneyUsd(languageMetadataUsd),
         totalUsd: moneyUsd(totalUsd),
       });
     }
@@ -577,7 +588,9 @@ export class TranslationRunService {
 function sameModels(fresh: Prisma.JsonValue, read: Record<string, string> | null): boolean {
   if (read === null) return true;
   const now = (fresh ?? {}) as Record<string, string>;
-  return [TRANSLATE_STAGE, CHECK_SEMANTIC_STAGE].every((stage) => now[stage] === read[stage]);
+  return [TRANSLATE_STAGE, CHECK_SEMANTIC_STAGE, METADATA_STAGE].every(
+    (stage) => now[stage] === read[stage],
+  );
 }
 
 function zero(): Prisma.Decimal {
@@ -621,7 +634,7 @@ function languageDto(
   return {
     language: l.language,
     status: l.status,
-    stage: stageOf(l, hasDossier, chunks),
+    stage: stageOf(l, hasDossier, chunks, position >= 0 && position === chapters.length - 1),
     reason: l.reason,
     // Колонка в базе допускает NULL (строки до записи причины): наружу - пустой список.
     reasonModels: l.reasonModels ?? [],
@@ -643,16 +656,22 @@ const CHECKING: readonly string[] = ['translated', 'checked'];
  * Этап языка словами `product.md` §2.3: досье, глоссарий, перевод (с нарезкой главы), проверка
  * (кусок текущей главы между переводом и находками или пауза сверки смысла без провайдера,
  * решение арбитра `F05 | F05-5`); у закончившего - его статус (решение арбитра `F05 | F05-4a`,
- * В6). Сборка - `F05-6`. Куски - группировка текущей главы языка (запрос на весь ход, `get`).
+ * В6); сборка - последняя глава закрыта целиком: главы собираются и идёт этап `metadata` (`F05-6`).
+ * Куски - группировка текущей главы языка (запрос на весь ход, `get`).
  */
 function stageOf(
   l: TranslationRunLanguage,
   hasDossier: boolean,
   chunks: ReadonlyArray<{ status: string }>,
+  lastChapter: boolean,
 ): TranslationRunStage {
   if (l.status === 'done' || l.status === 'failed' || l.status === 'cancelled') return l.status;
   if (!hasDossier) return 'dossier';
   if (!l.glossaryId) return 'glossary';
+  const closed = chunks.every((c) =>
+    (CHUNK_CLOSED_STATUSES as readonly string[]).includes(c.status),
+  );
+  if (lastChapter && chunks.length > 0 && closed) return 'assemble';
   const checking =
     l.reason === CHECK_NO_COMPLIANT_PROVIDER || chunks.some((c) => CHECKING.includes(c.status));
   return checking ? 'check' : 'translate';

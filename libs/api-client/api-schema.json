@@ -26182,6 +26182,7 @@
               "glossary",
               "translate",
               "check",
+              "assemble",
               "done",
               "failed",
               "cancelled"
@@ -26238,6 +26239,12 @@
               }
             ]
           },
+          "metadataUsd": {
+            "description": "Upper estimate: one call of the metadata stage (title, description, author, chapter titles)",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
           "splitUsd": {
             "description": "Contested joints by the split stage",
             "example": "100.00000000",
@@ -26245,7 +26252,7 @@
             "type": "string"
           },
           "totalUsd": {
-            "description": "Split, translate and check of this language",
+            "description": "Split, translate, check and metadata of this language",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -26263,6 +26270,7 @@
           "splitUsd",
           "translateUsd",
           "checkUsd",
+          "metadataUsd",
           "totalUsd"
         ],
         "type": "object"
@@ -26338,6 +26346,11 @@
           "check_semantic": {
             "description": "Meaning check model: of another family than the translate model of the run",
             "example": "deepseek/deepseek-v4-pro",
+            "type": "string"
+          },
+          "metadata": {
+            "description": "Model of the version fields (title, description, author, chapter titles)",
+            "example": "anthropic/claude-sonnet-5.5",
             "type": "string"
           },
           "translate": {
@@ -39377,7 +39390,7 @@
             "description": "Book version not found"
           },
           "409": {
-            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model"
+            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model"
           },
           "503": {
             "description": "LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE"
@@ -39448,7 +39461,7 @@
             "description": "Book version not found"
           },
           "409": {
-            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model"
+            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model"
           },
           "503": {
             "description": "LLM_MODELS_UNAVAILABLE"

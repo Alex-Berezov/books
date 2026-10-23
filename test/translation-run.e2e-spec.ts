@@ -169,7 +169,35 @@ describe('Translation run (e2e)', () => {
       .map((m) => ({ n: Number(m[1]), text: `${targetOf(body).toUpperCase()} ${m[2]}` }));
   };
 
+  /**
+   * Ответ этапа `metadata` (`F05-6`): поля из запроса с меткой языка - название, автор, блоки
+   * описания и названия глав по номерам; пустое название главы остаётся пустым.
+   */
+  const metadataAnswerOf = (body: ChatBody) => {
+    const user = body.messages[1]?.content ?? '';
+    const tag = targetOf(body).toUpperCase();
+    const field = (label: string) => new RegExp(`^${label}: (.*)$`, 'm').exec(user)?.[1] ?? '';
+    const listed = (header: string, end: string) =>
+      (user.split(header)[1] ?? '')
+        .split(end)[0]
+        .split('\n')
+        .map((line) => /^\[(\d+)\] ?(.*)$/s.exec(line))
+        .filter((m): m is RegExpExecArray => m !== null);
+    return {
+      title: `${tag} ${field('Title')}`,
+      author: `${tag} ${field('Author')}`,
+      description: listed('Description blocks, as "[n] text":\n', '\n\nChapter titles').map(
+        (m) => ({ n: Number(m[1]), text: `${tag} ${m[2]}` }),
+      ),
+      chapterTitles: listed('Chapter titles, as "[number] title":\n', '\nDATA>>>').map((m) => ({
+        number: Number(m[1]),
+        title: m[2] === '' ? '' : `${tag} ${m[2]}`,
+      })),
+    };
+  };
+
   const defaultAnswer = (name: string, body: ChatBody): unknown => {
+    if (name === 'metadata') return metadataAnswerOf(body);
     if (name === 'dossier_part') return PART;
     if (name === 'dossier') return dossier;
     if (name === 'glossary') return GLOSSARY;
@@ -387,7 +415,7 @@ describe('Translation run (e2e)', () => {
     await auth(http().get(`/admin/translation-runs/${id}`)).expect(404);
   });
 
-  it('two languages: one dossier, a glossary each, pieces in order, findings of piece N in the prompt of N+1, no version', async () => {
+  it('two languages: one dossier, a glossary each, pieces in order, findings of piece N in the prompt of N+1, chapters assembled, version fields translated, no version yet', async () => {
     const { bookId, versionId } = await englishBook([
       { number: 1, title: 'One', content: LONG },
       { number: 2, title: 'Two', content: SHORT },
@@ -462,7 +490,41 @@ describe('Translation run (e2e)', () => {
     expect(
       await prisma.llmOperation.count({ where: { translationRunId: runId, kind: 'dossier' } }),
     ).toBe(3);
+    // Черновик версии - подпачка 6b (решение арбитра `F05 | F05-6`): здесь главы собраны,
+    // поля версии переведены, версии нет.
     expect(await prisma.bookVersion.count({ where: { bookId } })).toBe(1);
+    expect(calls.filter((c) => c.name === 'metadata')).toHaveLength(2);
+    for (const language of ['es', 'fr'] as const) {
+      const lang = await langOf(runId, language);
+      expect(lang).toMatchObject({ flaggedChapters: 0, bookVersionId: null });
+      const chapters = await prisma.translationChapter.findMany({
+        where: { runLanguageId: lang.id },
+        orderBy: { chapterNumber: 'asc' },
+      });
+      expect(chapters.map((c) => [c.chapterNumber, c.status, c.flagReason, c.lengthLimit])).toEqual(
+        [
+          [1, 'assembled', null, 500_000],
+          [2, 'assembled', null, 500_000],
+        ],
+      );
+      const tag = language.toUpperCase();
+      expect(chapters[1].length).toBe(
+        `<p>${tag} Anna arrives.</p><p>${tag} — Hello, Annie.</p>`.length,
+      );
+      expect(lang.metadata).toMatchObject({
+        attempts: [{ model: MODEL, outcome: 'pass', remarks: [] }],
+        result: {
+          title: `${tag} Book en`,
+          author: `${tag} Author`,
+          authorFromGlossary: false,
+          description: `${tag} Desc`,
+          chapterTitles: [
+            { number: 1, title: `${tag} One` },
+            { number: 2, title: `${tag} Two` },
+          ],
+        },
+      });
+    }
 
     const res = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
     expect(res.body.operation).toMatchObject({ kind: 'translation_run', status: 'done' });
@@ -674,8 +736,9 @@ describe('Translation run (e2e)', () => {
     expect((await opOf(opId)).status).toBe('done');
     const [chunk] = await prisma.translationChunk.findMany({ where: { runLanguageId: lang.id } });
     expect(chunk.status).toBe('done');
-    // После `checked` - только находки в глоссарий: ни перевода, ни проверки заново.
-    expect(calls.length).toBe(before);
+    // После `checked` - только находки в глоссарий: ни перевода, ни проверки заново; дальше -
+    // поля версии (`F05-6`).
+    expect(calls.slice(before).map((c) => c.name)).toEqual(['metadata']);
   });
 
   /** Настройка этапов на время теста: строки снимаются в `finally`. */
@@ -1303,6 +1366,14 @@ describe('Translation run (e2e)', () => {
     });
     expect(chunk).toMatchObject({ status: 'flagged', flagReason: 'CHUNK_TOO_LONG', attempts: 0 });
     expect(translations()).toHaveLength(0);
+    // Кусок без перевода - глава не собирается, исходник вместо перевода не подставляется
+    // (решение арбитра `F05 | F05-6`).
+    expect(
+      await prisma.translationChapter.findFirstOrThrow({
+        where: { runLanguage: { runId: run.runId } },
+      }),
+    ).toMatchObject({ status: 'flagged', flagReason: 'CHUNK_UNTRANSLATED', length: null });
+    expect(await langOf(run.runId, 'es')).toMatchObject({ flaggedChapters: 1 });
   });
 
   it('the source edited mid-run pauses DOSSIER_STALE', async () => {
@@ -2038,6 +2109,7 @@ describe('Translation run (e2e)', () => {
           splitUsd: string;
           translateUsd: string;
           checkUsd: string;
+          metadataUsd: string;
           totalUsd: string;
         }>;
         translationsUsd: string;
@@ -2062,10 +2134,12 @@ describe('Translation run (e2e)', () => {
     expect(sum(before.languages.map((l) => l.totalUsd))).toBe(
       new Prisma.Decimal(before.translationsUsd).toString(),
     );
-    // Сверка смысла - своим полем и в сумме языка (решение арбитра `F05 | F05-5`).
+    // Сверка смысла и поля версии - своими полями и в сумме языка (решения арбитра
+    // `F05 | F05-5`, `F05 | F05-6`).
     for (const l of before.languages) {
       expect(new Prisma.Decimal(l.checkUsd).isPositive()).toBe(true);
-      expect(sum([l.splitUsd, l.translateUsd, l.checkUsd])).toBe(
+      expect(new Prisma.Decimal(l.metadataUsd).isPositive()).toBe(true);
+      expect(sum([l.splitUsd, l.translateUsd, l.checkUsd, l.metadataUsd])).toBe(
         new Prisma.Decimal(l.totalUsd).toString(),
       );
     }
@@ -2121,5 +2195,275 @@ describe('Translation run (e2e)', () => {
     await auth(
       http().get(`/admin/books/00000000-0000-0000-0000-000000000000/translation-runs`),
     ).expect(404);
+  });
+
+  it('a chapter longer than the limit is flagged with its length and limit, the other chapter is assembled (Р8)', async () => {
+    const { versionId } = await englishBook([
+      { number: 1, title: 'One', content: '<p>Big chapter.</p>' },
+      { number: 2, title: 'Two', content: SHORT },
+    ]);
+    answer = (name, body) => {
+      const base = defaultAnswer(name, body);
+      if (name !== 'translation' || !body.messages[1].content.includes('Big chapter')) return base;
+      return { ...(base as object), blocks: [{ n: 1, text: 'x'.repeat(500_001) }] };
+    };
+    const { runId, opId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    expect((await opOf(opId)).status).toBe('done');
+    const lang = await langOf(runId, 'es');
+    expect(lang).toMatchObject({ status: 'done', flaggedChapters: 1 });
+    const chapters = await prisma.translationChapter.findMany({
+      where: { runLanguageId: lang.id },
+      orderBy: { chapterNumber: 'asc' },
+    });
+    expect(chapters.map((c) => [c.status, c.flagReason, c.lengthLimit])).toEqual([
+      ['flagged', 'CHAPTER_TOO_LONG', 500_000],
+      ['assembled', null, 500_000],
+    ]);
+    expect(chapters[0].length).toBeGreaterThan(500_000);
+  });
+
+  it('a block repeated on a seam flags the chapter with the seam number; the chapter still goes to the draft', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    let lastBlock = '';
+    answer = (name, body) => {
+      const base = defaultAnswer(name, body) as { blocks: Array<{ n: number; text: string }> };
+      if (name !== 'translation') return base;
+      // Второй кусок начинается повтором последнего блока первого (модель повторила хвост).
+      const blocks = body.messages[1].content.includes('End of the previous translated piece')
+        ? base.blocks.map((b, i) => (i === 0 ? { n: b.n, text: lastBlock } : b))
+        : base.blocks;
+      lastBlock = blocks[blocks.length - 1].text;
+      return { ...base, blocks };
+    };
+    const { runId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    const lang = await langOf(runId, 'es');
+    expect(lang).toMatchObject({ status: 'done', flaggedChapters: 1 });
+    expect(
+      await prisma.translationChapter.findFirstOrThrow({ where: { runLanguageId: lang.id } }),
+    ).toMatchObject({
+      status: 'assembled',
+      flagReason: 'SEAM_REPEAT',
+      seamIndex: 1,
+      findings: [{ code: 'SEAM_REPEAT', seam: 1 }],
+    });
+  });
+
+  // Текст главы ловит и сверка кусков главы при сборке; название - только сверка отпечатка
+  // исходника перед сборкой (карточка, «От `F05-4a`»).
+  it.each([
+    ['text', { content: '<p>Anna leaves at night.</p>' }],
+    ['title', { title: 'One, revised' }],
+  ])(
+    'the %s of a translated chapter edited later pauses DOSSIER_STALE before assembly',
+    async (_what, data) => {
+      const { versionId } = await englishBook([
+        { number: 1, title: 'One', content: '<p>Anna leaves.</p>' },
+        { number: 2, title: 'Two', content: SHORT },
+      ]);
+      during = async (name) => {
+        const last = calls[calls.length - 1];
+        if (name !== 'translation' || !last.body.messages[1].content.includes('Anna arrives'))
+          return;
+        await prisma.chapter.update({
+          where: { bookVersionId_number: { bookVersionId: versionId, number: 1 } },
+          data,
+        });
+      };
+      const { runId, opId } = await createRun(versionId, ['es']);
+
+      await drain();
+
+      expect(await opOf(opId)).toMatchObject({ status: 'paused', pauseReason: 'DOSSIER_STALE' });
+      const lang = await langOf(runId, 'es');
+      expect(lang).toMatchObject({ status: 'running', reason: 'DOSSIER_STALE', metadata: null });
+      expect(await prisma.translationChapter.count({ where: { runLanguageId: lang.id } })).toBe(0);
+      expect(calls.filter((c) => c.name === 'metadata')).toHaveLength(0);
+    },
+  );
+
+  it('version fields in a foreign language: one retry with the remarks, then the language fails METADATA_INVALID', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    answer = (name, body) => {
+      const base = defaultAnswer(name, body);
+      if (name !== 'metadata') return base;
+      return { ...(base as object), title: 'The man who was in the house of the old woman' };
+    };
+    const { runId, opId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    const metadata = calls.filter((c) => c.name === 'metadata');
+    expect(metadata).toHaveLength(2);
+    expect(metadata[0].body.messages[1].content).not.toContain('The previous answer failed');
+    expect(metadata[1].body.messages[1].content).toContain(
+      'The title is not in Spanish: it reads as English.',
+    );
+    const lang = await langOf(runId, 'es');
+    expect(lang).toMatchObject({ status: 'failed', reason: 'METADATA_INVALID' });
+    expect(lang.metadata).toMatchObject({
+      result: null,
+      attempts: [
+        { model: MODEL, outcome: 'fail', costUsd: '0.0001' },
+        { model: MODEL, outcome: 'fail', costUsd: '0.0001' },
+      ],
+    });
+    expect((await opOf(opId)).status).toBe('done');
+  });
+
+  it('a version fields answer saved before the step is recorded is not paid again; the stage reads assemble meanwhile', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const saved = async () => (await langOf(runId, 'es')).metadata !== null;
+    await drain(saved);
+    expect(calls.filter((c) => c.name === 'metadata')).toHaveLength(1);
+    const assembling = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    expect(assembling.body.languages[0]).toMatchObject({ status: 'running', stage: 'assemble' });
+
+    // Исполнитель умер после записи ответа, до итога шага (как у куска выше).
+    await prisma.llmTask.updateMany({
+      where: {
+        operation: { translationRun: { id: runId } },
+        status: { in: ['pending', 'running'] },
+      },
+      data: { status: 'running', ownerToken: 'dead', leaseUntil: new Date(Date.now() - 1000) },
+    });
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'metadata')).toHaveLength(1);
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done' });
+  });
+
+  it('every provider of the version fields refuses: paused with the stage models; resume with stageModels.metadata goes on', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId, opId } = await createRun(versionId, ['es']);
+    refuse = (name, body) =>
+      name === 'metadata' && body.model !== ALT
+        ? json(
+            { error: { code: 404, message: 'No endpoints found matching your data policy' } },
+            404,
+          )
+        : null;
+
+    await drain();
+
+    expect(await opOf(opId)).toMatchObject({
+      status: 'paused',
+      pauseReason: 'NO_COMPLIANT_PROVIDER',
+    });
+    expect(await langOf(runId, 'es')).toMatchObject({
+      status: 'running',
+      reason: 'METADATA_NO_COMPLIANT_PROVIDER',
+      reasonModels: [MODEL],
+      metadata: null,
+    });
+    const paused = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    expect(paused.body.languages[0]).toMatchObject({ stage: 'assemble' });
+    // Параллельное «продолжить» сменило модель полей версии - отказ, а не запись мимо сверки.
+    const operations = app.get(LlmOperationsService);
+    const raced = jest.spyOn(operations, 'resume').mockImplementationOnce(async (...args) => {
+      await prisma.translationRun.update({
+        where: { id: runId },
+        data: { stageModels: { metadata: MODEL } },
+      });
+      return operations.resume(...args);
+    });
+    const changed = await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+      .send({ stageModels: { metadata: ALT } })
+      .expect(409);
+    expect(changed.body).toMatchObject({ code: 'TRANSLATION_RUN_MODELS_CHANGED' });
+    raced.mockRestore();
+    await prisma.translationRun.update({ where: { id: runId }, data: { stageModels: {} } });
+    await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+      .send({ stageModels: { metadata: ALT } })
+      .expect(200);
+    await drain();
+
+    expect((await opOf(opId)).status).toBe('done');
+    const lang = await langOf(runId, 'es');
+    expect(lang).toMatchObject({ status: 'done' });
+    expect(lang.metadata).toMatchObject({ attempts: [{ model: ALT, outcome: 'pass' }] });
+  });
+
+  it('version fields that do not fit the model context: the language fails METADATA_TOO_LONG without a call', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    let run: { runId: string; opId: string } = { runId: '', opId: '' };
+    await withStages([{ stage: 'metadata', model: TINY, fallbacks: [] }], async () => {
+      run = await createRun(versionId, ['es']);
+    });
+
+    await drain();
+
+    expect(await langOf(run.runId, 'es')).toMatchObject({
+      status: 'failed',
+      reason: 'METADATA_TOO_LONG',
+      metadata: null,
+    });
+    expect(calls.filter((c) => c.name === 'metadata')).toHaveLength(0);
+    expect((await opOf(run.opId)).status).toBe('done');
+  });
+
+  it('the version fields stage disabled: estimate and start refuse 409 LLM_STAGE_DISABLED', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    await withStages(
+      [{ stage: 'metadata', model: MODEL, fallbacks: [], enabled: false }],
+      async () => {
+        const estimate = await auth(
+          http()
+            .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+            .query({ languages: 'es' }),
+        ).expect(409);
+        expect(estimate.body).toMatchObject({ code: 'LLM_STAGE_DISABLED' });
+        const start = await startRun(versionId, { languages: ['es'] }).expect(409);
+        expect(start.body).toMatchObject({ code: 'LLM_STAGE_DISABLED' });
+      },
+    );
+  });
+
+  it('version fields not in the answer form after the retry with a remark: the language fails METADATA_INVALID without another round', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    answer = (name, body) =>
+      name === 'metadata' ? { title: 'Sin forma' } : defaultAnswer(name, body);
+    const { runId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    // Ответ и повтор с замечанием о форме - два вызова, третьего нет.
+    expect(calls.filter((c) => c.name === 'metadata')).toHaveLength(2);
+    const lang = await langOf(runId, 'es');
+    expect(lang).toMatchObject({ status: 'failed', reason: 'METADATA_INVALID' });
+    expect(lang.metadata).toMatchObject({
+      result: null,
+      attempts: [{ model: '', outcome: 'invalid', costUsd: '0.0002' }],
+    });
+  });
+
+  it('estimate of the version fields before the dossier and glossary exist is an upper bound over their size', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const estimate = async () =>
+      (
+        await auth(
+          http()
+            .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+            .query({ languages: 'es' }),
+        ).expect(200)
+      ).body as { upperBound: boolean; languages: Array<{ metadataUsd: string }> };
+    const before = await estimate();
+    expect(before.upperBound).toBe(true);
+    await startRun(versionId, { languages: ['es'] }).expect(202);
+    await drain();
+    const after = await estimate();
+    expect(after.upperBound).toBe(false);
+    // Сверху - вход сверх промпта в размер ответов досье и глоссария: дороже, чем по готовым.
+    expect(
+      new Prisma.Decimal(before.languages[0].metadataUsd).greaterThan(
+        after.languages[0].metadataUsd,
+      ),
+    ).toBe(true);
   });
 });

@@ -9,11 +9,13 @@ import {
   TranslationRunLanguage,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { RICH_HTML_MAX_LENGTH } from '../../../shared/validators/rich-html.decorator';
 import { LlmError } from '../../llm/llm.errors';
 import { LlmService } from '../../llm/llm.service';
 import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.registry';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
+import { assembleTranslatedChapter } from '../assemble/chapter-assembly';
 import { ChapterLayout, splitChapter } from '../chapter-blocks';
 import { ChapterChunk, nextSplit } from '../chunking/chapter-chunks';
 import { demandContext } from '../dossier/context-demand';
@@ -59,6 +61,22 @@ import {
 } from '../check/mechanical-check';
 import { semanticFailed, semanticFailures } from '../check/semantic-check';
 import { checkSemantic, semanticInputOf } from '../check/semantic-step';
+import { checkMetadata } from '../metadata/metadata-check';
+import {
+  METADATA_ATTEMPTS_MAX,
+  METADATA_INVALID,
+  METADATA_NO_COMPLIANT_PROVIDER,
+  METADATA_STAGE,
+  METADATA_TOO_LONG,
+} from '../metadata/metadata.constants';
+import {
+  MetadataState,
+  metadataFailures,
+  metadataRemarks,
+  metadataStateJson,
+  metadataStateOf,
+} from '../metadata/metadata-state';
+import { callMetadata, metadataInputOf, metadataSourceFields } from '../metadata/metadata-step';
 import { mergeFindings } from './glossary-findings';
 import { runStageModels, StageModels } from './run-models';
 import { runTaskInput } from './translation-run.service';
@@ -219,7 +237,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
       });
     }
     if (!lang.run.dossierId || !lang.glossaryId) return this.awaitContext(lang);
-    if (lang.chapterNumber === null) return this.startChapter(lang, null);
+    if (lang.chapterNumber === null) return this.startChapter(lang, null, ctx);
     return this.chapterStep(lang, lang.chapterNumber, ctx);
   }
 
@@ -308,8 +326,12 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     }
   }
 
-  /** Глава после `after` по порядку номеров; нет - язык доделан. */
-  private async startChapter(lang: LanguageRow, after: number | null): Promise<LlmTaskStepResult> {
+  /** Глава после `after` по порядку номеров; нет - сборка глав (`F05-6`). */
+  private async startChapter(
+    lang: LanguageRow,
+    after: number | null,
+    ctx: LlmTaskContext,
+  ): Promise<LlmTaskStepResult> {
     const next = await this.prisma.chapter.findFirst({
       where: {
         bookVersionId: lang.run.bookVersionId,
@@ -318,7 +340,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
       orderBy: { number: 'asc' },
       select: { number: true },
     });
-    if (!next) return this.finishLanguage(lang);
+    if (!next) return this.assemblyStep(lang, ctx);
     await this.prisma.translationRunLanguage.update({
       where: { id: lang.id },
       data: { chapterNumber: next.number, splitPicks: {} },
@@ -357,7 +379,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
       return this.pauseStale(lang);
     }
     const next = chunks.find((c) => !CLOSED.has(c.status));
-    if (!next) return this.startChapter(lang, number);
+    if (!next) return this.startChapter(lang, number, ctx);
     if (next.status === 'checked') return this.applyFindings(lang, next.id, ctx);
     const layout = splitChapter(chapter.content);
     if (next.status === 'translated') return this.checkStep(lang, layout, next, ctx);
@@ -805,6 +827,163 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
   }
 
   /**
+   * Сборка глав языка (`F05-6`, 6a; решение арбитра `F05 | F05-6` о дроблении): глава за шаг по
+   * порядку номеров исходника, затем этап `metadata`, затем язык доделан (черновик версии - 6b).
+   * Перед первой главой - сверка отпечатка исходника: главу, переведённую раньше, могли править,
+   * пока переводилась последняя (карточка, «От `F05-4a`»), а её куски уже не сверяются.
+   */
+  private async assemblyStep(lang: LanguageRow, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
+    // Главы собираются строго по порядку номеров: следующая - после последней собранной.
+    const last = await this.prisma.translationChapter.aggregate({
+      where: { runLanguageId: lang.id },
+      _max: { chapterNumber: true },
+    });
+    const after = last._max.chapterNumber;
+    const next = await this.prisma.chapter.findFirst({
+      where: {
+        bookVersionId: lang.run.bookVersionId,
+        ...(after === null ? {} : { number: { gt: after } }),
+      },
+      orderBy: { number: 'asc' },
+      select: { number: true },
+    });
+    if (!next) return this.metadataStep(lang, ctx);
+    if (after === null && (await this.isStale(lang.run))) return this.pauseStale(lang);
+    return this.assembleChapterStep(lang, next.number, ctx);
+  }
+
+  /**
+   * Сборка одной главы (`F05-6`, шаги 2-3, стыки кодом). Строка главы и счётчик флагов - одной
+   * транзакцией; повтор шага строку не дублирует (`skipDuplicates`) и флаг второй раз не считает.
+   */
+  private async assembleChapterStep(
+    lang: LanguageRow,
+    number: number,
+    ctx: LlmTaskContext,
+  ): Promise<LlmTaskStepResult> {
+    const [chapter, chunks] = await Promise.all([
+      this.prisma.chapter.findUnique({
+        where: { bookVersionId_number: { bookVersionId: lang.run.bookVersionId, number } },
+        select: { content: true },
+      }),
+      this.prisma.translationChunk.findMany({
+        where: { runLanguageId: lang.id, chapterNumber: number },
+        orderBy: { chunkIndex: 'asc' },
+        select: {
+          chunkIndex: true,
+          firstBlock: true,
+          lastBlock: true,
+          status: true,
+          blocks: true,
+          flagReason: true,
+          chapterFingerprint: true,
+        },
+        take: RUN_CHAPTER_CHUNKS_MAX,
+      }),
+    ]);
+    // Главу удалили, добавили или правили после нарезки - перевод собран не с того исходника.
+    if (
+      !chapter ||
+      chunks.length === 0 ||
+      chapterFingerprint(chapter.content) !== chunks[0].chapterFingerprint
+    ) {
+      return this.pauseStale(lang);
+    }
+    const result = assembleTranslatedChapter(splitChapter(chapter.content), chunks);
+    await ctx.renewLease();
+    await this.prisma.$transaction(async (tx) => {
+      const created = await tx.translationChapter.createMany({
+        data: [
+          {
+            runLanguageId: lang.id,
+            chapterNumber: number,
+            status: result.status,
+            flagReason: result.flagReason,
+            length: result.length,
+            lengthLimit: RICH_HTML_MAX_LENGTH.body,
+            seamIndex: result.status === 'assembled' ? result.seamIndex : null,
+            findings: result.findings as unknown as Prisma.InputJsonValue,
+          },
+        ],
+        skipDuplicates: true,
+      });
+      if (created.count > 0 && result.flagReason !== null) {
+        await tx.translationRunLanguage.update({
+          where: { id: lang.id },
+          data: { flaggedChapters: { increment: 1 } },
+        });
+      }
+    }, RUN_TX_OPTIONS);
+    return { kind: 'continue' };
+  }
+
+  /**
+   * Этап `metadata` (`F05-6`, шаг 4): название, описание, автор и названия глав на целевом языке.
+   * Ответ с попыткой пишется в язык до решения - повтор шага его не оплачивает. Провал проверок -
+   * повтор с замечаниями, вторая неудача - `failed` языка (`METADATA_INVALID`). Перед вызовом -
+   * сверка отпечатка: названия глав входят в него, за устаревший вход не платим.
+   */
+  private async metadataStep(lang: LanguageRow, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
+    const state: MetadataState = metadataStateOf(lang.metadata) ?? { attempts: [], result: null };
+    if (state.result) return this.finishLanguage(lang);
+    if (metadataFailures(state) >= METADATA_ATTEMPTS_MAX) {
+      return this.failLanguage(lang, METADATA_INVALID);
+    }
+    if (await this.isStale(lang.run)) return this.pauseStale(lang);
+    const fields = await metadataSourceFields(
+      this.prisma,
+      lang.run.bookVersionId,
+      lang.run.sourceLanguage,
+    );
+    if (!fields) return this.pauseStale(lang);
+    const { input, source } = metadataInputOf(
+      { ...fields, targetLanguage: lang.language },
+      await this.contextOf(lang),
+      metadataRemarks(state),
+    );
+    const models = stageModelsOf(lang.run, METADATA_STAGE);
+    const outcome = await callMetadata(this.llm, lang.run.operationId, input, ctx, models);
+    let failed = false;
+    switch (outcome.kind) {
+      case 'too_long':
+        return this.failLanguage(lang, METADATA_TOO_LONG);
+      case 'no_provider':
+        return this.pauseNoProvider(lang, METADATA_STAGE, outcome.models);
+      case 'invalid':
+        // Ответ не по форме и после повтора с замечанием внутри вызова (`METADATA_REMARKS`) -
+        // это и есть повтор карточки: ещё один круг заплатил бы снова без замечаний проверки.
+        state.attempts.push({
+          model: '',
+          costUsd: outcome.costUsd.toString(),
+          outcome: 'invalid',
+          remarks: [],
+        });
+        failed = true;
+        break;
+      case 'answered': {
+        const checked = checkMetadata(source, outcome.answer);
+        state.attempts.push({
+          model: outcome.model,
+          costUsd: outcome.costUsd.toString(),
+          outcome: checked.ok ? 'pass' : 'fail',
+          remarks: checked.ok ? [] : checked.remarks,
+        });
+        if (checked.ok) state.result = checked.result;
+        break;
+      }
+    }
+    // Аренда продлена - шаг ещё наш (`renewLease` бросает, если её забрали): ответ пишется без
+    // условия на прочитанную строку, иначе запись мимо (строку тронул «продолжить») теряла бы
+    // оплаченный ответ и платила бы за него снова.
+    await ctx.renewLease();
+    await this.prisma.translationRunLanguage.updateMany({
+      where: { id: lang.id, status: { in: [...UNFINISHED] } },
+      data: { metadata: metadataStateJson(state) },
+    });
+    return failed ? this.failLanguage(lang, METADATA_INVALID) : { kind: 'continue' };
+  }
+
+  /**
    * Отпечаток исходника не совпал с привязанным к запуску (`tech.md` §2а). Досье запуска -
    * той же версии, что запуск (привязка другой не проходит), поэтому сверка - по версии запуска.
    */
@@ -828,7 +1007,11 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     // в `stageModels`, а не `translate`.
     return this.stopRun(lang, 'NO_COMPLIANT_PROVIDER', {
       reason:
-        stage === CHECK_SEMANTIC_STAGE ? CHECK_NO_COMPLIANT_PROVIDER : 'LLM_NO_COMPLIANT_PROVIDER',
+        stage === CHECK_SEMANTIC_STAGE
+          ? CHECK_NO_COMPLIANT_PROVIDER
+          : stage === METADATA_STAGE
+            ? METADATA_NO_COMPLIANT_PROVIDER
+            : 'LLM_NO_COMPLIANT_PROVIDER',
       reasonModels: tried,
     });
   }
@@ -869,6 +1052,19 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     await this.prisma.translationRunLanguage.updateMany({
       where: { id: lang.id, status: { in: [...UNFINISHED] } },
       data: { status: 'done', reason: null },
+    });
+    await this.completeIfFinished(lang.run);
+    return { kind: 'done' };
+  }
+
+  /**
+   * Язык не доделать (`F05-6`: `metadata` не прошла повтор, вход не влезает в контекст): `failed`
+   * с кодом, прочие языки идут дальше (решение арбитра `F05 | F05-6`, итог языка).
+   */
+  private async failLanguage(lang: LanguageRow, reason: string): Promise<LlmTaskStepResult> {
+    await this.prisma.translationRunLanguage.updateMany({
+      where: { id: lang.id, status: { in: [...UNFINISHED] } },
+      data: { status: 'failed', reason },
     });
     await this.completeIfFinished(lang.run);
     return { kind: 'done' };

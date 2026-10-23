@@ -28,7 +28,11 @@ import {
   BookVersionSymbolDto,
 } from '../../../shared/dto/book-version-json.dto';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
-import { SHORT_TEXT_MAX_LENGTH } from '../../../shared/constants/validation';
+import {
+  SHORT_TEXT_MAX_LENGTH,
+  VERSION_AUTHOR_MAX_LENGTH,
+  VERSION_TITLE_MIN_LENGTH,
+} from '../../../shared/constants/validation';
 import { RICH_HTML_MAX_LENGTH, RichHtml } from '../../../shared/validators/rich-html.decorator';
 import {
   SLUG_MAX_LENGTH,
@@ -63,14 +67,16 @@ export class UpdateBookVersionDto implements Partial<CreateBookVersionDto> {
   // `LEGACY-437`: колонка NOT NULL, `null` не «не менять» — пропускается только отсутствующее поле.
   @ValidateIf((_o, value) => value !== undefined)
   @IsString()
-  @MinLength(2)
+  @MinLength(VERSION_TITLE_MIN_LENGTH)
   title?: string;
 
   @ApiPropertyOptional({ example: 'J.K. Rowling' })
   // `LEGACY-437`: колонка NOT NULL, `null` не «не менять» — пропускается только отсутствующее поле.
   @ValidateIf((_o, value) => value !== undefined)
   @IsString()
-  @MaxLength(500, { message: 'Author must be at most 500 characters long' })
+  @MaxLength(VERSION_AUTHOR_MAX_LENGTH, {
+    message: `Author must be at most ${VERSION_AUTHOR_MAX_LENGTH} characters long`,
+  })
   author?: string;
 
   /**
