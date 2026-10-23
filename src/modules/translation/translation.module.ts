@@ -20,6 +20,7 @@ import { TranslationRunTasksHandler } from './run/translation-run-tasks.handler'
 import { TranslationController } from './translation.controller';
 import { TranslationSourceService } from './translation-source.service';
 import { TRANSLATE_STAGE_DEFINITIONS } from './translate/translate.constants';
+import { CHECK_STAGE_DEFINITIONS } from './check/check.constants';
 
 /**
  * Автоперевод книги (F05): исходник по D8, блоки главы, отпечаток текста, досье и глоссарий
@@ -57,6 +58,7 @@ export class TranslationModule implements OnModuleInit {
     this.handlers.register(GLOSSARY_TASK_KIND, this.dossierTasks.glossaryHandler);
     this.kinds.register('dossier', this.dossierTasks);
     for (const definition of TRANSLATE_STAGE_DEFINITIONS) this.stages.register(definition);
+    for (const definition of CHECK_STAGE_DEFINITIONS) this.stages.register(definition);
     this.handlers.register(COMPARE_TASK_KIND, this.compareTasks.handler);
     this.kinds.register('compare', this.compareTasks);
     this.handlers.register(TRANSLATION_RUN_TASK_KIND, this.runTasks.handler);

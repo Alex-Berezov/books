@@ -27,6 +27,9 @@ import { DossierService } from '../dossier/dossier.service';
 import { assertKnownModels, stageEstimatorFor } from '../llm-model-checks';
 import { TranslationTargetReason } from '../translation-source';
 import { TranslationSourceService } from '../translation-source.service';
+import { chapterCheckUsd, checkEstimator } from '../check/check-estimate';
+import { CHECK_NO_COMPLIANT_PROVIDER, CHECK_SEMANTIC_STAGE } from '../check/check.constants';
+import { independentCheckModels } from '../check/check-models';
 import { TRANSLATE_STAGE } from '../translate/translate.constants';
 import {
   chapterSplitUsd,
@@ -37,6 +40,7 @@ import {
   readyContext,
   splitEstimator,
 } from '../translate/translate-estimate';
+import { runStageModels } from './run-models';
 import { CHUNK_CLOSED_STATUSES, TRANSLATION_RUN_TASK_KIND } from './translation-run.constants';
 import {
   ResumeTranslationRunDto,
@@ -302,7 +306,11 @@ export class TranslationRunService {
     const changed = Object.fromEntries(
       Object.entries(dto.stageModels ?? {}).filter(([, model]) => model !== undefined),
     ) as Record<string, string>;
-    if (Object.keys(changed).length > 0) await this.assertStageModels(changed);
+    let checked: Record<string, string> | null = null;
+    if (Object.keys(changed).length > 0) {
+      await this.assertStageModels(changed);
+      checked = await this.assertCheckFamily(id, changed);
+    }
     await this.operations.resume(
       op.id,
       dto.limitUsd != null ? new Prisma.Decimal(dto.limitUsd) : undefined,
@@ -312,6 +320,14 @@ export class TranslationRunService {
               where: { id },
               select: { stageModels: true },
             });
+            // Модели сверены до транзакции (каталог - сетевой вызов, не под замком). Параллельное
+            // «продолжить» успело их сменить - пара не сверена: отказ, а не запись мимо проверки.
+            if (!sameModels(run.stageModels, checked)) {
+              throw llmTaskConflict(
+                'TRANSLATION_RUN_MODELS_CHANGED',
+                'Stage models of the run changed concurrently, retry',
+              );
+            }
             await tx.translationRun.update({
               where: { id },
               data: { stageModels: { ...(run.stageModels as Record<string, string>), ...changed } },
@@ -339,7 +355,8 @@ export class TranslationRunService {
 
   /**
    * Оценка сверху по всей книге (`F05-4b`, шаг 2): куски каждой главы по границам кода, на язык -
-   * `split` по спорным стыкам и `translate` по кускам; досье одно на книгу, глоссарий на язык -
+   * `split` по спорным стыкам, `translate` и `check_semantic` по кускам (сверка смысла - решение
+   * арбитра `F05 | F05-5`); досье одно на книгу, глоссарий на язык -
    * строками, если их строить (устаревшее досье тоже: запуск строит его заново). Выход вызова -
    * `maxTokens` этапа, без коэффициента длины языка (решения арбитра `F05 | F05-4b`).
    */
@@ -379,6 +396,9 @@ export class TranslationRunService {
       rebuildStale: true,
     });
     const split = await splitEstimator(this.llm);
+    const translateModel =
+      query.translateModel ?? (await this.llm.getStageSetting(TRANSLATE_STAGE)).model;
+    const check = await checkEstimator(this.llm, translateModel);
     // Нарезка - на каждый язык своя (выборы стыков хранит язык запуска).
     const splitUsd = plans.reduce((sum, p) => sum.add(chapterSplitUsd(split, p)), zero());
     let upperBound = false;
@@ -412,7 +432,18 @@ export class TranslationRunService {
           ),
         zero(),
       );
-      const totalUsd = splitUsd.add(translateUsd);
+      const checkUsd = plans.reduce(
+        (sum, plan) =>
+          sum.add(
+            chapterCheckUsd(check, plan, {
+              sourceLanguage,
+              targetLanguage: language,
+              translateMaxTokens: call.maxTokens,
+            }),
+          ),
+        zero(),
+      );
+      const totalUsd = splitUsd.add(translateUsd).add(checkUsd);
       translationsUsd = translationsUsd.add(totalUsd);
       if (glossary) {
         minLimitUsd = minLimitUsd.add(glossary.suggestedLimitUsd);
@@ -423,18 +454,16 @@ export class TranslationRunService {
         glossary: glossary && contextLine(glossary),
         splitUsd: moneyUsd(splitUsd),
         translateUsd: moneyUsd(translateUsd),
+        checkUsd: moneyUsd(checkUsd),
         totalUsd: moneyUsd(totalUsd),
       });
     }
-    const [budget, setting] = await Promise.all([
-      this.budget.getBudget(),
-      this.llm.getStageSetting(TRANSLATE_STAGE),
-    ]);
+    const budget = await this.budget.getBudget();
     return {
       sourceLanguage,
       minLimitUsd,
       dto: {
-        translateModel: query.translateModel ?? setting.model,
+        translateModel,
         chapters: plans.length,
         chunks: plans.reduce((sum, p) => sum + p.chunks.length, 0),
         dossier: context.dossier && contextLine({ ...context.dossier, upperBound: false }),
@@ -516,6 +545,39 @@ export class TranslationRunService {
       await stageEstimatorFor(this.llm, stage, model);
     }
   }
+
+  /**
+   * Модели после «продолжить» - сверка смысла другого семейства, чем модель перевода запуска
+   * (`independentCheckModels` - одно правило с оценкой и стартом): при смене любой из двух моделей.
+   * Возвращает модели запуска, по которым сверено: транзакция «продолжить» сравнивает их под замком.
+   */
+  private async assertCheckFamily(
+    id: string,
+    changed: Record<string, string>,
+  ): Promise<Record<string, string>> {
+    const run = await this.prisma.translationRun.findUniqueOrThrow({
+      where: { id },
+      select: { stageModels: true, operation: { select: { settingsSnapshot: true } } },
+    });
+    const stageModels = { ...(run.stageModels as Record<string, string>), ...changed };
+    const snapshot = run.operation.settingsSnapshot;
+    const translate =
+      runStageModels(snapshot, stageModels, TRANSLATE_STAGE).model ??
+      (await this.llm.getStageSetting(TRANSLATE_STAGE)).model;
+    await independentCheckModels(
+      this.llm,
+      translate,
+      runStageModels(snapshot, stageModels, CHECK_SEMANTIC_STAGE),
+    );
+    return (run.stageModels ?? {}) as Record<string, string>;
+  }
+}
+
+/** Модели запуска не менялись с прочтения до транзакции (`null` - моделей не меняли, сверять нечего). */
+function sameModels(fresh: Prisma.JsonValue, read: Record<string, string> | null): boolean {
+  if (read === null) return true;
+  const now = (fresh ?? {}) as Record<string, string>;
+  return [TRANSLATE_STAGE, CHECK_SEMANTIC_STAGE].every((stage) => now[stage] === read[stage]);
 }
 
 function zero(): Prisma.Decimal {
@@ -559,7 +621,7 @@ function languageDto(
   return {
     language: l.language,
     status: l.status,
-    stage: stageOf(l, hasDossier),
+    stage: stageOf(l, hasDossier, chunks),
     reason: l.reason,
     // Колонка в базе допускает NULL (строки до записи причины): наружу - пустой список.
     reasonModels: l.reasonModels ?? [],
@@ -574,13 +636,24 @@ function languageDto(
   };
 }
 
+/** Куски, которые сейчас проверяются: переведён и ждёт проверок или проверен и ждёт находок. */
+const CHECKING: readonly string[] = ['translated', 'checked'];
+
 /**
- * Этап языка словами `product.md` §2.3: досье, глоссарий, перевод (с нарезкой главы); у
- * закончившего - его статус (решение арбитра `F05 | F05-4a`, В6). Проверка и сборка - `F05-5`,
- * `F05-6`.
+ * Этап языка словами `product.md` §2.3: досье, глоссарий, перевод (с нарезкой главы), проверка
+ * (кусок текущей главы между переводом и находками или пауза сверки смысла без провайдера,
+ * решение арбитра `F05 | F05-5`); у закончившего - его статус (решение арбитра `F05 | F05-4a`,
+ * В6). Сборка - `F05-6`. Куски - группировка текущей главы языка (запрос на весь ход, `get`).
  */
-function stageOf(l: TranslationRunLanguage, hasDossier: boolean): TranslationRunStage {
+function stageOf(
+  l: TranslationRunLanguage,
+  hasDossier: boolean,
+  chunks: ReadonlyArray<{ status: string }>,
+): TranslationRunStage {
   if (l.status === 'done' || l.status === 'failed' || l.status === 'cancelled') return l.status;
   if (!hasDossier) return 'dossier';
-  return l.glossaryId ? 'translate' : 'glossary';
+  if (!l.glossaryId) return 'glossary';
+  const checking =
+    l.reason === CHECK_NO_COMPLIANT_PROVIDER || chunks.some((c) => CHECKING.includes(c.status));
+  return checking ? 'check' : 'translate';
 }

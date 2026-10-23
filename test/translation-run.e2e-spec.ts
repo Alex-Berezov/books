@@ -10,6 +10,7 @@ import { LlmService } from '../src/modules/llm/llm.service';
 import { LlmTaskService, pairKeyOf } from '../src/modules/llm-worker/llm-task.service';
 import { TRANSLATION_RETRY_KIND } from '../src/modules/llm-worker/llm-task.types';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
+import { LlmOperationsService } from '../src/modules/llm-worker/llm-operations.service';
 import { lockBookLanguages } from '../src/modules/book-version/book-language-lock';
 import {
   ContextEstimates,
@@ -34,19 +35,30 @@ describe('Translation run (e2e)', () => {
   const TINY = 'z/tiny-context';
   /** Модель без цены в каталоге. */
   const NO_PRICE = 'z/no-price';
+  /** Умолчания сверки смысла: другое семейство, чем модель перевода. */
+  const CHECKER = 'deepseek/deepseek-v4-pro';
+  const CHECKER_ALT = 'z-ai/glm-5.3';
+  /** Jev: цена динамическая, в каталоге без цены (Р24). */
+  const JEV = 'typesafe/jev-router';
+  /** Проверяющий того же семейства, что запасная перевода `ALT`. */
+  const Z_CHECKER = 'z/checker';
   const MODELS = {
     data: [
       MODEL,
       ALT,
       TINY,
       NO_PRICE,
+      CHECKER,
+      CHECKER_ALT,
+      JEV,
+      Z_CHECKER,
       'google/gemma-4-31b-it:free',
       'minimax/minimax-m3.1-flash:free',
     ].map((id) => ({
       id,
       name: id,
       ...(id === TINY ? { context_length: 1_000 } : {}),
-      ...(id === NO_PRICE
+      ...(id === NO_PRICE || id === JEV
         ? {}
         : {
             pricing: id.endsWith(':free')
@@ -143,6 +155,9 @@ describe('Translation run (e2e)', () => {
   const targetOf = (body: ChatBody) =>
     /language code "(\w+)"/.exec(body.messages[0]?.content ?? '')?.[1] ?? '??';
 
+  /** Язык цели запуска для Jev: проверяющий в тесте отвечает языком текста «перевода». */
+  let jevTargetOf: (body: ChatBody) => string;
+
   /** Блоки куска из запроса: `[n] текст` построчно после заголовка. */
   const blocksOf = (body: ChatBody) => {
     const user = body.messages[1]?.content ?? '';
@@ -158,6 +173,10 @@ describe('Translation run (e2e)', () => {
     if (name === 'dossier_part') return PART;
     if (name === 'dossier') return dossier;
     if (name === 'glossary') return GLOSSARY;
+    if (name === 'check_semantic') {
+      return { verdict: 'pass', samples: [], omissions: [], nameFlags: [], remarks: [] };
+    }
+    if (name === 'check_language_jev') return { language: jevTargetOf(body) };
     if (name === 'split') {
       const first = /^\[(\d+)\]/m.exec(body.messages[1]?.content ?? '');
       return { boundaryBlock: Number(first?.[1] ?? 0) };
@@ -309,6 +328,7 @@ describe('Translation run (e2e)', () => {
     process.env.OPENROUTER_API_KEY = FAKE_KEY;
     calls.length = 0;
     answer = defaultAnswer;
+    jevTargetOf = () => 'es';
     dossier = DOSSIER;
     refuse = () => null;
     during = () => Promise.resolve();
@@ -393,9 +413,27 @@ describe('Translation run (e2e)', () => {
         [1, 1],
         [2, 0],
       ]);
-      // Проверок нет (`F05-5`): кусок `done` с пустым вердиктом - «не проверен».
-      expect(chunks.every((c) => c.status === 'done' && c.verdict === null)).toBe(true);
-      expect(chunks.map((c) => c.costUsd?.toString())).toEqual(['0.0001', '0.0001', '0.0001']);
+      // Кусок проверен (`F05-5`): механика прошла, Jev выключен, смысл - моделью другого
+      // семейства; стоимость куска - перевод плюс сверка смысла.
+      expect(chunks.every((c) => c.status === 'done')).toBe(true);
+      for (const c of chunks) {
+        expect(c.verdict).toMatchObject({
+          failures: 0,
+          remarks: [],
+          attempts: [
+            {
+              translatedBy: MODEL,
+              outcome: 'pass',
+              jev: { kind: 'disabled' },
+              semantic: { model: CHECKER },
+              mechanical: { failures: [] },
+            },
+          ],
+        });
+      }
+      expect(chunks.map((c) => c.costUsd?.toString())).toEqual(['0.0002', '0.0002', '0.0002']);
+      // Jev выключен по умолчанию - не зовётся, механика кодом работает.
+      expect(calls.filter((c) => c.name === 'check_language_jev')).toHaveLength(0);
       expect((chunks[0].blocks as Array<{ text: string }>)[0].text).toMatch(
         new RegExp(`^${language.toUpperCase()} Anna 0`),
       );
@@ -616,25 +654,593 @@ describe('Translation run (e2e)', () => {
     expect(dossier.generation).toBe(2);
   });
 
-  it('a piece in a status the step does not lead is not translated again: the run pauses STEP_FAILED', async () => {
+  it('a checked piece is closed by its findings, not translated or checked again', async () => {
     const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
     const { runId, opId } = await createRun(versionId, ['es']);
     const lang = await langOf(runId, 'es');
     await drain(
       async () =>
-        (await prisma.translationChunk.count({ where: { runLanguageId: lang.id } })) === 1,
+        (await prisma.translationChunk.count({
+          where: { runLanguageId: lang.id, status: 'checked' },
+        })) === 1,
     );
-    await prisma.translationChunk.updateMany({
-      where: { runLanguageId: lang.id },
-      data: { status: 'checked' },
-    });
-    const before = translations().length;
+    const before = calls.length;
+    // Кусок проверен и ждёт находок - этап «проверка».
+    const checking = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    expect(checking.body.languages[0]).toMatchObject({ stage: 'check' });
 
     await drain();
 
-    expect(await opOf(opId)).toMatchObject({ status: 'paused', pauseReason: 'STEP_FAILED' });
-    expect(await langOf(runId, 'es')).toMatchObject({ reason: 'CHUNK_STATUS_UNEXPECTED' });
-    expect(translations()).toHaveLength(before);
+    expect((await opOf(opId)).status).toBe('done');
+    const [chunk] = await prisma.translationChunk.findMany({ where: { runLanguageId: lang.id } });
+    expect(chunk.status).toBe('done');
+    // После `checked` - только находки в глоссарий: ни перевода, ни проверки заново.
+    expect(calls.length).toBe(before);
+  });
+
+  /** Настройка этапов на время теста: строки снимаются в `finally`. */
+  const withStages = async (
+    stages: Array<{ stage: string; model: string } & Record<string, unknown>>,
+    body: () => Promise<void>,
+  ) => {
+    for (const { stage, ...data } of stages) {
+      await prisma.llmStageSetting.upsert({
+        where: { stage },
+        create: { stage, ...data } as Prisma.LlmStageSettingUncheckedCreateInput,
+        update: data,
+      });
+    }
+    try {
+      await body();
+    } finally {
+      await prisma.llmStageSetting.deleteMany({
+        where: { stage: { in: stages.map((s) => s.stage) } },
+      });
+    }
+  };
+  const JEV_ON = {
+    stage: 'check_language_jev',
+    model: JEV,
+    enabled: true,
+    maxPricePerMTok: new Prisma.Decimal(5),
+  };
+  /** Португальский текст: в испанском переводе - подмена языка (`product.md` §7 п.3). */
+  const PT =
+    'O homem não sabia o que fazer com a sua vida, e a mulher dele também não sabia. ' +
+    'Eles moravam numa casa pequena perto do rio, onde passavam os dias sem pensar no futuro.';
+  const chunksOf = async (runId: string, language: Language) =>
+    prisma.translationChunk.findMany({
+      where: { runLanguageId: (await langOf(runId, language)).id },
+      orderBy: [{ chapterNumber: 'asc' }, { chunkIndex: 'asc' }],
+    });
+  const checks = () => calls.filter((c) => c.name === 'check_semantic');
+  const semanticPass = { verdict: 'pass', samples: [], omissions: [], nameFlags: [], remarks: [] };
+
+  it('a Portuguese piece in a Spanish translation fails the check twice and is flagged; the next chapter goes on', async () => {
+    const { versionId } = await englishBook([
+      { number: 1, title: 'One', content: SHORT },
+      { number: 2, title: 'Two', content: SHORT },
+    ]);
+    const { runId, opId } = await createRun(versionId, ['es']);
+    answer = (name, body) =>
+      name === 'translation' && body.messages[1].content.includes('Reader chapter 1')
+        ? {
+            blocks: blocksOf(body).map((b) => ({ n: b.n, text: PT })),
+            glossaryFindings: [{ source: 'Gate', target: 'Portão', kind: 'place', note: '' }],
+          }
+        : defaultAnswer(name, body);
+
+    await drain();
+
+    expect((await opOf(opId)).status).toBe('done');
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done', flaggedChunks: 1 });
+    const [first, second] = await chunksOf(runId, 'es');
+    expect(first).toMatchObject({ status: 'flagged', flagReason: 'LANGUAGE_MISMATCH' });
+    expect(first.verdict).toMatchObject({
+      failures: 2,
+      attempts: [
+        { outcome: 'fail', mechanical: { language: 'pt' } },
+        { outcome: 'fail', mechanical: { language: 'pt' } },
+      ],
+    });
+    // Две попытки перевода - обе в стоимости куска; смысл не сверялся: механика не прошла.
+    expect(first.costUsd?.toString()).toBe('0.0002');
+    expect(second.status).toBe('done');
+    const own = translations().filter((c) =>
+      c.body.messages[1].content.includes('Reader chapter 1'),
+    );
+    expect(own).toHaveLength(2);
+    expect(own[0].body.messages[1].content).not.toContain('Reviewer remarks');
+    expect(own[1].body.messages[1].content).toContain('Reviewer remarks');
+    expect(own[1].body.messages[1].content).toContain('it reads as Portuguese');
+    expect(checks()).toHaveLength(1);
+    // Находки флага в глоссарий не идут (решение арбитра `F05 | F05-5`).
+    const glossary = await prisma.bookGlossary.findUniqueOrThrow({
+      where: { id: (await langOf(runId, 'es')).glossaryId as string },
+    });
+    expect(JSON.stringify(glossary.data)).not.toContain('Portão');
+  });
+
+  it('a failed meaning check and a lost name: translated again with the remarks, passes the second time; the cost is the sum of all calls', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId, opId } = await createRun(versionId, ['es']);
+    let semanticCalls = 0;
+    answer = (name, body) => {
+      if (name !== 'check_semantic') return defaultAnswer(name, body);
+      semanticCalls++;
+      return semanticCalls === 1
+        ? {
+            ...semanticPass,
+            omissions: ['the greeting'],
+            nameFlags: [{ key: 'anna', verdict: 'lost' }],
+            remarks: ['Sample 1 changes the meaning.'],
+          }
+        : { ...semanticPass, nameFlags: [{ key: 'anna', verdict: 'inflected' }] };
+    };
+
+    await drain();
+
+    expect((await opOf(opId)).status).toBe('done');
+    const [chunk] = await chunksOf(runId, 'es');
+    expect(chunk.status).toBe('done');
+    expect(chunk.verdict).toMatchObject({
+      failures: 1,
+      attempts: [
+        { outcome: 'fail', semantic: { model: CHECKER } },
+        { outcome: 'pass', semantic: { model: CHECKER } },
+      ],
+    });
+    // Перевод и сверка смысла дважды - сумма четырёх ответов (В7).
+    expect(chunk.costUsd?.toString()).toBe('0.0004');
+    expect(await langOf(runId, 'es')).toMatchObject({ flaggedChunks: 0 });
+    // Имя, которого механика не нашла по основе («Ana» в «ES Anna»), - вопрос сверке смысла.
+    expect(checks()[0].body.messages[1].content).toContain('anna: Anna → Ana');
+    const second = translations()[1].body.messages[1].content;
+    expect(second).toContain('Sample 1 changes the meaning.');
+    expect(second).toContain('Missing or added: the greeting');
+    expect(second).toContain('Keep the name "Ana" (source "Anna") as the glossary says.');
+  });
+
+  it('a translation again after a failed check that answers not by the form: flagged CHUNK_INVALID_RESPONSE, the attempt and its cost are in the verdict', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    answer = (name, body) => {
+      if (name === 'check_semantic') return { ...semanticPass, verdict: 'fail' };
+      if (name === 'translation' && body.messages[1].content.includes('Reviewer remarks')) {
+        return { blocks: [], glossaryFindings: [] };
+      }
+      return defaultAnswer(name, body);
+    };
+
+    await drain();
+
+    const [chunk] = await chunksOf(runId, 'es');
+    expect(chunk).toMatchObject({ status: 'flagged', flagReason: 'CHUNK_INVALID_RESPONSE' });
+    expect(chunk.verdict).toMatchObject({
+      failures: 1,
+      attempts: [
+        { outcome: 'fail', translateCostUsd: '0.0001' },
+        { outcome: 'invalid', translatedBy: '', translateCostUsd: '0.0003' },
+      ],
+    });
+    // Перевод, сверка смысла и три ответа не по форме при переводе заново.
+    expect(chunk.costUsd?.toString()).toBe('0.0005');
+  });
+
+  it('unsure of the meaning check is no failure: the piece is done without a second translation', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    answer = (name, body) =>
+      name === 'check_semantic'
+        ? { ...semanticPass, verdict: 'unsure' }
+        : defaultAnswer(name, body);
+
+    await drain();
+
+    const [chunk] = await chunksOf(runId, 'es');
+    expect(chunk.status).toBe('done');
+    expect(chunk.verdict).toMatchObject({ failures: 0 });
+    expect(translations()).toHaveLength(1);
+  });
+
+  it('the run started with a checker of another family; the translator falls back by 429 to the family of every checker: flagged NOT_INDEPENDENT without a meaning call or a second translation', async () => {
+    await withStages(
+      [
+        { stage: 'translate', model: MODEL, fallbacks: [CHECKER_ALT] },
+        { stage: 'check_semantic', model: CHECKER_ALT, fallbacks: [] },
+      ],
+      async () => {
+        const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+        // Старт проходит: основная модель перевода - другого семейства, чем проверяющий.
+        const started = await startRun(versionId, { languages: ['es'] }).expect(202);
+        const runId = started.body.id as string;
+        refuse = (name, body) =>
+          name === 'translation' && body.model === MODEL
+            ? json({ error: { code: 429, message: 'Rate limited' } }, 429)
+            : null;
+
+        await drain();
+
+        const [chunk] = await chunksOf(runId, 'es');
+        expect(chunk).toMatchObject({
+          status: 'flagged',
+          flagReason: 'NOT_INDEPENDENT',
+          model: CHECKER_ALT,
+        });
+        expect(await langOf(runId, 'es')).toMatchObject({ status: 'done', flaggedChunks: 1 });
+        expect(checks()).toHaveLength(0);
+        expect(translations().filter((c) => c.model === CHECKER_ALT)).toHaveLength(1);
+      },
+    );
+  });
+
+  it('the source and translation do not fit the context of the checker: flagged CHECK_INPUT_TOO_LONG without a call, the language goes on', async () => {
+    await withStages([{ stage: 'check_semantic', model: TINY, fallbacks: [] }], async () => {
+      const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+      const { runId, opId } = await createRun(versionId, ['es']);
+
+      await drain();
+
+      expect((await opOf(opId)).status).toBe('done');
+      const [chunk] = await chunksOf(runId, 'es');
+      expect(chunk).toMatchObject({ status: 'flagged', flagReason: 'CHECK_INPUT_TOO_LONG' });
+      expect(checks()).toHaveLength(0);
+    });
+  });
+
+  it('the family rule follows the model that actually translated: after a 429 to the fallback the checker of its family is skipped', async () => {
+    await withStages(
+      [
+        { stage: 'translate', model: MODEL, fallbacks: [ALT] },
+        { stage: 'check_semantic', model: Z_CHECKER, fallbacks: [CHECKER] },
+      ],
+      async () => {
+        const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+        const { runId } = await createRun(versionId, ['es']);
+        refuse = (name, body) =>
+          name === 'translation' && body.model === MODEL
+            ? json({ error: { code: 429, message: 'Rate limited' } }, 429)
+            : null;
+
+        await drain();
+
+        const [chunk] = await chunksOf(runId, 'es');
+        expect(chunk).toMatchObject({ status: 'done', model: ALT });
+        expect(chunk.verdict).toMatchObject({ attempts: [{ translatedBy: ALT }] });
+        expect(checks().map((c) => c.model)).toEqual([CHECKER]);
+      },
+    );
+  });
+
+  it('Jev on: "pt" for a Spanish piece fails the mechanics and flags it after two; "unsure" is no failure; a refused call is skipped with a mark', async () => {
+    await withStages([JEV_ON], async () => {
+      jevTargetOf = () => 'pt';
+      const wrong = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+      const run = await createRun(wrong.versionId, ['es']);
+      await drain();
+      const [flagged] = await chunksOf(run.runId, 'es');
+      expect(flagged).toMatchObject({ status: 'flagged', flagReason: 'JEV_LANGUAGE_MISMATCH' });
+      expect(flagged.verdict).toMatchObject({
+        failures: 2,
+        attempts: [
+          { jev: { kind: 'answered', language: 'pt', model: JEV }, mechanical: { failures: [] } },
+          { jev: { kind: 'answered', language: 'pt' } },
+        ],
+      });
+      // Два перевода и два ответа Jev; смысл не сверялся.
+      expect(flagged.costUsd?.toString()).toBe('0.0004');
+      expect(checks()).toHaveLength(0);
+
+      calls.length = 0;
+      jevTargetOf = () => 'unsure';
+      const unsure = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+      const second = await createRun(unsure.versionId, ['es']);
+      await drain();
+      const [passed] = await chunksOf(second.runId, 'es');
+      expect(passed.status).toBe('done');
+      expect(passed.verdict).toMatchObject({
+        failures: 0,
+        attempts: [{ jev: { kind: 'answered', language: 'unsure' }, outcome: 'pass' }],
+      });
+
+      calls.length = 0;
+      refuse = (name) =>
+        name === 'check_language_jev'
+          ? json(
+              { error: { code: 404, message: 'No endpoints found matching your data policy' } },
+              404,
+            )
+          : null;
+      const refused = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+      const third = await createRun(refused.versionId, ['es']);
+      await drain();
+      const [skipped] = await chunksOf(third.runId, 'es');
+      expect(skipped.status).toBe('done');
+      expect(skipped.verdict).toMatchObject({
+        attempts: [
+          { jev: { kind: 'skipped', code: 'LLM_NO_COMPLIANT_PROVIDER' }, outcome: 'pass' },
+        ],
+      });
+      expect(checks()).toHaveLength(1);
+    });
+  });
+
+  it('Jev: its answer is written before the decision - a step repeated after a crash does not pay it again; mechanics failed - Jev is not called', async () => {
+    await withStages([JEV_ON], async () => {
+      const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+      const { runId } = await createRun(versionId, ['es']);
+      const lang = await langOf(runId, 'es');
+      const jevs = () => calls.filter((c) => c.name === 'check_language_jev');
+      await drain(() => Promise.resolve(jevs().length === 1 && checks().length === 0));
+      const [answered] = await chunksOf(runId, 'es');
+      expect(answered.status).toBe('translated');
+      // Ответ Jev уже в куске и в его стоимости: перевод плюс Jev.
+      expect(answered.costUsd?.toString()).toBe('0.0002');
+      await prisma.llmTask.updateMany({
+        where: {
+          operation: { translationRun: { id: runId } },
+          status: { in: ['pending', 'running'] },
+        },
+        data: { status: 'running', ownerToken: 'dead', leaseUntil: new Date(Date.now() - 1000) },
+      });
+      await drain();
+      expect(jevs()).toHaveLength(1);
+      const [done] = await prisma.translationChunk.findMany({ where: { runLanguageId: lang.id } });
+      expect(done.status).toBe('done');
+      expect(done.costUsd?.toString()).toBe('0.0003');
+
+      calls.length = 0;
+      const wrong = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+      const second = await createRun(wrong.versionId, ['es']);
+      answer = (name, body) =>
+        name === 'translation'
+          ? { blocks: blocksOf(body).map((b) => ({ n: b.n, text: PT })), glossaryFindings: [] }
+          : defaultAnswer(name, body);
+      await drain();
+      const [flagged] = await chunksOf(second.runId, 'es');
+      expect(flagged).toMatchObject({ status: 'flagged', flagReason: 'LANGUAGE_MISMATCH' });
+      expect(jevs()).toHaveLength(0);
+    });
+  });
+
+  it('Jev: an answer not by the form is skipped with its paid answers in the cost; a money refusal pauses the run, not skipped', async () => {
+    await withStages([JEV_ON], async () => {
+      answer = (name, body) =>
+        name === 'check_language_jev' ? { language: 'de' } : defaultAnswer(name, body);
+      const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+      const { runId } = await createRun(versionId, ['es']);
+      await drain();
+      const [chunk] = await chunksOf(runId, 'es');
+      expect(chunk.status).toBe('done');
+      expect(chunk.verdict).toMatchObject({
+        attempts: [{ jev: { kind: 'skipped', code: 'LLM_INVALID_RESPONSE', costUsd: '0.0002' } }],
+      });
+      // Перевод, два ответа Jev не по форме, сверка смысла.
+      expect(chunk.costUsd?.toString()).toBe('0.0004');
+
+      answer = defaultAnswer;
+      refuse = (name) =>
+        name === 'check_language_jev'
+          ? json({ error: { code: 402, message: 'Insufficient credits' } }, 402)
+          : null;
+      const broke = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+      const run = await createRun(broke.versionId, ['es']);
+      await drain();
+      expect(await opOf(run.opId)).toMatchObject({
+        status: 'paused',
+        pauseReason: 'INSUFFICIENT_FUNDS',
+      });
+      const [stopped] = await chunksOf(run.runId, 'es');
+      expect(stopped.status).toBe('translated');
+    });
+  });
+
+  it('the meaning check answers not by the form after the remark: flagged CHUNK_CHECK_INVALID_RESPONSE with both answers paid', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    answer = (name, body) =>
+      name === 'check_semantic' ? { verdict: 'maybe' } : defaultAnswer(name, body);
+
+    await drain();
+
+    const [chunk] = await chunksOf(runId, 'es');
+    expect(chunk).toMatchObject({ status: 'flagged', flagReason: 'CHUNK_CHECK_INVALID_RESPONSE' });
+    expect(chunk.verdict).toMatchObject({
+      attempts: [{ outcome: 'invalid', semantic: { answer: null, costUsd: '0.0002' } }],
+    });
+    expect(chunk.costUsd?.toString()).toBe('0.0003');
+    expect(translations()).toHaveLength(1);
+  });
+
+  it('every provider of the meaning check refuses: paused with the check models; resume with stageModels.check_semantic of another family goes on, of the same family is refused', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId, opId } = await createRun(versionId, ['es']);
+    refuse = (name, body) =>
+      name === 'check_semantic' && body.model !== Z_CHECKER
+        ? json(
+            { error: { code: 404, message: 'No endpoints found matching your data policy' } },
+            404,
+          )
+        : null;
+
+    await drain();
+
+    expect(await opOf(opId)).toMatchObject({
+      status: 'paused',
+      pauseReason: 'NO_COMPLIANT_PROVIDER',
+    });
+    // Причина называет этап сверки: выход - stageModels.check_semantic, а не translate.
+    expect(await langOf(runId, 'es')).toMatchObject({
+      reason: 'CHECK_NO_COMPLIANT_PROVIDER',
+      reasonModels: [CHECKER, CHECKER_ALT],
+    });
+    // Ход называет этап «проверка» (product.md §2.3).
+    const paused = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    expect(paused.body.languages[0]).toMatchObject({ stage: 'check' });
+    const same = await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+      .send({ stageModels: { check_semantic: MODEL } })
+      .expect(409);
+    expect(same.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
+    await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+      .send({ stageModels: { check_semantic: Z_CHECKER } })
+      .expect(200);
+    await drain();
+
+    expect((await opOf(opId)).status).toBe('done');
+    const [chunk] = await chunksOf(runId, 'es');
+    expect(chunk.status).toBe('done');
+    expect(chunk.verdict).toMatchObject({ attempts: [{ semantic: { model: Z_CHECKER } }] });
+  });
+
+  it('a piece translated before the checks existed (no verdict) is checked with the attempt taken from its fields', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    await drain(
+      async () =>
+        (await prisma.translationChunk.count({
+          where: { runLanguageId: lang.id, status: 'translated' },
+        })) === 1,
+    );
+    await prisma.translationChunk.updateMany({
+      where: { runLanguageId: lang.id },
+      data: { verdict: Prisma.DbNull },
+    });
+
+    await drain();
+
+    const [chunk] = await chunksOf(runId, 'es');
+    expect(chunk.status).toBe('done');
+    expect(chunk.verdict).toMatchObject({
+      failures: 0,
+      attempts: [{ translatedBy: MODEL, translateCostUsd: '0.0001', outcome: 'pass' }],
+    });
+    expect(chunk.costUsd?.toString()).toBe('0.0002');
+  });
+
+  it('the meaning check stage disabled: estimate and start refuse 409; disabled mid-run - the piece is flagged CHECK_STAGE_UNAVAILABLE and the language goes on', async () => {
+    // Книга для отказов оценки и старта - первой: ответ досье в тесте - по главам последней книги.
+    const other = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { versionId } = await englishBook([
+      { number: 1, title: 'One', content: SHORT },
+      { number: 2, title: 'Two', content: SHORT },
+    ]);
+    const { runId, opId } = await createRun(versionId, ['es']);
+    await withStages(
+      [{ stage: 'check_semantic', model: CHECKER, fallbacks: [], enabled: false }],
+      async () => {
+        const estimate = await auth(
+          http()
+            .get(`/admin/versions/${other.versionId}/translation-runs/estimate`)
+            .query({ languages: 'es' }),
+        ).expect(409);
+        expect(estimate.body).toMatchObject({ code: 'LLM_STAGE_DISABLED' });
+        const start = await startRun(other.versionId, { languages: ['es'] }).expect(409);
+        expect(start.body).toMatchObject({ code: 'LLM_STAGE_DISABLED' });
+
+        await drain();
+      },
+    );
+
+    expect({ op: await opOf(opId), lang: await langOf(runId, 'es') }).toMatchObject({
+      op: { status: 'done', pauseReason: null },
+      lang: { status: 'done', flaggedChunks: 2 },
+    });
+    const chunks = await chunksOf(runId, 'es');
+    expect(chunks.map((c) => [c.status, c.flagReason])).toEqual([
+      ['flagged', 'CHECK_STAGE_UNAVAILABLE'],
+      ['flagged', 'CHECK_STAGE_UNAVAILABLE'],
+    ]);
+    expect(translations()).toHaveLength(2);
+    expect(checks()).toHaveLength(0);
+  });
+
+  it('a piece flagged by the checks does not lend its failed translation as the tail of the next piece', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    const { runId } = await createRun(versionId, ['es']);
+    answer = (name, body) =>
+      name === 'translation' && body.messages[1].content.includes('[1] Anna 0')
+        ? { blocks: blocksOf(body).map((b) => ({ n: b.n, text: PT })), glossaryFindings: [] }
+        : defaultAnswer(name, body);
+
+    await drain();
+
+    const [first, second] = await chunksOf(runId, 'es');
+    expect(first).toMatchObject({ status: 'flagged', flagReason: 'LANGUAGE_MISMATCH' });
+    expect(second.status).toBe('done');
+    const next = translations().find((c) => c.body.messages[1].content.includes('Town 20'));
+    expect(next?.body.messages[1].content).not.toContain('End of the previous translated piece');
+    expect(next?.body.messages[1].content).not.toContain('O homem não sabia');
+  });
+
+  it('resume changing only the translate model to the family of every checker is refused 409 CHECK_MODEL_SAME_FAMILY; a fallback without a price does not count; models changed by a concurrent resume are refused', async () => {
+    // Запасная другого семейства - без цены: вызов её не позовёт, и проверка не должна её считать.
+    await withStages(
+      [{ stage: 'check_semantic', model: CHECKER, fallbacks: [NO_PRICE] }],
+      async () => {
+        const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+        const { runId, opId } = await createRun(versionId, ['es']);
+        refuse = (name, body) =>
+          name === 'translation' && body.model === MODEL
+            ? json(
+                { error: { code: 404, message: 'No endpoints found matching your data policy' } },
+                404,
+              )
+            : null;
+        await drain();
+        expect(await opOf(opId)).toMatchObject({ pauseReason: 'NO_COMPLIANT_PROVIDER' });
+
+        // Модель сверки в снимке - одна `deepseek/*`: перевод тем же семейством оставил бы книгу без сверки.
+        const deepseek = await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+          .send({ stageModels: { translate: CHECKER } })
+          .expect(409);
+        expect(deepseek.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
+
+        // Параллельное «продолжить» сменило модели между сверкой и транзакцией - отказ, не запись.
+        const operations = app.get(LlmOperationsService);
+        // Подмена - на один вызов: внутри неё `operations.resume` уже настоящий.
+        const raced = jest.spyOn(operations, 'resume').mockImplementationOnce(async (...args) => {
+          await prisma.translationRun.update({
+            where: { id: runId },
+            data: { stageModels: { translate: CHECKER } },
+          });
+          return operations.resume(...args);
+        });
+        const changed = await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+          .send({ stageModels: { translate: ALT } })
+          .expect(409);
+        expect(changed.body).toMatchObject({ code: 'TRANSLATION_RUN_MODELS_CHANGED' });
+        raced.mockRestore();
+        await prisma.translationRun.update({ where: { id: runId }, data: { stageModels: {} } });
+
+        await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+          .send({ stageModels: { translate: ALT } })
+          .expect(200);
+        await drain();
+        expect((await opOf(opId)).status).toBe('done');
+      },
+    );
+  });
+
+  it('no checker of another family than the translate model: estimate and start refuse 409 CHECK_MODEL_SAME_FAMILY; of another family - the check is in the estimate', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const estimate = (query: Record<string, string>) =>
+      auth(http().get(`/admin/versions/${versionId}/translation-runs/estimate`).query(query));
+    await withStages([{ stage: 'check_semantic', model: MODEL, fallbacks: [] }], async () => {
+      const refused = await estimate({ languages: 'es' }).expect(409);
+      expect(refused.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
+      const start = await startRun(versionId, { languages: ['es'] }).expect(409);
+      expect(start.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
+      // Модель перевода запуска другого семейства - проверяющий находится.
+      const other = await estimate({ languages: 'es', translateModel: ALT }).expect(200);
+      const [es] = other.body.languages as Array<Record<string, string>>;
+      expect(new Prisma.Decimal(es.checkUsd).isPositive()).toBe(true);
+    });
+    expect(
+      await runsOf(
+        (await prisma.bookVersion.findUniqueOrThrow({ where: { id: versionId } })).bookId,
+      ),
+    ).toBe(0);
   });
 
   it('a stop found while the pause button already stopped the run still sets its reason', async () => {
@@ -1429,6 +2035,9 @@ describe('Translation run (e2e)', () => {
         languages: Array<{
           language: string;
           glossary: { suggestedLimitUsd: string } | null;
+          splitUsd: string;
+          translateUsd: string;
+          checkUsd: string;
           totalUsd: string;
         }>;
         translationsUsd: string;
@@ -1453,6 +2062,13 @@ describe('Translation run (e2e)', () => {
     expect(sum(before.languages.map((l) => l.totalUsd))).toBe(
       new Prisma.Decimal(before.translationsUsd).toString(),
     );
+    // Сверка смысла - своим полем и в сумме языка (решение арбитра `F05 | F05-5`).
+    for (const l of before.languages) {
+      expect(new Prisma.Decimal(l.checkUsd).isPositive()).toBe(true);
+      expect(sum([l.splitUsd, l.translateUsd, l.checkUsd])).toBe(
+        new Prisma.Decimal(l.totalUsd).toString(),
+      );
+    }
     expect(
       sum([
         before.dossier?.suggestedLimitUsd ?? '0',

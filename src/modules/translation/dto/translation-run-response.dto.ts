@@ -13,6 +13,7 @@ export const TRANSLATION_RUN_STAGES = [
   'dossier',
   'glossary',
   'translate',
+  'check',
   'done',
   'failed',
   'cancelled',
@@ -155,7 +156,17 @@ export class TranslationRunLanguageEstimateDto {
   @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'Upper estimate: one call per piece' })
   translateUsd!: string;
 
-  @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'Split plus translate of this language' })
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Upper estimate: one meaning check per piece by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)',
+  })
+  checkUsd!: string;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description: 'Split, translate and check of this language',
+  })
   totalUsd!: string;
 }
 
@@ -187,7 +198,7 @@ export class TranslationRunEstimateDto {
   })
   upperBound!: boolean;
 
-  @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'All languages: split plus translate' })
+  @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'All languages: split, translate and check' })
   translationsUsd!: string;
 
   @ApiProperty({

@@ -15,7 +15,7 @@ import {
   TRANSLATE_SHAPE,
   translateBlockErrors,
 } from './translate.format';
-import { glossaryFor, lastTranslated, tailOf } from './translate-piece';
+import { doneRunBefore, glossaryFor, lastTranslated, tailOf } from './translate-piece';
 import { translateRequest } from './translate.prompts';
 
 const ctx = {
@@ -264,6 +264,15 @@ describe('translate input', () => {
     const text = [{ n: 1, text: 'Uno' }];
     expect(lastTranslated([text, []])).toBe(text);
     expect(lastTranslated([[], []])).toBeUndefined();
+    // Хвост не перешагивает флаг, в том числе через пустой `hr`-кусок после него.
+    const a = [{ n: 1, text: 'A.' }];
+    const chunks = [
+      { chunkIndex: 0, done: true, blocks: a },
+      { chunkIndex: 1, done: false, blocks: [{ n: 2, text: 'flagged' }] },
+      { chunkIndex: 2, done: true, blocks: [] },
+    ];
+    expect(lastTranslated(doneRunBefore(chunks, 3))).toBeUndefined();
+    expect(lastTranslated(doneRunBefore(chunks, 1))).toBe(a);
     expect(lastTranslated([])).toBeUndefined();
   });
 

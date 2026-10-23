@@ -62,8 +62,10 @@ export class StartTranslationRunDto extends TranslationRunEstimateQueryDto {
 
 /**
  * Модели этапов запуска поверх снимка: одна модель без запасных (решение арбитра
- * `F05 | F05-4a`, В1). Этап - только `translate`: у `split` последний запасной - код (Р7).
- * Чужой этап - 400 глобальной валидацией (`forbidNonWhitelisted`).
+ * `F05 | F05-4a`, В1). Этапы - `translate` и `check_semantic` (выход из паузы
+ * `NO_COMPLIANT_PROVIDER` на сверке смысла, решение арбитра `F05 | F05-5`): у `split` последний
+ * запасной - код (Р7), Jev не обязателен. Чужой этап - 400 глобальной валидацией
+ * (`forbidNonWhitelisted`).
  */
 export class TranslationRunStageModelsDto {
   @ApiPropertyOptional({ type: String, example: 'anthropic/claude-sonnet-5.5' })
@@ -71,6 +73,16 @@ export class TranslationRunStageModelsDto {
   @IsString()
   @MaxLength(200)
   translate?: string;
+
+  @ApiPropertyOptional({
+    type: String,
+    example: 'deepseek/deepseek-v4-pro',
+    description: 'Meaning check model: of another family than the translate model of the run',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  check_semantic?: string;
 }
 
 /** «Продолжить» запуск: новый лимит и модели этапов (`F05-4`, шаг 6). */

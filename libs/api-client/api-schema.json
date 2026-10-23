@@ -26094,7 +26094,7 @@
             "type": "string"
           },
           "translationsUsd": {
-            "description": "All languages: split plus translate",
+            "description": "All languages: split, translate and check",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -26181,6 +26181,7 @@
               "dossier",
               "glossary",
               "translate",
+              "check",
               "done",
               "failed",
               "cancelled"
@@ -26214,6 +26215,12 @@
       },
       "TranslationRunLanguageEstimateDto": {
         "properties": {
+          "checkUsd": {
+            "description": "Upper estimate: one meaning check per piece by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
           "glossary": {
             "allOf": [
               {
@@ -26238,7 +26245,7 @@
             "type": "string"
           },
           "totalUsd": {
-            "description": "Split plus translate of this language",
+            "description": "Split, translate and check of this language",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -26255,6 +26262,7 @@
           "glossary",
           "splitUsd",
           "translateUsd",
+          "checkUsd",
           "totalUsd"
         ],
         "type": "object"
@@ -26327,6 +26335,11 @@
       },
       "TranslationRunStageModelsDto": {
         "properties": {
+          "check_semantic": {
+            "description": "Meaning check model: of another family than the translate model of the run",
+            "example": "deepseek/deepseek-v4-pro",
+            "type": "string"
+          },
           "translate": {
             "example": "anthropic/claude-sonnet-5.5",
             "type": "string"
@@ -37932,7 +37945,7 @@
             "description": "Translation run not found"
           },
           "409": {
-            "description": "LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+            "description": "LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY: after the change no meaning check model of another family than the translate model; TRANSLATION_RUN_MODELS_CHANGED: a concurrent resume changed the stage models, retry"
           },
           "503": {
             "description": "LLM_DISABLED: no OpenRouter key"
@@ -39364,7 +39377,7 @@
             "description": "Book version not found"
           },
           "409": {
-            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model"
           },
           "503": {
             "description": "LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE"
@@ -39435,7 +39448,7 @@
             "description": "Book version not found"
           },
           "409": {
-            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model"
           },
           "503": {
             "description": "LLM_MODELS_UNAVAILABLE"

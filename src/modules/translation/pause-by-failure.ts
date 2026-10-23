@@ -19,3 +19,16 @@ export const PAUSE_BY_FAILURE: Readonly<Record<string, LlmPauseReason>> = {
   ...BUDGET_PAUSE_BY_FAILURE,
   LLM_NO_COMPLIANT_PROVIDER: 'NO_COMPLIANT_PROVIDER',
 };
+
+/**
+ * Отказы, которые необязательный вызов (`split` - граница кодом, Jev - пропуск с пометкой) не
+ * глушит: деньги - из той же таблицы, что паузы, остановка операции - не отказ модели.
+ */
+const STOP_CODES: ReadonlySet<string> = new Set(['LLM_OPERATION_NOT_ACTIVE', 'LLM_ABORTED']);
+
+export function passesThroughOptional(code: string): boolean {
+  return (
+    STOP_CODES.has(code) ||
+    Object.keys(BUDGET_PAUSE_BY_FAILURE).some((k) => k.split(':')[0] === code)
+  );
+}

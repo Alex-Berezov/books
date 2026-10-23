@@ -242,7 +242,7 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Book version not found' })
   @ApiConflictResponse({
     description:
-      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model',
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_MODELS_UNAVAILABLE' })
   runEstimate(
@@ -267,7 +267,7 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Book version not found' })
   @ApiConflictResponse({
     description:
-      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model',
   })
   @ApiServiceUnavailableResponse({
     description: 'LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE',
@@ -333,7 +333,7 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Translation run not found' })
   @ApiConflictResponse({
     description:
-      'LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+      'LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY: after the change no meaning check model of another family than the translate model; TRANSLATION_RUN_MODELS_CHANGED: a concurrent resume changed the stage models, retry',
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
   resumeRun(

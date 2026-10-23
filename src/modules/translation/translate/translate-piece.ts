@@ -137,6 +137,24 @@ export function lastTranslated(
   return undefined;
 }
 
+/**
+ * Переводы кусков, с которых можно брать хвост: закрытые `done` подряд до куска `index`. Кусок
+ * с флагом обрывает ряд (и через пустые `hr`-куски тоже): перевод, проваливший проверки, лежит
+ * у флага (`F05-7` правит его руками), а текст до флага - не «конец предыдущего куска».
+ */
+export function doneRunBefore(
+  chunks: ReadonlyArray<{ chunkIndex: number; done: boolean; blocks: readonly TranslatedBlock[] }>,
+  index: number,
+): Array<readonly TranslatedBlock[]> {
+  const run: Array<readonly TranslatedBlock[]> = [];
+  for (let i = index - 1; i >= 0; i--) {
+    const c = chunks.find((x) => x.chunkIndex === i);
+    if (!c?.done) break;
+    run.unshift(c.blocks);
+  }
+  return run;
+}
+
 export function pieceInput(input: {
   layout: Pick<ChapterLayout, 'blocks'>;
   chunks: readonly ChapterChunk[];

@@ -23,8 +23,42 @@ import { PAUSE_BY_FAILURE } from '../pause-by-failure';
 import { pickBoundary } from '../translate/split.stage';
 import { SPLIT_STAGE, TRANSLATE_STAGE } from '../translate/translate.constants';
 import { glossaryFindingsOf, TranslatedBlock } from '../translate/translate.format';
-import { lastTranslated, pieceInput, tailOf } from '../translate/translate-piece';
+import {
+  chunkBlocks,
+  doneRunBefore,
+  glossaryFor,
+  lastTranslated,
+  pieceInput,
+  tailOf,
+} from '../translate/translate-piece';
 import { PieceTranslation, translatePiece } from '../translate/translate-step';
+import {
+  CHECK_FAILURES_MAX,
+  CHECK_FLAG_REASONS,
+  CHECK_JEV_STAGE,
+  CHECK_SEMANTIC_STAGE,
+  CHECK_NO_COMPLIANT_PROVIDER,
+} from '../check/check.constants';
+import {
+  attemptSeed,
+  cappedRemarks,
+  CheckAttempt,
+  emptyVerdict,
+  ChunkVerdict,
+  currentAttempt,
+  verdictJson,
+  verdictOf,
+} from '../check/chunk-verdict';
+import { checkJev } from '../check/jev-step';
+import { jevFailure } from '../check/jev-check';
+import {
+  CheckFailure,
+  checkMechanical,
+  nameEntriesOf,
+  pieceTexts,
+} from '../check/mechanical-check';
+import { semanticFailed, semanticFailures } from '../check/semantic-check';
+import { checkSemantic, semanticInputOf } from '../check/semantic-step';
 import { mergeFindings } from './glossary-findings';
 import { runStageModels, StageModels } from './run-models';
 import { runTaskInput } from './translation-run.service';
@@ -48,6 +82,13 @@ const CLOSED = new Set<TranslationChunk['status']>(CHUNK_CLOSED_STATUSES);
 const UNRESUMABLE: readonly LlmPauseReason[] = ['DOSSIER_STALE'];
 /** Сброс остановки языка: «продолжить» и готовый контекст. */
 const CLEAR_STOP = { reason: null, reasonModels: [], blockedByOperationId: null };
+/**
+ * Статус, до которого ветка шага дойти не может: закрытый кусок отбирает `CLOSED`. Параметр -
+ * ровно закрытые статусы: новый статус схемы без своей ветки в `chapterStep` - ошибка сборки.
+ */
+function assertClosed(status: 'done' | 'flagged'): void {
+  void status;
+}
 
 function runLanguageIdOf(task: LlmTask): string | null {
   const id = (task.payload as Record<string, unknown> | null)?.runLanguageId;
@@ -59,10 +100,22 @@ function stageModelsOf(run: RunRow, stage: string): StageModels {
 }
 
 /**
+ * Прибавка к стоимости куска (решение арбитра `F05 | F05-5`: сумма всех платных ответов
+ * куска, В7). Пустая колонка - первая стоимость: `increment` по `NULL` дал бы `NULL`.
+ */
+function costAdded(
+  current: Prisma.Decimal | null,
+  add: Prisma.Decimal | string,
+): Prisma.Decimal | { increment: Prisma.Decimal | string } {
+  return current === null ? new Prisma.Decimal(add) : { increment: add };
+}
+
+/**
  * Шаги языка запуска перевода (`F05-4`, шаги 4-6). Шаг за раз: досье и глоссарий (запуск -
  * ждущий, Р20) → глава по порядку: сверка отпечатка, нарезка по стыку за шаг → кусок по
- * порядку: перевод → находки в глоссарий → следующий. Проверок нет (`F05-5`): кусок `done`
- * с пустым вердиктом - «не проверен». Модели этапов - из снимка операции запуска или
+ * порядку: перевод → проверки (`F05-5`: механика кодом, Jev, сверка смысла моделью другого
+ * семейства) → находки в глоссарий → следующий. Провал проверки - перевод заново с замечаниями,
+ * вторая неудача - флаг (`CHECK_FAILURES_MAX`). Модели этапов - из снимка операции запуска или
  * `stageModels` (решение арбитра `F05 | F05-4a`, В1).
  *
  * 🔴 Ответ модели пишется в кусок (`translated`) до записи итога шага и после продления
@@ -305,15 +358,19 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     }
     const next = chunks.find((c) => !CLOSED.has(c.status));
     if (!next) return this.startChapter(lang, number);
-    if (next.status === 'translated') return this.applyFindings(lang, next.id, ctx);
-    // В перевод - только `pending`: кусок в статусе, которого этот шаг не знает (`checked` -
-    // `F05-5`), повторный платный вызов не получает - шаг отказывает, запуск встаёт на паузу.
+    if (next.status === 'checked') return this.applyFindings(lang, next.id, ctx);
+    const layout = splitChapter(chapter.content);
+    if (next.status === 'translated') return this.checkStep(lang, layout, next, ctx);
+    // В перевод - только `pending`: закрытые куски отобраны выше (`CLOSED`), а новый статус
+    // схемы без своей ветки не соберётся (`assertClosed`) - иначе он ушёл бы в перевод, который
+    // пишется только из `pending`, и шаг платил бы по кругу.
     if (next.status !== 'pending') {
       // Итог `fail` исполнитель на паузу не переводит (`onFailed` не зовётся) - пауза ставится
       // здесь, иначе операция осталась бы `active` без задач.
+      assertClosed(next.status);
       return this.stopRun(lang, 'STEP_FAILED', { reason: CHUNK_STATUS_UNEXPECTED });
     }
-    return this.translateStep(lang, number, splitChapter(chapter.content), chunks, next, ctx);
+    return this.translateStep(lang, number, layout, chunks, next, ctx);
   }
 
   /**
@@ -376,20 +433,18 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     ctx: LlmTaskContext,
   ): Promise<LlmTaskStepResult> {
     const { run } = lang;
-    const [dossier, glossary] = await Promise.all([
-      this.prisma.bookDossier.findUnique({
-        where: { id: run.dossierId ?? '' },
-        select: { data: true },
-      }),
-      this.prisma.bookGlossary.findUnique({
-        where: { id: lang.glossaryId ?? '' },
-        select: { data: true },
-      }),
-    ]);
-    const before = chunks
-      .filter((c) => c.chunkIndex < chunk.chunkIndex)
-      .map((c) => (c.blocks ?? []) as unknown as TranslatedBlock[]);
-    const previous = lastTranslated(before);
+    const { dossier, glossary } = await this.contextOf(lang);
+    const verdict = verdictOf(chunk.verdict);
+    const previous = lastTranslated(
+      doneRunBefore(
+        chunks.map((c) => ({
+          chunkIndex: c.chunkIndex,
+          done: c.status === 'done',
+          blocks: (c.blocks ?? []) as unknown as TranslatedBlock[],
+        })),
+        chunk.chunkIndex,
+      ),
+    );
     const input = pieceInput({
       layout,
       chunks: chunks.map((c) => ({
@@ -398,20 +453,23 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
         words: c.words,
       })),
       index: chunk.chunkIndex,
-      dossier: dossier?.data ?? null,
-      glossary: glossary?.data ?? null,
+      dossier,
+      glossary,
       sourceLanguage: run.sourceLanguage,
       targetLanguage: lang.language,
       chapterNumber: number,
       previousTail: previous ? tailOf(previous) : null,
     });
+    // Перевод заново после провала проверки - с замечаниями проверяющего (решение арбитра
+    // `F05 | F05-5`); сид и счётчик неудач остаются в вердикте.
+    if (verdict && verdict.remarks.length > 0) input.reviewerRemarks = verdict.remarks;
     const models = stageModelsOf(run, TRANSLATE_STAGE);
     let piece: PieceTranslation;
     try {
       piece = await translatePiece(this.llm, run.operationId, input, layout, ctx, models);
     } catch (error) {
       if (error instanceof LlmError && error.code === 'LLM_NO_COMPLIANT_PROVIDER') {
-        return this.pauseNoProvider(lang, models);
+        return this.pauseNoProvider(lang, TRANSLATE_STAGE, models);
       }
       throw error;
     }
@@ -425,10 +483,28 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
         });
         return { kind: 'continue' };
       case 'too_long':
-        return this.flagChunk(lang, chunk, CHUNK_TOO_LONG);
+        return this.flagChunk(lang, chunk, CHUNK_TOO_LONG, { from: 'pending' });
       case 'invalid':
-        return this.flagChunk(lang, chunk, CHUNK_INVALID_RESPONSE, piece.costUsd);
-      case 'translated':
+        // Перевод заново после провала проверки - попытка в вердикт: его стоимость сходится с куском.
+        // Ответ не по форме - модель неизвестна (`translatedBy` пустой), есть только стоимость.
+        verdict?.attempts.push({
+          translatedBy: '',
+          translateCostUsd: piece.costUsd.toString(),
+          outcome: 'invalid',
+        });
+        return this.flagChunk(lang, chunk, CHUNK_INVALID_RESPONSE, {
+          from: 'pending',
+          costUsd: piece.costUsd,
+          attempt: true,
+          ...(verdict ? { verdict } : {}),
+        });
+      case 'translated': {
+        // Попытка - новая строка вердикта: проверки пишут в неё, сумма куска растёт (В7).
+        const next = verdict ?? emptyVerdict(chunk.id);
+        next.attempts.push({
+          translatedBy: piece.model,
+          translateCostUsd: piece.costUsd.toString(),
+        });
         await this.prisma.translationChunk.updateMany({
           where: { id: chunk.id, status: 'pending' },
           data: {
@@ -438,11 +514,211 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
             blocks: piece.blocks as unknown as Prisma.InputJsonValue,
             model: piece.model,
             callId: piece.callId,
-            costUsd: piece.costUsd,
+            costUsd: costAdded(chunk.costUsd, piece.costUsd),
+            verdict: verdictJson(next),
           },
         });
         return { kind: 'continue' };
+      }
     }
+  }
+
+  /** Досье запуска и глоссарий языка - данные перевода и проверок куска. */
+  private async contextOf(lang: LanguageRow): Promise<{ dossier: unknown; glossary: unknown }> {
+    const [dossier, glossary] = await Promise.all([
+      this.prisma.bookDossier.findUnique({
+        where: { id: lang.run.dossierId ?? '' },
+        select: { data: true },
+      }),
+      this.prisma.bookGlossary.findUnique({
+        where: { id: lang.glossaryId ?? '' },
+        select: { data: true },
+      }),
+    ]);
+    return { dossier: dossier?.data ?? null, glossary: glossary?.data ?? null };
+  }
+
+  /**
+   * Проверки переведённого куска (`F05-5`; `tech.md` §6): механика кодом каждый шаг (она
+   * дешёвая и детерминированная), Jev - отдельным шагом с записью ответа, сверка смысла - с записью
+   * решения. Каждый платный ответ пишется в кусок вместе со своей стоимостью - повтор шага после
+   * падения его не оплачивает. Провал → перевод заново с замечаниями, вторая неудача - флаг.
+   */
+  private async checkStep(
+    lang: LanguageRow,
+    layout: ChapterLayout,
+    chunk: ChunkRow,
+    ctx: LlmTaskContext,
+  ): Promise<LlmTaskStepResult> {
+    const { run } = lang;
+    // Кусок, переведённый до `F05-5` (запуск шёл во время выката): попытка из полей куска.
+    const verdict = verdictOf(chunk.verdict) ?? emptyVerdict(chunk.id);
+    let attempt = currentAttempt(verdict);
+    if (!attempt) {
+      attempt = {
+        translatedBy: chunk.model ?? '',
+        translateCostUsd: (chunk.costUsd ?? new Prisma.Decimal(0)).toString(),
+      };
+      verdict.attempts.push(attempt);
+    }
+    const { dossier, glossary } = await this.contextOf(lang);
+    const source = chunkBlocks(layout, chunk);
+    const translated = (chunk.blocks ?? []) as unknown as TranslatedBlock[];
+    const sourceText = pieceTexts(source).sourceText;
+    const names = nameEntriesOf(glossaryFor(glossary, dossier, sourceText).entries);
+    const mechanical = checkMechanical({
+      sourceLanguage: run.sourceLanguage,
+      targetLanguage: lang.language,
+      source,
+      translated,
+      glossary: names,
+    });
+    attempt.mechanical = mechanical;
+    // Механика провалилась - платные проверки ответ не изменят: перевод заново без них.
+    if (mechanical.failures.length > 0) {
+      return this.failCheck(lang, chunk, verdict, attempt, mechanical.failures);
+    }
+
+    if (attempt.jev === undefined) {
+      const jev = await checkJev(
+        this.llm,
+        run.operationId,
+        pieceTexts(source, translated).translatedText,
+        stageModelsOf(run, CHECK_JEV_STAGE),
+        ctx,
+      );
+      await ctx.renewLease();
+      attempt.jev = jev;
+      if (jev.kind !== 'disabled') {
+        // Ответ Jev - в кусок до решения со своей стоимостью: повтор шага его не оплачивает.
+        const paid = jev.costUsd;
+        await this.prisma.translationChunk.updateMany({
+          where: { id: chunk.id, status: 'translated' },
+          data: {
+            verdict: verdictJson(verdict),
+            ...(paid ? { costUsd: costAdded(chunk.costUsd, paid) } : {}),
+          },
+        });
+        return { kind: 'continue' };
+      }
+    }
+    const jevFailed = jevFailure(attempt.jev, lang.language);
+    if (jevFailed) return this.failCheck(lang, chunk, verdict, attempt, [jevFailed]);
+
+    const missed = names.filter((n) => mechanical.nameMisses.includes(n.key));
+    const input = semanticInputOf({
+      sourceLanguage: run.sourceLanguage,
+      targetLanguage: lang.language,
+      source,
+      translated,
+      seed: attemptSeed(verdict),
+      names: missed,
+    });
+    const outcome = await checkSemantic(
+      this.llm,
+      run.operationId,
+      input,
+      attempt.translatedBy,
+      stageModelsOf(run, CHECK_SEMANTIC_STAGE),
+      ctx,
+    );
+    switch (outcome.kind) {
+      case 'not_independent':
+        attempt.outcome = 'not_independent';
+        return this.flagChunk(lang, chunk, CHECK_FLAG_REASONS.NOT_INDEPENDENT, {
+          from: 'translated',
+          verdict,
+        });
+      case 'unavailable':
+        // Этап выключили или модель потеряла цену посреди запуска (решение арбитра
+        // `F05 | F05-5`): перевод заново не поможет - флаг, язык идёт дальше.
+        attempt.outcome = 'unavailable';
+        return this.flagChunk(lang, chunk, CHECK_FLAG_REASONS.CHECK_STAGE_UNAVAILABLE, {
+          from: 'translated',
+          verdict,
+        });
+      case 'no_provider':
+        return this.pauseNoProvider(lang, CHECK_SEMANTIC_STAGE, outcome.models);
+      case 'too_long':
+        // Исходник с переводом не влезает в контекст проверяющего: сверить нечем - флаг, как
+        // `CHUNK_TOO_LONG` у перевода, а не отказ шага по кругу.
+        attempt.outcome = 'too_long';
+        return this.flagChunk(lang, chunk, CHECK_FLAG_REASONS.CHECK_INPUT_TOO_LONG, {
+          from: 'translated',
+          verdict,
+        });
+      case 'invalid':
+        await ctx.renewLease();
+        attempt.semantic = { model: '', costUsd: outcome.costUsd.toString(), answer: null };
+        attempt.outcome = 'invalid';
+        return this.flagChunk(lang, chunk, CHECK_FLAG_REASONS.CHUNK_CHECK_INVALID_RESPONSE, {
+          from: 'translated',
+          costUsd: outcome.costUsd,
+          verdict,
+        });
+      case 'answered':
+        break;
+    }
+    await ctx.renewLease();
+    attempt.semantic = {
+      model: outcome.model,
+      costUsd: outcome.costUsd.toString(),
+      answer: outcome.answer,
+    };
+    if (semanticFailed(outcome.answer, missed)) {
+      return this.failCheck(
+        lang,
+        chunk,
+        verdict,
+        attempt,
+        semanticFailures(outcome.answer, missed),
+        outcome.costUsd,
+      );
+    }
+    attempt.outcome = 'pass';
+    await this.prisma.translationChunk.updateMany({
+      where: { id: chunk.id, status: 'translated' },
+      data: {
+        status: 'checked',
+        verdict: verdictJson(verdict),
+        costUsd: costAdded(chunk.costUsd, outcome.costUsd),
+      },
+    });
+    return { kind: 'continue' };
+  }
+
+  /**
+   * Неудача проверки: замечания - в вердикт, кусок - в перевод заново (`pending`); неудача
+   * `CHECK_FAILURES_MAX` - флаг с кодом первой причины, язык идёт дальше. Находки глоссария
+   * у флага не применяются (решение арбитра `F05 | F05-5`).
+   */
+  private async failCheck(
+    lang: LanguageRow,
+    chunk: ChunkRow,
+    verdict: ChunkVerdict,
+    attempt: CheckAttempt,
+    failures: readonly CheckFailure[],
+    costUsd: Prisma.Decimal | null = null,
+  ): Promise<LlmTaskStepResult> {
+    attempt.outcome = 'fail';
+    verdict.failures += 1;
+    verdict.remarks = cappedRemarks(failures.map((f) => f.remark));
+    if (verdict.failures >= CHECK_FAILURES_MAX) {
+      return this.flagChunk(lang, chunk, failures[0].code, {
+        from: 'translated',
+        costUsd,
+        verdict,
+      });
+    }
+    await this.prisma.translationChunk.updateMany({
+      where: { id: chunk.id, status: 'translated' },
+      data: {
+        status: 'pending',
+        verdict: verdictJson(verdict),
+        ...(costUsd ? { costUsd: costAdded(chunk.costUsd, costUsd) } : {}),
+      },
+    });
+    return { kind: 'continue' };
   }
 
   /**
@@ -465,7 +741,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
       const rows = await tx.$queryRaw<Array<{ data: Prisma.JsonValue; history: Prisma.JsonValue }>>`
         SELECT "data", "history" FROM "BookGlossary" WHERE "id" = ${lang.glossaryId} FOR UPDATE`;
       const row = rows[0];
-      // Повтор шага держит сам кусок: `translated → done` в этой же транзакции.
+      // Повтор шага держит сам кусок: `checked → done` в этой же транзакции.
       if (row) {
         const dossier = await tx.bookDossier.findUnique({
           where: { id: lang.run.dossierId ?? '' },
@@ -483,29 +759,39 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
         }
       }
       await tx.translationChunk.updateMany({
-        where: { id: chunk.id, status: 'translated' },
+        where: { id: chunk.id, status: 'checked' },
         data: { status: 'done' },
       });
     }, RUN_TX_OPTIONS);
     return { kind: 'continue' };
   }
 
-  /** Ошибка содержания после повторов - флаг куска, язык идёт дальше (`tech.md` §5). */
+  /**
+   * Ошибка содержания после повторов - флаг куска, язык идёт дальше (`tech.md` §5). `from` -
+   * статус, из которого флаг ставится: перевод (`pending`) или проверки (`translated`).
+   * `attempt` - шаг перевода, дошедший до модели (у `too_long` вызова не было; вызов проверки
+   * попыткой перевода не считается).
+   */
   private async flagChunk(
     lang: LanguageRow,
     chunk: ChunkRow,
     reason: string,
-    costUsd: Prisma.Decimal | null = null,
+    options: {
+      from: 'pending' | 'translated';
+      costUsd?: Prisma.Decimal | null;
+      attempt?: boolean;
+      verdict?: ChunkVerdict;
+    },
   ): Promise<LlmTaskStepResult> {
     await this.prisma.$transaction(async (tx) => {
       const flagged = await tx.translationChunk.updateMany({
-        where: { id: chunk.id, status: 'pending' },
-        // Попытка - шаг, дошедший до модели: у `too_long` вызова не было.
+        where: { id: chunk.id, status: options.from },
         data: {
           status: 'flagged',
           flagReason: reason,
-          costUsd,
-          attempts: { increment: costUsd ? 1 : 0 },
+          ...(options.costUsd ? { costUsd: costAdded(chunk.costUsd, options.costUsd) } : {}),
+          ...(options.attempt ? { attempts: { increment: 1 } } : {}),
+          ...(options.verdict ? { verdict: verdictJson(options.verdict) } : {}),
         },
       });
       if (flagged.count > 0) {
@@ -534,11 +820,15 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
    */
   private async pauseNoProvider(
     lang: LanguageRow,
+    stage: string,
     models: StageModels,
   ): Promise<LlmTaskStepResult> {
-    const tried = await this.llm.stageCallModels(TRANSLATE_STAGE, models);
+    const tried = await this.llm.stageCallModels(stage, models);
+    // Причина языка называет этап: из паузы сверки смысла выходят ключом `check_semantic`
+    // в `stageModels`, а не `translate`.
     return this.stopRun(lang, 'NO_COMPLIANT_PROVIDER', {
-      reason: 'LLM_NO_COMPLIANT_PROVIDER',
+      reason:
+        stage === CHECK_SEMANTIC_STAGE ? CHECK_NO_COMPLIANT_PROVIDER : 'LLM_NO_COMPLIANT_PROVIDER',
       reasonModels: tried,
     });
   }
