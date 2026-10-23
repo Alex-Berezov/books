@@ -129,7 +129,7 @@ export class TranslationController {
   @ApiAcceptedResponse({ type: DossierStatusDto })
   @ApiConflictResponse({
     description:
-      'DOSSIER_FRESH: a fresh dossier exists; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again',
+      'DOSSIER_FRESH: a fresh dossier exists; DOSSIER_OF_RUN: the version was made by a translation run, its dossier is the run dossier; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again',
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
   build(

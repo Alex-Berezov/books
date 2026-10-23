@@ -9,6 +9,12 @@ export const TRANSLATION_RUN_TASK_KIND = 'translation_run';
  */
 export const RUN_CHAPTER_CHUNKS_MAX = 500;
 
+/** Языков у запуска - не больше языков книги (`@@unique([runId, language])`): предел выборок по языкам. */
+export const RUN_LANGUAGES_MAX = 5;
+
+/** Незавершённые статусы языка запуска: шаги идут, язык держит своё место (`F05-4a`). */
+export const RUN_LANGUAGE_UNFINISHED = ['pending', 'running'] as const;
+
 /** Короткие записи шага и переходы запуска (`L-020`). */
 export const RUN_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
 
@@ -21,3 +27,6 @@ export const CHUNK_TOO_LONG = 'CHUNK_TOO_LONG';
 export const CHUNK_INVALID_RESPONSE = 'CHUNK_INVALID_RESPONSE';
 /** Кусок в статусе, который шаг перевода не ведёт: отказ шага, а не повторный платный вызов. */
 export const CHUNK_STATUS_UNEXPECTED = 'CHUNK_STATUS_UNEXPECTED';
+
+/** Предел текста отказа сервиса в `TranslationRunLanguage.reasonText` (`F05-6`, 6b). */
+export const CREATE_REJECTED_TEXT_MAX = 300;

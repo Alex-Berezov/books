@@ -44,6 +44,17 @@ export function pairKeyOf(operationId: string, language: Language): string {
 }
 
 /**
+ * Замок строки операции до конца транзакции. Порядок замков у вызывающих: сначала замок языка
+ * книги (если он есть), потом строка операции - не наоборот, иначе взаимная блокировка.
+ */
+export async function lockOperationRow(
+  tx: Prisma.TransactionClient,
+  operationId: string,
+): Promise<void> {
+  await tx.$queryRaw`SELECT id FROM "LlmOperation" WHERE id = ${operationId} FOR UPDATE`;
+}
+
+/**
  * Задачи исполнителя и переходы операции (`F05-1w`).
  *
  * Каждая запись - одним условным UPDATE (`L-019`): захват - по статусу, сроку и статусу
@@ -150,14 +161,24 @@ export class LlmTaskService {
    * операция уже стоит (кнопка «пауза» пришла, пока шёл шаг) - смена причины, кроме `keep`.
    * Запись вида - той же транзакцией и только если операция действительно остановлена этой
    * причиной: отменённой или законченной операции шаг ничего не пишет.
+   *
+   * `gate` - решение вида «останавливать ли» под замком строки операции (`FOR UPDATE`, первым
+   * оператором): `false` - паузы нет, что делать вместо неё, `gate` пишет сам через `tx`. Кто
+   * пишет в операцию в своей транзакции (черновик перевода, `F05-6`), ждёт этот замок, и решение
+   * не расходится с его коммитом (решение арбитра `F05 | F05-6`, гонка `pauseStale`).
    */
   async stopOrRepause(
     operationId: string,
     reason: LlmPauseReason,
     write: (tx: Prisma.TransactionClient) => Promise<void>,
     keep: readonly LlmPauseReason[] = [],
+    gate?: (tx: Prisma.TransactionClient) => Promise<boolean>,
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
+      if (gate) {
+        await lockOperationRow(tx, operationId);
+        if (!(await gate(tx))) return false;
+      }
       const paused = await tx.llmOperation.updateMany({
         where: { id: operationId, status: 'active' },
         data: { status: 'paused', pauseReason: reason },

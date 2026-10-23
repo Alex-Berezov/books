@@ -1,4 +1,10 @@
-import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  BadRequestException,
+  HttpException,
+} from '@nestjs/common';
 import { PUBLIC_BOOK_VERSION_SELECT } from '../../common/selects/public-book.select';
 import { getSupportedLanguages } from '../../shared/language/language.util';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -62,6 +68,11 @@ import {
 } from '../../shared/slug/book-slug-conflict';
 import { uniqueViolationFields, violationModelName } from '../../shared/prisma/prisma-error.util';
 import { approvedTargetLanguages } from './intake-target-languages';
+import {
+  CREATE_FROM_RUN_REJECTIONS,
+  CreateFromRun,
+  CreateFromRunRejectedError,
+} from './create-from-run';
 
 interface BookWithRights {
   id: string;
@@ -119,6 +130,19 @@ const BOOK_VERSION_SLUG_TAKEN_MESSAGE = 'Slug is already used by another version
 const BOOK_VERSION_CONFLICT_MESSAGE =
   'Version conflicts with an existing version (language or slug)';
 
+/** Поля нарушенного уникального индекса версии; `null` - не P2002 версии. */
+function bookVersionUniqueFields(e: unknown): string[] | null {
+  if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== 'P2002') return null;
+  const model = violationModelName(e);
+  if (model !== undefined && model !== 'BookVersion') return null;
+  return uniqueViolationFields(e);
+}
+
+/** Гонка по уникальному индексу языка книги (`@@unique([bookId, language])`). */
+function isLanguageTakenViolation(e: unknown): boolean {
+  return bookVersionUniqueFields(e)?.includes('bookId') ?? false;
+}
+
 /**
  * `P2002` записи версии — в 400 по индексу, на котором упал (`LEGACY-400`, пачка `T61`). До пачки `create`
  * и запасная ветка `update` отвечали «язык занят» и на занятый слаг. В обоих индексах есть `language`,
@@ -128,10 +152,8 @@ const BOOK_VERSION_CONFLICT_MESSAGE =
  * не называется — уходит как есть, как у страниц (`pageWriteError`).
  */
 function bookVersionUniqueViolation(e: unknown): unknown {
-  if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== 'P2002') return e;
-  const model = violationModelName(e);
-  if (model !== undefined && model !== 'BookVersion') return e;
-  const fields = uniqueViolationFields(e);
+  const fields = bookVersionUniqueFields(e);
+  if (fields === null) return e;
   if (fields.includes('slug')) return new BadRequestException(BOOK_VERSION_SLUG_TAKEN_MESSAGE);
   if (fields.includes('bookId'))
     return new BadRequestException(BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE);
@@ -238,7 +260,37 @@ export class BookVersionService {
     });
   }
 
-  async create(bookId: string, dto: CreateBookVersionDto, overrideLanguage?: Language) {
+  /**
+   * Новая версия книги. `fromRun` - создание черновика запуском перевода (`F05-6`, 6b): те же
+   * предусловия, но свой запуск язык не держит, `authorId` берётся как есть (подбор по имени
+   * не зовётся, Р22), ссылка запуска пишется той же транзакцией, а отказ приходит типизированным
+   * `CreateFromRunRejectedError` (`VERSION_EXISTS` / `CREATE_REJECTED`), без разбора текста ответа.
+   */
+  async create(
+    bookId: string,
+    dto: CreateBookVersionDto,
+    overrideLanguage?: Language,
+    fromRun?: CreateFromRun,
+  ) {
+    if (!fromRun) return this.createVersion(bookId, dto, overrideLanguage);
+    try {
+      return await this.createVersion(bookId, dto, overrideLanguage, fromRun);
+    } catch (e: unknown) {
+      if (e instanceof CreateFromRunRejectedError) throw e;
+      // Свои отказы предусловий - исключения HTTP до 500: запуск отдаёт их текст языку.
+      if (e instanceof HttpException && e.getStatus() < 500) {
+        throw new CreateFromRunRejectedError(CREATE_FROM_RUN_REJECTIONS.CREATE_REJECTED, e.message);
+      }
+      throw e;
+    }
+  }
+
+  private async createVersion(
+    bookId: string,
+    dto: CreateBookVersionDto,
+    overrideLanguage?: Language,
+    fromRun?: CreateFromRun,
+  ) {
     const effectiveLanguage = overrideLanguage ?? dto.language;
 
     // Get book with rights intake to check clearance
@@ -311,9 +363,17 @@ export class BookVersionService {
           select: { id: true },
         });
         if (existing) {
+          if (fromRun) {
+            throw new CreateFromRunRejectedError(
+              CREATE_FROM_RUN_REJECTIONS.VERSION_EXISTS,
+              BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE,
+            );
+          }
           throw new BadRequestException(BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE);
         }
-        if ((await unfinishedRunLanguages(tx, bookId, [effectiveLanguage])).length > 0) {
+        if (
+          (await unfinishedRunLanguages(tx, bookId, [effectiveLanguage], fromRun?.runId)).length > 0
+        ) {
           throw new BadRequestException({
             statusCode: 400,
             error: 'Bad Request',
@@ -389,12 +449,16 @@ export class BookVersionService {
             originalLanguage: dto.originalLanguage,
             copyrightStatus: dto.copyrightStatus,
             authorPageUrl: dto.authorPageUrl,
-            authorId: await this.authorService.resolveAuthorIdByName(
-              tx,
-              effectiveLanguage,
-              dto.author,
-              dto.authorId,
-            ),
+            // Запуск перевода копирует автора исходника, а не подбирает его по переведённому
+            // имени: `null` исходника остаётся `null` (Р16, Р22).
+            authorId: fromRun
+              ? (dto.authorId ?? null)
+              : await this.authorService.resolveAuthorIdByName(
+                  tx,
+                  effectiveLanguage,
+                  dto.author,
+                  dto.authorId,
+                ),
             characters: toJsonInput(dto.characters),
             quotes: toJsonInput(dto.quotes),
             faq: toJsonInput(dto.faq),
@@ -463,9 +527,18 @@ export class BookVersionService {
           tx,
         );
 
+        await fromRun?.afterCreate(tx, newVersion);
         return newVersion;
       }, BOOK_LANGUAGE_TX_OPTIONS);
     } catch (e: unknown) {
+      // Гонка по уникальному индексу языка в режиме запуска - тот же `VERSION_EXISTS`, что и
+      // версия, найденная под замком (Р6); прочие отказы разбирает `create`.
+      if (fromRun && isLanguageTakenViolation(e)) {
+        throw new CreateFromRunRejectedError(
+          CREATE_FROM_RUN_REJECTIONS.VERSION_EXISTS,
+          BOOK_VERSION_LANGUAGE_TAKEN_MESSAGE,
+        );
+      }
       throw bookVersionUniqueViolation(e);
     }
 

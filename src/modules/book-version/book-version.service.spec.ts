@@ -30,6 +30,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookVersionDto } from './dto/create-book-version.dto';
+import { CreateFromRunRejectedError } from './create-from-run';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
 
 type SeoFragment = Pick<Seo, 'metaTitle' | 'metaDescription'>;
@@ -663,6 +664,137 @@ describe('BookVersionService', () => {
 
       expect(rightsRecheckService.ensureTask).not.toHaveBeenCalled();
       expect(rightsRecheckService.createManual).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * Режим «от запуска перевода» (`F05-6`, 6b): те же предусловия, но отказ типизирован, свой
+   * запуск язык не держит, автор копируется без подбора по имени, ссылка пишется в транзакции.
+   */
+  describe('creation from a translation run', () => {
+    const dto = {
+      language: Language.es,
+      title: 'T',
+      author: 'A',
+      description: 'D',
+      coverImageUrl: 'u',
+      type: BookType.text,
+      isFree: true,
+      authorId: null,
+    } as CreateBookVersionDto;
+    const afterCreate = jest.fn();
+    const arrange = () => {
+      (prisma.book.findUnique as jest.Mock).mockResolvedValue({
+        id: 'b1',
+        rightsIntakeId: 'intake-1',
+        currentRightsProfileId: 'profile-1',
+        approvedRightsReviewId: 'review-1',
+      });
+      (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+        id: 'intake-1',
+        targetLanguages: ['en', 'es'],
+      });
+      (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue(null);
+      (prisma.bookVersion.create as jest.Mock).mockResolvedValue({ id: 'v-new' });
+    };
+
+    beforeEach(() => {
+      afterCreate.mockReset();
+      arrange();
+    });
+
+    it('does not guess the author by the translated name and writes the link in the transaction', async () => {
+      authorService.resolveAuthorIdByName.mockResolvedValue('guessed');
+
+      // Транзакция отдаёт свой объект-клиент (тот же стенд за прокси): колбэк, получивший
+      // корневой клиент сервиса, спека отличит.
+      const tx = new Proxy(prisma, {});
+      jest
+        .spyOn(prisma, '$transaction')
+        .mockImplementation(<T>(fn: (client: PrismaStub) => Promise<T> | T) =>
+          Promise.resolve(fn(tx)),
+        );
+
+      await service.create('b1', dto, Language.es, { runId: 'run-1', afterCreate });
+
+      expect(afterCreate.mock.calls[0][0]).toBe(tx);
+      expect(afterCreate.mock.calls[0][0]).not.toBe(prisma);
+      expect(authorService.resolveAuthorIdByName).not.toHaveBeenCalled();
+      const data = (prisma.bookVersion.create as jest.Mock).mock.calls[0][0].data as {
+        authorId?: string | null;
+        status: string;
+      };
+      expect(data).toMatchObject({ authorId: null, status: 'draft' });
+      expect(afterCreate).toHaveBeenCalledTimes(1);
+      expect(afterCreate).toHaveBeenCalledWith(expect.anything(), { id: 'v-new' });
+    });
+
+    it('passes its own run to the check of languages being translated', async () => {
+      const find = prisma.translationRunLanguage.findMany;
+      find.mockResolvedValue([]);
+
+      await service.create('b1', dto, Language.es, { runId: 'run-1', afterCreate });
+
+      expect(find).toHaveBeenCalledTimes(1);
+      expect(find).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            run: expect.objectContaining({ id: { not: 'run-1' } }),
+          }) as unknown,
+        }),
+      );
+    });
+
+    it('refuses a language that already has a version with VERSION_EXISTS', async () => {
+      (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue({ id: 'existing' });
+
+      const error = await service
+        .create('b1', dto, Language.es, { runId: 'run-1', afterCreate })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CreateFromRunRejectedError);
+      expect(error).toMatchObject({ code: 'VERSION_EXISTS' });
+      expect(afterCreate).not.toHaveBeenCalled();
+    });
+
+    it('turns any other precondition into CREATE_REJECTED with the text of the service', async () => {
+      (prisma.rightsIntake.findUnique as jest.Mock).mockResolvedValue({
+        id: 'intake-1',
+        targetLanguages: ['en'],
+      });
+
+      const error = await service
+        .create('b1', dto, Language.es, { runId: 'run-1', afterCreate })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CreateFromRunRejectedError);
+      expect(error).toMatchObject({ code: 'CREATE_REJECTED' });
+      expect((error as Error).message).toContain('not in approved target languages');
+    });
+
+    it('a race on the language index (P2002 bookId) is VERSION_EXISTS too', async () => {
+      (prisma.bookVersion.create as jest.Mock).mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'BookVersion', target: ['bookId', 'language'] },
+        }),
+      );
+
+      const error = await service
+        .create('b1', dto, Language.es, { runId: 'run-1', afterCreate })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CreateFromRunRejectedError);
+      expect(error).toMatchObject({ code: 'VERSION_EXISTS' });
+    });
+
+    it('does not retype the refusals of the manual path', async () => {
+      (prisma.bookVersion.findFirst as jest.Mock).mockResolvedValue({ id: 'existing' });
+
+      await expect(service.create('b1', dto, Language.es)).rejects.toBeInstanceOf(
+        BadRequestException,
+      );
     });
   });
 

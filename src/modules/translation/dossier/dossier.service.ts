@@ -163,29 +163,19 @@ export class DossierService {
 
   /**
    * Состояние досье версии для админки: старшее поколение её исходника (Р5), свежесть по
-   * отпечатку и операция строителя. Версия, созданная переводом, возьмёт досье своего запуска
-   * без признака «устарел» (Р18) - вместе со ссылкой версии на запуск в `F05-6` (решение арбитра
-   * `F05 | F05-4b`).
+   * отпечатку и операция строителя. Версия, созданная переводом, берёт досье своего запуска без
+   * признака «устарел» (Р18, `F05-6`, 6b; решение арбитра `F05 | F05-4b`): правка исходника после
+   * запуска досье перевода не меняет. Ручная версия и исходник - как прежде.
    */
   async status(versionId: string): Promise<DossierStatusDto> {
+    const own = await this.runDossierOf(versionId);
+    if (own) return this.statusOf(own.sourceVersionId, own.row, true);
     const { sourceVersionId } = await this.dossierSourceOf(versionId);
     const row = await this.latestDossier(sourceVersionId);
-    const [fingerprint, partsDone, operation, previousOperation] = row
-      ? await Promise.all([
-          sourceFingerprint(this.prisma, sourceVersionId),
-          this.prisma.bookDossierPart.count({ where: { dossierId: row.id } }),
-          this.operationOf(row.operationId),
-          this.operationOf(row.previousOperationId),
-        ])
-      : [null, 0, null, null];
-    return toDossierStatusDto({
-      sourceVersionId,
-      row,
-      fresh: row ? row.fingerprint === fingerprint : null,
-      partsDone,
-      operation,
-      previousOperation,
-    });
+    const fresh = row
+      ? sourceFingerprint(this.prisma, sourceVersionId).then((f) => row.fingerprint === f)
+      : null;
+    return this.statusOf(sourceVersionId, row, fresh);
   }
 
   async glossary(dossierId: string, language: Language): Promise<GlossaryDto> {
@@ -209,6 +199,14 @@ export class DossierService {
     limitUsd: Prisma.Decimal | undefined,
     createdById: string,
   ): Promise<DossierStatusDto> {
+    // У версии перевода досье её запуска (Р18): строить досье исходника отсюда - платить за то,
+    // чего эта версия не покажет (решение арбитра `F05 | F05-6`).
+    if (await this.runDossierOf(versionId)) {
+      throw llmTaskConflict(
+        'DOSSIER_OF_RUN',
+        'This version was made by a translation run: its dossier is the dossier of that run',
+      );
+    }
     this.llm.assertEnabled();
     const demand = await this.demandDossier(versionId, {
       rebuildStale: true,
@@ -820,6 +818,41 @@ export class DossierService {
       'SOURCE_HAS_NO_CHAPTERS',
       'The dossier source version has no chapter text',
     );
+  }
+
+  /** Досье запуска, создавшего эту версию (`TranslationRunLanguage.bookVersionId`, Р18); иначе `null`. */
+  private async runDossierOf(
+    versionId: string,
+  ): Promise<{ sourceVersionId: string; row: BookDossier | null } | null> {
+    const linked = await this.prisma.translationRunLanguage.findUnique({
+      where: { bookVersionId: versionId },
+      select: { run: { select: { bookVersionId: true, dossier: true } } },
+    });
+    return linked ? { sourceVersionId: linked.run.bookVersionId, row: linked.run.dossier } : null;
+  }
+
+  /** Ответ `status` по выбранной строке досье и её свежести. */
+  private async statusOf(
+    sourceVersionId: string,
+    row: BookDossier | null,
+    fresh: Promise<boolean> | boolean | null,
+  ): Promise<DossierStatusDto> {
+    const [isFresh, partsDone, operation, previousOperation] = row
+      ? await Promise.all([
+          fresh,
+          this.prisma.bookDossierPart.count({ where: { dossierId: row.id } }),
+          this.operationOf(row.operationId),
+          this.operationOf(row.previousOperationId),
+        ])
+      : [null, 0, null, null];
+    return toDossierStatusDto({
+      sourceVersionId,
+      row,
+      fresh: isFresh,
+      partsDone,
+      operation,
+      previousOperation,
+    });
   }
 }
 

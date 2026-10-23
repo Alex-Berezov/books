@@ -36,9 +36,17 @@ export class TranslationRunLanguageDto {
     type: String,
     nullable: true,
     description:
-      'Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE...)',
+      'Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_EXISTS, CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft)',
   })
   reason!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Text of the service that refused to create the draft version (reason CREATE_REJECTED), up to 300 characters; empty otherwise',
+  })
+  reasonText!: string | null;
 
   @ApiProperty({
     type: [String],

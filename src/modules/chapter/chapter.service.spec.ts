@@ -99,6 +99,43 @@ describe('ChapterService', () => {
       expect(clearanceLock.lockedVersions).toEqual(['v1']);
     });
 
+    /**
+     * `F05-6`, 6b: общий путь ручной главы и главы запуска перевода - запись, пометка свежести
+     * прав и колбэк вызывающего одной транзакцией под замком.
+     */
+    it('createLocked: staleness and the caller callback in the same locked transaction', async () => {
+      // Клиент транзакции - свой объект, а не корневой клиент сервиса: запись мимо `tx`
+      // (через `this.prisma`) спека отличает.
+      const tx = { chapter: { create: jest.fn() } };
+      const lock = createClearanceLockFake(tx);
+      const staleness = jest.fn();
+      const locked = new ChapterService(
+        prisma as unknown as PrismaService,
+        { checkVersionStaleness: staleness } as unknown as RightsContentHashService,
+        { assertAccess: jest.fn() } as unknown as GeoBlockRuleService,
+        lock.service,
+        adminAudit as unknown as AdminAuditService,
+      );
+      const seen: boolean[] = [];
+      tx.chapter.create.mockImplementation(() => {
+        seen.push(lock.isLocked());
+        return Promise.resolve({ id: 'c1' });
+      });
+      const afterCreate = jest.fn().mockImplementation(() => {
+        seen.push(lock.isLocked());
+        return Promise.resolve();
+      });
+
+      await locked.createLocked('v1', { number: 2, title: 'T', content: 'C' }, afterCreate);
+
+      expect(seen).toEqual([true, true]);
+      expect(prisma.chapter.create).not.toHaveBeenCalled();
+      expect(staleness).toHaveBeenCalledTimes(1);
+      expect(staleness).toHaveBeenCalledWith('v1', 'CHAPTER_CREATED', null, true, tx);
+      expect(afterCreate).toHaveBeenCalledTimes(1);
+      expect(afterCreate).toHaveBeenCalledWith(tx, { id: 'c1' });
+    });
+
     it('update', async () => {
       (prisma.chapter.findUnique as jest.Mock).mockResolvedValue({
         id: 'c1',

@@ -117,26 +117,41 @@ export class ChapterService {
       throw new BadRequestException('Chapter number must be unique within a version');
     }
     try {
-      const chapter = await this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
-        const created = await tx.chapter.create({
-          data: { bookVersionId, number: chapterNumber, title: dto.title, content: dto.content },
-        });
-        await this.rightsContentHashService.checkVersionStaleness(
-          bookVersionId,
-          'CHAPTER_CREATED',
-          null,
-          true,
-          tx,
-        );
-        return created;
+      return await this.createLocked(bookVersionId, {
+        number: chapterNumber,
+        title: dto.title,
+        content: dto.content,
       });
-      return chapter;
     } catch (e: unknown) {
       if ((e as Prisma.PrismaClientKnownRequestError).code === 'P2002') {
         throw new BadRequestException('Chapter number must be unique within a version');
       }
       throw e;
     }
+  }
+
+  /**
+   * Запись главы под замком проверки прав и с пометкой свежести - общий путь ручного создания и
+   * запуска перевода (`F05-6`, 6b; D3: правовой учёт текста мимо этого пути не обходится).
+   * `afterCreate` выполняется в той же транзакции, номер занят - `P2002` как у ручного пути.
+   */
+  async createLocked(
+    bookVersionId: string,
+    data: { number: number; title: string; content: string },
+    afterCreate?: (tx: Prisma.TransactionClient, created: Chapter) => Promise<void>,
+  ): Promise<Chapter> {
+    return this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
+      const created = await tx.chapter.create({ data: { bookVersionId, ...data } });
+      await this.rightsContentHashService.checkVersionStaleness(
+        bookVersionId,
+        'CHAPTER_CREATED',
+        null,
+        true,
+        tx,
+      );
+      await afterCreate?.(tx, created);
+      return created;
+    });
   }
 
   async get(id: string, countryCode: string | null = null) {

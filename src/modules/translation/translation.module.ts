@@ -1,4 +1,6 @@
 import { Module, OnModuleInit } from '@nestjs/common';
+import { BookVersionModule } from '../book-version/book-version.module';
+import { ChapterModule } from '../chapter/chapter.module';
 import { LlmModule } from '../llm/llm.module';
 import { LlmStageRegistry } from '../llm/llm-stages.registry';
 import { LlmOperationKindRegistry } from '../llm-worker/llm-operation-kind.registry';
@@ -14,6 +16,7 @@ import {
 } from './dossier/dossier.constants';
 import { DossierService } from './dossier/dossier.service';
 import { DossierTasksHandler } from './dossier/dossier-tasks.handler';
+import { TranslationDraftService } from './draft/translation-draft.service';
 import { TRANSLATION_RUN_TASK_KIND } from './run/translation-run.constants';
 import { TranslationRunService } from './run/translation-run.service';
 import { TranslationRunTasksHandler } from './run/translation-run-tasks.handler';
@@ -31,7 +34,7 @@ import { METADATA_STAGE_DEFINITIONS } from './metadata/metadata.constants';
  * после этого `onModuleInit`.
  */
 @Module({
-  imports: [LlmModule, LlmWorkerModule],
+  imports: [LlmModule, LlmWorkerModule, BookVersionModule, ChapterModule],
   controllers: [TranslationController],
   providers: [
     TranslationSourceService,
@@ -41,6 +44,7 @@ import { METADATA_STAGE_DEFINITIONS } from './metadata/metadata.constants';
     CompareTasksHandler,
     TranslationRunService,
     TranslationRunTasksHandler,
+    TranslationDraftService,
   ],
 })
 export class TranslationModule implements OnModuleInit {

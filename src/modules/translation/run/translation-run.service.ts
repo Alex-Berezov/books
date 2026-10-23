@@ -636,6 +636,7 @@ function languageDto(
     status: l.status,
     stage: stageOf(l, hasDossier, chunks, position >= 0 && position === chapters.length - 1),
     reason: l.reason,
+    reasonText: l.reasonText,
     // Колонка в базе допускает NULL (строки до записи причины): наружу - пустой список.
     reasonModels: l.reasonModels ?? [],
     chapterNumber: l.chapterNumber,

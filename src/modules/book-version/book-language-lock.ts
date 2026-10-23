@@ -37,17 +37,20 @@ export async function lockBookLanguages(
 /**
  * Языки книги, на которые идёт перевод: один предикат на замок и на причину
  * `TRANSLATION_IN_PROGRESS` (Р23). Без `languages` — все языки книги. Строк не больше пяти:
- * язык держит один незавершённый запуск.
+ * язык держит один незавершённый запуск. `exceptRunId` - запуск, который создаёт версию сам
+ * (`F05-6`, 6b): своего черновика он себе не мешает.
  */
 export async function unfinishedRunLanguages(
   db: Pick<Prisma.TransactionClient, 'translationRunLanguage'>,
   bookId: string,
   languages?: readonly Language[],
+  exceptRunId?: string,
 ): Promise<Language[]> {
   const rows = await db.translationRunLanguage.findMany({
     where: {
       ...(languages ? { language: { in: [...languages] } } : {}),
       run: {
+        ...(exceptRunId ? { id: { not: exceptRunId } } : {}),
         bookVersion: { bookId },
         operation: { status: { in: [...UNFINISHED_RUN_STATUSES] } },
       },

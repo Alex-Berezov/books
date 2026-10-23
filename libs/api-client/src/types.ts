@@ -13491,10 +13491,12 @@ export interface components {
       /** Format: uuid */
       glossaryId: string | null;
       language: components['schemas']['Language'];
-      /** @description Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE...) */
+      /** @description Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_EXISTS, CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft) */
       reason: string | null;
       /** @description Models that all refused by the data policy (NO_COMPLIANT_PROVIDER): pick another one in stageModels; empty otherwise */
       reasonModels: string[];
+      /** @description Text of the service that refused to create the draft version (reason CREATE_REJECTED), up to 300 characters; empty otherwise */
+      reasonText: string | null;
       /** @enum {string} */
       stage:
         | 'dossier'
@@ -19447,7 +19449,7 @@ export interface operations {
           'application/json': components['schemas']['DossierStatusDto'];
         };
       };
-      /** @description DOSSIER_FRESH: a fresh dossier exists; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again */
+      /** @description DOSSIER_FRESH: a fresh dossier exists; DOSSIER_OF_RUN: the version was made by a translation run, its dossier is the run dossier; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again */
       409: {
         headers: {
           [name: string]: unknown;

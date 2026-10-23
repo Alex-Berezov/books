@@ -583,6 +583,72 @@ describe('LLM worker (e2e)', () => {
       expect(writes).toEqual(['active', 'button']);
     });
 
+    it('a stop with a gate: the gate decides under the operation row lock, false keeps the operation running', async () => {
+      const writes: string[] = [];
+      const write = () => {
+        writes.push('write');
+        return Promise.resolve();
+      };
+      const held = await operation();
+      expect(
+        await tasks.stopOrRepause(held.id, 'DOSSIER_STALE', write, [], () =>
+          Promise.resolve(false),
+        ),
+      ).toBe(false);
+      expect((await prisma.llmOperation.findUniqueOrThrow({ where: { id: held.id } })).status).toBe(
+        'active',
+      );
+      const passed = await operation();
+      expect(
+        await tasks.stopOrRepause(passed.id, 'DOSSIER_STALE', write, [], () =>
+          Promise.resolve(true),
+        ),
+      ).toBe(true);
+      expect(
+        await prisma.llmOperation.findUniqueOrThrow({ where: { id: passed.id } }),
+      ).toMatchObject({ status: 'paused', pauseReason: 'DOSSIER_STALE' });
+      expect(writes).toEqual(['write']);
+    });
+
+    it('the gate runs only after the operation row lock is taken', async () => {
+      const op = await operation();
+      let release: () => void = () => undefined;
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      let entered: () => void = () => undefined;
+      const inside = new Promise<void>((resolve) => {
+        entered = resolve;
+      });
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "LlmOperation" WHERE id = ${op.id} FOR UPDATE`;
+          entered();
+          await held;
+        },
+        { timeout: 30_000, maxWait: 10_000 },
+      );
+      await inside;
+      let gateRan = false;
+      const stopping = tasks.stopOrRepause(
+        op.id,
+        'DOSSIER_STALE',
+        () => Promise.resolve(),
+        [],
+        () => {
+          gateRan = true;
+          return Promise.resolve(false);
+        },
+      );
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      // Пока замок у держателя, решение не принимается: иначе оно не видело бы его коммита.
+      expect(gateRan).toBe(false);
+      release();
+      await holder;
+      expect(await stopping).toBe(false);
+      expect(gateRan).toBe(true);
+    });
+
     it('a pair held by a task of another operation is an invariant breach, not a success', async () => {
       const other = await operation();
       const op = await operation('paused');

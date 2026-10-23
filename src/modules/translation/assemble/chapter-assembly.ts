@@ -8,10 +8,11 @@ import { TranslatedBlock } from '../translate/translate.format';
 import { chunkBlocks } from '../translate/translate-piece';
 
 /**
- * Коды флага и находок главы перевода (`F05-6`, шаги 2-3) - одна таблица (`flagReason`,
- * `findings`, отчёт и экран `F05-7`). Первые три главу в черновик не пускают (Р8; решение
- * арбитра `F05 | F05-6`: исходник вместо перевода не подставляется), остальные - флаг на
- * записанной главе.
+ * Коды флага и находок сборки главы перевода (`F05-6`, шаги 2-3). Первые три главу в черновик
+ * не пускают (Р8; решение арбитра `F05 | F05-6`: исходник вместо перевода не подставляется),
+ * остальные - флаг на записанной главе. Коды записи черновика - `DRAFT_FLAG_REASONS`
+ * (`draft/draft.constants.ts`); `TranslationChapter.flagReason` и `findings` несут оба набора
+ * (`ChapterFlagCode` в `draft.constants.ts`), отчёт и экран читают их вместе.
  */
 export const ASSEMBLY_FLAG_REASONS = {
   /** Собранная глава после санитайзера длиннее `RICH_HTML_MAX_LENGTH.body` (Р8). */

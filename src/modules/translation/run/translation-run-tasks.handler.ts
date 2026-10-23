@@ -14,12 +14,17 @@ import { LlmError } from '../../llm/llm.errors';
 import { LlmService } from '../../llm/llm.service';
 import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.registry';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
+import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
 import { assembleTranslatedChapter } from '../assemble/chapter-assembly';
+import { chapterAssemblyInput } from '../assemble/chapter-input';
 import { ChapterLayout, splitChapter } from '../chapter-blocks';
 import { ChapterChunk, nextSplit } from '../chunking/chapter-chunks';
 import { demandContext } from '../dossier/context-demand';
 import { DossierService } from '../dossier/dossier.service';
+import { CREATE_FROM_RUN_REJECTIONS } from '../../book-version/create-from-run';
+import { DRAFT_DELETED, NO_CHAPTERS_WRITTEN } from '../draft/draft.constants';
+import { TranslationDraftService } from '../draft/translation-draft.service';
 import { chapterFingerprint, sourceFingerprint } from '../source-fingerprint';
 import { PAUSE_BY_FAILURE } from '../pause-by-failure';
 import { pickBoundary } from '../translate/split.stage';
@@ -61,7 +66,7 @@ import {
 } from '../check/mechanical-check';
 import { semanticFailed, semanticFailures } from '../check/semantic-check';
 import { checkSemantic, semanticInputOf } from '../check/semantic-step';
-import { checkMetadata } from '../metadata/metadata-check';
+import { checkMetadata, MetadataResult } from '../metadata/metadata-check';
 import {
   METADATA_ATTEMPTS_MAX,
   METADATA_INVALID,
@@ -86,20 +91,27 @@ import {
   CHUNK_INVALID_RESPONSE,
   CHUNK_STATUS_UNEXPECTED,
   CHUNK_TOO_LONG,
+  RUN_LANGUAGE_UNFINISHED,
+  RUN_LANGUAGES_MAX,
   RUN_TX_OPTIONS,
 } from './translation-run.constants';
+import { StaleClosure, staleClosure } from './stale-closure';
 
 type RunRow = TranslationRun & { operation: Pick<LlmOperation, 'settingsSnapshot'> };
 type LanguageRow = TranslationRunLanguage & { run: RunRow };
 /** Кусок без ответа модели: шаги читают главу целиком, ответ нужен одному шагу находок. */
 type ChunkRow = Omit<TranslationChunk, 'rawResponse'>;
 
-const UNFINISHED = ['pending', 'running'] as const;
 const CLOSED = new Set<TranslationChunk['status']>(CHUNK_CLOSED_STATUSES);
 /** Тупиковые причины паузы запуска: выход - отмена или новый запуск (Р13). */
 const UNRESUMABLE: readonly LlmPauseReason[] = ['DOSSIER_STALE'];
 /** Сброс остановки языка: «продолжить» и готовый контекст. */
-const CLEAR_STOP = { reason: null, reasonModels: [], blockedByOperationId: null };
+const CLEAR_STOP = {
+  reason: null,
+  reasonText: null,
+  reasonModels: [],
+  blockedByOperationId: null,
+};
 /**
  * Статус, до которого ветка шага дойти не может: закрытый кусок отбирает `CLOSED`. Параметр -
  * ровно закрытые статусы: новый статус схемы без своей ветки в `chapterStep` - ошибка сборки.
@@ -107,6 +119,9 @@ const CLEAR_STOP = { reason: null, reasonModels: [], blockedByOperationId: null 
 function assertClosed(status: 'done' | 'flagged'): void {
   void status;
 }
+
+/** Под замком строки операции черновик уже есть: тупик Р13 не ставится, смена причины откатывается. */
+class StaleDecisionChangedError extends Error {}
 
 function runLanguageIdOf(task: LlmTask): string | null {
   const id = (task.payload as Record<string, unknown> | null)?.runLanguageId;
@@ -147,6 +162,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     private readonly llm: LlmService,
     private readonly tasks: LlmTaskService,
     private readonly dossiers: DossierService,
+    private readonly drafts: TranslationDraftService,
   ) {}
 
   /** С `DOSSIER_STALE` запуск не продолжают (Р13) - условием записи «продолжить». */
@@ -172,16 +188,34 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
       include: { languages: { orderBy: { language: 'asc' } } },
     });
     if (!run || run.languages.length === 0) return [];
-    if (run.dossierFingerprint !== null && (await this.isStale(run))) {
-      await this.tasks.repauseOperation(op.id, 'DOSSIER_STALE', async (tx) => {
-        await tx.translationRunLanguage.updateMany({
-          where: { runId: run.id, status: { in: [...UNFINISHED] } },
-          data: { ...CLEAR_STOP, reason: 'DOSSIER_STALE' },
+    const open = run.languages.filter((l) =>
+      (RUN_LANGUAGE_UNFINISHED as readonly string[]).includes(l.status),
+    );
+    // Тупик Р13 - только если ни у одного языка нет живого черновика (`staleClosure`). Снимок
+    // здесь - лишь повод попробовать тупик: решение принимается заново в транзакции смены
+    // причины, под замком строки операции (её `UPDATE`). Черновик появился между снимком и
+    // замком - смены нет (откат), «продолжить» идёт дальше. Иначе задачи ставятся всем открытым
+    // языкам, а устаревшие закрывает `onResumed` - то же решение в транзакции «продолжить»;
+    // задача закрытого языка ничего не делает (`run`: язык не в работе).
+    if (
+      run.dossierFingerprint !== null &&
+      !staleClosure(open).hasLiveDraft &&
+      (await this.isStale(run))
+    ) {
+      try {
+        await this.tasks.repauseOperation(op.id, 'DOSSIER_STALE', async (tx) => {
+          if ((await this.closeOnStale(tx, run.id)).hasLiveDraft)
+            throw new StaleDecisionChangedError();
+          await tx.translationRunLanguage.updateMany({
+            where: { runId: run.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
+            data: { ...CLEAR_STOP, reason: 'DOSSIER_STALE' },
+          });
         });
-      });
-      return [];
+        return [];
+      } catch (error) {
+        if (!(error instanceof StaleDecisionChangedError)) throw error;
+      }
     }
-    const open = run.languages.filter((l) => (UNFINISHED as readonly string[]).includes(l.status));
     // Все языки доделаны, а операция на паузе (пауза пришла вместе с последним шагом): шаг
     // любого языка закроет операцию.
     const languages = open.length > 0 ? open : run.languages.slice(0, 1);
@@ -190,8 +224,23 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
 
   /** «Продолжить»: причины остановки недоделанных языков сбрасываются той же транзакцией. */
   async onResumed(op: LlmOperation, tx: Prisma.TransactionClient): Promise<void> {
+    // Строка операции уже под замком записи «продолжить» (`resumeOperation`): решение и его
+    // исполнение - через `tx`, тем же снимком, что и шаги, которые ждут этот замок.
+    const run = await tx.translationRun.findUnique({ where: { operationId: op.id } });
+    if (run && run.dossierFingerprint !== null && (await this.isStale(run, tx))) {
+      const decision = await this.closeOnStale(tx, run.id);
+      // Живого черновика под замком уже нет (его удалили после снимка `resumeTasks`), а языки
+      // ждут: продолжать их по устаревшему исходнику нельзя (Р13) - отказ, транзакция откатывается,
+      // следующее «продолжить» поставит тупик.
+      if (!decision.hasLiveDraft && decision.waiting.length > 0) {
+        throw llmTaskConflict(
+          'LLM_OPERATION_NOT_RESUMABLE',
+          'The source changed and no language writes a draft: the run cannot be continued',
+        );
+      }
+    }
     await tx.translationRunLanguage.updateMany({
-      where: { run: { operationId: op.id }, status: { in: [...UNFINISHED] } },
+      where: { run: { operationId: op.id }, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
       data: CLEAR_STOP,
     });
   }
@@ -203,7 +252,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
    */
   async onCancelled(op: LlmOperation, tx: Prisma.TransactionClient): Promise<void> {
     await tx.translationRunLanguage.updateMany({
-      where: { run: { operationId: op.id }, status: { in: [...UNFINISHED] } },
+      where: { run: { operationId: op.id }, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
       data: { status: 'cancelled' },
     });
   }
@@ -220,13 +269,16 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     if (!lang) {
       await this.tasks.failOperation(task.operationId, async (tx) => {
         await tx.translationRunLanguage.updateMany({
-          where: { run: { operationId: task.operationId }, status: { in: [...UNFINISHED] } },
+          where: {
+            run: { operationId: task.operationId },
+            status: { in: [...RUN_LANGUAGE_UNFINISHED] },
+          },
           data: { status: 'failed' },
         });
       });
       return { kind: 'done' };
     }
-    if (!(UNFINISHED as readonly string[]).includes(lang.status)) {
+    if (!(RUN_LANGUAGE_UNFINISHED as readonly string[]).includes(lang.status)) {
       await this.completeIfFinished(lang.run);
       return { kind: 'done' };
     }
@@ -237,6 +289,14 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
       });
     }
     if (!lang.run.dossierId || !lang.glossaryId) return this.awaitContext(lang);
+    // Черновик создан - дальше только его главы: шаги перевода и сборки исходник уже не сверяют
+    // (правка исходника после создания версии не ставит язык на `DOSSIER_STALE`, 6b).
+    // Удалённый черновик (`draftCreatedAt` без ссылки) - туда же: `DRAFT_DELETED` раньше сверок глав.
+    const metadata =
+      lang.bookVersionId === null && lang.draftCreatedAt === null
+        ? null
+        : metadataStateOf(lang.metadata)?.result;
+    if (metadata) return this.draftStep(lang, ctx, metadata);
     if (lang.chapterNumber === null) return this.startChapter(lang, null, ctx);
     return this.chapterStep(lang, lang.chapterNumber, ctx);
   }
@@ -861,35 +921,10 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     number: number,
     ctx: LlmTaskContext,
   ): Promise<LlmTaskStepResult> {
-    const [chapter, chunks] = await Promise.all([
-      this.prisma.chapter.findUnique({
-        where: { bookVersionId_number: { bookVersionId: lang.run.bookVersionId, number } },
-        select: { content: true },
-      }),
-      this.prisma.translationChunk.findMany({
-        where: { runLanguageId: lang.id, chapterNumber: number },
-        orderBy: { chunkIndex: 'asc' },
-        select: {
-          chunkIndex: true,
-          firstBlock: true,
-          lastBlock: true,
-          status: true,
-          blocks: true,
-          flagReason: true,
-          chapterFingerprint: true,
-        },
-        take: RUN_CHAPTER_CHUNKS_MAX,
-      }),
-    ]);
+    const input = await chapterAssemblyInput(this.prisma, lang.run.bookVersionId, lang.id, number);
     // Главу удалили, добавили или правили после нарезки - перевод собран не с того исходника.
-    if (
-      !chapter ||
-      chunks.length === 0 ||
-      chapterFingerprint(chapter.content) !== chunks[0].chapterFingerprint
-    ) {
-      return this.pauseStale(lang);
-    }
-    const result = assembleTranslatedChapter(splitChapter(chapter.content), chunks);
+    if (!input) return this.pauseStale(lang);
+    const result = assembleTranslatedChapter(splitChapter(input.content), input.chunks);
     await ctx.renewLease();
     await this.prisma.$transaction(async (tx) => {
       const created = await tx.translationChapter.createMany({
@@ -925,7 +960,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
    */
   private async metadataStep(lang: LanguageRow, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
     const state: MetadataState = metadataStateOf(lang.metadata) ?? { attempts: [], result: null };
-    if (state.result) return this.finishLanguage(lang);
+    if (state.result) return this.draftStep(lang, ctx, state.result);
     if (metadataFailures(state) >= METADATA_ATTEMPTS_MAX) {
       return this.failLanguage(lang, METADATA_INVALID);
     }
@@ -977,19 +1012,91 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     // оплаченный ответ и платила бы за него снова.
     await ctx.renewLease();
     await this.prisma.translationRunLanguage.updateMany({
-      where: { id: lang.id, status: { in: [...UNFINISHED] } },
+      where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
       data: { metadata: metadataStateJson(state) },
     });
     return failed ? this.failLanguage(lang, METADATA_INVALID) : { kind: 'continue' };
   }
 
   /**
+   * Черновик версии и главы (`F05-6`, 6b): версия создаётся один раз, затем глава за шаг по
+   * порядку номеров; после последней язык доделан. Исходник после создания версии уже не сверяется
+   * на уровне языка - глава сверяет свой отпечаток сама (`SOURCE_CHANGED`, язык идёт дальше).
+   */
+  private async draftStep(
+    lang: LanguageRow,
+    ctx: LlmTaskContext,
+    metadata: MetadataResult,
+  ): Promise<LlmTaskStepResult> {
+    if (lang.bookVersionId === null) {
+      // Черновик создавался, а ссылки нет - его удалили (решение арбитра `F05 | F05-6`).
+      if (lang.draftCreatedAt !== null) return this.failLanguage(lang, DRAFT_DELETED);
+      if (await this.isStale(lang.run)) return this.pauseStale(lang);
+      if (!(await this.drafts.nextToWrite(lang.id))) {
+        return this.failLanguage(lang, NO_CHAPTERS_WRITTEN);
+      }
+      await ctx.renewLease();
+      const created = await this.drafts.createDraft(lang, metadata);
+      if (!created) return this.pauseStale(lang);
+      if (created.kind === 'created') return { kind: 'continue' };
+      if (created.kind === 'deleted') return this.failLanguage(lang, DRAFT_DELETED);
+      // Повтор шага после потерянной аренды: версию создал прошлый исполнитель - она своя.
+      if (created.code === CREATE_FROM_RUN_REJECTIONS.VERSION_EXISTS) {
+        const own = await this.prisma.translationRunLanguage.findUnique({
+          where: { id: lang.id },
+          select: { bookVersionId: true },
+        });
+        if (own?.bookVersionId) return { kind: 'continue' };
+      }
+      return this.failLanguage(lang, created.code, created.text);
+    }
+    const next = await this.drafts.nextToWrite(lang.id);
+    if (!next) return this.finishLanguage(lang);
+    const written = await this.drafts.writeChapter(
+      { ...lang, bookVersionId: lang.bookVersionId },
+      next,
+      metadata.chapterTitles,
+      () => ctx.renewLease(),
+    );
+    // Черновик удалили посреди записи главы - тот же исход, что и между шагами.
+    if (written === 'draft_deleted') return this.failLanguage(lang, DRAFT_DELETED);
+    return { kind: 'continue' };
+  }
+
+  /**
    * Отпечаток исходника не совпал с привязанным к запуску (`tech.md` §2а). Досье запуска -
    * той же версии, что запуск (привязка другой не проходит), поэтому сверка - по версии запуска.
    */
-  private async isStale(run: TranslationRun): Promise<boolean> {
-    const current = await sourceFingerprint(this.prisma, run.bookVersionId);
+  private async isStale(
+    run: TranslationRun,
+    db: Prisma.TransactionClient = this.prisma,
+  ): Promise<boolean> {
+    const current = await sourceFingerprint(db, run.bookVersionId);
     return current !== run.dossierFingerprint;
+  }
+
+  /**
+   * Исполнение `staleClosure` в транзакции под замком строки операции: устаревшие языки без
+   * черновика - `failed` `DOSSIER_STALE` (если у кого-то живой черновик), удалённые черновики -
+   * `DRAFT_DELETED`; причины прошлых остановок сбрасываются. Языков у запуска не больше пяти.
+   */
+  private async closeOnStale(tx: Prisma.TransactionClient, runId: string): Promise<StaleClosure> {
+    const languages = await tx.translationRunLanguage.findMany({
+      where: { runId, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
+      select: { id: true, bookVersionId: true, draftCreatedAt: true },
+      take: RUN_LANGUAGES_MAX,
+    });
+    const decision = staleClosure(languages);
+    const close = async (ids: string[], reason: string) => {
+      if (ids.length === 0) return;
+      await tx.translationRunLanguage.updateMany({
+        where: { id: { in: ids }, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
+        data: { ...CLEAR_STOP, status: 'failed', reason },
+      });
+    };
+    await close(decision.stale, 'DOSSIER_STALE');
+    await close(decision.deleted, DRAFT_DELETED);
+    return decision;
   }
 
   /**
@@ -1039,9 +1146,34 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     return { kind: 'continue' };
   }
 
-  /** Исходник правили посреди запуска: пауза `DOSSIER_STALE`, выход - отмена или новый запуск (Р13). */
+  /**
+   * Исходник правили посреди запуска: пауза `DOSSIER_STALE`, выход - отмена или новый запуск (Р13).
+   * Пока у другого незавершённого языка есть черновик, пауза операции остановила бы и его - язык
+   * закрывается сам (`failed` `DOSSIER_STALE`), черновики дописываются (решение арбитра `F05 | F05-6`).
+   */
   private async pauseStale(lang: LanguageRow): Promise<LlmTaskStepResult> {
-    return this.stopRun(lang, 'DOSSIER_STALE', { reason: 'DOSSIER_STALE' });
+    let isSelfClosed = false;
+    await this.tasks.stopOrRepause(
+      lang.run.operationId,
+      'DOSSIER_STALE',
+      async (tx) => {
+        // Язык, который решение закрыло, своей причины не меняет.
+        await tx.translationRunLanguage.updateMany({
+          where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
+          data: { reason: 'DOSSIER_STALE' },
+        });
+      },
+      UNRESUMABLE,
+      // Решение - под замком строки операции: черновик, который сейчас создаётся, его ждёт.
+      async (tx) => {
+        const decision = await this.closeOnStale(tx, lang.runId);
+        isSelfClosed = decision.stale.includes(lang.id) || decision.deleted.includes(lang.id);
+        return !decision.hasLiveDraft;
+      },
+    );
+    if (!isSelfClosed) return { kind: 'continue' };
+    await this.completeIfFinished(lang.run);
+    return { kind: 'done' };
   }
 
   /**
@@ -1050,7 +1182,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
    */
   private async finishLanguage(lang: LanguageRow): Promise<LlmTaskStepResult> {
     await this.prisma.translationRunLanguage.updateMany({
-      where: { id: lang.id, status: { in: [...UNFINISHED] } },
+      where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
       data: { status: 'done', reason: null },
     });
     await this.completeIfFinished(lang.run);
@@ -1058,13 +1190,18 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
   }
 
   /**
-   * Язык не доделать (`F05-6`: `metadata` не прошла повтор, вход не влезает в контекст): `failed`
+   * Язык не доделать (`F05-6`: `metadata` не прошла повтор, вход не влезает в контекст, черновик
+   * не создан - `VERSION_EXISTS`, `CREATE_REJECTED`): `failed`
    * с кодом, прочие языки идут дальше (решение арбитра `F05 | F05-6`, итог языка).
    */
-  private async failLanguage(lang: LanguageRow, reason: string): Promise<LlmTaskStepResult> {
+  private async failLanguage(
+    lang: LanguageRow,
+    reason: string,
+    reasonText: string | null = null,
+  ): Promise<LlmTaskStepResult> {
     await this.prisma.translationRunLanguage.updateMany({
-      where: { id: lang.id, status: { in: [...UNFINISHED] } },
-      data: { status: 'failed', reason },
+      where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
+      data: { status: 'failed', reason, reasonText },
     });
     await this.completeIfFinished(lang.run);
     return { kind: 'done' };
@@ -1072,7 +1209,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
 
   private async completeIfFinished(run: TranslationRun): Promise<void> {
     const open = await this.prisma.translationRunLanguage.count({
-      where: { runId: run.id, status: { in: [...UNFINISHED] } },
+      where: { runId: run.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
     });
     if (open === 0) await this.tasks.completeOperation(run.operationId);
   }
