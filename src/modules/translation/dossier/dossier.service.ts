@@ -44,6 +44,12 @@ export interface DossierWaiter {
   waitingFor?: string | null;
   /** Запуск ждущего (`F05-4`): операция, заведённая ради него, привязывается к нему. */
   translationRunId?: string | null;
+  /**
+   * Лимита ждущего не хватило на операцию досье или глоссария (Р20): запись ждущего с лимитом,
+   * с которым она поместится, - той же транзакцией, что пауза его операции: опрос не видит паузу
+   * без причины, а причину без паузы (решение арбитра `F05 | F05-7`, /fix В2).
+   */
+  onLimit?: (tx: Prisma.TransactionClient, minLimitUsd: Prisma.Decimal) => Promise<void>;
 }
 
 export interface DemandOptions {
@@ -707,17 +713,21 @@ export class DossierService {
    * Без ждущего (кнопка) лимит - у новой операции.
    */
   private async waiterFits(options: DemandOptions, limitUsd: Prisma.Decimal): Promise<boolean> {
-    if (!options.waiter || (await this.waiterHasRoom(options.waiter, limitUsd))) return true;
-    await this.pauseWaiter(options.waiter, 'LIMIT_REACHED');
-    return false;
-  }
-
-  private async waiterHasRoom(waiter: DossierWaiter, needed: Prisma.Decimal): Promise<boolean> {
+    if (!options.waiter) return true;
     const op = await this.prisma.llmOperation.findUnique({
-      where: { id: waiter.operationId },
+      where: { id: options.waiter.operationId },
       select: { limitUsd: true, spentUsd: true, reservedUsd: true },
     });
-    return !!op && op.limitUsd.sub(op.spentUsd).sub(op.reservedUsd).gte(needed);
+    // Операции ждущего нет - не помещается ни с каким лимитом: пауза без суммы.
+    const minLimit = op ? waiterMinLimit(op, limitUsd) : null;
+    if (op && minLimit === null) return true;
+    const { onLimit } = options.waiter;
+    await this.tasks.pauseOperation(
+      options.waiter.operationId,
+      'LIMIT_REACHED',
+      onLimit && minLimit ? (tx) => onLimit(tx, minLimit) : undefined,
+    );
+    return false;
   }
 
   /**
@@ -902,4 +912,20 @@ function summaryAnswersChars(parts: number, call: StageCallEstimator): number {
   return call.contextLength === null
     ? answers
     : Math.min(answers, call.contextLength * CHARS_PER_TOKEN);
+}
+
+/**
+ * Лимит ждущего, с которым операция досье или глоссария поместится: потрачено + в резерве + её
+ * лимит, вверх до восьми знаков - деньги хранятся `Decimal(14,8)`, и округлённый вниз минимум
+ * не пропустил бы «продолжить» с показанной суммой (`F05-7`). `null` - помещается и так.
+ */
+export function waiterMinLimit(
+  op: { limitUsd: Prisma.Decimal; spentUsd: Prisma.Decimal; reservedUsd: Prisma.Decimal },
+  needed: Prisma.Decimal,
+): Prisma.Decimal | null {
+  const min = op.spentUsd
+    .add(op.reservedUsd)
+    .add(needed)
+    .toDecimalPlaces(8, Prisma.Decimal.ROUND_UP);
+  return op.limitUsd.gte(min) ? null : min;
 }

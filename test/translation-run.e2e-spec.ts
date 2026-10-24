@@ -16,6 +16,7 @@ import { lockBookLanguages } from '../src/modules/book-version/book-language-loc
 import { ChapterService } from '../src/modules/chapter/chapter.service';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import { TranslationDraftService } from '../src/modules/translation/draft/translation-draft.service';
+import { DOSSIER_LIMIT_TOO_LOW } from '../src/modules/translation/run/translation-run.constants';
 import { BookVersionService } from '../src/modules/book-version/book-version.service';
 import { CreateFromRunRejectedError } from '../src/modules/book-version/create-from-run';
 import {
@@ -594,7 +595,18 @@ describe('Translation run (e2e)', () => {
       chaptersTotal: 2,
       chunksDone: 1,
       chunksTotal: 1,
+      flaggedChapters: 0,
+      draftVersionId: (await langOf(runId, 'es')).bookVersionId,
     });
+    // Досье и два глоссария - своими строками, без операции самого запуска (`F05-7`, В1).
+    const own = await prisma.llmOperation.findMany({
+      where: { translationRunId: runId, kind: 'dossier' },
+      orderBy: { createdAt: 'asc' },
+    });
+    const body = res.body as { operation: { id: string }; operations: Array<{ id: string }> };
+    expect(own).toHaveLength(3);
+    expect(body.operations.map((o) => o.id)).toEqual(own.map((o) => o.id));
+    expect(body.operations.map((o) => o.id)).not.toContain(body.operation.id);
   });
 
   /**
@@ -1844,7 +1856,116 @@ describe('Translation run (e2e)', () => {
     expect(res.body.languages[0]).toMatchObject({
       stage: 'dossier',
       blockedByOperationId: builder.id,
+      draftVersionId: null,
     });
+    // Причина паузы строителя и его траты - в ходе запуска, без операции самого запуска (В1).
+    expect(res.body.operations).toEqual([
+      expect.objectContaining({
+        id: builder.id,
+        status: 'paused',
+        pauseReason: 'LIMIT_REACHED',
+        limitUsd: builder.limitUsd.toFixed(8),
+        spentUsd: builder.spentUsd.toFixed(8),
+      }),
+    ]);
+    // Операций запуска больше предела: ждущая языком старше всех, но в ответе остаётся.
+    await prisma.llmOperation.createMany({
+      data: Array.from({ length: 50 }, () => ({
+        kind: 'dossier' as const,
+        status: 'done' as const,
+        limitUsd: '1',
+        translationRunId: runId,
+      })),
+    });
+    const crowded = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    const crowdedIds = (crowded.body as { operations: Array<{ id: string }> }).operations.map(
+      (o) => o.id,
+    );
+    expect(crowdedIds).toHaveLength(51);
+    expect(crowdedIds[0]).toBe(builder.id);
+    await prisma.llmOperation.deleteMany({
+      where: { translationRunId: runId, status: 'done', kind: 'dossier' },
+    });
+    // Досье чужого сравнения не привязано к запуску: видно по `blockedByOperationId`.
+    await prisma.llmOperation.update({
+      where: { id: builder.id },
+      data: { translationRunId: null },
+    });
+    const foreign = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    expect(foreign.body.operations.map((o: { id: string }) => o.id)).toEqual([builder.id]);
+    // Операция другого запуска, на которую языки не ссылаются, в ответ не попадает.
+    const other = await createRun(versionId, ['fr']);
+    const unrelated = await prisma.llmOperation.create({
+      data: {
+        kind: 'dossier',
+        status: 'paused',
+        limitUsd: '1',
+        translationRunId: other.runId,
+      },
+    });
+    const isolated = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    expect(isolated.body.operations.map((o: { id: string }) => o.id)).toEqual([builder.id]);
+    expect(unrelated.translationRunId).toBe(other.runId);
+  });
+
+  it('the run limit left is lower than the dossier or the glossary limit: DOSSIER_LIMIT_TOO_LOW with the amount, nothing paid; resume clears it', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    // Лимит запуска меньше лимита операции досье (оценка × 1,5): досье не заводится вовсе.
+    // Запуск уже потратил весь лимит - нужная сумма считается сверх потраченного.
+    const { runId, opId } = await createRun(versionId, ['es'], '0.5');
+    await prisma.llmOperation.update({ where: { id: opId }, data: { spentUsd: '0.5' } });
+
+    await drain();
+
+    expect(await opOf(opId)).toMatchObject({ status: 'paused', pauseReason: 'LIMIT_REACHED' });
+    const dossierLang = await langOf(runId, 'es');
+    expect(dossierLang.reason).toBe(DOSSIER_LIMIT_TOO_LOW);
+    expect(dossierLang.reasonUsd?.gt('0.5')).toBe(true);
+    expect(
+      await prisma.llmOperation.count({ where: { translationRunId: runId, kind: 'dossier' } }),
+    ).toBe(0);
+    const res = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    expect(res.body.languages[0]).toMatchObject({
+      stage: 'dossier',
+      reason: DOSSIER_LIMIT_TOO_LOW,
+      reasonUsd: dossierLang.reasonUsd?.toFixed(8),
+      blockedByOperationId: null,
+    });
+
+    // Ровно этого лимита хватает: досье заводится, причина и лимит языка очищены.
+    await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+      .send({ limitUsd: dossierLang.reasonUsd?.toFixed(8) })
+      .expect(200);
+    await drain(
+      async () =>
+        (await prisma.llmOperation.count({
+          where: { translationRunId: runId, kind: 'dossier' },
+        })) > 0,
+    );
+    expect(
+      await prisma.llmOperation.count({ where: { translationRunId: runId, kind: 'dossier' } }),
+    ).toBe(1);
+    expect(await langOf(runId, 'es')).toMatchObject({ reasonUsd: null, reasonModels: [] });
+    expect((await langOf(runId, 'es')).reason).not.toBe(DOSSIER_LIMIT_TOO_LOW);
+    await drain();
+
+    // Досье готово: второй запуск на другой язык с крошечным лимитом встаёт на глоссарии.
+    const second = await createRun(versionId, ['fr'], '0.00000001');
+    await drain();
+    const glossaryLang = await langOf(second.runId, 'fr');
+    expect(glossaryLang).toMatchObject({ glossaryId: null, reason: DOSSIER_LIMIT_TOO_LOW });
+    expect(glossaryLang.reasonUsd?.gt(0)).toBe(true);
+    const glossary = await auth(http().get(`/admin/translation-runs/${second.runId}`)).expect(200);
+    // Досье к запуску привязывается вместе с глоссарием: до него этап хода - `dossier`.
+    expect(glossary.body.languages[0]).toMatchObject({
+      reason: DOSSIER_LIMIT_TOO_LOW,
+      reasonUsd: glossaryLang.reasonUsd?.toFixed(8),
+    });
+    expect(
+      await prisma.llmOperation.count({
+        where: { translationRunId: second.runId, kind: 'dossier' },
+      }),
+    ).toBe(0);
   });
 
   it('a step without its language row fails the run; the other languages are failed, not running', async () => {
@@ -2349,6 +2470,59 @@ describe('Translation run (e2e)', () => {
     ).expect(404);
   });
 
+  it('runs of the book filtered by version and by not finished: a running run older than eleven cancelled ones is still found (F05-7, /fix В1)', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const running = await startRun(versionId, { languages: ['fr'] }).expect(202);
+    for (let i = 0; i < 11; i += 1) {
+      const cancelled = await startRun(versionId, { languages: ['es'] }).expect(202);
+      await auth(
+        http().post(`/admin/translation-runs/${cancelled.body.id as string}/cancel`),
+      ).expect(200);
+    }
+
+    const firstPage = await auth(http().get(`/admin/books/${bookId}/translation-runs`)).expect(200);
+    expect(firstPage.body.items.map((r: { id: string }) => r.id)).not.toContain(running.body.id);
+
+    const active = await auth(
+      http()
+        .get(`/admin/books/${bookId}/translation-runs`)
+        .query({ bookVersionId: versionId, active: true }),
+    ).expect(200);
+    expect(active.body.items.map((r: { id: string }) => r.id)).toEqual([running.body.id]);
+    expect(active.body.pagination.total).toBe(1);
+    // На паузе запуск тоже незавершённый; не «true» и не «false» - 400, а не снятый фильтр.
+    await auth(http().post(`/admin/translation-runs/${running.body.id as string}/pause`)).expect(
+      200,
+    );
+    const paused = await auth(
+      http()
+        .get(`/admin/books/${bookId}/translation-runs`)
+        .query({ bookVersionId: versionId, active: true }),
+    ).expect(200);
+    expect(paused.body.items.map((r: { id: string }) => r.id)).toEqual([running.body.id]);
+    await auth(http().get(`/admin/books/${bookId}/translation-runs`).query({ active: '1' })).expect(
+      400,
+    );
+
+    const latest = await auth(
+      http()
+        .get(`/admin/books/${bookId}/translation-runs`)
+        .query({ bookVersionId: versionId, limit: 1 }),
+    ).expect(200);
+    expect(latest.body.pagination.total).toBe(12);
+    expect(latest.body.items[0].operation.status).toBe('cancelled');
+
+    const otherVersion = await auth(
+      http()
+        .get(`/admin/books/${bookId}/translation-runs`)
+        .query({ bookVersionId: '00000000-0000-0000-0000-000000000000' }),
+    ).expect(200);
+    expect(otherVersion.body.items).toEqual([]);
+    await auth(
+      http().get(`/admin/books/${bookId}/translation-runs`).query({ bookVersionId: 'nope' }),
+    ).expect(400);
+  });
+
   it('a chapter longer than the limit is flagged with its length and limit, the other chapter is assembled (Р8)', async () => {
     const { versionId } = await englishBook([
       { number: 1, title: 'One', content: '<p>Big chapter.</p>' },
@@ -2418,6 +2592,9 @@ describe('Translation run (e2e)', () => {
     expect(
       await prisma.chapter.count({ where: { bookVersionId: lang.bookVersionId as string } }),
     ).toBe(1);
+    // Флаг главы виден в ходе, а не только в отчёте (`F05-7`, §2.3).
+    const res = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    expect(res.body.languages[0]).toMatchObject({ flaggedChapters: 1 });
   });
 
   // Текст главы ловит и сверка кусков главы при сборке; название - только сверка отпечатка
@@ -3159,6 +3336,9 @@ describe('Translation run (e2e)', () => {
       bookVersionId: null,
     });
     expect(await prisma.bookVersion.count({ where: { bookId, language: 'es' } })).toBe(0);
+    // Ход не ссылается на удалённый черновик (`F05-7`).
+    const res = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
+    expect(res.body.languages[0]).toMatchObject({ reason: 'DRAFT_DELETED', draftVersionId: null });
   });
 
   it('a draft deleted before its first chapter: the language fails DRAFT_DELETED, no second draft', async () => {

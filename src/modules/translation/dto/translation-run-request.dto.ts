@@ -6,14 +6,17 @@ import {
   ArrayMinSize,
   ArrayUnique,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsOptional,
   IsString,
+  IsUUID,
   Matches,
   MaxLength,
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { PaginationDto } from '../../../shared/dto/pagination.dto';
 import { MONEY_DOC, MONEY_PATTERN, notUndefined, toMoneyString } from '../../llm/dto/llm-money';
 import { ResumeLlmOperationDto } from '../../llm-worker/dto/resume-llm-operation.dto';
 import { toQueryList } from './translation-compare-request.dto';
@@ -117,4 +120,24 @@ export class ResumeTranslationRunDto extends ResumeLlmOperationDto {
   @ValidateNested()
   @Type(() => TranslationRunStageModelsDto)
   stageModels?: TranslationRunStageModelsDto;
+}
+
+/**
+ * Список запусков книги (`F05-7`, решение арбитра `F05 | F05-7`, /fix В1): блок версии берёт
+ * идущие запуски своей версии и её последний, а не первую страницу всей книги.
+ */
+export class ListTranslationRunsQueryDto extends PaginationDto {
+  @ApiPropertyOptional({ format: 'uuid', description: 'Only runs of this source version' })
+  @IsOptional()
+  @IsUUID()
+  bookVersionId?: string;
+
+  @ApiPropertyOptional({ description: 'Only runs not finished: the operation active or paused' })
+  @IsOptional()
+  // Не «да» и не «нет» - значение как есть, `@IsBoolean` отвечает 400, а не снимает фильтр молча.
+  @Transform(({ value }: { value: unknown }) =>
+    value === 'true' ? true : value === 'false' ? false : value,
+  )
+  @IsBoolean()
+  active?: boolean;
 }

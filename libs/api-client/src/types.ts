@@ -13562,6 +13562,8 @@ export interface components {
       languages: components['schemas']['TranslationRunLanguageDto'][];
       /** @description Progress and pause live here: status, pauseReason, spent and limit */
       operation: components['schemas']['LlmOperationDto'];
+      /** @description Dossier and glossary operations of this run, and the paused ones its languages wait for (blockedByOperationId): own limit and spent, cancel and resume via /admin/llm/operations/:id; the run operation itself is not here */
+      operations: components['schemas']['LlmOperationDto'][];
       sourceLanguage: components['schemas']['Language'];
       /** @description Stage models of this run over its snapshot */
       stageModels: components['schemas']['TranslationRunStageModelsDto'];
@@ -13621,16 +13623,29 @@ export interface components {
       chunksDone: number;
       /** @description Pieces of the current chapter; 0 before its split */
       chunksTotal: number;
+      /**
+       * Format: uuid
+       * @description Draft version this language writes into; empty before its creation or after its deletion. Stage assemble with a draft - chapters go into the draft
+       */
+      draftVersionId: string | null;
+      /** @description Chapters with a flag (seams, final check, not written): details in the report */
+      flaggedChapters: number;
       flaggedChunks: number;
       /** Format: uuid */
       glossaryId: string | null;
       language: components['schemas']['Language'];
-      /** @description Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_EXISTS, CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft) */
+      /** @description Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE, DOSSIER_LIMIT_TOO_LOW - the run limit left is lower than the dossier or glossary limit, amount in reasonUsd...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_EXISTS, CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft) */
       reason: string | null;
       /** @description Models that all refused by the data policy (NO_COMPLIANT_PROVIDER): pick another one in stageModels; empty otherwise */
       reasonModels: string[];
       /** @description Text of the service that refused to create the draft version (reason CREATE_REJECTED), up to 300 characters; empty otherwise */
       reasonText: string | null;
+      /**
+       * Format: decimal
+       * @description Reason DOSSIER_LIMIT_TOO_LOW: the run limit with which the dossier or glossary operation fits (spent + reserved + its limit); resume with a run limit not lower than it. Empty otherwise
+       * @example 100.00000000
+       */
+      reasonUsd: string | null;
       /** @enum {string} */
       stage:
         | 'dossier'
@@ -15268,6 +15283,10 @@ export interface operations {
         page?: number;
         /** @description Number of records per page */
         limit?: number;
+        /** @description Only runs of this source version */
+        bookVersionId?: string;
+        /** @description Only runs not finished: the operation active or paused */
+        active?: boolean;
       };
       header?: never;
       path: {

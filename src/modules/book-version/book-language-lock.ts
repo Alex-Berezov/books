@@ -16,7 +16,7 @@ export const BOOK_LANGUAGE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as 
  * Операция запуска перевода держит язык, пока она `active` или `paused` по любой причине (Р23):
  * отменённый, упавший и законченный запуск язык освобождают.
  */
-const UNFINISHED_RUN_STATUSES: readonly LlmOperationStatus[] = ['active', 'paused'];
+export const UNFINISHED_RUN_STATUSES: readonly LlmOperationStatus[] = ['active', 'paused'];
 
 /**
  * Замок пары (книга, язык) — ручное создание версии и старт запуска перевода (Р6). Берётся

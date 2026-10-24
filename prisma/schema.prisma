@@ -4459,6 +4459,9 @@ model TranslationRunLanguage {
   draftCreatedAt       DateTime?
   /// Модели, которые отказали все (`NO_COMPLIANT_PROVIDER`, Р7, В4); «продолжить» очищает.
   reasonModels         String[]
+  /// Лимит, которого не хватило досье или глоссарию до трат (`DOSSIER_LIMIT_TOO_LOW`, `F05-7`,
+  /// решение арбитра `F05 | F05-7`, /fix В2); «продолжить» очищает.
+  reasonUsd            Decimal?                     @db.Decimal(14, 8)
   /// Глава читалки, которую язык переводит; пусто до первой.
   chapterNumber        Int?
   /// Выборы модели `split` по спорным стыкам текущей главы `{ "<первый кандидат>": блок }`.

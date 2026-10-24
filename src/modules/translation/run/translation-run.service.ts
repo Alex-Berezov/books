@@ -12,6 +12,7 @@ import { RICH_HTML_MAX_LENGTH } from '../../../shared/validators/rich-html.decor
 import {
   BOOK_LANGUAGE_TX_OPTIONS,
   lockBookLanguages,
+  UNFINISHED_RUN_STATUSES,
   unfinishedRunLanguages,
 } from '../../book-version/book-language-lock';
 import { approvedTargetLanguages } from '../../book-version/intake-target-languages';
@@ -45,7 +46,11 @@ import {
   splitEstimator,
 } from '../translate/translate-estimate';
 import { runStageModels } from './run-models';
-import { CHUNK_CLOSED_STATUSES, TRANSLATION_RUN_TASK_KIND } from './translation-run.constants';
+import {
+  CHUNK_CLOSED_STATUSES,
+  RUN_OPERATIONS_MAX,
+  TRANSLATION_RUN_TASK_KIND,
+} from './translation-run.constants';
 import {
   ResumeTranslationRunDto,
   StartTranslationRunDto,
@@ -205,12 +210,18 @@ export class TranslationRunService {
     bookId: string,
     page: number,
     limit: number,
+    filter: { bookVersionId?: string; active?: boolean } = {},
   ): Promise<PaginatedResult<TranslationRunListItemDto>> {
     // Пустой список и «нет такой книги» - разные ответы, как у ручек версии.
     if (!(await this.prisma.book.findUnique({ where: { id: bookId }, select: { id: true } }))) {
       throw new NotFoundException('Book not found');
     }
-    const where = { bookVersion: { bookId } };
+    // Фильтры блока версии (`F05-7`, /fix В1): запуски версии и только незавершённые.
+    const where: Prisma.TranslationRunWhereInput = {
+      bookVersion: { bookId },
+      ...(filter.bookVersionId ? { bookVersionId: filter.bookVersionId } : {}),
+      ...(filter.active ? { operation: { status: { in: [...UNFINISHED_RUN_STATUSES] } } } : {}),
+    };
     const [rows, total] = await Promise.all([
       this.prisma.translationRun.findMany({
         where,
@@ -245,7 +256,10 @@ export class TranslationRunService {
       include: { operation: true, languages: { orderBy: { language: 'asc' } } },
     });
     if (!run) throw new NotFoundException('Translation run not found');
-    const [chapters, chunks] = await Promise.all([
+    const blockers = run.languages.flatMap((l) =>
+      l.blockedByOperationId ? [l.blockedByOperationId] : [],
+    );
+    const [chapters, chunks, own, blocking] = await Promise.all([
       // Номера глав исходника - для «глава N из M»; глав не больше предела досье.
       this.prisma.chapter.findMany({
         where: { bookVersionId: run.bookVersionId },
@@ -263,7 +277,23 @@ export class TranslationRunService {
         },
         _count: { _all: true },
       }),
+      // Досье и глоссарии запуска (решение арбитра `F05 | F05-7`, В1): от новых, предел
+      // срезает старые, а не идущую операцию.
+      this.prisma.llmOperation.findMany({
+        where: { translationRunId: run.id, NOT: { id: run.operationId } },
+        orderBy: { createdAt: 'desc' },
+        take: RUN_OPERATIONS_MAX,
+      }),
+      // Операции, которые ждут языки, - всегда: у чужого досье (сравнение) нет
+      // `translationRunId`, своё могло не влезть в предел. Строк не больше, чем языков.
+      blockers.length > 0
+        ? this.prisma.llmOperation.findMany({ where: { id: { in: blockers } } })
+        : Promise.resolve<LlmOperation[]>([]),
     ]);
+    const operations = [
+      ...own,
+      ...blocking.filter((b) => b.id !== run.operationId && !own.some((o) => o.id === b.id)),
+    ].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
     const numbers = chapters.map((c) => c.number);
     return {
       id: run.id,
@@ -272,6 +302,7 @@ export class TranslationRunService {
       dossierId: run.dossierId,
       stageModels: (run.stageModels ?? {}) as TranslationRunStageModelsDto,
       operation: toOperationDto(run.operation),
+      operations: operations.map(toOperationDto),
       createdAt: run.createdAt.toISOString(),
       languages: run.languages.map((l) =>
         languageDto(
@@ -666,14 +697,17 @@ function languageDto(
     reasonText: l.reasonText,
     // Колонка в базе допускает NULL (строки до записи причины): наружу - пустой список.
     reasonModels: l.reasonModels ?? [],
+    reasonUsd: l.reasonUsd ? moneyUsd(l.reasonUsd) : null,
     chapterNumber: l.chapterNumber,
     chapterPosition: position >= 0 ? position + 1 : null,
     chaptersTotal: chapters.length,
     chunksDone: done,
     chunksTotal: total,
     flaggedChunks: l.flaggedChunks,
+    flaggedChapters: l.flaggedChapters,
     glossaryId: l.glossaryId,
     blockedByOperationId: l.blockedByOperationId,
+    draftVersionId: l.bookVersionId,
   };
 }
 

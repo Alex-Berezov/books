@@ -1,5 +1,5 @@
 import { HttpException } from '@nestjs/common';
-import { BookDossier, BookGlossary, Language } from '@prisma/client';
+import { BookDossier, BookGlossary, Language, Prisma } from '@prisma/client';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { Demand, DossierService } from './dossier.service';
 
@@ -42,6 +42,8 @@ export async function demandContext(
     translationRunId?: string | null;
     /** Готовое устаревшее досье - строить новым поколением, а не отдавать как есть. */
     rebuildStale?: boolean;
+    /** Лимита не хватило на досье или глоссарий - до паузы операции ждущего (`F05-7`). */
+    onLimit?: (tx: Prisma.TransactionClient, minLimitUsd: Prisma.Decimal) => Promise<void>;
   },
 ): Promise<ContextDemand> {
   const options = {
@@ -49,6 +51,7 @@ export async function demandContext(
       operationId: input.operationId,
       waitingFor: input.waitingFor,
       translationRunId: input.translationRunId ?? null,
+      onLimit: input.onLimit,
     },
   };
   try {

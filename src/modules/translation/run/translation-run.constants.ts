@@ -12,6 +12,16 @@ export const RUN_CHAPTER_CHUNKS_MAX = 500;
 /** Языков у запуска - не больше языков книги (`@@unique([runId, language])`): предел выборок по языкам. */
 export const RUN_LANGUAGES_MAX = 5;
 
+/** Операций досье и глоссария в ходе запуска (`F05-7`): досье, до пяти глоссариев и пере-заведённые. */
+export const RUN_OPERATIONS_MAX = 50;
+
+/**
+ * Пауза запуска до трат: лимиту запуска не хватило на операцию досье или глоссария (Р20) - у языка
+ * свой код и лимит запуска, с которым она поместится (`reasonUsd`), а не «лимит достигнут»
+ * (решение арбитра `F05 | F05-7`, /fix В2).
+ */
+export const DOSSIER_LIMIT_TOO_LOW = 'DOSSIER_LIMIT_TOO_LOW';
+
 /** Незавершённые статусы языка запуска: шаги идут, язык держит своё место (`F05-4a`). */
 export const RUN_LANGUAGE_UNFINISHED = ['pending', 'running'] as const;
 

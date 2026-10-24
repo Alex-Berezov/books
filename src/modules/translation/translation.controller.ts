@@ -42,6 +42,7 @@ import {
   TranslationCompareListItemDto,
 } from './dto/translation-compare-response.dto';
 import {
+  ListTranslationRunsQueryDto,
   ResumeTranslationRunDto,
   StartTranslationRunDto,
   TranslationRunEstimateQueryDto,
@@ -290,9 +291,12 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Book not found' })
   listRuns(
     @Param('bookId') bookId: string,
-    @Query() query: PaginationDto,
+    @Query() query: ListTranslationRunsQueryDto,
   ): Promise<PaginatedResult<TranslationRunListItemDto>> {
-    return this.runs.listForBook(bookId, query.page ?? 1, query.limit ?? 10);
+    return this.runs.listForBook(bookId, query.page ?? 1, query.limit ?? 10, {
+      bookVersionId: query.bookVersionId,
+      active: query.active === true,
+    });
   }
 
   @Get('translation-runs/:id/report')

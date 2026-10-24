@@ -36,7 +36,7 @@ export class TranslationRunLanguageDto {
     type: String,
     nullable: true,
     description:
-      'Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_EXISTS, CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft)',
+      'Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE, DOSSIER_LIMIT_TOO_LOW - the run limit left is lower than the dossier or glossary limit, amount in reasonUsd...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_EXISTS, CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft)',
   })
   reason!: string | null;
 
@@ -54,6 +54,14 @@ export class TranslationRunLanguageDto {
       'Models that all refused by the data policy (NO_COMPLIANT_PROVIDER): pick another one in stageModels; empty otherwise',
   })
   reasonModels!: string[];
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    nullable: true,
+    description:
+      'Reason DOSSIER_LIMIT_TOO_LOW: the run limit with which the dossier or glossary operation fits (spent + reserved + its limit); resume with a run limit not lower than it. Empty otherwise',
+  })
+  reasonUsd!: string | null;
 
   @ApiProperty({ type: Number, nullable: true, description: 'Reader chapter being translated' })
   chapterNumber!: number | null;
@@ -73,6 +81,12 @@ export class TranslationRunLanguageDto {
   @ApiProperty({ type: Number })
   flaggedChunks!: number;
 
+  @ApiProperty({
+    type: Number,
+    description: 'Chapters with a flag (seams, final check, not written): details in the report',
+  })
+  flaggedChapters!: number;
+
   @ApiProperty({ type: String, format: 'uuid', nullable: true })
   glossaryId!: string | null;
 
@@ -83,6 +97,15 @@ export class TranslationRunLanguageDto {
     description: 'Paused dossier or glossary operation this language waits for (DOSSIER_PAUSED)',
   })
   blockedByOperationId!: string | null;
+
+  @ApiProperty({
+    type: String,
+    format: 'uuid',
+    nullable: true,
+    description:
+      'Draft version this language writes into; empty before its creation or after its deletion. Stage assemble with a draft - chapters go into the draft',
+  })
+  draftVersionId!: string | null;
 }
 
 export class TranslationRunDto {
@@ -109,6 +132,13 @@ export class TranslationRunDto {
     description: 'Progress and pause live here: status, pauseReason, spent and limit',
   })
   operation!: LlmOperationDto;
+
+  @ApiProperty({
+    type: () => [LlmOperationDto],
+    description:
+      'Dossier and glossary operations of this run, and the paused ones its languages wait for (blockedByOperationId): own limit and spent, cancel and resume via /admin/llm/operations/:id; the run operation itself is not here',
+  })
+  operations!: LlmOperationDto[];
 
   @ApiProperty({ type: () => [TranslationRunLanguageDto] })
   languages!: TranslationRunLanguageDto[];

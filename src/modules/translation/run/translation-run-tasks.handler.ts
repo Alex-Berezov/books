@@ -142,6 +142,7 @@ import {
   RUN_LANGUAGES_MAX,
   RUN_TX_OPTIONS,
   FINAL_CODE_TX_OPTIONS,
+  DOSSIER_LIMIT_TOO_LOW,
 } from './translation-run.constants';
 import { StaleClosure, staleClosure } from './stale-closure';
 
@@ -158,8 +159,10 @@ const CLEAR_STOP = {
   reason: null,
   reasonText: null,
   reasonModels: [],
+  reasonUsd: null,
   blockedByOperationId: null,
 };
+
 /**
  * Статус, до которого ветка шага дойти не может: закрытый кусок отбирает `CLOSED`. Параметр -
  * ровно закрытые статусы: новый статус схемы без своей ветки в `chapterStep` - ошибка сборки.
@@ -379,6 +382,14 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
       // До привязки не переведено ничего: устаревшее готовое досье строится новым поколением,
       // а не останавливает запуск на `DOSSIER_STALE` без выхода.
       rebuildStale: !run.dossierId,
+      // Причина и лимит - той же транзакцией, что пауза операции: опрос не увидит одно без
+      // другого, а «продолжить» не может прийти раньше и быть затёрто этой записью.
+      onLimit: async (tx, minLimitUsd) => {
+        await tx.translationRunLanguage.update({
+          where: { id: lang.id },
+          data: { ...CLEAR_STOP, reason: DOSSIER_LIMIT_TOO_LOW, reasonUsd: minLimitUsd },
+        });
+      },
     });
     switch (context.kind) {
       case 'ready': {
@@ -427,10 +438,13 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
       case 'stopped':
         // Операция запуска уже на паузе (её поставил `DossierService`): причина и операция
         // досье - у языка, для «продолжить досье» (`F05-7`).
-        await this.prisma.translationRunLanguage.update({
-          where: { id: lang.id },
-          data: { reason: context.reason, blockedByOperationId: context.blockedBy },
-        });
+        // `LIMIT_REACHED` до трат язык уже записал сам (`onLimit`): не затирать код и лимит.
+        if (context.reason !== 'LIMIT_REACHED' || context.blockedBy !== null) {
+          await this.prisma.translationRunLanguage.update({
+            where: { id: lang.id },
+            data: { reason: context.reason, blockedByOperationId: context.blockedBy },
+          });
+        }
         return { kind: 'continue' };
       // Строку меняли одновременно - «повторить позже», а не отказ.
       case 'retry':
