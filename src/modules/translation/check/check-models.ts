@@ -9,19 +9,21 @@ import { independentModels } from './semantic-check';
  * старт и «продолжить» (решения арбитра `F05 | F05-5`): модели - те же, что позовёт вызов
  * (`stageCallModels`: запасная без цены выпадает), иначе проверка видела бы модель, которой
  * у вызова нет. Нет ни одной - 409 `CHECK_MODEL_SAME_FAMILY`: такая настройка выключила бы сверку
- * на всю книгу при оплаченном переводе. Отбор на каждом вызове шага (`checkSemantic`) остаётся.
+ * на всю книгу при оплаченном переводе. Отбор на каждом вызове шага (`callIndependent`) остаётся.
+ * Итоговая проверка (`final_check`, `F05-6`) - тем же правилом своим этапом (решение арбитра).
  */
 export async function independentCheckModels(
   llm: LlmService,
   translateModel: string,
   models: StageModels = {},
+  stage: string = CHECK_SEMANTIC_STAGE,
 ): Promise<string[]> {
-  const checks = await llm.stageCallModels(CHECK_SEMANTIC_STAGE, models);
+  const checks = await llm.stageCallModels(stage, models);
   const independent = independentModels(checks, translateModel);
   if (independent.length === 0) {
     throw llmTaskConflict(
       'CHECK_MODEL_SAME_FAMILY',
-      `Meaning check models ${checks.join(', ')} are of the same family as the translate model "${translateModel}"`,
+      `Check models of ${stage} ${checks.join(', ')} are of the same family as the translate model "${translateModel}"`,
     );
   }
   return independent;

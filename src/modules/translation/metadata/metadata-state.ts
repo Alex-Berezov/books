@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { MetadataResult } from './metadata-check';
 
@@ -18,6 +19,28 @@ export interface MetadataAttempt {
 export interface MetadataState {
   attempts: MetadataAttempt[];
   result: MetadataResult | null;
+  /**
+   * Снимок названия, описания и автора исходника на момент принятия ответа (`metadataSourceHash`):
+   * под замком создания черновика он сверяется с текущими полями (решения арбитра `F05 | F05-6`,
+   * 6c В1 и /fix круг 2, В3).
+   * Нет - ответ принят до `6c`, сверка полей пропускается.
+   */
+  sourceHash?: string;
+}
+
+/**
+ * Отпечаток полей версии исходника, которые переводит этап сверх глав (название, описание,
+ * автор): отпечаток исходника
+ * (`sourceFingerprint`) считает только главы, а правка названия или описания уехала бы в черновик.
+ */
+export function metadataSourceHash(fields: {
+  title: string;
+  description: string;
+  author: string;
+}): string {
+  return createHash('sha256')
+    .update(JSON.stringify([fields.title, fields.description, fields.author]))
+    .digest('hex');
 }
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>

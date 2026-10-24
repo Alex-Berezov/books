@@ -2418,6 +2418,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/translation-runs/{id}/report': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Translation run report: by language - pieces, retries, piece and chapter flags with reasons, final check, chapters not in the draft, the draft version; cost by stage and model over every operation of the run */
+    get: operations['TranslationController_getRunReport'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/translation-runs/{id}/resume': {
     parameters: {
       query?: never;
@@ -13316,6 +13333,11 @@ export interface components {
       items: components['schemas']['TopViewsItemDto'][];
       totalVersions: number;
     };
+    /**
+     * @description written - in the draft; flagged - not in the draft; assembled/pending - not yet
+     * @enum {string}
+     */
+    TranslationChapterStatus: 'pending' | 'assembled' | 'written' | 'flagged';
     TranslationCompareDto: {
       /** Format: uuid */
       bookVersionId: string;
@@ -13413,6 +13435,118 @@ export interface components {
      * @enum {string}
      */
     TranslationCompareModelStatus: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+    TranslationReportChapterDto: {
+      /**
+       * Format: uuid
+       * @description Chapter of the draft
+       */
+      chapterId: string | null;
+      findings: components['schemas']['TranslationReportFindingDto'][];
+      /** @description First flag of the chapter */
+      flagReason: string | null;
+      /** @description Length of the assembled chapter */
+      length: number | null;
+      lengthLimit: number | null;
+      number: number;
+      seamIndex: number | null;
+      /** @description written - in the draft; flagged - not in the draft; assembled/pending - not yet */
+      status: components['schemas']['TranslationChapterStatus'];
+    };
+    TranslationReportChunkFlagDto: {
+      count: number;
+      /** @description Flag reason code of the pieces */
+      reason: string;
+    };
+    TranslationReportChunksDto: {
+      flagged: components['schemas']['TranslationReportChunkFlagDto'][];
+      /** @description Translate attempts beyond the first, summed over the pieces */
+      retries: number;
+      /** @description Pieces of all chapters of this language */
+      total: number;
+    };
+    TranslationReportCostDto: {
+      calls: number;
+      /**
+       * Format: decimal
+       * @example 100.00000000
+       */
+      costUsd: string;
+      /** @description Model that answered; null - calls without an answer of a model */
+      model: string | null;
+      stage: string;
+    };
+    TranslationReportFinalCheckDto: {
+      /** @description Chapters read by the checking model */
+      chaptersChecked: number;
+      /** @description Source chapters with text that are not among the chapters of the translation */
+      missingChapters: number[];
+      /**
+       * @description pending - an unfinished language has not reached it yet; skipped - not done: its metadata stage started before the final check existed, or the language ended earlier
+       * @enum {string}
+       */
+      status: 'pending' | 'skipped' | 'in_progress' | 'done';
+    };
+    TranslationReportFindingDto: {
+      /** @description Source block number the remark is about */
+      block?: number;
+      chunkIndex?: number;
+      /** @description Flag reason of the piece (CHUNK_FLAGGED) */
+      chunkReason?: string;
+      /** @description Finding code: assembly (CHAPTER_TOO_LONG, CHUNK_UNTRANSLATED, CHUNKS_MISMATCH, CHUNK_FLAGGED, SEAM_REPEAT), joints (SEAM_*), final check (FINAL_*, GLOSSARY_SOURCE_FORM, CHAPTER_EMPTY), draft (SOURCE_CHANGED, TITLE_MISSING). SEAM_CHECKED and FINAL_CHECKED are paid answers without a problem */
+      code: string;
+      /** @description The source spelling found in the translation */
+      form?: string;
+      /** @description Text around the found spelling */
+      fragment?: string;
+      /** @description Remark of the checking model */
+      issue?: string;
+      /** @description Glossary entry key (GLOSSARY_SOURCE_FORM) */
+      key?: string;
+      /** @description Model of the paid answer */
+      model?: string;
+      /** @description Problems at the joint named by the model */
+      problems?: string[];
+      /** @description Joint number from 1: between pieces seam-1 and seam */
+      seam?: number;
+      /** @description The spelling the glossary gives */
+      target?: string;
+    };
+    TranslationReportInFlightDto: {
+      /** @description Calls without a final cost yet */
+      calls: number;
+      /**
+       * Format: decimal
+       * @description Reserved for them, not in the total
+       * @example 100.00000000
+       */
+      reservedUsd: string;
+    };
+    TranslationReportLanguageDto: {
+      /** @description The author name is the glossary spelling; null - the metadata stage gave no answer */
+      authorFromGlossary: boolean | null;
+      chapters: components['schemas']['TranslationReportChapterDto'][];
+      chunks: components['schemas']['TranslationReportChunksDto'];
+      /** Format: date-time */
+      draftCreatedAt: string | null;
+      /**
+       * Format: uuid
+       * @description The draft version of this language; null - not created or deleted
+       */
+      draftVersionId: string | null;
+      finalCheck: components['schemas']['TranslationReportFinalCheckDto'];
+      flaggedChapters: number;
+      flaggedChunks: number;
+      language: components['schemas']['Language'];
+      /** @description Chapters not in the draft (CHAPTER_TOO_LONG, CHUNK_UNTRANSLATED, SOURCE_CHANGED…) */
+      notWrittenChapters: number[];
+      reason: string | null;
+      reasonText: string | null;
+      status: components['schemas']['TranslationRunLanguageStatus'];
+      /** @description Chapter numbers already taken in the draft by another chapter: skipped, not written by the run */
+      takenChapters: number[];
+      /** @description Chapters the run wrote to the draft; 0 with a draft - a draft without chapters of the run */
+      writtenChapters: number;
+    };
     TranslationRunDto: {
       /**
        * Format: uuid
@@ -13512,10 +13646,16 @@ export interface components {
     TranslationRunLanguageEstimateDto: {
       /**
        * Format: decimal
-       * @description Upper estimate: one meaning check per piece by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)
+       * @description Upper estimate: one meaning check per piece and one per joint of pieces by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)
        * @example 100.00000000
        */
       checkUsd: string;
+      /**
+       * Format: decimal
+       * @description Upper estimate: one final check call per chapter by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)
+       * @example 100.00000000
+       */
+      finalCheckUsd: string;
       /** @description The glossary of this language is built first under its own operation; null - ready or building */
       glossary: components['schemas']['CompareContextLineDto'] | null;
       language: components['schemas']['Language'];
@@ -13533,7 +13673,7 @@ export interface components {
       splitUsd: string;
       /**
        * Format: decimal
-       * @description Split, translate, check and metadata of this language
+       * @description Split, translate, check, final check and metadata of this language
        * @example 100.00000000
        */
       totalUsd: string;
@@ -13563,12 +13703,33 @@ export interface components {
       /** @description Stage models of this run over its snapshot */
       stageModels: components['schemas']['TranslationRunStageModelsDto'];
     };
+    TranslationRunReportDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      /** @description Cost by stage and model over every operation of the run (the run, its dossier and glossaries) */
+      costs: components['schemas']['TranslationReportCostDto'][];
+      /** Format: uuid */
+      id: string;
+      inFlight: components['schemas']['TranslationReportInFlightDto'];
+      languages: components['schemas']['TranslationReportLanguageDto'][];
+      /**
+       * Format: decimal
+       * @description Spent by every operation of the run; equals the sum of costs to the cent
+       * @example 100.00000000
+       */
+      totalUsd: string;
+    };
     TranslationRunStageModelsDto: {
       /**
        * @description Meaning check model: of another family than the translate model of the run
        * @example deepseek/deepseek-v4-pro
        */
       check_semantic?: string;
+      /**
+       * @description Final check model: of another family than the translate model of the run
+       * @example deepseek/deepseek-v4-pro
+       */
+      final_check?: string;
       /**
        * @description Model of the version fields (title, description, author, chapter titles)
        * @example anthropic/claude-sonnet-5.5
@@ -19129,6 +19290,34 @@ export interface operations {
       };
     };
   };
+  TranslationController_getRunReport: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationRunReportDto'];
+        };
+      };
+      /** @description Translation run not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   TranslationController_resumeRun: {
     parameters: {
       query?: never;
@@ -19166,7 +19355,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY: after the change no meaning check model of another family than the translate model; TRANSLATION_RUN_MODELS_CHANGED: a concurrent resume changed the stage models, retry */
+      /** @description LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY: after the change no meaning check or final check model of another family than the translate model; TRANSLATION_RUN_MODELS_CHANGED: a concurrent resume changed the stage models, retry */
       409: {
         headers: {
           [name: string]: unknown;
@@ -19961,7 +20150,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model */
+      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, final_check, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check or final check model of another family than the translate model */
       409: {
         headers: {
           [name: string]: unknown;

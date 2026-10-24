@@ -25697,6 +25697,16 @@
         ],
         "type": "object"
       },
+      "TranslationChapterStatus": {
+        "description": "written - in the draft; flagged - not in the draft; assembled/pending - not yet",
+        "enum": [
+          "pending",
+          "assembled",
+          "written",
+          "flagged"
+        ],
+        "type": "string"
+      },
       "TranslationCompareDto": {
         "properties": {
           "bookVersionId": {
@@ -25976,6 +25986,333 @@
         ],
         "type": "string"
       },
+      "TranslationReportChapterDto": {
+        "properties": {
+          "chapterId": {
+            "description": "Chapter of the draft",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationReportFindingDto"
+            },
+            "type": "array"
+          },
+          "flagReason": {
+            "description": "First flag of the chapter",
+            "nullable": true,
+            "type": "string"
+          },
+          "length": {
+            "description": "Length of the assembled chapter",
+            "nullable": true,
+            "type": "number"
+          },
+          "lengthLimit": {
+            "nullable": true,
+            "type": "number"
+          },
+          "number": {
+            "type": "number"
+          },
+          "seamIndex": {
+            "nullable": true,
+            "type": "number"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationChapterStatus"
+              }
+            ],
+            "description": "written - in the draft; flagged - not in the draft; assembled/pending - not yet"
+          }
+        },
+        "required": [
+          "number",
+          "status",
+          "flagReason",
+          "seamIndex",
+          "length",
+          "lengthLimit",
+          "chapterId",
+          "findings"
+        ],
+        "type": "object"
+      },
+      "TranslationReportChunkFlagDto": {
+        "properties": {
+          "count": {
+            "type": "number"
+          },
+          "reason": {
+            "description": "Flag reason code of the pieces",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "count"
+        ],
+        "type": "object"
+      },
+      "TranslationReportChunksDto": {
+        "properties": {
+          "flagged": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationReportChunkFlagDto"
+            },
+            "type": "array"
+          },
+          "retries": {
+            "description": "Translate attempts beyond the first, summed over the pieces",
+            "type": "number"
+          },
+          "total": {
+            "description": "Pieces of all chapters of this language",
+            "type": "number"
+          }
+        },
+        "required": [
+          "total",
+          "retries",
+          "flagged"
+        ],
+        "type": "object"
+      },
+      "TranslationReportCostDto": {
+        "properties": {
+          "calls": {
+            "type": "number"
+          },
+          "costUsd": {
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "model": {
+            "description": "Model that answered; null - calls without an answer of a model",
+            "nullable": true,
+            "type": "string"
+          },
+          "stage": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "model",
+          "calls",
+          "costUsd"
+        ],
+        "type": "object"
+      },
+      "TranslationReportFinalCheckDto": {
+        "properties": {
+          "chaptersChecked": {
+            "description": "Chapters read by the checking model",
+            "type": "number"
+          },
+          "missingChapters": {
+            "description": "Source chapters with text that are not among the chapters of the translation",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "pending - an unfinished language has not reached it yet; skipped - not done: its metadata stage started before the final check existed, or the language ended earlier",
+            "enum": [
+              "pending",
+              "skipped",
+              "in_progress",
+              "done"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "missingChapters",
+          "chaptersChecked"
+        ],
+        "type": "object"
+      },
+      "TranslationReportFindingDto": {
+        "properties": {
+          "block": {
+            "description": "Source block number the remark is about",
+            "type": "number"
+          },
+          "chunkIndex": {
+            "type": "number"
+          },
+          "chunkReason": {
+            "description": "Flag reason of the piece (CHUNK_FLAGGED)",
+            "type": "string"
+          },
+          "code": {
+            "description": "Finding code: assembly (CHAPTER_TOO_LONG, CHUNK_UNTRANSLATED, CHUNKS_MISMATCH, CHUNK_FLAGGED, SEAM_REPEAT), joints (SEAM_*), final check (FINAL_*, GLOSSARY_SOURCE_FORM, CHAPTER_EMPTY), draft (SOURCE_CHANGED, TITLE_MISSING). SEAM_CHECKED and FINAL_CHECKED are paid answers without a problem",
+            "type": "string"
+          },
+          "form": {
+            "description": "The source spelling found in the translation",
+            "type": "string"
+          },
+          "fragment": {
+            "description": "Text around the found spelling",
+            "type": "string"
+          },
+          "issue": {
+            "description": "Remark of the checking model",
+            "type": "string"
+          },
+          "key": {
+            "description": "Glossary entry key (GLOSSARY_SOURCE_FORM)",
+            "type": "string"
+          },
+          "model": {
+            "description": "Model of the paid answer",
+            "type": "string"
+          },
+          "problems": {
+            "description": "Problems at the joint named by the model",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "seam": {
+            "description": "Joint number from 1: between pieces seam-1 and seam",
+            "type": "number"
+          },
+          "target": {
+            "description": "The spelling the glossary gives",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "type": "object"
+      },
+      "TranslationReportInFlightDto": {
+        "properties": {
+          "calls": {
+            "description": "Calls without a final cost yet",
+            "type": "number"
+          },
+          "reservedUsd": {
+            "description": "Reserved for them, not in the total",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "calls",
+          "reservedUsd"
+        ],
+        "type": "object"
+      },
+      "TranslationReportLanguageDto": {
+        "properties": {
+          "authorFromGlossary": {
+            "description": "The author name is the glossary spelling; null - the metadata stage gave no answer",
+            "nullable": true,
+            "type": "boolean"
+          },
+          "chapters": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationReportChapterDto"
+            },
+            "type": "array"
+          },
+          "chunks": {
+            "$ref": "#/components/schemas/TranslationReportChunksDto"
+          },
+          "draftCreatedAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "draftVersionId": {
+            "description": "The draft version of this language; null - not created or deleted",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "finalCheck": {
+            "$ref": "#/components/schemas/TranslationReportFinalCheckDto"
+          },
+          "flaggedChapters": {
+            "type": "number"
+          },
+          "flaggedChunks": {
+            "type": "number"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "notWrittenChapters": {
+            "description": "Chapters not in the draft (CHAPTER_TOO_LONG, CHUNK_UNTRANSLATED, SOURCE_CHANGED…)",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "reason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "reasonText": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunLanguageStatus"
+              }
+            ]
+          },
+          "takenChapters": {
+            "description": "Chapter numbers already taken in the draft by another chapter: skipped, not written by the run",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "writtenChapters": {
+            "description": "Chapters the run wrote to the draft; 0 with a draft - a draft without chapters of the run",
+            "type": "number"
+          }
+        },
+        "required": [
+          "language",
+          "status",
+          "reason",
+          "reasonText",
+          "draftVersionId",
+          "draftCreatedAt",
+          "flaggedChunks",
+          "flaggedChapters",
+          "authorFromGlossary",
+          "chunks",
+          "chapters",
+          "notWrittenChapters",
+          "writtenChapters",
+          "takenChapters",
+          "finalCheck"
+        ],
+        "type": "object"
+      },
       "TranslationRunDto": {
         "properties": {
           "bookVersionId": {
@@ -26223,7 +26560,13 @@
       "TranslationRunLanguageEstimateDto": {
         "properties": {
           "checkUsd": {
-            "description": "Upper estimate: one meaning check per piece by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)",
+            "description": "Upper estimate: one meaning check per piece and one per joint of pieces by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "finalCheckUsd": {
+            "description": "Upper estimate: one final check call per chapter by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -26258,7 +26601,7 @@
             "type": "string"
           },
           "totalUsd": {
-            "description": "Split, translate, check and metadata of this language",
+            "description": "Split, translate, check, final check and metadata of this language",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -26276,6 +26619,7 @@
           "splitUsd",
           "translateUsd",
           "checkUsd",
+          "finalCheckUsd",
           "metadataUsd",
           "totalUsd"
         ],
@@ -26347,10 +26691,58 @@
         ],
         "type": "object"
       },
+      "TranslationRunReportDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "costs": {
+            "description": "Cost by stage and model over every operation of the run (the run, its dossier and glossaries)",
+            "items": {
+              "$ref": "#/components/schemas/TranslationReportCostDto"
+            },
+            "type": "array"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "inFlight": {
+            "$ref": "#/components/schemas/TranslationReportInFlightDto"
+          },
+          "languages": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationReportLanguageDto"
+            },
+            "type": "array"
+          },
+          "totalUsd": {
+            "description": "Spent by every operation of the run; equals the sum of costs to the cent",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "bookVersionId",
+          "languages",
+          "costs",
+          "inFlight",
+          "totalUsd"
+        ],
+        "type": "object"
+      },
       "TranslationRunStageModelsDto": {
         "properties": {
           "check_semantic": {
             "description": "Meaning check model: of another family than the translate model of the run",
+            "example": "deepseek/deepseek-v4-pro",
+            "type": "string"
+          },
+          "final_check": {
+            "description": "Final check model: of another family than the translate model of the run",
             "example": "deepseek/deepseek-v4-pro",
             "type": "string"
           },
@@ -37922,6 +38314,46 @@
         ]
       }
     },
+    "/admin/translation-runs/{id}/report": {
+      "get": {
+        "operationId": "TranslationController_getRunReport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationRunReportDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Translation run not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Translation run report: by language - pieces, retries, piece and chapter flags with reasons, final check, chapters not in the draft, the draft version; cost by stage and model over every operation of the run",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/translation-runs/{id}/resume": {
       "post": {
         "operationId": "TranslationController_resumeRun",
@@ -37964,7 +38396,7 @@
             "description": "Translation run not found"
           },
           "409": {
-            "description": "LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY: after the change no meaning check model of another family than the translate model; TRANSLATION_RUN_MODELS_CHANGED: a concurrent resume changed the stage models, retry"
+            "description": "LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY: after the change no meaning check or final check model of another family than the translate model; TRANSLATION_RUN_MODELS_CHANGED: a concurrent resume changed the stage models, retry"
           },
           "503": {
             "description": "LLM_DISABLED: no OpenRouter key"
@@ -39396,7 +39828,7 @@
             "description": "Book version not found"
           },
           "409": {
-            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model"
+            "description": "The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, final_check, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check or final check model of another family than the translate model"
           },
           "503": {
             "description": "LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE"

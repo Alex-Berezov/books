@@ -41,13 +41,19 @@ export interface SemanticAnswer {
 export const familyOf = (model: string): string => model.split('/')[0];
 
 /**
- * Модели проверки другого семейства, чем модель, фактически переведшая кусок, в порядке этапа.
- * Пусто - проверить независимо некому (флаг `NOT_INDEPENDENT`). Список - то, что позовёт вызов:
- * переход на запасную по 429 идёт только по нему, и все в нём другого семейства.
+ * Модели проверки другого семейства, чем модели, фактически переведшие проверяемый текст (кусок -
+ * одна, стык и глава - модели всех своих кусков), в порядке этапа. Пусто - проверить независимо
+ * некому (флаг `NOT_INDEPENDENT`). Список - то, что позовёт вызов: переход на запасную по 429 идёт
+ * только по нему, и все в нём другого семейства.
  */
-export function independentModels(candidates: readonly string[], translatedBy: string): string[] {
-  const family = familyOf(translatedBy);
-  return candidates.filter((m) => familyOf(m) !== family);
+export function independentModels(
+  candidates: readonly string[],
+  translatedBy: string | readonly string[],
+): string[] {
+  const families = new Set(
+    (typeof translatedBy === 'string' ? [translatedBy] : translatedBy).map(familyOf),
+  );
+  return candidates.filter((m) => !families.has(familyOf(m)));
 }
 
 /** Генератор по сиду (mulberry32): тот же сид - те же предложения, повтор шага воспроизводим. */

@@ -27,9 +27,11 @@ import { DossierService } from '../dossier/dossier.service';
 import { assertKnownModels, stageEstimatorFor } from '../llm-model-checks';
 import { TranslationTargetReason } from '../translation-source';
 import { TranslationSourceService } from '../translation-source.service';
-import { chapterCheckUsd, checkEstimator } from '../check/check-estimate';
+import { chapterCheckUsd, chapterSeamUsd, checkEstimator } from '../check/check-estimate';
 import { CHECK_NO_COMPLIANT_PROVIDER, CHECK_SEMANTIC_STAGE } from '../check/check.constants';
 import { independentCheckModels } from '../check/check-models';
+import { FINAL_CHECK_STAGE } from '../final-check/final-check.constants';
+import { chapterFinalCheckUsd, finalCheckEstimator } from '../final-check/final-check-estimate';
 import { METADATA_STAGE } from '../metadata/metadata.constants';
 import { metadataSourceFields, metadataUsd } from '../metadata/metadata-step';
 import { TRANSLATE_STAGE } from '../translate/translate.constants';
@@ -358,7 +360,8 @@ export class TranslationRunService {
   /**
    * Оценка сверху по всей книге (`F05-4b`, шаг 2): куски каждой главы по границам кода, на язык -
    * `split` по спорным стыкам, `translate` и `check_semantic` по кускам (сверка смысла - решение
-   * арбитра `F05 | F05-5`), `metadata` - вызов на язык (`F05-6`); досье одно на книгу, глоссарий на язык -
+   * арбитра `F05 | F05-5`) и стыкам глав (`F05-6`, 6c), `final_check` - вызов на главу, `metadata` -
+   * вызов на язык (`F05-6`); досье одно на книгу, глоссарий на язык -
    * строками, если их строить (устаревшее досье тоже: запуск строит его заново). Выход вызова -
    * `maxTokens` этапа, без коэффициента длины языка (решения арбитра `F05 | F05-4b`).
    */
@@ -402,7 +405,10 @@ export class TranslationRunService {
     const split = await splitEstimator(this.llm);
     const translateModel =
       query.translateModel ?? (await this.llm.getStageSetting(TRANSLATE_STAGE)).model;
-    const check = await checkEstimator(this.llm, translateModel);
+    const [check, finalCheck] = await Promise.all([
+      checkEstimator(this.llm, translateModel),
+      finalCheckEstimator(this.llm, translateModel),
+    ]);
     const metadata = await stageEstimatorFor(this.llm, METADATA_STAGE);
     // Нарезка - на каждый язык своя (выборы стыков хранит язык запуска).
     const splitUsd = plans.reduce((sum, p) => sum.add(chapterSplitUsd(split, p)), zero());
@@ -437,13 +443,26 @@ export class TranslationRunService {
           ),
         zero(),
       );
+      const pair = { sourceLanguage, targetLanguage: language };
       const checkUsd = plans.reduce(
         (sum, plan) =>
+          sum
+            .add(
+              chapterCheckUsd(check, plan, {
+                ...pair,
+                translateMaxTokens: call.maxTokens,
+              }),
+            )
+            .add(chapterSeamUsd(check, plan, pair)),
+        zero(),
+      );
+      const finalCheckUsd = plans.reduce(
+        (sum, plan) =>
           sum.add(
-            chapterCheckUsd(check, plan, {
-              sourceLanguage,
-              targetLanguage: language,
-              translateMaxTokens: call.maxTokens,
+            chapterFinalCheckUsd(finalCheck, plan, pair, {
+              glossary: ready.glossaryData,
+              dossier: ready.dossierData,
+              extra,
             }),
           ),
         zero(),
@@ -453,7 +472,11 @@ export class TranslationRunService {
         { ...fields, targetLanguage: language },
         { glossary: ready.glossaryData, dossier: ready.dossierData, extra },
       );
-      const totalUsd = splitUsd.add(translateUsd).add(checkUsd).add(languageMetadataUsd);
+      const totalUsd = splitUsd
+        .add(translateUsd)
+        .add(checkUsd)
+        .add(finalCheckUsd)
+        .add(languageMetadataUsd);
       translationsUsd = translationsUsd.add(totalUsd);
       if (glossary) {
         minLimitUsd = minLimitUsd.add(glossary.suggestedLimitUsd);
@@ -465,6 +488,7 @@ export class TranslationRunService {
         splitUsd: moneyUsd(splitUsd),
         translateUsd: moneyUsd(translateUsd),
         checkUsd: moneyUsd(checkUsd),
+        finalCheckUsd: moneyUsd(finalCheckUsd),
         metadataUsd: moneyUsd(languageMetadataUsd),
         totalUsd: moneyUsd(totalUsd),
       });
@@ -558,7 +582,7 @@ export class TranslationRunService {
   }
 
   /**
-   * Модели после «продолжить» - сверка смысла другого семейства, чем модель перевода запуска
+   * Модели после «продолжить» - сверка смысла и итоговая проверка другого семейства, чем модель перевода запуска
    * (`independentCheckModels` - одно правило с оценкой и стартом): при смене любой из двух моделей.
    * Возвращает модели запуска, по которым сверено: транзакция «продолжить» сравнивает их под замком.
    */
@@ -575,11 +599,14 @@ export class TranslationRunService {
     const translate =
       runStageModels(snapshot, stageModels, TRANSLATE_STAGE).model ??
       (await this.llm.getStageSetting(TRANSLATE_STAGE)).model;
-    await independentCheckModels(
-      this.llm,
-      translate,
-      runStageModels(snapshot, stageModels, CHECK_SEMANTIC_STAGE),
-    );
+    for (const stage of [CHECK_SEMANTIC_STAGE, FINAL_CHECK_STAGE]) {
+      await independentCheckModels(
+        this.llm,
+        translate,
+        runStageModels(snapshot, stageModels, stage),
+        stage,
+      );
+    }
     return (run.stageModels ?? {}) as Record<string, string>;
   }
 }
@@ -588,7 +615,7 @@ export class TranslationRunService {
 function sameModels(fresh: Prisma.JsonValue, read: Record<string, string> | null): boolean {
   if (read === null) return true;
   const now = (fresh ?? {}) as Record<string, string>;
-  return [TRANSLATE_STAGE, CHECK_SEMANTIC_STAGE, METADATA_STAGE].every(
+  return [TRANSLATE_STAGE, CHECK_SEMANTIC_STAGE, METADATA_STAGE, FINAL_CHECK_STAGE].every(
     (stage) => now[stage] === read[stage],
   );
 }

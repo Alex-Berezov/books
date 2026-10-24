@@ -11,6 +11,7 @@ import {
 import { ChapterService } from '../../chapter/chapter.service';
 import { lockOperationRow } from '../../llm-worker/llm-task.service';
 import { assembleTranslatedChapter } from '../assemble/chapter-assembly';
+import { addChapterFindings } from '../assemble/chapter-findings';
 import { chapterAssemblyInput } from '../assemble/chapter-input';
 import { splitChapter } from '../chapter-blocks';
 import { MetadataResult } from '../metadata/metadata-check';
@@ -19,7 +20,8 @@ import {
   RUN_LANGUAGE_UNFINISHED,
   RUN_TX_OPTIONS,
 } from '../run/translation-run.constants';
-import { chapterFingerprint } from '../source-fingerprint';
+import { metadataSourceHash } from '../metadata/metadata-state';
+import { chapterFingerprint, sourceFingerprint } from '../source-fingerprint';
 import { ChapterFlagCode, DRAFT_FLAG_REASONS } from './draft.constants';
 
 /** Запуск уже стоит на `DOSSIER_STALE`: версия откатывается, шаг уходит в `pauseStale`. */
@@ -28,17 +30,26 @@ class DraftAfterStaleError extends Error {}
 /** Черновик языка уже создавался и удалён: второй не создаётся, версия откатывается. */
 class DraftDeletedError extends Error {}
 
+/** Название или описание исходника правили после ответа `metadata`: версия откатывается. */
+class MetadataFieldsChangedError extends Error {}
+
 /** Язык запуска в объёме, нужном черновику. */
 export interface DraftLanguage {
   id: string;
   language: Language;
   bookVersionId: string | null;
-  run: { id: string; bookVersionId: string; operationId: string };
+  run: {
+    id: string;
+    bookVersionId: string;
+    operationId: string;
+    dossierFingerprint: string | null;
+  };
 }
 
 export type DraftCreation =
   | { kind: 'created'; versionId: string }
   | { kind: 'deleted' }
+  | { kind: 'fields_changed' }
   | { kind: 'rejected'; code: CreateFromRunRejectionCode; text: string | null };
 
 /**
@@ -62,9 +73,15 @@ export class TranslationDraftService {
    * карточки; права, категории, теги и статус `draft` ставит сам метод. `null` у исходника
    * (`authorId`, годы, оригинал) остаётся `null`. Ссылка языка на версию пишется той же
    * транзакцией, что версия: повтор шага после падения её видит и идёт к главам. `null` -
-   * исходной версии нет или запуск уже встал на устаревшем исходнике: шаг уходит в паузу.
+   * исходной версии нет, запуск уже встал на устаревшем исходнике или исходник правили после
+   * последней сверки шага: шаг уходит в паузу. `fields_changed` - правили название или описание
+   * после ответа `metadata` (`sourceHash`): этап идёт заново (решение арбитра `F05 | F05-6`, 6c В1).
    */
-  async createDraft(lang: DraftLanguage, metadata: MetadataResult): Promise<DraftCreation | null> {
+  async createDraft(
+    lang: DraftLanguage,
+    metadata: MetadataResult,
+    sourceHash?: string,
+  ): Promise<DraftCreation | null> {
     const source = await this.prisma.bookVersion.findUnique({
       where: { id: lang.run.bookVersionId },
       select: {
@@ -111,6 +128,26 @@ export class TranslationDraftService {
           if (operation?.status === 'paused' && operation.pauseReason === 'DOSSIER_STALE') {
             throw new DraftAfterStaleError();
           }
+          // Исходник правили между последней сверкой шага и замком (Н6): главы - отпечатком
+          // исходника (иначе пауза `DOSSIER_STALE`), название, описание и автор - снимком ответа
+          // `metadata` (отпечаток их не видит). Читается через `tx` после замка операции; строка
+          // версии исходника не запирается: правка, закоммиченная после этого чтения, - то же, что
+          // правка после создания черновика, её сверка не ловит (решение арбитра `F05 | F05-6`,
+          // 23.10.2026, «сверка только до create»).
+          if (
+            (await sourceFingerprint(tx, lang.run.bookVersionId)) !== lang.run.dossierFingerprint
+          ) {
+            throw new DraftAfterStaleError();
+          }
+          if (sourceHash !== undefined) {
+            const fields = await tx.bookVersion.findUnique({
+              where: { id: lang.run.bookVersionId },
+              select: { title: true, description: true, author: true },
+            });
+            if (!fields || metadataSourceHash(fields) !== sourceHash) {
+              throw new MetadataFieldsChangedError();
+            }
+          }
           // Ссылка - только языку в работе и ещё без черновика: шаг мог прочитать язык до того,
           // как прошлый исполнитель создал черновик, а редактор его удалил.
           const linked = await tx.translationRunLanguage.updateMany({
@@ -139,6 +176,7 @@ export class TranslationDraftService {
     } catch (error) {
       if (error instanceof DraftAfterStaleError) return null;
       if (error instanceof DraftDeletedError) return { kind: 'deleted' };
+      if (error instanceof MetadataFieldsChangedError) return { kind: 'fields_changed' };
       if (!(error instanceof CreateFromRunRejectedError)) throw error;
       // Текст нужен только отказу предусловия; он из исключения самого сервиса (решение арбитра).
       return {
@@ -193,22 +231,32 @@ export class TranslationDraftService {
       );
       return;
     }
-    const title = titles.find((t) => t.number === number)?.title ?? '';
+    const translatedTitle = titles.find((t) => t.number === number)?.title;
+    // Названия нет в ответе `metadata` (глава появилась после него): пусто и находка, глава
+    // пишется; у исходника без названия находки нет (решение арбитра `F05 | F05-6`, 6c В2).
+    const titleMissing = translatedTitle === undefined && input?.title.trim() !== '';
+    const title = translatedTitle ?? '';
     await renewLease();
     try {
       await this.chapters.createLocked(
         lang.bookVersionId,
         { number, title, content: assembly.content },
         async (tx, created) => {
-          await tx.translationChapter.updateMany({
-            where: { id: row.id, status: 'assembled' },
-            data: {
-              status: 'written',
-              chapterId: created.id,
-              // Та же функция, которой Р9 сверит текст главы с записанным (`F05-7v`).
-              writtenHash: chapterFingerprint(assembly.content),
+          await addChapterFindings(
+            tx,
+            lang.id,
+            row,
+            titleMissing ? [{ code: DRAFT_FLAG_REASONS.TITLE_MISSING }] : [],
+            {
+              data: {
+                status: 'written',
+                chapterId: created.id,
+                // Та же функция, которой Р9 сверит текст главы с записанным (`F05-7v`).
+                writtenHash: chapterFingerprint(assembly.content),
+              },
+              where: { status: 'assembled' },
             },
-          });
+          );
         },
       );
     } catch (error) {

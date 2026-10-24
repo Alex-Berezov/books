@@ -58,6 +58,8 @@ import {
   TranslationSourceDto,
 } from './dto/translation-response.dto';
 import { DossierService } from './dossier/dossier.service';
+import { TranslationRunReportDto } from './dto/translation-run-report-response.dto';
+import { TranslationRunReportService } from './run/translation-run-report.service';
 import { TranslationRunService } from './run/translation-run.service';
 import { TranslationSourceService } from './translation-source.service';
 
@@ -84,6 +86,7 @@ export class TranslationController {
     private readonly dossiers: DossierService,
     private readonly compares: TranslationCompareService,
     private readonly runs: TranslationRunService,
+    private readonly reports: TranslationRunReportService,
   ) {}
 
   @Get('versions/:id/translation-source')
@@ -267,7 +270,7 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Book version not found' })
   @ApiConflictResponse({
     description:
-      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check model of another family than the translate model',
+      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, final_check, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check or final check model of another family than the translate model',
   })
   @ApiServiceUnavailableResponse({
     description: 'LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE',
@@ -290,6 +293,18 @@ export class TranslationController {
     @Query() query: PaginationDto,
   ): Promise<PaginatedResult<TranslationRunListItemDto>> {
     return this.runs.listForBook(bookId, query.page ?? 1, query.limit ?? 10);
+  }
+
+  @Get('translation-runs/:id/report')
+  @ApiOperation({
+    summary:
+      'Translation run report: by language - pieces, retries, piece and chapter flags with reasons, final check, chapters not in the draft, the draft version; cost by stage and model over every operation of the run',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: TranslationRunReportDto })
+  @ApiNotFoundResponse({ description: 'Translation run not found' })
+  getRunReport(@Param('id') id: string): Promise<TranslationRunReportDto> {
+    return this.reports.report(id);
   }
 
   @Get('translation-runs/:id')
@@ -333,7 +348,7 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Translation run not found' })
   @ApiConflictResponse({
     description:
-      'LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY: after the change no meaning check model of another family than the translate model; TRANSLATION_RUN_MODELS_CHANGED: a concurrent resume changed the stage models, retry',
+      'LLM_OPERATION_NOT_RESUMABLE: not paused, or paused on DOSSIER_STALE (cancel and start anew); RETRY_IN_PROGRESS; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY: after the change no meaning check or final check model of another family than the translate model; TRANSLATION_RUN_MODELS_CHANGED: a concurrent resume changed the stage models, retry',
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
   resumeRun(

@@ -17,7 +17,12 @@ import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.serv
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
 import { assembleTranslatedChapter } from '../assemble/chapter-assembly';
-import { chapterAssemblyInput } from '../assemble/chapter-input';
+import {
+  ASSEMBLY_CHUNK_SELECT,
+  chapterAssemblyInput,
+  chunksOfChapter,
+  InputChunk,
+} from '../assemble/chapter-input';
 import { ChapterLayout, splitChapter } from '../chapter-blocks';
 import { ChapterChunk, nextSplit } from '../chunking/chapter-chunks';
 import { demandContext } from '../dossier/context-demand';
@@ -65,7 +70,48 @@ import {
   pieceTexts,
 } from '../check/mechanical-check';
 import { semanticFailed, semanticFailures } from '../check/semantic-check';
+import { callIndependent, translatorsOf } from '../check/independent-call';
 import { checkSemantic, semanticInputOf } from '../check/semantic-step';
+import {
+  addChapterFindings,
+  CHAPTER_FINDINGS_SELECT,
+  ChapterFindingsRow,
+} from '../assemble/chapter-findings';
+import {
+  nextSeam,
+  SEAM_FINDING_CODES,
+  SEAM_SHAPE,
+  seamAnswerOf,
+  seamFailed,
+  SeamFinding,
+  seamFindingsOf,
+  seamInputOf,
+  seamProblems,
+  seamRequest,
+} from '../check/seam-check';
+import { DOSSIER_MAX_CHAPTERS } from '../dossier/dossier.constants';
+import { FinalChapter, FinalFinding, finalCodeCheck } from '../final-check/final-check-code';
+import {
+  FINAL_CHECK_NO_COMPLIANT_PROVIDER,
+  FINAL_CHECK_STAGE,
+  FINAL_FINDING_CODES,
+} from '../final-check/final-check.constants';
+import {
+  anchoredIssues,
+  FINAL_CHECK_SHAPE,
+  finalCheckAnswerOf,
+  finalCheckFailed,
+  finalCheckInputOf,
+  finalCheckRequest,
+} from '../final-check/final-check.prompts';
+import {
+  finalCheckBypassed,
+  FinalCheckChapter,
+  FinalCheckState,
+  finalCheckStateJson,
+  finalCheckStateOf,
+} from '../final-check/final-check-state';
+import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
 import { checkMetadata, MetadataResult } from '../metadata/metadata-check';
 import {
   METADATA_ATTEMPTS_MAX,
@@ -78,6 +124,7 @@ import {
   MetadataState,
   metadataFailures,
   metadataRemarks,
+  metadataSourceHash,
   metadataStateJson,
   metadataStateOf,
 } from '../metadata/metadata-state';
@@ -94,6 +141,7 @@ import {
   RUN_LANGUAGE_UNFINISHED,
   RUN_LANGUAGES_MAX,
   RUN_TX_OPTIONS,
+  FINAL_CODE_TX_OPTIONS,
 } from './translation-run.constants';
 import { StaleClosure, staleClosure } from './stale-closure';
 
@@ -119,6 +167,16 @@ const CLEAR_STOP = {
 function assertClosed(status: 'done' | 'flagged'): void {
   void status;
 }
+
+/**
+ * Причина языка на паузе `NO_COMPLIANT_PROVIDER` по этапу: выход - ключ этого этапа в `stageModels`,
+ * а не `translate`. Стыки моделью - этап `check_semantic` (решение арбитра `F05 | F05-6`, 6c В4).
+ */
+const NO_PROVIDER_REASONS: Readonly<Record<string, string>> = {
+  [CHECK_SEMANTIC_STAGE]: CHECK_NO_COMPLIANT_PROVIDER,
+  [METADATA_STAGE]: METADATA_NO_COMPLIANT_PROVIDER,
+  [FINAL_CHECK_STAGE]: FINAL_CHECK_NO_COMPLIANT_PROVIDER,
+};
 
 /** Под замком строки операции черновик уже есть: тупик Р13 не ставится, смена причины откатывается. */
 class StaleDecisionChangedError extends Error {}
@@ -893,6 +951,12 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
    * пока переводилась последняя (карточка, «От `F05-4a`»), а её куски уже не сверяются.
    */
   private async assemblyStep(lang: LanguageRow, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
+    // Глава со стыками на проверке моделью (6c) доделывается раньше следующей.
+    const pending = await this.prisma.translationChapter.findFirst({
+      where: { runLanguageId: lang.id, status: 'pending' },
+      select: CHAPTER_FINDINGS_SELECT,
+    });
+    if (pending) return this.seamStep(lang, pending, ctx);
     // Главы собираются строго по порядку номеров: следующая - после последней собранной.
     const last = await this.prisma.translationChapter.aggregate({
       where: { runLanguageId: lang.id },
@@ -907,7 +971,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
       orderBy: { number: 'asc' },
       select: { number: true },
     });
-    if (!next) return this.metadataStep(lang, ctx);
+    if (!next) return this.finalCheckStep(lang, ctx);
     if (after === null && (await this.isStale(lang.run))) return this.pauseStale(lang);
     return this.assembleChapterStep(lang, next.number, ctx);
   }
@@ -915,6 +979,8 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
   /**
    * Сборка одной главы (`F05-6`, шаги 2-3, стыки кодом). Строка главы и счётчик флагов - одной
    * транзакцией; повтор шага строку не дублирует (`skipDuplicates`) и флаг второй раз не считает.
+   * Собранная глава из нескольких кусков - `pending`: её стыки читает модель (`seamStep`), затем
+   * `assembled` (решение арбитра `F05 | F05-6`, 6c В4).
    */
   private async assembleChapterStep(
     lang: LanguageRow,
@@ -925,6 +991,8 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     // Главу удалили, добавили или правили после нарезки - перевод собран не с того исходника.
     if (!input) return this.pauseStale(lang);
     const result = assembleTranslatedChapter(splitChapter(input.content), input.chunks);
+    const status =
+      result.status === 'assembled' && input.chunks.length > 1 ? 'pending' : result.status;
     await ctx.renewLease();
     await this.prisma.$transaction(async (tx) => {
       const created = await tx.translationChapter.createMany({
@@ -932,7 +1000,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
           {
             runLanguageId: lang.id,
             chapterNumber: number,
-            status: result.status,
+            status,
             flagReason: result.flagReason,
             length: result.length,
             lengthLimit: RICH_HTML_MAX_LENGTH.body,
@@ -947,6 +1015,329 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
           where: { id: lang.id },
           data: { flaggedChapters: { increment: 1 } },
         });
+      }
+    }, RUN_TX_OPTIONS);
+    return { kind: 'continue' };
+  }
+
+  /**
+   * Стык главы моделью (`F05-6`, шаг 3; решение арбитра `F05 | F05-6`, 6c В4): стык за шаг, этап
+   * `check_semantic` со своим промптом, модели - другого семейства, чем модели обоих кусков стыка.
+   * Оплаченный ответ - находкой главы до решения: повтор шага его не оплачивает. Все стыки
+   * разобраны - глава `assembled`, провал - флаг с номером стыка, не повтор.
+   */
+  private async seamStep(
+    lang: LanguageRow,
+    row: ChapterFindingsRow,
+    ctx: LlmTaskContext,
+  ): Promise<LlmTaskStepResult> {
+    const { run } = lang;
+    const input = await chapterAssemblyInput(
+      this.prisma,
+      run.bookVersionId,
+      lang.id,
+      row.chapterNumber,
+    );
+    if (!input) return this.pauseStale(lang);
+    const seam = nextSeam(input.chunks.length, row.findings);
+    if (seam === null) {
+      // Находки уже на главе: дописывать нечего, флаг и номер стыка - из них.
+      await this.prisma.$transaction(async (tx) => {
+        await addChapterFindings(tx, lang.id, row, [], {
+          data: { status: 'assembled' },
+          where: { status: 'pending' },
+          flagFrom: seamFindingsOf(row.findings),
+        });
+      }, RUN_TX_OPTIONS);
+      return { kind: 'continue' };
+    }
+    const [previous, next] = [input.chunks[seam - 1], input.chunks[seam]];
+    const models = stageModelsOf(run, CHECK_SEMANTIC_STAGE);
+    const outcome = await callIndependent(
+      this.llm,
+      run.operationId,
+      CHECK_SEMANTIC_STAGE,
+      seamRequest(
+        seamInputOf(splitChapter(input.content), previous, next, {
+          sourceLanguage: run.sourceLanguage,
+          targetLanguage: lang.language,
+        }),
+      ),
+      SEAM_SHAPE,
+      seamAnswerOf,
+      translatorsOf([previous, next]),
+      models,
+      ctx,
+    );
+    let finding: SeamFinding;
+    switch (outcome.kind) {
+      case 'no_provider':
+        return this.pauseNoProvider(lang, CHECK_SEMANTIC_STAGE, outcome.models);
+      case 'not_independent':
+        finding = { code: SEAM_FINDING_CODES.SEAM_NOT_INDEPENDENT, seam };
+        break;
+      case 'unavailable':
+        finding = { code: SEAM_FINDING_CODES.SEAM_CHECK_UNAVAILABLE, seam };
+        break;
+      case 'too_long':
+        finding = { code: SEAM_FINDING_CODES.SEAM_CHECK_INPUT_TOO_LONG, seam };
+        break;
+      case 'invalid':
+        finding = {
+          code: SEAM_FINDING_CODES.SEAM_CHECK_INVALID_RESPONSE,
+          seam,
+          costUsd: outcome.costUsd.toString(),
+        };
+        break;
+      case 'answered':
+        finding = seamFailed(outcome.answer)
+          ? {
+              code: SEAM_FINDING_CODES.SEAM_BROKEN,
+              seam,
+              model: outcome.model,
+              costUsd: outcome.costUsd.toString(),
+              problems: seamProblems(outcome.answer),
+            }
+          : {
+              code: SEAM_FINDING_CODES.SEAM_CHECKED,
+              seam,
+              model: outcome.model,
+              costUsd: outcome.costUsd.toString(),
+            };
+        break;
+    }
+    // Аренда продлена - шаг ещё наш: ответ стыка пишется, пока глава на проверке стыков; флаг -
+    // при закрытии главы, когда разобраны все стыки.
+    await ctx.renewLease();
+    await this.prisma.$transaction(async (tx) => {
+      await addChapterFindings(tx, lang.id, row, [finding], {
+        where: { status: 'pending' },
+        flagFrom: [],
+      });
+    }, RUN_TX_OPTIONS);
+    return { kind: 'continue' };
+  }
+
+  /**
+   * Итоговая проверка (`F05-6`, шаг 5) - после сборки последней главы, до `metadata` (решение
+   * арбитра `F05 | F05-6`, 6c В6): кодом один раз, затем моделью глава за шаг. Язык, у которого
+   * этап `metadata` начат до неё (запуск шёл во время выката), её не догоняет: в отчёте -
+   * «не проводилась».
+   */
+  private async finalCheckStep(lang: LanguageRow, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
+    const state = finalCheckStateOf(lang.finalCheck);
+    if (state?.done || finalCheckBypassed(state, lang.metadata))
+      return this.metadataStep(lang, ctx);
+    if (!state?.code) return this.finalCodeStep(lang, ctx);
+    return this.finalModelStep(lang, state, ctx);
+  }
+
+  /** Собранная глава языка без разметки - вход проверок кодом и моделью; `null` - исходник правили. */
+  private async assembledChapter(
+    lang: LanguageRow,
+    number: number,
+  ): Promise<{ layout: ChapterLayout; content: string; chunks: InputChunk[] } | null> {
+    const input = await chapterAssemblyInput(this.prisma, lang.run.bookVersionId, lang.id, number);
+    if (!input) return null;
+    const layout = splitChapter(input.content);
+    const assembly = assembleTranslatedChapter(layout, input.chunks);
+    if (assembly.status !== 'assembled') return null;
+    return { layout, content: assembly.content, chunks: input.chunks };
+  }
+
+  /**
+   * Итоговая проверка кодом: главы исходника ↔ главы перевода, пустые, прогон глоссария по всему
+   * тексту (6c В7). Три выборки на весь язык - главы исходника, строки глав и куски, - без запроса
+   * на главу. Находки глав и состояние языка - одной транзакцией под замком строки языка: шаг,
+   * повторённый после потерянной аренды, видит записанный `code` и находки второй раз не пишет.
+   */
+  private async finalCodeStep(lang: LanguageRow, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
+    const [sources, rows, chunks] = await Promise.all([
+      this.prisma.chapter.findMany({
+        where: { bookVersionId: lang.run.bookVersionId },
+        select: { number: true, content: true },
+        orderBy: { number: 'asc' },
+        take: DOSSIER_MAX_CHAPTERS,
+      }),
+      this.prisma.translationChapter.findMany({
+        where: { runLanguageId: lang.id },
+        select: { ...CHAPTER_FINDINGS_SELECT, status: true },
+        orderBy: { chapterNumber: 'asc' },
+        take: DOSSIER_MAX_CHAPTERS,
+      }),
+      this.prisma.translationChunk.findMany({
+        where: { runLanguageId: lang.id },
+        select: { ...ASSEMBLY_CHUNK_SELECT, chapterNumber: true },
+        orderBy: [{ chapterNumber: 'asc' }, { chunkIndex: 'asc' }],
+        take: DOSSIER_MAX_CHAPTERS * RUN_CHAPTER_CHUNKS_MAX,
+      }),
+    ]);
+    const byChapter = new Map<number, typeof chunks>();
+    for (const c of chunks) {
+      const own = byChapter.get(c.chapterNumber);
+      if (own) own.push(c);
+      else byChapter.set(c.chapterNumber, [c]);
+    }
+    const rowOf = new Map(rows.map((r) => [r.chapterNumber, r]));
+    const chapters: FinalChapter[] = [];
+    for (const source of sources) {
+      const layout = splitChapter(source.content);
+      const sourceBlocks = layout.blocks.filter((b) => b.translatable).length;
+      const row = rowOf.get(source.number);
+      let text: string | null = null;
+      if (row?.status === 'assembled' && sourceBlocks > 0) {
+        const own = byChapter.get(source.number) ?? [];
+        // Главу правили после сборки - перевод проверялся бы не с того исходника.
+        if (!chunksOfChapter(source.content, own)) return this.pauseStale(lang);
+        const assembly = assembleTranslatedChapter(layout, own);
+        if (assembly.status !== 'assembled') return this.pauseStale(lang);
+        text = richHtmlText(assembly.content);
+      }
+      chapters.push({
+        number: source.number,
+        text,
+        sourceBlocks,
+        inTranslation: row !== undefined,
+      });
+    }
+    const { glossary } = await this.contextOf(lang);
+    const entries = nameEntriesOf(((glossary ?? {}) as { entries?: unknown[] }).entries ?? []);
+    const result = finalCodeCheck(chapters, entries, lang.language);
+    const state: FinalCheckState = { code: { missing: result.missing }, chapters: [], done: false };
+    await ctx.renewLease();
+    await this.prisma.$transaction(async (tx) => {
+      const current = await tx.$queryRaw<Array<{ finalCheck: Prisma.JsonValue }>>`
+        SELECT "finalCheck" FROM "TranslationRunLanguage" WHERE "id" = ${lang.id} FOR UPDATE`;
+      if (finalCheckStateOf(current[0]?.finalCheck)?.code) return;
+      const written = await tx.translationRunLanguage.updateMany({
+        where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
+        data: { finalCheck: finalCheckStateJson(state) },
+      });
+      if (written.count === 0) return;
+      for (const [number, found] of result.findings) {
+        const row = rowOf.get(number);
+        if (row) await addChapterFindings(tx, lang.id, row, found);
+      }
+    }, FINAL_CODE_TX_OPTIONS);
+    return { kind: 'continue' };
+  }
+
+  /**
+   * Итоговая проверка моделью: начало и конец главы, модель другого семейства, чем модели кусков
+   * главы (6c В5). Глава за шаг; ответ - в состояние языка вместе с находкой главы. Отказ всех
+   * моделей по политике - пауза этапа; нет независимой, этап недоступен - находка, язык дальше.
+   */
+  private async finalModelStep(
+    lang: LanguageRow,
+    state: FinalCheckState,
+    ctx: LlmTaskContext,
+  ): Promise<LlmTaskStepResult> {
+    const done = new Set(state.chapters.map((c) => c.number));
+    const row = await this.prisma.translationChapter.findFirst({
+      where: {
+        runLanguageId: lang.id,
+        status: 'assembled',
+        ...(done.size > 0 ? { chapterNumber: { notIn: [...done] } } : {}),
+      },
+      select: CHAPTER_FINDINGS_SELECT,
+      orderBy: { chapterNumber: 'asc' },
+    });
+    if (!row) {
+      await this.prisma.translationRunLanguage.updateMany({
+        where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
+        data: { finalCheck: finalCheckStateJson({ ...state, done: true }) },
+      });
+      return { kind: 'continue' };
+    }
+    const assembled = await this.assembledChapter(lang, row.chapterNumber);
+    if (!assembled) return this.pauseStale(lang);
+    const { run } = lang;
+    const translated = assembled.chunks.flatMap(
+      (c) => (Array.isArray(c.blocks) ? c.blocks : []) as unknown as TranslatedBlock[],
+    );
+    const input = finalCheckInputOf({
+      layout: assembled.layout,
+      translated,
+      sourceLanguage: run.sourceLanguage,
+      targetLanguage: lang.language,
+      chapterNumber: row.chapterNumber,
+      context: await this.contextOf(lang),
+    });
+    let record: FinalCheckChapter;
+    let found: FinalFinding[] = [];
+    // Глава без текста в исходнике: читать модели нечего (пустая глава перевода, решение арбитра).
+    if (input.blocks.length === 0) {
+      record = { number: row.chapterNumber, outcome: 'pass', model: '', costUsd: '0' };
+    } else if (!translated.some((b) => input.blocks.includes(b.n) && b.text.trim() !== '')) {
+      // Перевод пуст - флаг `CHAPTER_EMPTY` уже поставила проверка кодом; за чтение пустоты не платим.
+      record = { number: row.chapterNumber, outcome: 'empty', model: '', costUsd: '0' };
+    } else {
+      const outcome = await callIndependent(
+        this.llm,
+        run.operationId,
+        FINAL_CHECK_STAGE,
+        finalCheckRequest(input),
+        FINAL_CHECK_SHAPE,
+        finalCheckAnswerOf,
+        translatorsOf(assembled.chunks),
+        stageModelsOf(run, FINAL_CHECK_STAGE),
+        ctx,
+      );
+      const base = { number: row.chapterNumber, model: '', costUsd: '0' };
+      switch (outcome.kind) {
+        case 'no_provider':
+          return this.pauseNoProvider(lang, FINAL_CHECK_STAGE, outcome.models);
+        case 'not_independent':
+          record = { ...base, outcome: 'not_independent' };
+          found = [{ code: FINAL_FINDING_CODES.FINAL_NOT_INDEPENDENT }];
+          break;
+        case 'unavailable':
+          record = { ...base, outcome: 'unavailable' };
+          found = [{ code: FINAL_FINDING_CODES.FINAL_CHECK_UNAVAILABLE }];
+          break;
+        case 'too_long':
+          record = { ...base, outcome: 'too_long' };
+          found = [{ code: FINAL_FINDING_CODES.FINAL_CHECK_INPUT_TOO_LONG }];
+          break;
+        case 'invalid':
+          record = { ...base, outcome: 'invalid', costUsd: outcome.costUsd.toString() };
+          found = [
+            {
+              code: FINAL_FINDING_CODES.FINAL_CHECK_INVALID_RESPONSE,
+              costUsd: record.costUsd,
+            },
+          ];
+          break;
+        case 'answered': {
+          const paid = { model: outcome.model, costUsd: outcome.costUsd.toString() };
+          const failed = finalCheckFailed(outcome.answer, input.blocks);
+          record = { ...base, ...paid, outcome: failed ? 'fail' : 'pass' };
+          const issues = anchoredIssues(outcome.answer, input.blocks);
+          found = !failed
+            ? [{ code: FINAL_FINDING_CODES.FINAL_CHECKED, ...paid }]
+            : issues.length > 0
+              ? issues.map((i) => ({
+                  code: FINAL_FINDING_CODES.FINAL_CHECK_FAIL,
+                  block: i.block,
+                  issue: i.problem,
+                  ...paid,
+                }))
+              : [{ code: FINAL_FINDING_CODES.FINAL_CHECK_FAIL, ...paid }];
+          break;
+        }
+      }
+    }
+    // Аренда продлена - шаг ещё наш: ответ пишется без условия на прочитанное состояние, иначе
+    // запись мимо теряла бы оплаченный ответ (как у `metadata`).
+    await ctx.renewLease();
+    const next: FinalCheckState = { ...state, chapters: [...state.chapters, record] };
+    await this.prisma.$transaction(async (tx) => {
+      const written = await tx.translationRunLanguage.updateMany({
+        where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
+        data: { finalCheck: finalCheckStateJson(next) },
+      });
+      if (written.count > 0 && found.length > 0) {
+        await addChapterFindings(tx, lang.id, row, found, { where: { status: 'assembled' } });
       }
     }, RUN_TX_OPTIONS);
     return { kind: 'continue' };
@@ -1003,7 +1394,11 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
           outcome: checked.ok ? 'pass' : 'fail',
           remarks: checked.ok ? [] : checked.remarks,
         });
-        if (checked.ok) state.result = checked.result;
+        if (checked.ok) {
+          state.result = checked.result;
+          // Снимок полей, с которых переведено: черновик сверит его под замком (6c В1).
+          state.sourceHash = metadataSourceHash(fields);
+        }
         break;
       }
     }
@@ -1036,9 +1431,11 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
         return this.failLanguage(lang, NO_CHAPTERS_WRITTEN);
       }
       await ctx.renewLease();
-      const created = await this.drafts.createDraft(lang, metadata);
+      const state = metadataStateOf(lang.metadata);
+      const created = await this.drafts.createDraft(lang, metadata, state?.sourceHash);
       if (!created) return this.pauseStale(lang);
       if (created.kind === 'created') return { kind: 'continue' };
+      if (created.kind === 'fields_changed') return this.redoMetadata(lang);
       if (created.kind === 'deleted') return this.failLanguage(lang, DRAFT_DELETED);
       // Повтор шага после потерянной аренды: версию создал прошлый исполнитель - она своя.
       if (created.code === CREATE_FROM_RUN_REJECTIONS.VERSION_EXISTS) {
@@ -1060,6 +1457,24 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     );
     // Черновик удалили посреди записи главы - тот же исход, что и между шагами.
     if (written === 'draft_deleted') return this.failLanguage(lang, DRAFT_DELETED);
+    return { kind: 'continue' };
+  }
+
+  /**
+   * Название или описание исходника правили после принятия ответа `metadata` (решение арбитра
+   * `F05 | F05-6`, 6c В1): ответ снимается, попытки остаются (принятая в лимит не входит), этап
+   * идёт заново с новым входом. Черновик не создан - его транзакция откатилась.
+   */
+  private async redoMetadata(lang: LanguageRow): Promise<LlmTaskStepResult> {
+    const state = metadataStateOf(lang.metadata);
+    if (state) {
+      await this.prisma.translationRunLanguage.updateMany({
+        where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] }, bookVersionId: null },
+        data: {
+          metadata: metadataStateJson({ attempts: state.attempts, result: null }),
+        },
+      });
+    }
     return { kind: 'continue' };
   }
 
@@ -1113,12 +1528,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     // Причина языка называет этап: из паузы сверки смысла выходят ключом `check_semantic`
     // в `stageModels`, а не `translate`.
     return this.stopRun(lang, 'NO_COMPLIANT_PROVIDER', {
-      reason:
-        stage === CHECK_SEMANTIC_STAGE
-          ? CHECK_NO_COMPLIANT_PROVIDER
-          : stage === METADATA_STAGE
-            ? METADATA_NO_COMPLIANT_PROVIDER
-            : 'LLM_NO_COMPLIANT_PROVIDER',
+      reason: NO_PROVIDER_REASONS[stage] ?? 'LLM_NO_COMPLIANT_PROVIDER',
       reasonModels: tried,
     });
   }

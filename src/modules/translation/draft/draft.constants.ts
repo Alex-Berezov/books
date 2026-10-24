@@ -1,4 +1,6 @@
 import { AssemblyFlagReason } from '../assemble/chapter-assembly';
+import { SeamFindingCode } from '../check/seam-check';
+import { FinalFindingCode } from '../final-check/final-check.constants';
 
 /**
  * Причины флага главы черновика (`F05-6`, 6b) - сверх причин сборки (`ASSEMBLY_FLAG_REASONS`):
@@ -7,12 +9,18 @@ import { AssemblyFlagReason } from '../assemble/chapter-assembly';
 export const DRAFT_FLAG_REASONS = {
   /** Глава исходника изменилась после перевода: перед записью отпечаток не сошёлся с кусками. */
   SOURCE_CHANGED: 'SOURCE_CHANGED',
+  /** Названия главы нет в ответе `metadata`: записано пустым (решение арбитра `F05 | F05-6`, 6c В2). */
+  TITLE_MISSING: 'TITLE_MISSING',
 } as const;
 
 export type DraftFlagReason = (typeof DRAFT_FLAG_REASONS)[keyof typeof DRAFT_FLAG_REASONS];
 
-/** Код флага и находки главы перевода: сборки (6a) или записи черновика (6b). */
-export type ChapterFlagCode = AssemblyFlagReason | DraftFlagReason;
+/** Код флага и находки главы перевода: сборки (6a), записи черновика (6b), стыков и итоговой проверки (6c). */
+export type ChapterFlagCode =
+  | AssemblyFlagReason
+  | DraftFlagReason
+  | SeamFindingCode
+  | FinalFindingCode;
 
 /**
  * Черновик языка удалили посреди записи глав (решение арбитра `F05 | F05-6`): язык `failed`,

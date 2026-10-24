@@ -168,9 +168,16 @@ export class TranslationRunLanguageEstimateDto {
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'Upper estimate: one meaning check per piece by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)',
+      'Upper estimate: one meaning check per piece and one per joint of pieces by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)',
   })
   checkUsd!: string;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Upper estimate: one final check call per chapter by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)',
+  })
+  finalCheckUsd!: string;
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
@@ -181,7 +188,7 @@ export class TranslationRunLanguageEstimateDto {
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
-    description: 'Split, translate, check and metadata of this language',
+    description: 'Split, translate, check, final check and metadata of this language',
   })
   totalUsd!: string;
 }

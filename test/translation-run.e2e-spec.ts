@@ -23,6 +23,8 @@ import {
   DossierService,
 } from '../src/modules/translation/dossier/dossier.service';
 import { runTaskInput } from '../src/modules/translation/run/translation-run.service';
+import { TranslationRunReportDto } from '../src/modules/translation/dto/translation-run-report-response.dto';
+import { sourceFingerprint } from '../src/modules/translation/source-fingerprint';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { grantStaffRoles } from './helpers/staff-roles';
@@ -164,6 +166,13 @@ describe('Translation run (e2e)', () => {
   /** Язык цели запуска для Jev: проверяющий в тесте отвечает языком текста «перевода». */
   let jevTargetOf: (body: ChatBody) => string;
 
+  /**
+   * Перевод держит имя глоссария («Anna» → «Ana»): чистый перевод итоговая проверка не флагует
+   * (`F05-6c`). `keepNames` - перевод оставил исходное написание: потерянное имя для сверки
+   * смысла и второе написание для итоговой проверки.
+   */
+  let keepNames = false;
+
   /** Блоки куска из запроса: `[n] текст` построчно после заголовка. */
   const blocksOf = (body: ChatBody) => {
     const user = body.messages[1]?.content ?? '';
@@ -172,7 +181,10 @@ describe('Translation run (e2e)', () => {
       .split('\n')
       .map((line) => /^\[(\d+)\] (.*)$/s.exec(line))
       .filter((m): m is RegExpExecArray => m !== null)
-      .map((m) => ({ n: Number(m[1]), text: `${targetOf(body).toUpperCase()} ${m[2]}` }));
+      .map((m) => ({
+        n: Number(m[1]),
+        text: `${targetOf(body).toUpperCase()} ${keepNames ? m[2] : m[2].replace(/\bAnna\b/g, 'Ana')}`,
+      }));
   };
 
   /**
@@ -210,6 +222,8 @@ describe('Translation run (e2e)', () => {
     if (name === 'check_semantic') {
       return { verdict: 'pass', samples: [], omissions: [], nameFlags: [], remarks: [] };
     }
+    if (name === 'check_seam') return { verdict: 'pass', problems: [] };
+    if (name === 'final_check') return { verdict: 'pass', issues: [] };
     if (name === 'check_language_jev') return { language: jevTargetOf(body) };
     if (name === 'split') {
       const first = /^\[(\d+)\]/m.exec(body.messages[1]?.content ?? '');
@@ -367,6 +381,7 @@ describe('Translation run (e2e)', () => {
     process.env.OPENROUTER_API_KEY = FAKE_KEY;
     calls.length = 0;
     answer = defaultAnswer;
+    keepNames = false;
     jevTargetOf = () => 'es';
     dossier = DOSSIER;
     refuse = () => null;
@@ -412,6 +427,7 @@ describe('Translation run (e2e)', () => {
     const id = '00000000-0000-0000-0000-000000000000';
     const routes: Array<['get' | 'post', string]> = [
       ['get', `/admin/translation-runs/${id}`],
+      ['get', `/admin/translation-runs/${id}/report`],
       ['post', `/admin/translation-runs/${id}/pause`],
       ['post', `/admin/translation-runs/${id}/resume`],
       ['post', `/admin/translation-runs/${id}/cancel`],
@@ -503,7 +519,7 @@ describe('Translation run (e2e)', () => {
       // Jev выключен по умолчанию - не зовётся, механика кодом работает.
       expect(calls.filter((c) => c.name === 'check_language_jev')).toHaveLength(0);
       expect((chunks[0].blocks as Array<{ text: string }>)[0].text).toMatch(
-        new RegExp(`^${language.toUpperCase()} Anna 0`),
+        new RegExp(`^${language.toUpperCase()} Ana 0`),
       );
       // Переводы языка шли строго по порядку кусков.
       const own = translations().filter((c) => targetOf(c.body) === language);
@@ -550,7 +566,7 @@ describe('Translation run (e2e)', () => {
       await expectDraft(lang, language, bookId);
       const tag = language.toUpperCase();
       expect(chapters[1].length).toBe(
-        `<p>${tag} Anna arrives.</p><p>${tag} — Hello, Annie.</p>`.length,
+        `<p>${tag} Ana arrives.</p><p>${tag} — Hello, Annie.</p>`.length,
       );
       expect(lang.metadata).toMatchObject({
         attempts: [{ model: MODEL, outcome: 'pass', remarks: [] }],
@@ -860,8 +876,8 @@ describe('Translation run (e2e)', () => {
     const [chunk] = await prisma.translationChunk.findMany({ where: { runLanguageId: lang.id } });
     expect(chunk.status).toBe('done');
     // После `checked` - только находки в глоссарий: ни перевода, ни проверки заново; дальше -
-    // поля версии (`F05-6`).
-    expect(calls.slice(before).map((c) => c.name)).toEqual(['metadata']);
+    // итоговая проверка и поля версии (`F05-6`).
+    expect(calls.slice(before).map((c) => c.name)).toEqual(['final_check', 'metadata']);
   });
 
   /** Настройка этапов на время теста: строки снимаются в `finally`. */
@@ -950,6 +966,7 @@ describe('Translation run (e2e)', () => {
   it('a failed meaning check and a lost name: translated again with the remarks, passes the second time; the cost is the sum of all calls', async () => {
     const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
     const { runId, opId } = await createRun(versionId, ['es']);
+    keepNames = true;
     let semanticCalls = 0;
     answer = (name, body) => {
       if (name !== 'check_semantic') return defaultAnswer(name, body);
@@ -2241,6 +2258,7 @@ describe('Translation run (e2e)', () => {
           splitUsd: string;
           translateUsd: string;
           checkUsd: string;
+          finalCheckUsd: string;
           metadataUsd: string;
           totalUsd: string;
         }>;
@@ -2266,12 +2284,13 @@ describe('Translation run (e2e)', () => {
     expect(sum(before.languages.map((l) => l.totalUsd))).toBe(
       new Prisma.Decimal(before.translationsUsd).toString(),
     );
-    // Сверка смысла и поля версии - своими полями и в сумме языка (решения арбитра
-    // `F05 | F05-5`, `F05 | F05-6`).
+    // Сверка смысла, итоговая проверка и поля версии - своими полями и в сумме языка (решения
+    // арбитра `F05 | F05-5`, `F05 | F05-6`).
     for (const l of before.languages) {
       expect(new Prisma.Decimal(l.checkUsd).isPositive()).toBe(true);
+      expect(new Prisma.Decimal(l.finalCheckUsd).isPositive()).toBe(true);
       expect(new Prisma.Decimal(l.metadataUsd).isPositive()).toBe(true);
-      expect(sum([l.splitUsd, l.translateUsd, l.checkUsd, l.metadataUsd])).toBe(
+      expect(sum([l.splitUsd, l.translateUsd, l.checkUsd, l.finalCheckUsd, l.metadataUsd])).toBe(
         new Prisma.Decimal(l.totalUsd).toString(),
       );
     }
@@ -2389,7 +2408,12 @@ describe('Translation run (e2e)', () => {
       status: 'written',
       flagReason: 'SEAM_REPEAT',
       seamIndex: 1,
-      findings: [{ code: 'SEAM_REPEAT', seam: 1 }],
+      // Повтор кодом - флаг; ответы стыка и итоговой проверки без провала - записи, не флаги.
+      findings: [
+        { code: 'SEAM_REPEAT', seam: 1 },
+        { code: 'SEAM_CHECKED', seam: 1, model: CHECKER, costUsd: '0.0001' },
+        { code: 'FINAL_CHECKED', model: CHECKER, costUsd: '0.0001' },
+      ],
     });
     expect(
       await prisma.chapter.count({ where: { bookVersionId: lang.bookVersionId as string } }),
@@ -2792,6 +2816,13 @@ describe('Translation run (e2e)', () => {
     });
     expect(row.chapterId).toBe(manual.id);
     expect(manual.title).toBe('Manual');
+    // В отчёте глава с занятым номером - не записанная переводом (6c /fix круг 2, В5).
+    const report = await auth(http().get(`/admin/translation-runs/${runId}/report`)).expect(200);
+    expect(report.body.languages[0]).toMatchObject({
+      writtenChapters: 0,
+      takenChapters: [row.chapterNumber],
+      notWrittenChapters: [],
+    });
   });
 
   it('the author of the source is copied, not guessed by the translated name (Р16, Р22); a description with a forbidden tag is cleaned', async () => {
@@ -3440,6 +3471,11 @@ describe('Translation run (e2e)', () => {
   it('a stale run language snapshot does not recreate a deleted draft', async () => {
     const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
     const { runId } = await createRun(versionId, ['es']);
+    // Запуск дошёл до черновика - привязан к текущему исходнику (сверка под замком, `F05-6c`).
+    await prisma.translationRun.update({
+      where: { id: runId },
+      data: { dossierFingerprint: await sourceFingerprint(prisma, versionId) },
+    });
     // Снимок языка - до черновика; в базе черновик уже создавался и удалён.
     const snapshot = await prisma.translationRunLanguage.findUniqueOrThrow({
       where: { runId_language: { runId, language: 'es' } },
@@ -3460,5 +3496,701 @@ describe('Translation run (e2e)', () => {
 
     expect(created).toEqual({ kind: 'deleted' });
     expect(await prisma.bookVersion.count({ where: { bookId, language: 'es' } })).toBe(0);
+  });
+  /** Находки главы языка: порядок - как записаны. */
+  const findingsOf = async (runLanguageId: string, chapterNumber: number) =>
+    (
+      await prisma.translationChapter.findUniqueOrThrow({
+        where: { runLanguageId_chapterNumber: { runLanguageId, chapterNumber } },
+      })
+    ).findings as Array<Record<string, unknown>>;
+
+  it('6c: a joint is read by a model of another family than both pieces; a broken joint flags the chapter with its number, the chapter is written', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    answer = (name, body) =>
+      name === 'check_seam'
+        ? { verdict: 'fail', problems: ['The sentence of block 20 is cut at the joint'] }
+        : defaultAnswer(name, body);
+    const { runId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    const seams = calls.filter((c) => c.name === 'check_seam');
+    expect(seams.map((c) => c.model)).toEqual([CHECKER]);
+    const lang = await langOf(runId, 'es');
+    expect(lang).toMatchObject({ status: 'done', flaggedChapters: 1 });
+    const chapter = await prisma.translationChapter.findFirstOrThrow({
+      where: { runLanguageId: lang.id },
+    });
+    expect(chapter).toMatchObject({ status: 'written', flagReason: 'SEAM_BROKEN', seamIndex: 1 });
+    expect(await findingsOf(lang.id, 1)).toContainEqual({
+      code: 'SEAM_BROKEN',
+      seam: 1,
+      model: CHECKER,
+      costUsd: '0.0001',
+      problems: ['The sentence of block 20 is cut at the joint'],
+    });
+  });
+
+  it('6c: the joint window is two blocks before and two after it, the source and the translation', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    await createRun(versionId, ['es']);
+
+    await drain();
+
+    const [seam] = calls.filter((c) => c.name === 'check_seam');
+    const pieces = translations().map((c) => blocksOf(c.body).map((b) => b.n));
+    const joint = pieces[0][pieces[0].length - 1];
+    const user = seam.body.messages[1].content;
+    for (const n of [joint - 1, joint, joint + 1, joint + 2]) {
+      expect(user).toContain(` ${n - 1} w0`);
+    }
+    expect(user).not.toContain(` ${joint - 3} w0`);
+    expect(user).not.toContain(` ${joint + 2} w0`);
+    expect(user).toContain('<<<TRANSLATION_AFTER\nES ');
+  });
+
+  it('6c: pieces of a joint by two families: the checker is of a third family, not of either piece', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    const pending = async () =>
+      (await prisma.translationChapter.count({
+        where: { runLanguageId: lang.id, status: 'pending' },
+      })) > 0;
+    await drain(pending);
+    // Второй кусок перевела модель семейства основного проверяющего (переход по 429).
+    await prisma.translationChunk.updateMany({
+      where: { runLanguageId: lang.id, chunkIndex: 1 },
+      data: { model: 'deepseek/deepseek-v3' },
+    });
+
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'check_seam').map((c) => c.model)).toEqual([CHECKER_ALT]);
+  });
+
+  it('6c: a joint answer saved before the step is recorded is not paid again', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    const saved = async () =>
+      (
+        await prisma.translationChapter.findMany({
+          where: { runLanguageId: lang.id, status: 'pending' },
+        })
+      ).some((c) => Array.isArray(c.findings) && c.findings.length > 0);
+    await drain(saved);
+    expect(calls.filter((c) => c.name === 'check_seam')).toHaveLength(1);
+
+    await prisma.llmTask.updateMany({
+      where: {
+        operation: { translationRun: { id: runId } },
+        status: { in: ['pending', 'running'] },
+      },
+      data: { status: 'running', ownerToken: 'dead', leaseUntil: new Date(Date.now() - 1000) },
+    });
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'check_seam')).toHaveLength(1);
+    expect(await findingsOf(lang.id, 1)).toContainEqual({
+      code: 'SEAM_CHECKED',
+      seam: 1,
+      model: CHECKER,
+      costUsd: '0.0001',
+    });
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done' });
+  });
+
+  it('6c: final check - the source spelling of a glossary name left in the translation and a remark of the model on a block flag the chapter; the chapter is written', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    keepNames = true;
+    answer = (name, body) =>
+      name === 'final_check'
+        ? {
+            verdict: 'fail',
+            issues: [
+              { block: 2, problem: 'The greeting lost its name' },
+              { block: 7, problem: 'A block the model never saw' },
+            ],
+          }
+        : defaultAnswer(name, body);
+    const { runId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    const finals = calls.filter((c) => c.name === 'final_check');
+    expect(finals.map((c) => c.model)).toEqual([CHECKER]);
+    expect(finals[0].body.messages[1].content).toContain('[2] ES — Hello, Annie.');
+    const lang = await langOf(runId, 'es');
+    // Глава одна: флаг считается один раз, находок - две.
+    expect(lang).toMatchObject({ status: 'done', flaggedChapters: 1 });
+    expect(await findingsOf(lang.id, 1)).toEqual([
+      {
+        code: 'GLOSSARY_SOURCE_FORM',
+        key: 'anna',
+        form: 'Anna',
+        target: 'Ana',
+        fragment: 'ES Anna arrives. ES — Hello, Annie.',
+      },
+      {
+        code: 'FINAL_CHECK_FAIL',
+        block: 2,
+        issue: 'The greeting lost its name',
+        model: CHECKER,
+        costUsd: '0.0001',
+      },
+    ]);
+    const chapter = await prisma.translationChapter.findFirstOrThrow({
+      where: { runLanguageId: lang.id },
+    });
+    expect(chapter).toMatchObject({ status: 'written', flagReason: 'GLOSSARY_SOURCE_FORM' });
+    expect(lang.finalCheck).toEqual({
+      code: { missing: [] },
+      chapters: [{ number: 1, outcome: 'fail', model: CHECKER, costUsd: '0.0001' }],
+      done: true,
+    });
+    // Итоговая проверка - до полей версии (решение арбитра, В6).
+    const names = calls.map((c) => c.name);
+    expect(names.indexOf('final_check')).toBeLessThan(names.indexOf('metadata'));
+  });
+
+  it('6c: a final check answer saved before the step is recorded is not paid again', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const saved = async () =>
+      ((await langOf(runId, 'es')).finalCheck as { chapters?: unknown[] } | null)?.chapters
+        ?.length === 1;
+    await drain(saved);
+    expect(calls.filter((c) => c.name === 'final_check')).toHaveLength(1);
+
+    await prisma.llmTask.updateMany({
+      where: {
+        operation: { translationRun: { id: runId } },
+        status: { in: ['pending', 'running'] },
+      },
+      data: { status: 'running', ownerToken: 'dead', leaseUntil: new Date(Date.now() - 1000) },
+    });
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'final_check')).toHaveLength(1);
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done' });
+  });
+
+  it('6c: a run language whose version fields started before the final check existed does not catch up on it', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    // Запуск шёл во время выката: язык дошёл до `metadata` старым кодом, `finalCheck` пуст.
+    const assembled = async () =>
+      (await prisma.translationChapter.count({ where: { runLanguageId: lang.id } })) > 0;
+    await drain(assembled);
+    await prisma.translationRunLanguage.update({
+      where: { id: lang.id },
+      data: { metadata: { attempts: [], result: null } },
+    });
+
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'final_check')).toHaveLength(0);
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done', finalCheck: null });
+    const report = await auth(http().get(`/admin/translation-runs/${runId}/report`)).expect(200);
+    expect(report.body.languages[0].finalCheck).toEqual({
+      status: 'skipped',
+      missingChapters: [],
+      chaptersChecked: 0,
+    });
+  });
+
+  it('6c: every provider of the final check refuses: paused with its models; resume with stageModels.final_check of another family goes on, of the same family is refused', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId, opId } = await createRun(versionId, ['es']);
+    // Отказывают обе модели умолчания: основная и запасная третьего семейства.
+    refuse = (name, body) =>
+      name === 'final_check' && body.model !== Z_CHECKER
+        ? json(
+            { error: { code: 404, message: 'No endpoints found matching your data policy' } },
+            404,
+          )
+        : null;
+
+    await drain();
+
+    expect(await opOf(opId)).toMatchObject({
+      status: 'paused',
+      pauseReason: 'NO_COMPLIANT_PROVIDER',
+    });
+    expect(await langOf(runId, 'es')).toMatchObject({
+      reason: 'FINAL_CHECK_NO_COMPLIANT_PROVIDER',
+      reasonModels: [CHECKER, CHECKER_ALT],
+    });
+    const same = await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+      .send({ stageModels: { final_check: MODEL } })
+      .expect(409);
+    expect(same.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
+    await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+      .send({ stageModels: { final_check: Z_CHECKER } })
+      .expect(200);
+    await drain();
+
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done' });
+    expect(calls.filter((c) => c.name === 'final_check').at(-1)?.model).toBe(Z_CHECKER);
+  });
+
+  it('6c: no final check model of another family than the translate model: estimate and start refuse 409; otherwise the final check is in the estimate total', async () => {
+    const { versionId } = await englishBook([
+      { number: 1, title: 'One', content: LONG },
+      { number: 2, title: 'Two', content: SHORT },
+    ]);
+    const estimate = (query: Record<string, string>) =>
+      auth(http().get(`/admin/versions/${versionId}/translation-runs/estimate`).query(query));
+    await withStages([{ stage: 'final_check', model: MODEL, fallbacks: [] }], async () => {
+      const refused = await estimate({ languages: 'es' }).expect(409);
+      expect(refused.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
+      const start = await startRun(versionId, { languages: ['es'] }).expect(409);
+      expect(start.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
+    });
+    const ok = await estimate({ languages: 'es' }).expect(200);
+    const [es] = ok.body.languages as Array<Record<string, string>>;
+    const money = (v: string) => new Prisma.Decimal(v);
+    expect(money(es.finalCheckUsd).isPositive()).toBe(true);
+    expect(
+      money(es.splitUsd)
+        .add(es.translateUsd)
+        .add(es.checkUsd)
+        .add(es.finalCheckUsd)
+        .add(es.metadataUsd)
+        .toFixed(8),
+    ).toBe(es.totalUsd);
+  });
+
+  it('6c: the report - pieces, retries, piece and chapter flags, chapters not in the draft, the draft; cost by stage and model sums to the spent of every run operation to the cent', async () => {
+    const { versionId } = await englishBook([
+      { number: 1, title: 'One', content: '<p>Big chapter.</p>' },
+      { number: 2, title: 'Two', content: LONG },
+    ]);
+    const prices: Record<string, number> = {
+      dossier_part: 0.00011,
+      dossier: 0.00013,
+      glossary: 0.00017,
+      translation: 0.00019,
+      check_semantic: 0.00023,
+      check_seam: 0.00029,
+      final_check: 0.00031,
+      metadata: 0.00037,
+    };
+    costOf = (name) => prices[name] ?? 0;
+    let failed = false;
+    answer = (name, body) => {
+      const base = defaultAnswer(name, body);
+      if (name === 'check_semantic' && !failed) {
+        // Первый кусок проверки - провал смысла: перевод заново с замечаниями (повтор).
+        failed = true;
+        return { ...(base as object), verdict: 'fail' };
+      }
+      if (name !== 'translation' || !body.messages[1].content.includes('Big chapter')) return base;
+      return { ...(base as object), blocks: [{ n: 1, text: 'x'.repeat(500_001) }] };
+    };
+    const { runId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    const response = await auth(http().get(`/admin/translation-runs/${runId}/report`)).expect(200);
+    const report = response.body as TranslationRunReportDto;
+    const lang = await langOf(runId, 'es');
+    expect(report).toMatchObject({ id: runId, bookVersionId: versionId });
+    expect(report.languages).toHaveLength(1);
+    const [es] = report.languages;
+    expect(es).toMatchObject({
+      language: 'es',
+      status: 'done',
+      draftVersionId: lang.bookVersionId,
+      flaggedChapters: lang.flaggedChapters,
+      authorFromGlossary: false,
+      notWrittenChapters: [1],
+      writtenChapters: 1,
+      // Глава 1 с флагом Р8 - в `notWrittenChapters`, пропавшей она не считается.
+      finalCheck: { status: 'done', missingChapters: [], chaptersChecked: 1 },
+    });
+    expect(es.chunks.total).toBe(
+      await prisma.translationChunk.count({ where: { runLanguageId: lang.id } }),
+    );
+    const chunkRows = await prisma.translationChunk.findMany({
+      where: { runLanguageId: lang.id },
+      select: { attempts: true },
+    });
+    const retries = chunkRows.reduce((sum, c) => sum + Math.max(c.attempts - 1, 0), 0);
+    expect(retries).toBeGreaterThan(0);
+    expect(es.chunks.retries).toBe(retries);
+    expect(es.chapters.map((c) => [c.number, c.status])).toEqual([
+      [1, 'flagged'],
+      [2, 'written'],
+    ]);
+    expect(es.chapters[0]).toMatchObject({ flagReason: 'CHAPTER_TOO_LONG', lengthLimit: 500_000 });
+    // Находки наружу - без стоимости ответа: деньги - в `costs`.
+    expect(es.chapters[1].findings.find((f) => f.code === 'SEAM_CHECKED')).toEqual({
+      code: 'SEAM_CHECKED',
+      seam: 1,
+      model: CHECKER,
+    });
+
+    const spent = await prisma.llmOperation.aggregate({
+      where: { translationRunId: runId },
+      _sum: { spentUsd: true },
+    });
+    const paid = await prisma.llmCall.aggregate({
+      where: { operation: { translationRunId: runId } },
+      _sum: { costUsd: true },
+    });
+    expect(report.totalUsd).toBe((spent._sum.spentUsd as Prisma.Decimal).toFixed(8));
+    expect(report.totalUsd).toBe((paid._sum.costUsd as Prisma.Decimal).toFixed(8));
+    const rows = report.costs as Array<{ stage: string; model: string | null; costUsd: string }>;
+    expect(rows.reduce((sum, r) => sum.add(r.costUsd), new Prisma.Decimal(0)).toFixed(8)).toBe(
+      report.totalUsd,
+    );
+    // Досье и глоссарий запуска - своими операциями, но в отчёте запуска.
+    expect(new Set(rows.map((r) => r.stage))).toEqual(
+      new Set([
+        'dossier',
+        'glossary',
+        'split',
+        'translate',
+        'check_semantic',
+        'final_check',
+        'metadata',
+      ]),
+    );
+    expect(rows.find((r) => r.stage === 'final_check')).toMatchObject({ model: CHECKER });
+    expect(report.inFlight).toEqual({ calls: 0, reservedUsd: '0.00000000' });
+
+    await auth(
+      http().get(`/admin/translation-runs/00000000-0000-0000-0000-000000000000/report`),
+    ).expect(404);
+  });
+
+  it('6c: the source title edited after the version fields, before the draft lock: the fields are translated again, the draft has the new title', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const versions = app.get(BookVersionService);
+    // Правка - после последней сверки шага, до замка черновика.
+    jest
+      .spyOn(versions, 'create')
+      .mockImplementationOnce(async (...args: Parameters<BookVersionService['create']>) => {
+        await prisma.bookVersion.update({
+          where: { id: versionId },
+          data: { title: 'Book en, revised' },
+        });
+        // Разовая подмена уже снята: этот вызов идёт в настоящий метод.
+        return versions.create(...args);
+      });
+    const { runId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'metadata')).toHaveLength(2);
+    const lang = await langOf(runId, 'es');
+    expect(lang).toMatchObject({ status: 'done' });
+    expect(lang.metadata).toMatchObject({
+      attempts: [{ outcome: 'pass' }, { outcome: 'pass' }],
+      result: { title: 'ES Book en, revised' },
+    });
+    const drafts = await prisma.bookVersion.findMany({ where: { bookId, language: 'es' } });
+    expect(drafts.map((d) => d.title)).toEqual(['ES Book en, revised']);
+  });
+
+  it('6c: the source chapters edited after the last check of the step, before the draft lock: DOSSIER_STALE, no draft', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const versions = app.get(BookVersionService);
+    jest
+      .spyOn(versions, 'create')
+      .mockImplementationOnce(async (...args: Parameters<BookVersionService['create']>) => {
+        await prisma.chapter.update({
+          where: { bookVersionId_number: { bookVersionId: versionId, number: 1 } },
+          data: { content: '<p>Anna leaves.</p>' },
+        });
+        // Разовая подмена уже снята: этот вызов идёт в настоящий метод.
+        return versions.create(...args);
+      });
+    const { runId, opId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    expect(await opOf(opId)).toMatchObject({ status: 'paused', pauseReason: 'DOSSIER_STALE' });
+    expect(await langOf(runId, 'es')).toMatchObject({
+      reason: 'DOSSIER_STALE',
+      bookVersionId: null,
+    });
+    expect(await prisma.bookVersion.count({ where: { bookId, language: 'es' } })).toBe(0);
+  });
+
+  it('6c: a chapter title missing from the version fields answer is written empty with a TITLE_MISSING flag', async () => {
+    const { versionId } = await englishBook([
+      // Без имён глоссария: иных флагов у глав нет, флаг названия - первый.
+      { number: 1, title: 'One', content: '<p>Bob arrives.</p>' },
+      { number: 2, title: '', content: '<p>Bob stays.</p>' },
+    ]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    const drafted = async () => (await langOf(runId, 'es')).bookVersionId !== null;
+    await drain(drafted);
+    // Ответ `metadata` без названий глав: путь главы, появившейся после этапа.
+    const state = (await langOf(runId, 'es')).metadata as { result: Record<string, unknown> };
+    await prisma.translationRunLanguage.update({
+      where: { id: lang.id },
+      data: {
+        metadata: {
+          ...state,
+          result: { ...state.result, chapterTitles: [] },
+        } as Prisma.InputJsonValue,
+      },
+    });
+    const before = (await langOf(runId, 'es')).flaggedChapters;
+
+    await drain();
+
+    const done = await langOf(runId, 'es');
+    const titles = await prisma.chapter.findMany({
+      where: { bookVersionId: done.bookVersionId as string },
+      select: { number: true, title: true },
+      orderBy: { number: 'asc' },
+    });
+    expect(titles).toEqual([
+      { number: 1, title: '' },
+      { number: 2, title: '' },
+    ]);
+    // Глава 1 - с названием у исходника: находка; глава 2 без названия - без неё.
+    expect(await findingsOf(lang.id, 1)).toContainEqual({ code: 'TITLE_MISSING' });
+    expect(await findingsOf(lang.id, 2)).not.toContainEqual({ code: 'TITLE_MISSING' });
+    const written = await prisma.translationChapter.findMany({
+      where: { runLanguageId: lang.id },
+      orderBy: { chapterNumber: 'asc' },
+    });
+    expect(written.map((c) => [c.status, c.flagReason])).toEqual([
+      ['written', 'TITLE_MISSING'],
+      ['written', null],
+    ]);
+    expect(done.flaggedChapters).toBe(before + 1);
+  });
+  it('6c: a piece of a joint translated without a recorded model: independence cannot be told - SEAM_NOT_INDEPENDENT without a call', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    const pending = async () =>
+      (await prisma.translationChapter.count({
+        where: { runLanguageId: lang.id, status: 'pending' },
+      })) > 0;
+    await drain(pending);
+    await prisma.translationChunk.updateMany({
+      where: { runLanguageId: lang.id, chunkIndex: 1 },
+      data: { model: null },
+    });
+
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'check_seam')).toHaveLength(0);
+    expect(await findingsOf(lang.id, 1)).toContainEqual({ code: 'SEAM_NOT_INDEPENDENT', seam: 1 });
+    const chapter = await prisma.translationChapter.findFirstOrThrow({
+      where: { runLanguageId: lang.id },
+    });
+    expect(chapter).toMatchObject({
+      status: 'written',
+      flagReason: 'SEAM_NOT_INDEPENDENT',
+      seamIndex: 1,
+    });
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done', flaggedChapters: 1 });
+  });
+
+  it('6c: a chapter translated by the family of the final check model goes to its fallback of a third family', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    const assembled = async () =>
+      (await prisma.translationChapter.count({ where: { runLanguageId: lang.id } })) > 0;
+    await drain(assembled);
+    await prisma.translationChunk.updateMany({
+      where: { runLanguageId: lang.id },
+      data: { model: 'deepseek/deepseek-v3' },
+    });
+
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'final_check').map((c) => c.model)).toEqual([
+      CHECKER_ALT,
+    ]);
+  });
+
+  it('6c: a chapter translated by the families of both final check models: FINAL_NOT_INDEPENDENT without a call, the chapter is written', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    const assembled = async () =>
+      (await prisma.translationChapter.count({
+        where: { runLanguageId: lang.id, status: 'assembled' },
+      })) > 0;
+    await drain(assembled);
+    // Куски главы перевели модели семейств основной и запасной итоговой проверки.
+    await prisma.translationChunk.updateMany({
+      where: { runLanguageId: lang.id, chunkIndex: 0 },
+      data: { model: 'deepseek/deepseek-v3' },
+    });
+    await prisma.translationChunk.updateMany({
+      where: { runLanguageId: lang.id, chunkIndex: 1 },
+      data: { model: 'z-ai/glm-4' },
+    });
+
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'final_check')).toHaveLength(0);
+    expect(await findingsOf(lang.id, 1)).toContainEqual({ code: 'FINAL_NOT_INDEPENDENT' });
+    const done = await langOf(runId, 'es');
+    expect(done).toMatchObject({ status: 'done', flaggedChapters: 1 });
+    expect(done.finalCheck).toMatchObject({
+      chapters: [{ number: 1, outcome: 'not_independent', model: '' }],
+      done: true,
+    });
+  });
+
+  it('6c: the final check stage disabled mid-run: FINAL_CHECK_UNAVAILABLE on the chapter, the language goes on', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    const assembled = async () =>
+      (await prisma.translationChapter.count({ where: { runLanguageId: lang.id } })) > 0;
+    await drain(assembled);
+
+    await withStages(
+      [{ stage: 'final_check', model: CHECKER, fallbacks: [], enabled: false }],
+      async () => {
+        await drain();
+      },
+    );
+
+    expect(calls.filter((c) => c.name === 'final_check')).toHaveLength(0);
+    expect(await findingsOf(lang.id, 1)).toEqual([{ code: 'FINAL_CHECK_UNAVAILABLE' }]);
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done', flaggedChapters: 1 });
+  });
+
+  it('6c: a final check state without the code result (a broken write) is redone, not a step that never moves', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    const assembled = async () =>
+      (await prisma.translationChapter.count({ where: { runLanguageId: lang.id } })) > 0;
+    await drain(assembled);
+    await prisma.translationRunLanguage.update({
+      where: { id: lang.id },
+      data: { finalCheck: { code: null, chapters: [], done: false } },
+    });
+
+    await drain();
+
+    const done = await langOf(runId, 'es');
+    expect(done).toMatchObject({ status: 'done' });
+    expect(done.finalCheck).toMatchObject({ code: { missing: [] }, done: true });
+    expect(calls.filter((c) => c.name === 'final_check')).toHaveLength(1);
+  });
+  it('6c: a translator of the deepseek or glm family still has a final check of another family: estimate passes', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    for (const translateModel of [CHECKER, CHECKER_ALT]) {
+      const ok = await auth(
+        http()
+          .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+          .query({ languages: 'es', translateModel }),
+      ).expect(200);
+      const [es] = ok.body.languages as Array<Record<string, string>>;
+      expect(new Prisma.Decimal(es.finalCheckUsd).isPositive()).toBe(true);
+    }
+  });
+
+  it('6c: the source author edited after the version fields, before the draft lock: the fields are translated again', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const versions = app.get(BookVersionService);
+    jest
+      .spyOn(versions, 'create')
+      .mockImplementationOnce(async (...args: Parameters<BookVersionService['create']>) => {
+        await prisma.bookVersion.update({
+          where: { id: versionId },
+          data: { author: 'Author, revised' },
+        });
+        // Разовая подмена уже снята: этот вызов идёт в настоящий метод.
+        return versions.create(...args);
+      });
+    const { runId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'metadata')).toHaveLength(2);
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done' });
+    const drafts = await prisma.bookVersion.findMany({ where: { bookId, language: 'es' } });
+    expect(drafts.map((d) => d.author)).toEqual(['ES Author, revised']);
+  });
+
+  it('6c: the report of a language still translating: the final check is pending, not skipped', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    const translated = async () =>
+      (await prisma.translationChunk.count({
+        where: { runLanguageId: lang.id, status: 'translated' },
+      })) > 0;
+    await drain(translated);
+
+    const report = await auth(http().get(`/admin/translation-runs/${runId}/report`)).expect(200);
+
+    expect(report.body.languages[0].finalCheck).toEqual({
+      status: 'pending',
+      missingChapters: [],
+      chaptersChecked: 0,
+    });
+  });
+
+  it('6c: every provider of the joint check refuses: the chapter waits pending, paused with the check models; resume with stageModels.check_semantic goes on', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    const { runId, opId } = await createRun(versionId, ['es']);
+    refuse = (name, body) =>
+      name === 'check_seam' && body.model !== Z_CHECKER
+        ? json(
+            { error: { code: 404, message: 'No endpoints found matching your data policy' } },
+            404,
+          )
+        : null;
+
+    await drain();
+
+    expect(await opOf(opId)).toMatchObject({
+      status: 'paused',
+      pauseReason: 'NO_COMPLIANT_PROVIDER',
+    });
+    const lang = await langOf(runId, 'es');
+    expect(lang).toMatchObject({ reason: 'CHECK_NO_COMPLIANT_PROVIDER' });
+    expect(
+      await prisma.translationChapter.findFirstOrThrow({ where: { runLanguageId: lang.id } }),
+    ).toMatchObject({ status: 'pending', findings: [] });
+    await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+      .send({ stageModels: { check_semantic: Z_CHECKER } })
+      .expect(200);
+    await drain();
+
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done' });
+    expect(await findingsOf(lang.id, 1)).toContainEqual({
+      code: 'SEAM_CHECKED',
+      seam: 1,
+      model: Z_CHECKER,
+      costUsd: '0.0001',
+    });
+  });
+  it('6c: the report of a language cancelled in the middle of its final check: skipped, not in progress', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const coded = async () =>
+      ((await langOf(runId, 'es')).finalCheck as { code?: unknown } | null)?.code !== undefined;
+    await drain(coded);
+    await auth(http().post(`/admin/translation-runs/${runId}/cancel`)).expect(200);
+
+    const report = await auth(http().get(`/admin/translation-runs/${runId}/report`)).expect(200);
+
+    expect(report.body.languages[0]).toMatchObject({
+      status: 'cancelled',
+      finalCheck: { status: 'skipped' },
+    });
   });
 });

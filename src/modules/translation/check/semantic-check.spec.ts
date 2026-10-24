@@ -34,6 +34,12 @@ describe('semantic check', () => {
     expect(independentModels(['deepseek/v4'], 'deepseek/v3')).toEqual([]);
   });
 
+  it('a joint or a chapter of pieces by two models: the checker of either family is skipped', () => {
+    const candidates = ['anthropic/claude', 'deepseek/v4', 'z-ai/glm'];
+    expect(independentModels(candidates, ['anthropic/x', 'deepseek/v3'])).toEqual(['z-ai/glm']);
+    expect(independentModels(candidates, ['anthropic/x', 'deepseek/v3', 'z-ai/y'])).toEqual([]);
+  });
+
   it('the same seed samples the same 3-5 sentences; another seed - others', () => {
     const seed = seedOf('chunk-1');
     expect(seedOf('chunk-1')).toBe(seed);

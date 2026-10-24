@@ -8,7 +8,7 @@ import { shapeErrors } from '../dossier/dossier.format';
 import { fenced } from '../fenced-data';
 import { passesThroughOptional } from '../pause-by-failure';
 import { planChapter } from '../translate/translate-estimate';
-import { chapterCheckUsd, checkEstimator } from './check-estimate';
+import { chapterCheckUsd, chapterSeamUsd, checkEstimator } from './check-estimate';
 import {
   attemptSeed,
   cappedRemarks,
@@ -170,6 +170,22 @@ describe('check estimate', () => {
     expect(total.toString()).toBe(String(plan.chunks.length));
     // Перевод - входом сверх запроса: `maxTokens` перевода.
     expect((estimate.mock.calls[0] as unknown as [unknown, number])[1]).toBe(10);
+  });
+
+  it('joints of a chapter: a call per joint with the window of the step (`check_seam`), none for one piece', async () => {
+    const plan = await planChapter(
+      1,
+      Array.from({ length: 40 }, (_, i) => `<p>Line ${i} ${'word '.repeat(99)}</p>`).join(''),
+    );
+    const estimate = jest.fn(() => D(1));
+    const check = { maxTokens: 1, enabled: true, contextLength: null, estimate };
+    const languages = { sourceLanguage: 'en', targetLanguage: 'es' } as const;
+    const total = chapterSeamUsd(check, plan, languages);
+    expect(total.toString()).toBe(String(plan.chunks.length - 1));
+    const [request] = estimate.mock.calls[0] as unknown as [{ jsonSchema: { name: string } }];
+    expect(request.jsonSchema.name).toBe('check_seam');
+    const single = await planChapter(1, '<p>One short line.</p>');
+    expect(chapterSeamUsd(check, single, languages).toString()).toBe('0');
   });
 });
 

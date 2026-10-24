@@ -18,6 +18,7 @@ import { DossierService } from './dossier/dossier.service';
 import { DossierTasksHandler } from './dossier/dossier-tasks.handler';
 import { TranslationDraftService } from './draft/translation-draft.service';
 import { TRANSLATION_RUN_TASK_KIND } from './run/translation-run.constants';
+import { TranslationRunReportService } from './run/translation-run-report.service';
 import { TranslationRunService } from './run/translation-run.service';
 import { TranslationRunTasksHandler } from './run/translation-run-tasks.handler';
 import { TranslationController } from './translation.controller';
@@ -25,6 +26,7 @@ import { TranslationSourceService } from './translation-source.service';
 import { TRANSLATE_STAGE_DEFINITIONS } from './translate/translate.constants';
 import { CHECK_STAGE_DEFINITIONS } from './check/check.constants';
 import { METADATA_STAGE_DEFINITIONS } from './metadata/metadata.constants';
+import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constants';
 
 /**
  * Автоперевод книги (F05): исходник по D8, блоки главы, отпечаток текста, досье и глоссарий
@@ -43,6 +45,7 @@ import { METADATA_STAGE_DEFINITIONS } from './metadata/metadata.constants';
     TranslationCompareService,
     CompareTasksHandler,
     TranslationRunService,
+    TranslationRunReportService,
     TranslationRunTasksHandler,
     TranslationDraftService,
   ],
@@ -65,6 +68,7 @@ export class TranslationModule implements OnModuleInit {
     for (const definition of TRANSLATE_STAGE_DEFINITIONS) this.stages.register(definition);
     for (const definition of CHECK_STAGE_DEFINITIONS) this.stages.register(definition);
     for (const definition of METADATA_STAGE_DEFINITIONS) this.stages.register(definition);
+    for (const definition of FINAL_CHECK_STAGE_DEFINITIONS) this.stages.register(definition);
     this.handlers.register(COMPARE_TASK_KIND, this.compareTasks.handler);
     this.kinds.register('compare', this.compareTasks);
     this.handlers.register(TRANSLATION_RUN_TASK_KIND, this.runTasks.handler);

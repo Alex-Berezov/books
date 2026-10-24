@@ -18,6 +18,13 @@ export const RUN_LANGUAGE_UNFINISHED = ['pending', 'running'] as const;
 /** Короткие записи шага и переходы запуска (`L-020`). */
 export const RUN_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
 
+/**
+ * Транзакция находок итоговой проверки кодом - запись главы (и счётчика) на каждую главу языка,
+ * до `DOSSIER_MAX_CHAPTERS`: свой срок, как у соседей с длинным обходом (`AUTHOR_DELETE_TX_OPTIONS`,
+ * `author.service.ts`), а не пара записей `RUN_TX_OPTIONS` (L-020).
+ */
+export const FINAL_CODE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
+
 /** Кусок закрыт: переведён и находки дописаны, или с флагом. Одно правило на шаг и ход запуска. */
 export const CHUNK_CLOSED_STATUSES: readonly TranslationChunkStatus[] = ['done', 'flagged'];
 

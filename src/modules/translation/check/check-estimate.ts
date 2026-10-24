@@ -5,6 +5,7 @@ import { ChapterPlan } from '../translate/translate-estimate';
 import { chunkBlocks } from '../translate/translate-piece';
 import { CHECK_SEMANTIC_STAGE } from './check.constants';
 import { independentCheckModels } from './check-models';
+import { seamInputOf, seamRequest } from './seam-check';
 import { semanticRequest } from './semantic-check';
 import { semanticInputOf } from './semantic-step';
 
@@ -54,6 +55,33 @@ export function chapterCheckUsd(
     });
     // Перевод - вход сверх запроса в объёме `maxTokens` перевода, без сборки строки.
     total = total.add(check.estimate(semanticRequest(input), context.translateMaxTokens));
+  }
+  return total;
+}
+
+/**
+ * Стыки главы моделью сверху (`F05-6`, 6c; решение арбитра `F05 | F05-6`, В4 - в `checkUsd`): вызов
+ * на стык, вход - тот же, что у шага (`seamInputOf`); перевода ещё нет - на его месте исходник
+ * окна (перевод того же объёма). Глава из одного куска стыков не имеет.
+ */
+export function chapterSeamUsd(
+  check: StageCallEstimator,
+  plan: ChapterPlan,
+  languages: { sourceLanguage: Language; targetLanguage: Language },
+): Prisma.Decimal {
+  let total = new Prisma.Decimal(0);
+  const asTranslated = (chunk: ChapterPlan['chunks'][number]) => ({
+    ...chunk,
+    blocks: chunkBlocks(plan.layout, chunk).map((b) => ({ n: b.n, text: b.html })),
+  });
+  for (let seam = 1; seam < plan.chunks.length; seam++) {
+    const input = seamInputOf(
+      plan.layout,
+      asTranslated(plan.chunks[seam - 1]),
+      asTranslated(plan.chunks[seam]),
+      languages,
+    );
+    total = total.add(check.estimate(seamRequest(input)));
   }
   return total;
 }
