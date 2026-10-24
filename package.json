@@ -175,5 +175,8 @@
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
+  },
+  "resolutions": {
+    "@nestjs/platform-express/multer": "2.5.0"
   }
 }
