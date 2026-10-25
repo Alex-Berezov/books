@@ -78,6 +78,13 @@ export class TranslationReportFindingDto {
 
   @ApiPropertyOptional({ type: String, description: 'Model of the paid answer' })
   model?: string;
+
+  @ApiPropertyOptional({
+    type: Boolean,
+    description:
+      'Found on the text before a retry or a hand edit of a piece: mute it, it is not in the chapter flag; absent - current',
+  })
+  stale?: boolean;
 }
 
 export class TranslationReportChapterDto {
@@ -110,6 +117,14 @@ export class TranslationReportChapterDto {
     description: 'Chapter of the draft',
   })
   chapterId!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Why the last chapter rewrite after a piece retry or hand edit did not go through: CHAPTER_EDITED_MANUALLY, VERSION_NOT_DRAFT, DRAFT_DELETED, SOURCE_CHANGED or an assembly code; empty - it did, or there was none',
+  })
+  rewriteRefusal!: string | null;
 
   @ApiProperty({ type: () => [TranslationReportFindingDto] })
   findings!: TranslationReportFindingDto[];

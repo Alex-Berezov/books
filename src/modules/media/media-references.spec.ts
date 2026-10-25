@@ -114,6 +114,8 @@ const NOT_MEDIA_JSON_REFERENCES: Record<string, string> = {
   'TranslationChunk.blocks':
     'перевод блоков куска - картинки только с src исходного блока, пишет сервер (F05-4)',
   'TranslationChunk.verdict': 'вердикт проверки куска, пишет сервер (F05-5)',
+  'TranslationChunk.retry':
+    'попытка повтора куска - перевод блоков тем же белым списком, что blocks, в главу идёт только после подмены, пишет сервер (F05-7v)',
   'TranslationRunLanguage.metadata':
     'поля версии этапа metadata - картинки описания только с src исходника, в версию их пишет 6b через description, пишет сервер (F05-6)',
   'TranslationRunLanguage.finalCheck': 'находки итоговой проверки, пишет сервер (F05-6)',

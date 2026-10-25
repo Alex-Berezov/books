@@ -2350,6 +2350,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/translation-chunks/{id}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    /** Edit a piece by hand: the translation of each block of the piece, inline markup only; the piece is saved, the draft chapter is rewritten unless refused (reason) */
+    put: operations['TranslationController_editChunk'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/translation-chunks/{id}/retry': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Retry a piece anew with checks under its own operation and limit, optionally with another translate model; the piece and the draft chapter are replaced when the retry ends */
+    post: operations['TranslationController_retryChunk'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/translation-compares/{id}': {
     parameters: {
       query?: never;
@@ -2395,6 +2429,23 @@ export interface paths {
     put?: never;
     /** Cancel a translation run: unfinished languages stop and the run spends nothing more; translated pieces stay. Dossier and glossary operations started for it run on their own limit and are cancelled separately */
     post: operations['TranslationController_cancelRun'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/translation-runs/{id}/chunks': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Pieces of one chapter of a run language side by side: source and translation block to block, status, flag, model, cost, retry and hand edit; the chapter rewrite refusal and its findings */
+    get: operations['TranslationController_listChunks'];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -8785,6 +8836,15 @@ export interface components {
       pace: string;
       sentenceLength: string;
     };
+    EditTranslationChunkDto: {
+      blocks: components['schemas']['EditedChunkBlockDto'][];
+    };
+    EditedChunkBlockDto: {
+      /** @description Block number of the source chapter, from 1 */
+      n: number;
+      /** @description Translation of the block: inline markup only */
+      text: string;
+    };
     EditionRightsDto: {
       createdAt: string;
       id: string;
@@ -9715,7 +9775,7 @@ export interface components {
       updatedAt: string;
     };
     /** @enum {string} */
-    LlmOperationKind: 'translation_run' | 'dossier' | 'compare' | 'draft';
+    LlmOperationKind: 'translation_run' | 'dossier' | 'compare' | 'draft' | 'translation_retry';
     /** @enum {string} */
     LlmOperationStatus: 'active' | 'paused' | 'cancelled' | 'done' | 'failed';
     /** @enum {string} */
@@ -11293,6 +11353,19 @@ export interface components {
       limitUsd?: string;
       /** @description Stage models of this run over its snapshot, one model without fallbacks: the way out of NO_COMPLIANT_PROVIDER */
       stageModels?: components['schemas']['TranslationRunStageModelsDto'];
+    };
+    RetryTranslationChunkDto: {
+      /**
+       * Format: decimal
+       * @description Limit of the retry operation
+       * @example 100
+       */
+      limitUsd: string;
+      /**
+       * @description Translate model of this retry, one model without fallbacks. Default - the translate model of the run
+       * @example anthropic/claude-sonnet-5.5
+       */
+      model?: string;
     };
     ReviewChainDiffDto: {
       changedCountryCount: number;
@@ -13338,6 +13411,113 @@ export interface components {
      * @enum {string}
      */
     TranslationChapterStatus: 'pending' | 'assembled' | 'written' | 'flagged';
+    TranslationChunkBlockDto: {
+      n: number;
+      /** @description Source block, inline markup */
+      source: string;
+      /** @description Translation of the block, inline markup; empty - not translated */
+      translation: string | null;
+    };
+    TranslationChunkDto: {
+      /** @description Translate attempts that reached a model */
+      attempts: number;
+      blocks: components['schemas']['TranslationChunkBlockDto'][];
+      /** @description Order of the piece in the chapter, from 0 */
+      chunkIndex: number;
+      /**
+       * Format: decimal
+       * @description All paid answers of the piece
+       * @example 100.00000000
+       */
+      costUsd: string | null;
+      /**
+       * Format: date-time
+       * @description The piece was edited by hand: the editor answers for the text
+       */
+      editedAt: string | null;
+      firstBlock: number;
+      /** @description Code of the piece flag */
+      flagReason: string | null;
+      /** Format: uuid */
+      id: string;
+      lastBlock: number;
+      /** @description Model that translated the piece */
+      model: string | null;
+      /** @description Remarks of the last failed check of the piece (why it was flagged or translated anew); empty - none */
+      remarks: string[];
+      retry: components['schemas']['TranslationChunkRetryDto'] | null;
+      status: components['schemas']['TranslationChunkStatus'];
+    };
+    TranslationChunkEditedDto: {
+      chapterRewritten: boolean;
+      chunk: components['schemas']['TranslationChunkDto'];
+      /** @description Why the chapter was not rewritten (as rewriteRefusal); empty - rewritten or no draft yet */
+      reason: string | null;
+    };
+    TranslationChunkRetryDto: {
+      /**
+       * Format: decimal
+       * @description Cost of the retry answers
+       * @example 100.00000000
+       */
+      costUsd: string;
+      /**
+       * Format: decimal
+       * @description Limit of the retry operation
+       * @example 100.00000000
+       */
+      limitUsd: string | null;
+      /** @description Model that answered the retry */
+      model: string | null;
+      /** Format: uuid */
+      operationId: string;
+      /** @description Status of the retry operation: active - going; paused - stopped on pauseReason, resume with POST /admin/llm/operations/:id/resume; cancelled, done, failed */
+      operationStatus: components['schemas']['LlmOperationStatus'] | null;
+      pauseReason: components['schemas']['LlmPauseReason'] | null;
+      /** @description failed: why the piece was not replaced (SOURCE_CHANGED, CHUNK_TOO_LONG, CHUNK_INVALID_RESPONSE, RETRY_CANCELLED - the operation was cancelled, RETRY_NOT_APPLIED - the attempt was taken off before the swap); applied: the check flag of the new translation, if any */
+      reason: string | null;
+      /** @description Paused on NO_COMPLIANT_PROVIDER (reason - the stage code, as in the run language): the models of the stage that all refused by the data policy; retry with another model. Empty otherwise */
+      reasonModels: string[];
+      /** @description Translate model asked for this retry; empty - the run models */
+      requestedModel: string | null;
+      /**
+       * Format: decimal
+       * @description Spent by the retry operation
+       * @example 100.00000000
+       */
+      spentUsd: string | null;
+      /** @description Stage of the retry: pending (translate), translated (checks), checked, done, flagged - before the piece is replaced; applied - the piece is replaced; failed - not replaced, reason in reason */
+      status: string;
+    };
+    TranslationChunkRetryStartedDto: {
+      chunk: components['schemas']['TranslationChunkDto'];
+      operation: components['schemas']['LlmOperationDto'];
+    };
+    /** @enum {string} */
+    TranslationChunkStatus: 'pending' | 'translated' | 'checked' | 'done' | 'flagged';
+    TranslationChunksChapterDto: {
+      /**
+       * Format: uuid
+       * @description Chapter of the draft
+       */
+      chapterId: string | null;
+      /** @description Findings as in the run report; stale - found on the text before a retry or hand edit */
+      findings: components['schemas']['TranslationReportFindingDto'][];
+      flagReason: string | null;
+      /** @description Why the last chapter rewrite after a retry or edit did not go through: CHAPTER_EDITED_MANUALLY, VERSION_NOT_DRAFT, DRAFT_DELETED, SOURCE_CHANGED or an assembly code */
+      rewriteRefusal: string | null;
+      status: components['schemas']['TranslationChapterStatus'];
+    };
+    TranslationChunksDto: {
+      chapter: components['schemas']['TranslationChunksChapterDto'] | null;
+      chapterNumber: number;
+      chunks: components['schemas']['TranslationChunkDto'][];
+      language: components['schemas']['Language'];
+      /** Format: uuid */
+      runId: string;
+      /** @description The source chapter changed after the split: blocks may not match */
+      sourceChanged: boolean;
+    };
     TranslationCompareDto: {
       /** Format: uuid */
       bookVersionId: string;
@@ -13448,6 +13628,8 @@ export interface components {
       length: number | null;
       lengthLimit: number | null;
       number: number;
+      /** @description Why the last chapter rewrite after a piece retry or hand edit did not go through: CHAPTER_EDITED_MANUALLY, VERSION_NOT_DRAFT, DRAFT_DELETED, SOURCE_CHANGED or an assembly code; empty - it did, or there was none */
+      rewriteRefusal: string | null;
       seamIndex: number | null;
       /** @description written - in the draft; flagged - not in the draft; assembled/pending - not yet */
       status: components['schemas']['TranslationChapterStatus'];
@@ -13508,6 +13690,8 @@ export interface components {
       problems?: string[];
       /** @description Joint number from 1: between pieces seam-1 and seam */
       seam?: number;
+      /** @description Found on the text before a retry or a hand edit of a piece: mute it, it is not in the chapter flag; absent - current */
+      stale?: boolean;
       /** @description The spelling the glossary gives */
       target?: string;
     };
@@ -19183,6 +19367,105 @@ export interface operations {
       };
     };
   };
+  TranslationController_editChunk: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['EditTranslationChunkDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationChunkEditedDto'];
+        };
+      };
+      /** @description CHUNK_BLOCKS_INVALID: blocks not of the piece, repeated, missing or empty after markup cleaning */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Translation chunk not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description RUN_ACTIVE; RETRY_IN_PROGRESS; DRAFT_MISSING; CHUNK_SOURCE_CHANGED: the source chapter changed after the split; CHUNK_EDIT_CONFLICT: the chapter or piece changed concurrently, try again */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_retryChunk: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RetryTranslationChunkDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationChunkRetryStartedDto'];
+        };
+      };
+      /** @description LLM_MODEL_UNKNOWN; limitUsd not an amount */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Translation chunk not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description RUN_ACTIVE: the run is running, pause it; RETRY_IN_PROGRESS: a retry of this language is in progress; DRAFT_MISSING: the language has no draft; CHUNK_SOURCE_CHANGED: the source chapter changed after the split; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_DISABLED: no OpenRouter key */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   TranslationController_getCompare: {
     parameters: {
       query?: never;
@@ -19267,6 +19550,38 @@ export interface operations {
       };
       /** @description LLM_OPERATION_NOT_CANCELLABLE: already finished */
       409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  TranslationController_listChunks: {
+    parameters: {
+      query: {
+        lang: components['schemas']['Language'];
+        /** @description Reader chapter number of the source */
+        chapter: number;
+      };
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['TranslationChunksDto'];
+        };
+      };
+      /** @description Translation run not found, or it does not translate to lang */
+      404: {
         headers: {
           [name: string]: unknown;
         };

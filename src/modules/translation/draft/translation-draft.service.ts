@@ -288,30 +288,20 @@ export class TranslationDraftService {
 
   /**
    * Глава не пишется (`SOURCE_CHANGED` или причина сборки): `flagReason` - то, почему её нет
-   * в черновике, прежний флаг сборки остаётся в находках; счётчик - один раз на главу.
+   * в черновике, прежний флаг сборки остаётся в находках; счётчик - один раз на главу. Правило
+   * флага - общее (`addChapterFindings`, режим замены флага; решение арбитра `F05 | F05-7v`).
    */
   private async markNotWritten(
     lang: DraftLanguage,
     row: TranslationChapter,
     reason: ChapterFlagCode,
   ): Promise<void> {
-    const previous = Array.isArray(row.findings) ? row.findings : [];
     await this.prisma.$transaction(async (tx) => {
-      const changed = await tx.translationChapter.updateMany({
-        where: { id: row.id, status: 'assembled' },
-        data: {
-          status: 'flagged',
-          flagReason: reason,
-          findings: [...previous, { code: reason }] as Prisma.InputJsonValue,
-        },
+      await addChapterFindings(tx, lang.id, row, [{ code: reason }], {
+        data: { status: 'flagged' },
+        where: { status: 'assembled' },
+        overwriteFlag: true,
       });
-      // Глава уже с флагом сборки (стык, флагнутый кусок) в счётчике есть - второй раз не считаем.
-      if (changed.count > 0 && row.flagReason === null) {
-        await tx.translationRunLanguage.update({
-          where: { id: lang.id },
-          data: { flaggedChapters: { increment: 1 } },
-        });
-      }
     }, RUN_TX_OPTIONS);
   }
 }

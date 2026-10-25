@@ -66,8 +66,8 @@ const EXPECTED: Site[] = [
   {
     file: 'modules/chapter/chapter.service.ts',
     writer: 'checkVersionStaleness',
-    count: 3,
-    why: 'создание, правка и удаление главы — строки главы и пометка версии в одной транзакции под замком',
+    count: 4,
+    why: 'создание, правка и удаление главы и перезапись главы черновика по Р9 (`rewriteLocked`, F05-7v) — строки главы и пометка версии в одной транзакции под замком',
   },
   {
     file: 'modules/audio-chapter/audio-chapter.service.ts',

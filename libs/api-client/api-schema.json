@@ -11266,6 +11266,37 @@
         ],
         "type": "object"
       },
+      "EditTranslationChunkDto": {
+        "properties": {
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/EditedChunkBlockDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "blocks"
+        ],
+        "type": "object"
+      },
+      "EditedChunkBlockDto": {
+        "properties": {
+          "n": {
+            "description": "Block number of the source chapter, from 1",
+            "type": "number"
+          },
+          "text": {
+            "description": "Translation of the block: inline markup only",
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "text"
+        ],
+        "type": "object"
+      },
       "EditionRightsDto": {
         "properties": {
           "createdAt": {
@@ -14038,7 +14069,8 @@
           "translation_run",
           "dossier",
           "compare",
-          "draft"
+          "draft",
+          "translation_retry"
         ],
         "type": "string"
       },
@@ -19132,6 +19164,25 @@
             "description": "Stage models of this run over its snapshot, one model without fallbacks: the way out of NO_COMPLIANT_PROVIDER"
           }
         },
+        "type": "object"
+      },
+      "RetryTranslationChunkDto": {
+        "properties": {
+          "limitUsd": {
+            "description": "Limit of the retry operation",
+            "example": "100",
+            "format": "decimal",
+            "type": "string"
+          },
+          "model": {
+            "description": "Translate model of this retry, one model without fallbacks. Default - the translate model of the run",
+            "example": "anthropic/claude-sonnet-5.5",
+            "type": "string"
+          }
+        },
+        "required": [
+          "limitUsd"
+        ],
         "type": "object"
       },
       "ReviewChainDiffDto": {
@@ -25707,6 +25758,336 @@
         ],
         "type": "string"
       },
+      "TranslationChunkBlockDto": {
+        "properties": {
+          "n": {
+            "type": "number"
+          },
+          "source": {
+            "description": "Source block, inline markup",
+            "type": "string"
+          },
+          "translation": {
+            "description": "Translation of the block, inline markup; empty - not translated",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "n",
+          "source",
+          "translation"
+        ],
+        "type": "object"
+      },
+      "TranslationChunkDto": {
+        "properties": {
+          "attempts": {
+            "description": "Translate attempts that reached a model",
+            "type": "number"
+          },
+          "blocks": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationChunkBlockDto"
+            },
+            "type": "array"
+          },
+          "chunkIndex": {
+            "description": "Order of the piece in the chapter, from 0",
+            "type": "number"
+          },
+          "costUsd": {
+            "description": "All paid answers of the piece",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "editedAt": {
+            "description": "The piece was edited by hand: the editor answers for the text",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "firstBlock": {
+            "type": "number"
+          },
+          "flagReason": {
+            "description": "Code of the piece flag",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "lastBlock": {
+            "type": "number"
+          },
+          "model": {
+            "description": "Model that translated the piece",
+            "nullable": true,
+            "type": "string"
+          },
+          "remarks": {
+            "description": "Remarks of the last failed check of the piece (why it was flagged or translated anew); empty - none",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "retry": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationChunkRetryDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationChunkStatus"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "chunkIndex",
+          "firstBlock",
+          "lastBlock",
+          "status",
+          "flagReason",
+          "model",
+          "costUsd",
+          "attempts",
+          "remarks",
+          "editedAt",
+          "retry",
+          "blocks"
+        ],
+        "type": "object"
+      },
+      "TranslationChunkEditedDto": {
+        "properties": {
+          "chapterRewritten": {
+            "type": "boolean"
+          },
+          "chunk": {
+            "$ref": "#/components/schemas/TranslationChunkDto"
+          },
+          "reason": {
+            "description": "Why the chapter was not rewritten (as rewriteRefusal); empty - rewritten or no draft yet",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk",
+          "chapterRewritten",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "TranslationChunkRetryDto": {
+        "properties": {
+          "costUsd": {
+            "description": "Cost of the retry answers",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "limitUsd": {
+            "description": "Limit of the retry operation",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "model": {
+            "description": "Model that answered the retry",
+            "nullable": true,
+            "type": "string"
+          },
+          "operationId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "operationStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationStatus"
+              }
+            ],
+            "description": "Status of the retry operation: active - going; paused - stopped on pauseReason, resume with POST /admin/llm/operations/:id/resume; cancelled, done, failed",
+            "nullable": true
+          },
+          "pauseReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmPauseReason"
+              }
+            ],
+            "nullable": true
+          },
+          "reason": {
+            "description": "failed: why the piece was not replaced (SOURCE_CHANGED, CHUNK_TOO_LONG, CHUNK_INVALID_RESPONSE, RETRY_CANCELLED - the operation was cancelled, RETRY_NOT_APPLIED - the attempt was taken off before the swap); applied: the check flag of the new translation, if any",
+            "nullable": true,
+            "type": "string"
+          },
+          "reasonModels": {
+            "description": "Paused on NO_COMPLIANT_PROVIDER (reason - the stage code, as in the run language): the models of the stage that all refused by the data policy; retry with another model. Empty otherwise",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "requestedModel": {
+            "description": "Translate model asked for this retry; empty - the run models",
+            "nullable": true,
+            "type": "string"
+          },
+          "spentUsd": {
+            "description": "Spent by the retry operation",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "description": "Stage of the retry: pending (translate), translated (checks), checked, done, flagged - before the piece is replaced; applied - the piece is replaced; failed - not replaced, reason in reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "status",
+          "requestedModel",
+          "model",
+          "reason",
+          "reasonModels",
+          "costUsd",
+          "operationStatus",
+          "pauseReason",
+          "spentUsd",
+          "limitUsd"
+        ],
+        "type": "object"
+      },
+      "TranslationChunkRetryStartedDto": {
+        "properties": {
+          "chunk": {
+            "$ref": "#/components/schemas/TranslationChunkDto"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/LlmOperationDto"
+          }
+        },
+        "required": [
+          "operation",
+          "chunk"
+        ],
+        "type": "object"
+      },
+      "TranslationChunkStatus": {
+        "enum": [
+          "pending",
+          "translated",
+          "checked",
+          "done",
+          "flagged"
+        ],
+        "type": "string"
+      },
+      "TranslationChunksChapterDto": {
+        "properties": {
+          "chapterId": {
+            "description": "Chapter of the draft",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "findings": {
+            "description": "Findings as in the run report; stale - found on the text before a retry or hand edit",
+            "items": {
+              "$ref": "#/components/schemas/TranslationReportFindingDto"
+            },
+            "type": "array"
+          },
+          "flagReason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "rewriteRefusal": {
+            "description": "Why the last chapter rewrite after a retry or edit did not go through: CHAPTER_EDITED_MANUALLY, VERSION_NOT_DRAFT, DRAFT_DELETED, SOURCE_CHANGED or an assembly code",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationChapterStatus"
+              }
+            ]
+          }
+        },
+        "required": [
+          "status",
+          "flagReason",
+          "rewriteRefusal",
+          "chapterId",
+          "findings"
+        ],
+        "type": "object"
+      },
+      "TranslationChunksDto": {
+        "properties": {
+          "chapter": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationChunksChapterDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "chapterNumber": {
+            "type": "number"
+          },
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationChunkDto"
+            },
+            "type": "array"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "runId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "sourceChanged": {
+            "description": "The source chapter changed after the split: blocks may not match",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "runId",
+          "language",
+          "chapterNumber",
+          "sourceChanged",
+          "chapter",
+          "chunks"
+        ],
+        "type": "object"
+      },
       "TranslationCompareDto": {
         "properties": {
           "bookVersionId": {
@@ -26017,6 +26398,11 @@
           "number": {
             "type": "number"
           },
+          "rewriteRefusal": {
+            "description": "Why the last chapter rewrite after a piece retry or hand edit did not go through: CHAPTER_EDITED_MANUALLY, VERSION_NOT_DRAFT, DRAFT_DELETED, SOURCE_CHANGED or an assembly code; empty - it did, or there was none",
+            "nullable": true,
+            "type": "string"
+          },
           "seamIndex": {
             "nullable": true,
             "type": "number"
@@ -26038,6 +26424,7 @@
           "length",
           "lengthLimit",
           "chapterId",
+          "rewriteRefusal",
           "findings"
         ],
         "type": "object"
@@ -26187,6 +26574,10 @@
           "seam": {
             "description": "Joint number from 1: between pieces seam-1 and seam",
             "type": "number"
+          },
+          "stale": {
+            "description": "Found on the text before a retry or a hand edit of a piece: mute it, it is not in the chapter flag; absent - current",
+            "type": "boolean"
           },
           "target": {
             "description": "The spelling the glossary gives",
@@ -38195,6 +38586,121 @@
         ]
       }
     },
+    "/admin/translation-chunks/{id}": {
+      "put": {
+        "operationId": "TranslationController_editChunk",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditTranslationChunkDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationChunkEditedDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "CHUNK_BLOCKS_INVALID: blocks not of the piece, repeated, missing or empty after markup cleaning"
+          },
+          "404": {
+            "description": "Translation chunk not found"
+          },
+          "409": {
+            "description": "RUN_ACTIVE; RETRY_IN_PROGRESS; DRAFT_MISSING; CHUNK_SOURCE_CHANGED: the source chapter changed after the split; CHUNK_EDIT_CONFLICT: the chapter or piece changed concurrently, try again"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Edit a piece by hand: the translation of each block of the piece, inline markup only; the piece is saved, the draft chapter is rewritten unless refused (reason)",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/translation-chunks/{id}/retry": {
+      "post": {
+        "operationId": "TranslationController_retryChunk",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RetryTranslationChunkDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationChunkRetryStartedDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "LLM_MODEL_UNKNOWN; limitUsd not an amount"
+          },
+          "404": {
+            "description": "Translation chunk not found"
+          },
+          "409": {
+            "description": "RUN_ACTIVE: the run is running, pause it; RETRY_IN_PROGRESS: a retry of this language is in progress; DRAFT_MISSING: the language has no draft; CHUNK_SOURCE_CHANGED: the source chapter changed after the split; LLM_NO_PRICE; LLM_STAGE_DISABLED; CHECK_MODEL_SAME_FAMILY"
+          },
+          "503": {
+            "description": "LLM_DISABLED: no OpenRouter key"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Retry a piece anew with checks under its own operation and limit, optionally with another translate model; the piece and the draft chapter are replaced when the retry ends",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/translation-compares/{id}": {
       "get": {
         "operationId": "TranslationController_getCompare",
@@ -38313,6 +38819,63 @@
           }
         ],
         "summary": "Cancel a translation run: unfinished languages stop and the run spends nothing more; translated pieces stay. Dossier and glossary operations started for it run on their own limit and are cancelled separately",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/translation-runs/{id}/chunks": {
+      "get": {
+        "operationId": "TranslationController_listChunks",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/Language"
+            }
+          },
+          {
+            "description": "Reader chapter number of the source",
+            "in": "query",
+            "name": "chapter",
+            "required": true,
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TranslationChunksDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Translation run not found, or it does not translate to lang"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Pieces of one chapter of a run language side by side: source and translation block to block, status, flag, model, cost, retry and hand edit; the chapter rewrite refusal and its findings",
         "tags": [
           "admin"
         ]

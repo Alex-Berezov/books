@@ -47,6 +47,8 @@ export function reportFindings(value: Prisma.JsonValue): TranslationReportFindin
       if (typeof f[k] === 'string') out[k] = f[k].slice(0, FINDING_STRING_MAX);
     }
     for (const k of FINDING_NUMBERS) if (typeof f[k] === 'number') out[k] = f[k];
+    // К тексту до повтора или правки куска (`F05-7v`): приглушается, во флаг главы не входит.
+    if (f.stale === true) out.stale = true;
     if (Array.isArray(f.problems)) {
       out.problems = f.problems
         .filter((p): p is string => typeof p === 'string')
@@ -127,6 +129,7 @@ export class TranslationRunReportService {
           lengthLimit: true,
           chapterId: true,
           writtenHash: true,
+          rewriteRefusal: true,
           findings: true,
         },
         orderBy: { chapterNumber: 'asc' },
@@ -195,6 +198,7 @@ export class TranslationRunReportService {
             length: c.length,
             lengthLimit: c.lengthLimit,
             chapterId: c.chapterId,
+            rewriteRefusal: c.rewriteRefusal,
             findings: reportFindings(c.findings),
           })),
           notWrittenChapters: rows

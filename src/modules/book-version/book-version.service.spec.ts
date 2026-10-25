@@ -18,7 +18,7 @@ import { RightsLawyerReviewService } from '../rights-lawyer/rights-lawyer-review
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { TaxonomyIndexabilityService } from '../seo/indexability/taxonomy-indexability.service';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import {
   Language,
   BookType,
@@ -770,6 +770,19 @@ describe('BookVersionService', () => {
       expect(error).toBeInstanceOf(CreateFromRunRejectedError);
       expect(error).toMatchObject({ code: 'CREATE_REJECTED' });
       expect((error as Error).message).toContain('not in approved target languages');
+    });
+
+    it('a 409 of a precondition is not CREATE_REJECTED: it passes on as a step error (Н8)', async () => {
+      (prisma.rightsIntake.findUnique as jest.Mock).mockRejectedValue(
+        new ConflictException({ code: 'RIGHTS_CLEARANCE_GROUP_MOVED', message: 'moved' }),
+      );
+
+      const error = await service
+        .create('b1', dto, Language.es, { runId: 'run-1', afterCreate })
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ConflictException);
+      expect(error).not.toBeInstanceOf(CreateFromRunRejectedError);
     });
 
     it('a race on the language index (P2002 bookId) is VERSION_EXISTS too', async () => {

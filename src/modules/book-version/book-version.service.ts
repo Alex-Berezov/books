@@ -277,8 +277,10 @@ export class BookVersionService {
       return await this.createVersion(bookId, dto, overrideLanguage, fromRun);
     } catch (e: unknown) {
       if (e instanceof CreateFromRunRejectedError) throw e;
-      // Свои отказы предусловий - исключения HTTP до 500: запуск отдаёт их текст языку.
-      if (e instanceof HttpException && e.getStatus() < 500) {
+      // Свои отказы предусловий - исключения HTTP до 500: запуск отдаёт их текст языку. 409 -
+      // конфликт, который проходит сам (перепривязка группы прав посреди замка): ошибкой шага он
+      // уходит в повторы исполнителя, а не закрывает язык навсегда (Н8, решение арбитра `F05 | F05-7v`).
+      if (e instanceof HttpException && e.getStatus() < 500 && e.getStatus() !== 409) {
         throw new CreateFromRunRejectedError(CREATE_FROM_RUN_REJECTIONS.CREATE_REJECTED, e.message);
       }
       throw e;

@@ -1,10 +1,17 @@
 import { LlmTask } from '@prisma/client';
 
 /**
- * Вид задачи повтора куска (`F05-7v`). Обработчика здесь нет, но держатель ключа пары с этим
- * видом даёт «продолжить» отказ 409 `RETRY_IN_PROGRESS` (решение арбитра `F05 | F05-1w`).
+ * Вид задачи повтора куска (`F05-7v`, обработчик - `translation/retry/chunk-retry.handler.ts`).
+ * Держатель ключа пары с этим видом даёт «продолжить» отказ 409 `RETRY_IN_PROGRESS` (решение
+ * арбитра `F05 | F05-1w`).
  */
 export const TRANSLATION_RETRY_KIND = 'translation_retry';
+
+/** 409: на паре «запуск, язык» идёт повтор куска - «продолжить» запуска и новый повтор ждут его. */
+export const RETRY_IN_PROGRESS = 'RETRY_IN_PROGRESS';
+
+/** 409: запуск перевода идёт (или его шаг доделывается) - повтор и правка куска ждут паузы. */
+export const RUN_ACTIVE = 'RUN_ACTIVE';
 
 /** Причина отказа задачи, исчерпавшей захваты подряд без завершённого шага. */
 export const TOO_MANY_ATTEMPTS = 'TOO_MANY_ATTEMPTS';

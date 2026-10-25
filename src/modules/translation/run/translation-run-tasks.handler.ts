@@ -10,7 +10,6 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { RICH_HTML_MAX_LENGTH } from '../../../shared/validators/rich-html.decorator';
-import { LlmError } from '../../llm/llm.errors';
 import { LlmService } from '../../llm/llm.service';
 import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.registry';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
@@ -33,45 +32,22 @@ import { TranslationDraftService } from '../draft/translation-draft.service';
 import { chapterFingerprint, sourceFingerprint } from '../source-fingerprint';
 import { PAUSE_BY_FAILURE } from '../pause-by-failure';
 import { pickBoundary } from '../translate/split.stage';
-import { SPLIT_STAGE, TRANSLATE_STAGE } from '../translate/translate.constants';
+import { SPLIT_STAGE } from '../translate/translate.constants';
 import { glossaryFindingsOf, TranslatedBlock } from '../translate/translate.format';
 import {
-  chunkBlocks,
-  doneRunBefore,
-  glossaryFor,
-  lastTranslated,
-  pieceInput,
-  tailOf,
-} from '../translate/translate-piece';
-import { PieceTranslation, translatePiece } from '../translate/translate-step';
-import {
-  CHECK_FAILURES_MAX,
-  CHECK_FLAG_REASONS,
-  CHECK_JEV_STAGE,
-  CHECK_SEMANTIC_STAGE,
-  CHECK_NO_COMPLIANT_PROVIDER,
-} from '../check/check.constants';
-import {
-  attemptSeed,
-  cappedRemarks,
-  CheckAttempt,
-  emptyVerdict,
-  ChunkVerdict,
-  currentAttempt,
-  verdictJson,
-  verdictOf,
-} from '../check/chunk-verdict';
-import { checkJev } from '../check/jev-step';
-import { jevFailure } from '../check/jev-check';
-import {
-  CheckFailure,
-  checkMechanical,
-  nameEntriesOf,
-  pieceTexts,
-} from '../check/mechanical-check';
-import { semanticFailed, semanticFailures } from '../check/semantic-check';
+  checkChunk,
+  chunkStepContext,
+  ChunkStepInput,
+  ChunkStepResult,
+  ChunkStore,
+  ChunkWrite,
+  costAdded,
+  translateChunk,
+} from '../translate/chunk-steps';
+import { CHECK_SEMANTIC_STAGE, CHECK_NO_COMPLIANT_PROVIDER } from '../check/check.constants';
+import { verdictJson } from '../check/chunk-verdict';
+import { nameEntriesOf } from '../check/mechanical-check';
 import { callIndependent, translatorsOf } from '../check/independent-call';
-import { checkSemantic, semanticInputOf } from '../check/semantic-step';
 import {
   addChapterFindings,
   CHAPTER_FINDINGS_SELECT,
@@ -135,9 +111,7 @@ import { runTaskInput } from './translation-run.service';
 import {
   RUN_CHAPTER_CHUNKS_MAX,
   CHUNK_CLOSED_STATUSES,
-  CHUNK_INVALID_RESPONSE,
   CHUNK_STATUS_UNEXPECTED,
-  CHUNK_TOO_LONG,
   RUN_LANGUAGE_UNFINISHED,
   RUN_LANGUAGES_MAX,
   RUN_TX_OPTIONS,
@@ -181,6 +155,11 @@ const NO_PROVIDER_REASONS: Readonly<Record<string, string>> = {
   [FINAL_CHECK_STAGE]: FINAL_CHECK_NO_COMPLIANT_PROVIDER,
 };
 
+/** Код причины паузы `NO_COMPLIANT_PROVIDER` по этапу - один у языка запуска и у попытки повтора. */
+export function noProviderReason(stage: string): string {
+  return NO_PROVIDER_REASONS[stage] ?? 'LLM_NO_COMPLIANT_PROVIDER';
+}
+
 /** Под замком строки операции черновик уже есть: тупик Р13 не ставится, смена причины откатывается. */
 class StaleDecisionChangedError extends Error {}
 
@@ -191,17 +170,6 @@ function runLanguageIdOf(task: LlmTask): string | null {
 
 function stageModelsOf(run: RunRow, stage: string): StageModels {
   return runStageModels(run.operation.settingsSnapshot, run.stageModels, stage);
-}
-
-/**
- * Прибавка к стоимости куска (решение арбитра `F05 | F05-5`: сумма всех платных ответов
- * куска, В7). Пустая колонка - первая стоимость: `increment` по `NULL` дал бы `NULL`.
- */
-function costAdded(
-  current: Prisma.Decimal | null,
-  add: Prisma.Decimal | string,
-): Prisma.Decimal | { increment: Prisma.Decimal | string } {
-  return current === null ? new Prisma.Decimal(add) : { increment: add };
 }
 
 /**
@@ -514,7 +482,9 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     if (!next) return this.startChapter(lang, number, ctx);
     if (next.status === 'checked') return this.applyFindings(lang, next.id, ctx);
     const layout = splitChapter(chapter.content);
-    if (next.status === 'translated') return this.checkStep(lang, layout, next, ctx);
+    if (next.status === 'translated') {
+      return this.checkStep(lang, number, layout, chunks, next, ctx);
+    }
     // В перевод - только `pending`: закрытые куски отобраны выше (`CLOSED`), а новый статус
     // схемы без своей ветки не соберётся (`assertClosed`) - иначе он ушёл бы в перевод, который
     // пишется только из `pending`, и шаг платил бы по кругу.
@@ -578,6 +548,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     return { kind: 'continue' };
   }
 
+  /** Перевод куска - общий шаг (`translate/chunk-steps.ts`), запись в строку куска запуска. */
   private async translateStep(
     lang: LanguageRow,
     number: number,
@@ -586,293 +557,98 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     chunk: ChunkRow,
     ctx: LlmTaskContext,
   ): Promise<LlmTaskStepResult> {
-    const { run } = lang;
-    const { dossier, glossary } = await this.contextOf(lang);
-    const verdict = verdictOf(chunk.verdict);
-    const previous = lastTranslated(
-      doneRunBefore(
-        chunks.map((c) => ({
-          chunkIndex: c.chunkIndex,
-          done: c.status === 'done',
-          blocks: (c.blocks ?? []) as unknown as TranslatedBlock[],
-        })),
-        chunk.chunkIndex,
-      ),
-    );
-    const input = pieceInput({
-      layout,
-      chunks: chunks.map((c) => ({
-        firstBlock: c.firstBlock,
-        lastBlock: c.lastBlock,
-        words: c.words,
-      })),
-      index: chunk.chunkIndex,
-      dossier,
-      glossary,
-      sourceLanguage: run.sourceLanguage,
-      targetLanguage: lang.language,
-      chapterNumber: number,
-      previousTail: previous ? tailOf(previous) : null,
-    });
-    // Перевод заново после провала проверки - с замечаниями проверяющего (решение арбитра
-    // `F05 | F05-5`); сид и счётчик неудач остаются в вердикте.
-    if (verdict && verdict.remarks.length > 0) input.reviewerRemarks = verdict.remarks;
-    const models = stageModelsOf(run, TRANSLATE_STAGE);
-    let piece: PieceTranslation;
-    try {
-      piece = await translatePiece(this.llm, run.operationId, input, layout, ctx, models);
-    } catch (error) {
-      if (error instanceof LlmError && error.code === 'LLM_NO_COMPLIANT_PROVIDER') {
-        return this.pauseNoProvider(lang, TRANSLATE_STAGE, models);
-      }
-      throw error;
-    }
-    await ctx.renewLease();
-    switch (piece.kind) {
-      // Кусок без переводимых блоков (только `hr` и картинки без подписей): модель не звалась.
-      case 'empty':
-        await this.prisma.translationChunk.updateMany({
-          where: { id: chunk.id, status: 'pending' },
-          data: { status: 'done', blocks: [] },
-        });
-        return { kind: 'continue' };
-      case 'too_long':
-        return this.flagChunk(lang, chunk, CHUNK_TOO_LONG, { from: 'pending' });
-      case 'invalid':
-        // Перевод заново после провала проверки - попытка в вердикт: его стоимость сходится с куском.
-        // Ответ не по форме - модель неизвестна (`translatedBy` пустой), есть только стоимость.
-        verdict?.attempts.push({
-          translatedBy: '',
-          translateCostUsd: piece.costUsd.toString(),
-          outcome: 'invalid',
-        });
-        return this.flagChunk(lang, chunk, CHUNK_INVALID_RESPONSE, {
-          from: 'pending',
-          costUsd: piece.costUsd,
-          attempt: true,
-          ...(verdict ? { verdict } : {}),
-        });
-      case 'translated': {
-        // Попытка - новая строка вердикта: проверки пишут в неё, сумма куска растёт (В7).
-        const next = verdict ?? emptyVerdict(chunk.id);
-        next.attempts.push({
-          translatedBy: piece.model,
-          translateCostUsd: piece.costUsd.toString(),
-        });
-        await this.prisma.translationChunk.updateMany({
-          where: { id: chunk.id, status: 'pending' },
-          data: {
-            status: 'translated',
-            attempts: { increment: 1 },
-            rawResponse: piece.raw as Prisma.InputJsonValue,
-            blocks: piece.blocks as unknown as Prisma.InputJsonValue,
-            model: piece.model,
-            callId: piece.callId,
-            costUsd: costAdded(chunk.costUsd, piece.costUsd),
-            verdict: verdictJson(next),
-          },
-        });
-        return { kind: 'continue' };
-      }
-    }
+    const input = await this.stepInput(lang, number, layout, chunks, ctx);
+    return this.stepResult(lang, await translateChunk(input, chunk, this.runStore(lang, chunk)));
   }
 
-  /** Досье запуска и глоссарий языка - данные перевода и проверок куска. */
-  private async contextOf(lang: LanguageRow): Promise<{ dossier: unknown; glossary: unknown }> {
-    const [dossier, glossary] = await Promise.all([
-      this.prisma.bookDossier.findUnique({
-        where: { id: lang.run.dossierId ?? '' },
-        select: { data: true },
-      }),
-      this.prisma.bookGlossary.findUnique({
-        where: { id: lang.glossaryId ?? '' },
-        select: { data: true },
-      }),
-    ]);
-    return { dossier: dossier?.data ?? null, glossary: glossary?.data ?? null };
-  }
-
-  /**
-   * Проверки переведённого куска (`F05-5`; `tech.md` §6): механика кодом каждый шаг (она
-   * дешёвая и детерминированная), Jev - отдельным шагом с записью ответа, сверка смысла - с записью
-   * решения. Каждый платный ответ пишется в кусок вместе со своей стоимостью - повтор шага после
-   * падения его не оплачивает. Провал → перевод заново с замечаниями, вторая неудача - флаг.
-   */
+  /** Проверки куска - общий шаг (`translate/chunk-steps.ts`), запись в строку куска запуска. */
   private async checkStep(
     lang: LanguageRow,
+    number: number,
     layout: ChapterLayout,
+    chunks: ChunkRow[],
     chunk: ChunkRow,
     ctx: LlmTaskContext,
   ): Promise<LlmTaskStepResult> {
+    const input = await this.stepInput(lang, number, layout, chunks, ctx);
+    return this.stepResult(lang, await checkChunk(input, chunk, this.runStore(lang, chunk)));
+  }
+
+  private async stepInput(
+    lang: LanguageRow,
+    number: number,
+    layout: ChapterLayout,
+    chunks: ChunkRow[],
+    ctx: LlmTaskContext,
+  ): Promise<ChunkStepInput> {
     const { run } = lang;
-    // Кусок, переведённый до `F05-5` (запуск шёл во время выката): попытка из полей куска.
-    const verdict = verdictOf(chunk.verdict) ?? emptyVerdict(chunk.id);
-    let attempt = currentAttempt(verdict);
-    if (!attempt) {
-      attempt = {
-        translatedBy: chunk.model ?? '',
-        translateCostUsd: (chunk.costUsd ?? new Prisma.Decimal(0)).toString(),
-      };
-      verdict.attempts.push(attempt);
-    }
     const { dossier, glossary } = await this.contextOf(lang);
-    const source = chunkBlocks(layout, chunk);
-    const translated = (chunk.blocks ?? []) as unknown as TranslatedBlock[];
-    const sourceText = pieceTexts(source).sourceText;
-    const names = nameEntriesOf(glossaryFor(glossary, dossier, sourceText).entries);
-    const mechanical = checkMechanical({
-      sourceLanguage: run.sourceLanguage,
-      targetLanguage: lang.language,
-      source,
-      translated,
-      glossary: names,
-    });
-    attempt.mechanical = mechanical;
-    // Механика провалилась - платные проверки ответ не изменят: перевод заново без них.
-    if (mechanical.failures.length > 0) {
-      return this.failCheck(lang, chunk, verdict, attempt, mechanical.failures);
-    }
-
-    if (attempt.jev === undefined) {
-      const jev = await checkJev(
-        this.llm,
-        run.operationId,
-        pieceTexts(source, translated).translatedText,
-        stageModelsOf(run, CHECK_JEV_STAGE),
-        ctx,
-      );
-      await ctx.renewLease();
-      attempt.jev = jev;
-      if (jev.kind !== 'disabled') {
-        // Ответ Jev - в кусок до решения со своей стоимостью: повтор шага его не оплачивает.
-        const paid = jev.costUsd;
-        await this.prisma.translationChunk.updateMany({
-          where: { id: chunk.id, status: 'translated' },
-          data: {
-            verdict: verdictJson(verdict),
-            ...(paid ? { costUsd: costAdded(chunk.costUsd, paid) } : {}),
-          },
-        });
-        return { kind: 'continue' };
-      }
-    }
-    const jevFailed = jevFailure(attempt.jev, lang.language);
-    if (jevFailed) return this.failCheck(lang, chunk, verdict, attempt, [jevFailed]);
-
-    const missed = names.filter((n) => mechanical.nameMisses.includes(n.key));
-    const input = semanticInputOf({
-      sourceLanguage: run.sourceLanguage,
-      targetLanguage: lang.language,
-      source,
-      translated,
-      seed: attemptSeed(verdict),
-      names: missed,
-    });
-    const outcome = await checkSemantic(
-      this.llm,
-      run.operationId,
-      input,
-      attempt.translatedBy,
-      stageModelsOf(run, CHECK_SEMANTIC_STAGE),
+    return {
+      llm: this.llm,
+      operationId: run.operationId,
       ctx,
-    );
-    switch (outcome.kind) {
-      case 'not_independent':
-        attempt.outcome = 'not_independent';
-        return this.flagChunk(lang, chunk, CHECK_FLAG_REASONS.NOT_INDEPENDENT, {
-          from: 'translated',
-          verdict,
-        });
-      case 'unavailable':
-        // Этап выключили или модель потеряла цену посреди запуска (решение арбитра
-        // `F05 | F05-5`): перевод заново не поможет - флаг, язык идёт дальше.
-        attempt.outcome = 'unavailable';
-        return this.flagChunk(lang, chunk, CHECK_FLAG_REASONS.CHECK_STAGE_UNAVAILABLE, {
-          from: 'translated',
-          verdict,
-        });
-      case 'no_provider':
-        return this.pauseNoProvider(lang, CHECK_SEMANTIC_STAGE, outcome.models);
-      case 'too_long':
-        // Исходник с переводом не влезает в контекст проверяющего: сверить нечем - флаг, как
-        // `CHUNK_TOO_LONG` у перевода, а не отказ шага по кругу.
-        attempt.outcome = 'too_long';
-        return this.flagChunk(lang, chunk, CHECK_FLAG_REASONS.CHECK_INPUT_TOO_LONG, {
-          from: 'translated',
-          verdict,
-        });
-      case 'invalid':
-        await ctx.renewLease();
-        attempt.semantic = { model: '', costUsd: outcome.costUsd.toString(), answer: null };
-        attempt.outcome = 'invalid';
-        return this.flagChunk(lang, chunk, CHECK_FLAG_REASONS.CHUNK_CHECK_INVALID_RESPONSE, {
-          from: 'translated',
-          costUsd: outcome.costUsd,
-          verdict,
-        });
-      case 'answered':
-        break;
-    }
-    await ctx.renewLease();
-    attempt.semantic = {
-      model: outcome.model,
-      costUsd: outcome.costUsd.toString(),
-      answer: outcome.answer,
+      sourceLanguage: run.sourceLanguage,
+      targetLanguage: lang.language,
+      chapterNumber: number,
+      layout,
+      chunks,
+      dossier,
+      glossary,
+      models: (stage) => stageModelsOf(run, stage),
     };
-    if (semanticFailed(outcome.answer, missed)) {
-      return this.failCheck(
-        lang,
-        chunk,
-        verdict,
-        attempt,
-        semanticFailures(outcome.answer, missed),
-        outcome.costUsd,
-      );
+  }
+
+  private stepResult(lang: LanguageRow, result: ChunkStepResult): Promise<LlmTaskStepResult> {
+    if (result.kind === 'no_provider') {
+      return this.pauseNoProvider(lang, result.stage, result.models);
     }
-    attempt.outcome = 'pass';
-    await this.prisma.translationChunk.updateMany({
-      where: { id: chunk.id, status: 'translated' },
-      data: {
-        status: 'checked',
-        verdict: verdictJson(verdict),
-        costUsd: costAdded(chunk.costUsd, outcome.costUsd),
-      },
-    });
-    return { kind: 'continue' };
+    return Promise.resolve({ kind: 'continue' });
   }
 
   /**
-   * Неудача проверки: замечания - в вердикт, кусок - в перевод заново (`pending`); неудача
-   * `CHECK_FAILURES_MAX` - флаг с кодом первой причины, язык идёт дальше. Находки глоссария
-   * у флага не применяются (решение арбитра `F05 | F05-5`).
+   * Запись шагов в строку куска запуска условием статуса. Флаг - со счётчиком флагов языка той
+   * же транзакцией: ошибка содержания после повторов, язык идёт дальше (`tech.md` §5).
    */
-  private async failCheck(
-    lang: LanguageRow,
-    chunk: ChunkRow,
-    verdict: ChunkVerdict,
-    attempt: CheckAttempt,
-    failures: readonly CheckFailure[],
-    costUsd: Prisma.Decimal | null = null,
-  ): Promise<LlmTaskStepResult> {
-    attempt.outcome = 'fail';
-    verdict.failures += 1;
-    verdict.remarks = cappedRemarks(failures.map((f) => f.remark));
-    if (verdict.failures >= CHECK_FAILURES_MAX) {
-      return this.flagChunk(lang, chunk, failures[0].code, {
-        from: 'translated',
-        costUsd,
-        verdict,
-      });
-    }
-    await this.prisma.translationChunk.updateMany({
-      where: { id: chunk.id, status: 'translated' },
-      data: {
-        status: 'pending',
-        verdict: verdictJson(verdict),
-        ...(costUsd ? { costUsd: costAdded(chunk.costUsd, costUsd) } : {}),
-      },
+  private runStore(lang: LanguageRow, chunk: ChunkRow): ChunkStore {
+    const data = (write: ChunkWrite): Prisma.TranslationChunkUpdateManyMutationInput => ({
+      ...(write.status ? { status: write.status } : {}),
+      ...(write.rawResponse !== undefined
+        ? { rawResponse: write.rawResponse as Prisma.InputJsonValue }
+        : {}),
+      ...(write.blocks ? { blocks: write.blocks as unknown as Prisma.InputJsonValue } : {}),
+      ...(write.model !== undefined ? { model: write.model } : {}),
+      ...(write.callId !== undefined ? { callId: write.callId } : {}),
+      ...(write.costUsd ? { costUsd: costAdded(chunk.costUsd, write.costUsd) } : {}),
+      ...(write.attempt ? { attempts: { increment: 1 } } : {}),
+      ...(write.verdict ? { verdict: verdictJson(write.verdict) } : {}),
     });
-    return { kind: 'continue' };
+    return {
+      write: async (from, write) => {
+        await this.prisma.translationChunk.updateMany({
+          where: { id: chunk.id, status: from },
+          data: data(write),
+        });
+      },
+      flag: async (from, reason, write) => {
+        await this.prisma.$transaction(async (tx) => {
+          const flagged = await tx.translationChunk.updateMany({
+            where: { id: chunk.id, status: from },
+            data: { ...data(write), status: 'flagged', flagReason: reason },
+          });
+          if (flagged.count > 0) {
+            await tx.translationRunLanguage.update({
+              where: { id: lang.id },
+              data: { flaggedChunks: { increment: 1 } },
+            });
+          }
+        }, RUN_TX_OPTIONS);
+      },
+    };
+  }
+
+  /** Досье запуска и глоссарий языка - данные перевода и проверок куска. */
+  private contextOf(lang: LanguageRow): Promise<{ dossier: unknown; glossary: unknown }> {
+    return chunkStepContext(this.prisma, lang.run.dossierId, lang.glossaryId);
   }
 
   /**
@@ -916,44 +692,6 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
         where: { id: chunk.id, status: 'checked' },
         data: { status: 'done' },
       });
-    }, RUN_TX_OPTIONS);
-    return { kind: 'continue' };
-  }
-
-  /**
-   * Ошибка содержания после повторов - флаг куска, язык идёт дальше (`tech.md` §5). `from` -
-   * статус, из которого флаг ставится: перевод (`pending`) или проверки (`translated`).
-   * `attempt` - шаг перевода, дошедший до модели (у `too_long` вызова не было; вызов проверки
-   * попыткой перевода не считается).
-   */
-  private async flagChunk(
-    lang: LanguageRow,
-    chunk: ChunkRow,
-    reason: string,
-    options: {
-      from: 'pending' | 'translated';
-      costUsd?: Prisma.Decimal | null;
-      attempt?: boolean;
-      verdict?: ChunkVerdict;
-    },
-  ): Promise<LlmTaskStepResult> {
-    await this.prisma.$transaction(async (tx) => {
-      const flagged = await tx.translationChunk.updateMany({
-        where: { id: chunk.id, status: options.from },
-        data: {
-          status: 'flagged',
-          flagReason: reason,
-          ...(options.costUsd ? { costUsd: costAdded(chunk.costUsd, options.costUsd) } : {}),
-          ...(options.attempt ? { attempts: { increment: 1 } } : {}),
-          ...(options.verdict ? { verdict: verdictJson(options.verdict) } : {}),
-        },
-      });
-      if (flagged.count > 0) {
-        await tx.translationRunLanguage.update({
-          where: { id: lang.id },
-          data: { flaggedChunks: { increment: 1 } },
-        });
-      }
     }, RUN_TX_OPTIONS);
     return { kind: 'continue' };
   }
@@ -1542,7 +1280,7 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     // Причина языка называет этап: из паузы сверки смысла выходят ключом `check_semantic`
     // в `stageModels`, а не `translate`.
     return this.stopRun(lang, 'NO_COMPLIANT_PROVIDER', {
-      reason: NO_PROVIDER_REASONS[stage] ?? 'LLM_NO_COMPLIANT_PROVIDER',
+      reason: noProviderReason(stage),
       reasonModels: tried,
     });
   }

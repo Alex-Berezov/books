@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { SEAM_FINDING_CODES } from '../check/seam-check';
-import { ChapterFlagCode } from '../draft/draft.constants';
+import { ChapterFlagCode, DRAFT_FLAG_REASONS } from '../draft/draft.constants';
 import { FINAL_FINDING_CODES } from '../final-check/final-check.constants';
+import { ASSEMBLY_FLAG_REASONS, AssemblyFinding } from './chapter-assembly';
 
 /** Глава языка в объёме, нужном находкам: флаг, номер стыка и прежние находки. */
 export interface ChapterFindingsRow {
@@ -44,6 +45,11 @@ export async function addChapterFindings(
     data?: Prisma.TranslationChapterUncheckedUpdateManyInput;
     where?: Prisma.TranslationChapterWhereInput;
     flagFrom?: ReadonlyArray<{ code: ChapterFlagCode; seam?: number }>;
+    /**
+     * Флаг заменяет прежний (глава не пишется в черновик: `flagReason` - то, почему её там нет,
+     * прежний флаг остаётся в находках); счётчик - всё так же один раз на главу.
+     */
+    overwriteFlag?: boolean;
   } = {},
 ): Promise<boolean> {
   const previous = Array.isArray(row.findings) ? row.findings : [];
@@ -78,6 +84,92 @@ export async function addChapterFindings(
       where: { id: languageId },
       data: { flaggedChapters: { increment: 1 } },
     });
+  } else if (options.overwriteFlag) {
+    await tx.translationChapter.updateMany({
+      where: { id: row.id },
+      data: { flagReason: flag.code },
+    });
   }
   return true;
+}
+
+/** Находка главы, как она лежит в `TranslationChapter.findings`; `stale` - к тексту до правки. */
+export interface StoredFinding {
+  code: string;
+  seam?: number;
+  stale?: boolean;
+  [key: string]: unknown;
+}
+
+const ASSEMBLY_CODES: ReadonlySet<string> = new Set(Object.values(ASSEMBLY_FLAG_REASONS));
+const DRAFT_CODES: ReadonlySet<string> = new Set(Object.values(DRAFT_FLAG_REASONS));
+
+/**
+ * Находки главы после повтора или правки куска (решение арбитра `F05 | F05-7v`): находки сборки -
+ * кода, бесплатные - заменяются свежими; находки записи черновика остаются; ответы моделей
+ * (стыки, итоговая проверка) и их записи `*_CHECKED` остаются с `stale: true` - оплаченное
+ * не стирается, но к новому тексту не относится. `notWritten` - глава не пишется: её код
+ * последней находкой, как у записи черновика.
+ */
+export function rebuiltFindings(
+  previous: Prisma.JsonValue,
+  fresh: readonly AssemblyFinding[],
+  notWritten: ChapterFlagCode | null = null,
+): StoredFinding[] {
+  const kept = (Array.isArray(previous) ? previous : [])
+    .filter((f): f is Prisma.JsonObject => typeof f === 'object' && f !== null && !Array.isArray(f))
+    .map((f) => f as unknown as StoredFinding)
+    .filter((f) => typeof f.code === 'string' && !ASSEMBLY_CODES.has(f.code))
+    .filter((f) => f.code !== DRAFT_FLAG_REASONS.SOURCE_CHANGED)
+    .map((f) => (DRAFT_CODES.has(f.code) ? f : { ...f, stale: true }));
+  const added: StoredFinding[] = fresh.map((f) => ({ ...f }));
+  const tail: StoredFinding[] =
+    notWritten && !fresh.some((f) => f.code === notWritten) ? [{ code: notWritten }] : [];
+  return [...added, ...kept, ...tail];
+}
+
+/** Флаг и номер стыка главы по действующим находкам: без `stale` и без записей ответов. */
+export function activeFlagOf(
+  findings: readonly StoredFinding[],
+  notWritten: string | null = null,
+): { flagReason: string | null; seamIndex: number | null } {
+  const active = findings.filter((f) => !f.stale && isFlagFinding(f));
+  return {
+    flagReason: notWritten ?? active[0]?.code ?? null,
+    seamIndex: active.find((f) => typeof f.seam === 'number')?.seam ?? null,
+  };
+}
+
+/**
+ * Запись пересобранных находок главы, строка которой уже под замком транзакции (`FOR UPDATE`):
+ * `flagReason` и `seamIndex` - по действующим, `flaggedChapters` языка - ±1 по переходу флага
+ * «был → нет» и «не было → есть», условием на счётчик, чтобы не уйти ниже нуля. `data` - переход
+ * статуса и прочие поля той же записью.
+ */
+export async function writeRebuiltFindings(
+  tx: Prisma.TransactionClient,
+  languageId: string,
+  locked: { id: string; flagReason: string | null },
+  findings: readonly StoredFinding[],
+  data: Prisma.TranslationChapterUncheckedUpdateInput,
+  /** Глава не в черновике: флаг - то, почему её там нет (код сборки или отказ перезаписи). */
+  notWritten: string | null = null,
+): Promise<void> {
+  const { flagReason, seamIndex } = activeFlagOf(findings, notWritten);
+  await tx.translationChapter.update({
+    where: { id: locked.id },
+    data: {
+      ...data,
+      flagReason,
+      seamIndex,
+      findings: findings as unknown as Prisma.InputJsonValue,
+    },
+  });
+  const was = locked.flagReason !== null;
+  const now = flagReason !== null;
+  if (was === now) return;
+  await tx.translationRunLanguage.updateMany({
+    where: { id: languageId, ...(now ? {} : { flaggedChapters: { gt: 0 } }) },
+    data: { flaggedChapters: now ? { increment: 1 } : { decrement: 1 } },
+  });
 }

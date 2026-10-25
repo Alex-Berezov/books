@@ -10,7 +10,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { utcTimestamp } from '../../shared/prisma/utc-timestamp';
 import { LlmConfig } from '../llm/llm.config';
 import { LlmWorkerConfig } from './llm-worker.config';
-import { LlmTaskStepResult, TRANSLATION_RETRY_KIND } from './llm-task.types';
+import {
+  LlmTaskStepResult,
+  RETRY_IN_PROGRESS,
+  RUN_ACTIVE,
+  TRANSLATION_RETRY_KIND,
+} from './llm-task.types';
 import { LlmTaskLeaseLostError, llmTaskConflict } from './llm-worker.errors';
 
 /** Переход операции вместе с её задачами - короткие условные UPDATE (`L-020`). */
@@ -235,8 +240,9 @@ export class LlmTaskService {
    * «Продолжить» (Р19): операция снова `active`, задачи шага вставляются заново - все в одной
    * транзакции (у запуска перевода - по задаче на язык, решение арбитра `F05 | F05-4`). Ключ
    * пары занят шаговой задачей той же операции (шаг ещё `running`) - успех без второй задачи;
-   * задачей повтора куска - 409 `RETRY_IN_PROGRESS`, операция остаётся как была; иным
-   * держателем - нарушение инварианта (решение арбитра `F05 | F05-1w`).
+   * задачей повтора куска - 409 `RETRY_IN_PROGRESS`, операция остаётся как была; у самого
+   * повтора шагом запуска - 409 `RUN_ACTIVE` (`F05-7v`); иным держателем - нарушение
+   * инварианта (решение арбитра `F05 | F05-1w`).
    *
    * `alongside` - запись вида операции (модели этапов запуска, сброс причин), которая идёт
    * той же транзакцией после перевода в `active`: отказ «продолжить» откатывает и её.
@@ -297,10 +303,20 @@ export class LlmTaskService {
   ): Promise<EnqueueResult> {
     const result = await this.enqueue({ ...task, operationId }, tx);
     if (result.created) return result;
-    if (result.holder.kind === TRANSLATION_RETRY_KIND) {
-      throw llmTaskConflict('RETRY_IN_PROGRESS', 'A chunk retry is in progress for this language');
+    // Пару держит повтор куска, а продолжают не его: запуск или повтор другого куска - ждать.
+    if (
+      result.holder.kind === TRANSLATION_RETRY_KIND &&
+      (task.kind !== TRANSLATION_RETRY_KIND || result.holder.operationId !== operationId)
+    ) {
+      throw llmTaskConflict(RETRY_IN_PROGRESS, 'A chunk retry is in progress for this language');
     }
+    // Шаг своей операции ещё `running` (в том числе шаг самого повтора) - успех без второй задачи.
     if (result.holder.operationId === operationId) return result;
+    // Повтор куска держит пару запуска своей операцией (`F05-7v`): чужой держатель - шаг запуска,
+    // который ещё доделывается, а не нарушение инварианта.
+    if (task.kind === TRANSLATION_RETRY_KIND) {
+      throw llmTaskConflict(RUN_ACTIVE, 'A step of the translation run is in progress');
+    }
     this.logger.error(
       `LLM task pair ${task.pairKey ?? '-'} is held by task ${result.holder.id} ` +
         `of operation ${result.holder.operationId} (kind ${result.holder.kind})`,
@@ -488,27 +504,42 @@ export class LlmTaskService {
     alongside?: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
-      const stopped = await tx.llmOperation.updateMany({
-        where: {
-          id: operationId,
-          // Отменить можно и стоящую на паузе; отказ, пауза и завершение - только идущую.
-          status: { in: status === 'cancelled' ? ['active', 'paused'] : ['active'] },
-        },
-        data: { status, pauseReason: reason },
-      });
-      if (stopped.count === 0) {
+      if (!(await stopOperationRows(tx, operationId, status, reason))) {
         await alongside?.(tx);
         return false;
       }
-      await tx.llmTask.updateMany({
-        where: { operationId, status: 'pending' },
-        data: { status: 'cancelled' },
-      });
       await after?.(tx);
       await alongside?.(tx);
       return true;
     }, TASK_TX_OPTIONS);
   }
+}
+
+/**
+ * Строки остановки операции в транзакции вызывающего: операция - в `status` (отменить можно и
+ * стоящую на паузе; отказ, пауза и завершение - только идущую), её `pending`-задачи - `cancelled`
+ * (Р19). Один переход на `stopOperation` и на тех, кто снимает операцию под своими замками
+ * (повтор куска, `F05-7v`). `false` - операция уже не в том статусе, задачи не тронуты.
+ */
+export async function stopOperationRows(
+  tx: Prisma.TransactionClient,
+  operationId: string,
+  status: 'paused' | 'cancelled' | 'failed' | 'done',
+  reason: LlmPauseReason | null,
+): Promise<boolean> {
+  const stopped = await tx.llmOperation.updateMany({
+    where: {
+      id: operationId,
+      status: { in: status === 'cancelled' ? ['active', 'paused'] : ['active'] },
+    },
+    data: { status, pauseReason: reason },
+  });
+  if (stopped.count === 0) return false;
+  await tx.llmTask.updateMany({
+    where: { operationId, status: 'pending' },
+    data: { status: 'cancelled' },
+  });
+  return true;
 }
 
 /** Причина паузы не из `reasons` (пустая - тоже); пустой список - без условия. */

@@ -4041,6 +4041,8 @@ enum LlmOperationKind {
   dossier
   compare
   draft
+  /// Повтор одного куска запуска перевода (`F05-7v`): своя операция и лимит, привязка - `translationRunId`.
+  translation_retry
 }
 
 enum LlmOperationStatus {
@@ -4526,6 +4528,12 @@ model TranslationChunk {
   /// Факт всех платных ответов куска: попытки перевода с повторами по замечанию (В7), Jev и
   /// сверка смысла (`F05-5`); попытка, оборвавшаяся ошибкой без разобранного ответа, не входит.
   costUsd            Decimal?               @db.Decimal(14, 8)
+  /// Попытка повтора куска (`F05-7v`, форма - `ChunkRetry` в `translation/retry/chunk-retry.ts`): операция,
+  /// этап, перевод и вердикт попытки. Кусок подменяется ею одной транзакцией с перезаписью главы;
+  /// до того поля куска не меняются, и «продолжить» запуска его не трогает.
+  retry              Json?
+  /// Кусок правили руками (`PUT /admin/translation-chunks/:id`): за текст отвечает редактор.
+  editedAt           DateTime?
   createdAt          DateTime               @default(now())
   updatedAt          DateTime               @updatedAt
 
@@ -4555,6 +4563,9 @@ model TranslationChapter {
   chapter       Chapter?                 @relation(fields: [chapterId], references: [id], onDelete: SetNull)
   /// sha256 записанного очищенного `content` (Р9).
   writtenHash   String?
+  /// Почему последняя перезапись главы после повтора или правки куска не прошла (Р9, `F05-7v`):
+  /// `CHAPTER_EDITED_MANUALLY`, `VERSION_NOT_DRAFT`, `DRAFT_DELETED` или код сборки; пусто - прошла.
+  rewriteRefusal String?
   createdAt     DateTime                 @default(now())
   updatedAt     DateTime                 @updatedAt
 

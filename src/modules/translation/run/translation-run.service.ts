@@ -278,9 +278,10 @@ export class TranslationRunService {
         _count: { _all: true },
       }),
       // Досье и глоссарии запуска (решение арбитра `F05 | F05-7`, В1): от новых, предел
-      // срезает старые, а не идущую операцию.
+      // срезает старые, а не идущую операцию. Повторы кусков (`F05-7v`) - на своём экране:
+      // их число не ограничено и вытеснило бы досье из предела.
       this.prisma.llmOperation.findMany({
-        where: { translationRunId: run.id, NOT: { id: run.operationId } },
+        where: { translationRunId: run.id, kind: 'dossier', NOT: { id: run.operationId } },
         orderBy: { createdAt: 'desc' },
         take: RUN_OPERATIONS_MAX,
       }),

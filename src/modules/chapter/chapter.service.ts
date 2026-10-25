@@ -17,6 +17,18 @@ import {
 // Предохранитель списка названий глав: глав в версии на порядки меньше.
 const CHAPTER_TITLES_MAX = 5_000;
 
+/** Запись главы внутри `rewriteLocked`: все обращения - через транзакцию под замком прав. */
+export interface LockedChapterWriter {
+  /** Статус версии под замком её строки; `null` - версии нет. */
+  versionStatus(): Promise<string | null>;
+  /** Строка главы версии под `FOR UPDATE`; `null` - главы нет. */
+  lockChapter(id: string): Promise<{ id: string; content: string } | null>;
+  /** Номер уже занят главой версии. */
+  numberTaken(number: number): Promise<boolean>;
+  /** `id` - замена текста существующей главы, без него - новая глава с номером и названием. */
+  write(data: { id?: string; number: number; title: string; content: string }): Promise<Chapter>;
+}
+
 @Injectable()
 export class ChapterService {
   constructor(
@@ -151,6 +163,63 @@ export class ChapterService {
       );
       await afterCreate?.(tx, created);
       return created;
+    });
+  }
+
+  /**
+   * Перезапись или создание главы черновика по Р9 (`F05-7v`): тот же замок проверки прав и та же
+   * пометка свежести, что у ручных путей (D3). `body` решает в той же транзакции, писать ли:
+   * статус версии читается после замка строки версии (`FOR NO KEY UPDATE` замка прав держит
+   * публикацию), текст главы - под `FOR UPDATE` её строки (`lockChapter`). Ручное сохранение
+   * главы ждёт этот же замок прав, поэтому проходит одно из двух, а сверка - уже по итогу первого.
+   */
+  async rewriteLocked<T>(
+    bookVersionId: string,
+    body: (tx: Prisma.TransactionClient, chapters: LockedChapterWriter) => Promise<T>,
+  ): Promise<T> {
+    return this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
+      const writer: LockedChapterWriter = {
+        versionStatus: async () =>
+          (
+            await tx.bookVersion.findUnique({
+              where: { id: bookVersionId },
+              select: { status: true },
+            })
+          )?.status ?? null,
+        lockChapter: async (id) => {
+          const rows = await tx.$queryRaw<Array<{ id: string; content: string }>>`
+            SELECT "id", "content" FROM "Chapter"
+            WHERE "id" = ${id} AND "bookVersionId" = ${bookVersionId}
+            FOR UPDATE`;
+          return rows[0] ?? null;
+        },
+        numberTaken: async (number) =>
+          (await tx.chapter.findUnique({
+            where: { bookVersionId_number: { bookVersionId, number } },
+            select: { id: true },
+          })) !== null,
+        write: async (data) => {
+          const written = data.id
+            ? await tx.chapter.update({ where: { id: data.id }, data: { content: data.content } })
+            : await tx.chapter.create({
+                data: {
+                  bookVersionId,
+                  number: data.number,
+                  title: data.title,
+                  content: data.content,
+                },
+              });
+          await this.rightsContentHashService.checkVersionStaleness(
+            bookVersionId,
+            data.id ? 'CHAPTER_UPDATED' : 'CHAPTER_CREATED',
+            null,
+            true,
+            tx,
+          );
+          return written;
+        },
+      };
+      return body(tx, writer);
     });
   }
 

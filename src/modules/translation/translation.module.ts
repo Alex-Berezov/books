@@ -17,6 +17,10 @@ import {
 import { DossierService } from './dossier/dossier.service';
 import { DossierTasksHandler } from './dossier/dossier-tasks.handler';
 import { TranslationDraftService } from './draft/translation-draft.service';
+import { TRANSLATION_RETRY_KIND } from './retry/chunk-retry';
+import { ChunkRetryHandler } from './retry/chunk-retry.handler';
+import { ChunkRetryService } from './retry/chunk-retry.service';
+import { ChunkRewriteService } from './retry/chunk-rewrite.service';
 import { TRANSLATION_RUN_TASK_KIND } from './run/translation-run.constants';
 import { TranslationRunReportService } from './run/translation-run-report.service';
 import { TranslationRunService } from './run/translation-run.service';
@@ -31,8 +35,8 @@ import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constan
 /**
  * Автоперевод книги (F05): исходник по D8, блоки главы, отпечаток текста, досье и глоссарий
  * (`F05-2`), нарезка, перевод куска и сравнение моделей на главе (`F05-3`), шаги запуска
- * перевода по языкам (`F05-4`). Этапы, виды задач и виды операций `dossier`, `compare`
- * и `translation_run` регистрируются здесь: исполнитель стартует в `onApplicationBootstrap`,
+ * перевода по языкам (`F05-4`), повтор и правка куска (`F05-7v`). Этапы, виды задач и виды
+ * операций `dossier`, `compare`, `translation_run` и `translation_retry` регистрируются здесь: исполнитель стартует в `onApplicationBootstrap`,
  * после этого `onModuleInit`.
  */
 @Module({
@@ -48,6 +52,9 @@ import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constan
     TranslationRunReportService,
     TranslationRunTasksHandler,
     TranslationDraftService,
+    ChunkRewriteService,
+    ChunkRetryService,
+    ChunkRetryHandler,
   ],
 })
 export class TranslationModule implements OnModuleInit {
@@ -58,6 +65,7 @@ export class TranslationModule implements OnModuleInit {
     private readonly dossierTasks: DossierTasksHandler,
     private readonly compareTasks: CompareTasksHandler,
     private readonly runTasks: TranslationRunTasksHandler,
+    private readonly retryTasks: ChunkRetryHandler,
   ) {}
 
   onModuleInit(): void {
@@ -73,5 +81,7 @@ export class TranslationModule implements OnModuleInit {
     this.kinds.register('compare', this.compareTasks);
     this.handlers.register(TRANSLATION_RUN_TASK_KIND, this.runTasks.handler);
     this.kinds.register('translation_run', this.runTasks);
+    this.handlers.register(TRANSLATION_RETRY_KIND, this.retryTasks.handler);
+    this.kinds.register('translation_retry', this.retryTasks);
   }
 }
