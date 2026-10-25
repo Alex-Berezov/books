@@ -26704,6 +26704,27 @@
         ],
         "type": "object"
       },
+      "TranslationRunAuthorDto": {
+        "properties": {
+          "email": {
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "name": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "email",
+          "name"
+        ],
+        "type": "object"
+      },
       "TranslationRunDto": {
         "properties": {
           "bookVersionId": {
@@ -27044,6 +27065,48 @@
         ],
         "type": "object"
       },
+      "TranslationRunLanguageResultDto": {
+        "properties": {
+          "draftVersionId": {
+            "description": "Draft version of this language; empty before its creation or after its deletion",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "reason": {
+            "description": "Code of the last stop of this language, as `reason` of the run progress",
+            "nullable": true,
+            "type": "string"
+          },
+          "reasonText": {
+            "description": "Text of the service that refused to create the draft version (reason CREATE_REJECTED), up to 300 characters; empty otherwise",
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunLanguageStatus"
+              }
+            ]
+          }
+        },
+        "required": [
+          "language",
+          "status",
+          "reason",
+          "reasonText",
+          "draftVersionId"
+        ],
+        "type": "object"
+      },
       "TranslationRunLanguageStatus": {
         "enum": [
           "pending",
@@ -27061,9 +27124,25 @@
             "format": "uuid",
             "type": "string"
           },
+          "costUsd": {
+            "description": "Spent by all operations of the run (dossier, glossaries, retries): totalUsd of its report",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
           "createdAt": {
             "format": "date-time",
             "type": "string"
+          },
+          "createdBy": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunAuthorDto"
+              }
+            ],
+            "description": "Who started the run; empty when the user is deleted",
+            "nullable": true,
+            "type": "object"
           },
           "id": {
             "format": "uuid",
@@ -27075,6 +27154,13 @@
             },
             "type": "array"
           },
+          "models": {
+            "description": "Models chosen for the run by stage, in the pipeline order: the snapshot and the run override of the steps of the run (split to final check); whether a stage runs is read from the live setting at the call; the dossier and glossary run on the live setting; the models actually called are in the report",
+            "items": {
+              "$ref": "#/components/schemas/TranslationRunStageModelDto"
+            },
+            "type": "array"
+          },
           "operation": {
             "allOf": [
               {
@@ -27082,6 +27168,12 @@
               }
             ],
             "description": "Status, pause reason, spent and limit of the run"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/TranslationRunLanguageResultDto"
+            },
+            "type": "array"
           },
           "sourceLanguage": {
             "allOf": [
@@ -27106,7 +27198,11 @@
           "languages",
           "stageModels",
           "operation",
-          "createdAt"
+          "createdAt",
+          "createdBy",
+          "models",
+          "costUsd",
+          "results"
         ],
         "type": "object"
       },
@@ -27150,6 +27246,30 @@
           "costs",
           "inFlight",
           "totalUsd"
+        ],
+        "type": "object"
+      },
+      "TranslationRunStageModelDto": {
+        "properties": {
+          "fallbacks": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "model": {
+            "example": "anthropic/claude-sonnet-5.5",
+            "type": "string"
+          },
+          "stage": {
+            "example": "translate",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage",
+          "model",
+          "fallbacks"
         ],
         "type": "object"
       },

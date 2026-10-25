@@ -6,17 +6,21 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Language, LlmTask, Prisma, RoleName } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { LLM_BUDGET_ID } from '../src/modules/llm/llm-budget.service';
+import { LLM_BUDGET_ID, LlmBudgetService } from '../src/modules/llm/llm-budget.service';
 import { LlmService } from '../src/modules/llm/llm.service';
 import { LlmTaskService, pairKeyOf } from '../src/modules/llm-worker/llm-task.service';
 import { TRANSLATION_RETRY_KIND } from '../src/modules/llm-worker/llm-task.types';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
+import { LlmWorkerConfig } from '../src/modules/llm-worker/llm-worker.config';
 import { LlmOperationsService } from '../src/modules/llm-worker/llm-operations.service';
 import { lockBookLanguages } from '../src/modules/book-version/book-language-lock';
 import { ChapterService } from '../src/modules/chapter/chapter.service';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import { TranslationDraftService } from '../src/modules/translation/draft/translation-draft.service';
-import { DOSSIER_LIMIT_TOO_LOW } from '../src/modules/translation/run/translation-run.constants';
+import {
+  DOSSIER_LIMIT_TOO_LOW,
+  RUN_HISTORY_STAGES,
+} from '../src/modules/translation/run/translation-run.constants';
 import { BookVersionService } from '../src/modules/book-version/book-version.service';
 import { CreateFromRunRejectedError } from '../src/modules/book-version/create-from-run';
 import {
@@ -346,6 +350,31 @@ describe('Translation run (e2e)', () => {
       if (left === 0) return;
     }
     throw new Error('drain did not finish');
+  };
+
+  /**
+   * Сколько задач исполнитель взял за один проход (`runOnce`): взятые задачи идут одновременно,
+   * каждая в своём слоте, - мера одновременности языков без таймеров (`F05-8`).
+   */
+  const slotsInOnePass = () => {
+    // `bind` без `strictBindCallApply` теряет тип: метод - своим типом.
+    const claim = tasks.claim.bind(tasks) as LlmTaskService['claim'];
+    const runOnce = worker.runOnce.bind(worker) as LlmWorkerService['runOnce'];
+    let pass = 0;
+    let peak = 0;
+    jest
+      .spyOn(tasks, 'claim')
+      .mockImplementation(async (...args: Parameters<LlmTaskService['claim']>) => {
+        const task = await claim(...args);
+        if (task) pass += 1;
+        return task;
+      });
+    jest.spyOn(worker, 'runOnce').mockImplementation(async () => {
+      pass = 0;
+      await runOnce();
+      peak = Math.max(peak, pass);
+    });
+    return { peak: () => peak };
   };
 
   const resetBudget = () =>
@@ -793,6 +822,212 @@ describe('Translation run (e2e)', () => {
     expect((await opOf(opId)).status).toBe('done');
     // Каждый кусок оплачен ровно раз: по два куска главы на четыре языка.
     expect(translations()).toHaveLength(8);
+  });
+
+  it('four languages on four slots, the limit on two and a half languages: the run spends no more than its limit, each dossier and glossary operation no more than its own, each language keeps its piece order (F05-8, §7 п.6)', async () => {
+    jest.spyOn(app.get(LlmWorkerConfig), 'concurrency').mockReturnValue(4);
+    // Резерв вызова перевода - с запасом над фактом (условие посадки: факт не больше резерва),
+    // даже когда лимит запуска поднят до крупнейшей операции досье или глоссария.
+    await prisma.llmStageSetting.upsert({
+      where: { stage: 'translate' },
+      create: { stage: 'translate', model: MODEL, maxTokens: 50_000 },
+      update: { maxTokens: 50_000 },
+    });
+    try {
+      const { versionId } = await englishBook([
+        { number: 1, title: 'One', content: LONG },
+        { number: 2, title: 'Two', content: SHORT },
+      ]);
+      const four: Language[] = ['es', 'fr', 'pt', 'ru'];
+      const slots = slotsInOnePass();
+      // Досье и глоссарии строятся внутри запуска своими операциями: тратят свой лимит, но каждая
+      // обязана влезть в остаток запуска (С12; решение арбитра `F05 | F05-8`, В1 - мера перерасхода
+      // - операция запуска). Лимит - не ниже самой крупной из них, а перевод стоит так, что лимит
+      // покрывает ровно два с половиной языка: три куска на язык.
+      const estimate = await auth(
+        http()
+          .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+          .query({ languages: four.join(',') }),
+      ).expect(200);
+      const body = estimate.body as {
+        dossier: { suggestedLimitUsd: string } | null;
+        languages: Array<{ glossary: { suggestedLimitUsd: string } | null }>;
+      };
+      const side = [body.dossier, ...body.languages.map((l) => l.glossary)].flatMap((x) =>
+        x ? [Number(x.suggestedLimitUsd)] : [],
+      );
+      const limitUsd = Math.max(0.075, ...side);
+      const limit = limitUsd.toFixed(8);
+      const fact = Number((limitUsd / 7.5).toFixed(8));
+      // Нарезка - на бесплатной модели (резерв 0): честный провайдер берёт за неё 0.
+      costOf = (name) => (name === 'translation' ? fact : name === 'split' ? 0 : 0.0001);
+      const { runId, opId } = await createRun(versionId, four, limit);
+      await drain();
+
+      const paused = await opOf(opId);
+      expect(paused).toMatchObject({ status: 'paused', pauseReason: 'LIMIT_REACHED' });
+      // Факт не больше резерва: перерасхода нет вовсе (В2).
+      expect(paused.spentUsd.lte(new Prisma.Decimal(limit))).toBe(true);
+      expect(paused.reservedUsd.isZero()).toBe(true);
+      // Условие посадки: факт каждого вызова запуска не больше его резерва.
+      const paid = await prisma.llmCall.findMany({
+        where: { operationId: opId, costUsd: { not: null } },
+      });
+      for (const c of paid) expect(c.costUsd!.lte(c.reservedUsd)).toBe(true);
+      // Пауза - от лимита: язык не уложил резерв вызова или глоссарий в остаток запуска.
+      const stopped = await prisma.translationRunLanguage.findMany({
+        where: { runId, status: { not: 'done' } },
+        select: { reason: true },
+      });
+      expect(stopped.length).toBeGreaterThan(0);
+      // Язык, чей шаг ждал в очереди, когда операция встала, своей причины не пишет (`null`);
+      // у остальных - только лимит, и хотя бы один встал на резерве вызова.
+      for (const l of stopped) {
+        expect(['LLM_BUDGET_EXCEEDED:operation', DOSSIER_LIMIT_TOO_LOW, null]).toContain(l.reason);
+      }
+      expect(stopped.some((l) => l.reason === 'LLM_BUDGET_EXCEEDED:operation')).toBe(true);
+      // Языки шли одновременно: в одном проходе исполнитель держал не меньше трёх задач.
+      expect(slots.peak()).toBeGreaterThanOrEqual(3);
+      // Пауза не до работы (решение арбитра `F05 | F05-8`, круг 2): оплачен хотя бы один кусок.
+      expect(translations().length).toBeGreaterThanOrEqual(1);
+      expect(translations().length).toBeLessThan(12);
+      const ops = await prisma.llmOperation.findMany({
+        where: { translationRunId: runId, NOT: { id: opId } },
+      });
+      // Досье и глоссарии - каждая операция в пределах своего лимита.
+      expect(ops.length).toBeGreaterThan(0);
+      for (const op of ops) expect(op.spentUsd.lte(op.limitUsd)).toBe(true);
+
+      await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+        .send({ limitUsd: '10' })
+        .expect(200);
+      await drain();
+      expect((await opOf(opId)).status).toBe('done');
+      for (const language of four) {
+        const lang = await langOf(runId, language);
+        const pieces = await prisma.translationChunk.findMany({
+          where: { runLanguageId: lang.id },
+          orderBy: [{ chapterNumber: 'asc' }, { chunkIndex: 'asc' }],
+          select: { callId: true },
+        });
+        expect(pieces).toHaveLength(3);
+        const started = await Promise.all(
+          pieces.map(async (p) =>
+            (
+              await prisma.llmCall.findUniqueOrThrow({ where: { id: p.callId as string } })
+            ).startedAt.getTime(),
+          ),
+        );
+        // Язык идёт по своим кускам по порядку: глава за главой, кусок за куском.
+        expect(started).toEqual([...started].sort((a, b) => a - b));
+      }
+      // Каждый кусок оплачен ровно раз.
+      expect(translations()).toHaveLength(12);
+    } finally {
+      await prisma.llmStageSetting.deleteMany({ where: { stage: 'translate' } });
+    }
+  });
+
+  it('a call whose fact exceeds its reserve: the run overspends by no more than that difference and reserves nothing after paying it (F05-8, В2)', async () => {
+    jest.spyOn(app.get(LlmWorkerConfig), 'concurrency').mockReturnValue(4);
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    const four: Language[] = ['es', 'fr', 'pt', 'ru'];
+    let first = true;
+    // Первый перевод провайдер оценил дороже резерва, остальные - честно (нарезка - бесплатная
+    // модель с резервом 0).
+    costOf = (name) => {
+      if (name === 'split') return 0;
+      if (name !== 'translation') return 0.0001;
+      if (!first) return 0.01;
+      first = false;
+      return 1;
+    };
+    // Порядок по завершению вызовов бюджета, а не по отметкам времени: `startedAt` и
+    // `reserveReleasedAt` - начало своих транзакций, а не их запись.
+    type ReserveArgs = Parameters<LlmBudgetService['reserve']>;
+    type SettleArgs = Parameters<LlmBudgetService['settle']>;
+    const budget = app.get(LlmBudgetService);
+    const reserve = budget.reserve.bind(budget) as LlmBudgetService['reserve'];
+    const settle = budget.settle.bind(budget) as LlmBudgetService['settle'];
+    let paid = false;
+    let lateReserves = 0;
+    jest.spyOn(budget, 'reserve').mockImplementation(async (input: ReserveArgs[0]) => {
+      // Резерв, начатый после оплаты дорогого вызова, видит spent выше лимита и обязан отказать;
+      // начатый до неё может закончиться позже - он не в счёт.
+      const afterPayment = paid;
+      const reserved = await reserve(input);
+      if (afterPayment) lateReserves += 1;
+      return reserved;
+    });
+    jest
+      .spyOn(budget, 'settle')
+      .mockImplementation(async (callId: SettleArgs[0], outcome: SettleArgs[1]) => {
+        const settled = await settle(callId, outcome);
+        if (outcome.costUsd.eq(1)) paid = true;
+        return settled;
+      });
+    const limit = '0.5';
+    const { opId } = await createRun(versionId, four, limit);
+    await drain();
+
+    const paused = await opOf(opId);
+    expect(paused).toMatchObject({ status: 'paused', pauseReason: 'LIMIT_REACHED' });
+    const over = await prisma.llmCall.findFirstOrThrow({
+      where: { operationId: opId, stage: 'translate', costUsd: new Prisma.Decimal(1) },
+    });
+    // Честные вызовы в полёте добавляют к перерасходу не больше нуля (факт не больше резерва):
+    // предел - разница дорогого вызова, а не «вызовов по числу слотов».
+    const overspend = paused.spentUsd.sub(new Prisma.Decimal(limit));
+    expect(overspend.gt(0)).toBe(true);
+    expect(overspend.lte(over.costUsd!.sub(over.reservedUsd))).toBe(true);
+    // После оплаты дорогого вызова ни одного нового резерва: spent уже выше лимита.
+    expect(paid).toBe(true);
+    expect(lateReserves).toBe(0);
+  });
+
+  it('four languages on four slots under the spending ceiling: the run pauses CEILING_REACHED and the budget never passes the ceiling (F05-8, карточка шаг 1)', async () => {
+    jest.spyOn(app.get(LlmWorkerConfig), 'concurrency').mockReturnValue(4);
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    const four: Language[] = ['es', 'fr', 'pt', 'ru'];
+    // Досье и глоссарии готовы заранее: общий бюджет тратит только перевод запуска.
+    const warm = await createRun(versionId, four);
+    await drain(
+      async () =>
+        (await prisma.translationRunLanguage.count({
+          where: { runId: warm.runId, glossaryId: { not: null } },
+        })) === 4,
+    );
+    await prisma.llmOperation.update({ where: { id: warm.opId }, data: { status: 'cancelled' } });
+    await prisma.llmTask.updateMany({
+      where: { operationId: warm.opId, status: { in: ['pending', 'running'] } },
+      data: { status: 'cancelled' },
+    });
+    calls.length = 0;
+    // Потолок на два с половиной языка по два куска по 0,03 (резерв вызова около 0,035 - в полёте
+    // до четырёх); лимит запуска его не держит.
+    const ceiling = '0.15';
+    await prisma.llmBudget.update({
+      where: { id: LLM_BUDGET_ID },
+      data: { ceilingUsd: ceiling, reservedUsd: 0, spentUsd: 0 },
+    });
+    costOf = (name) => (name === 'translation' ? 0.03 : name === 'split' ? 0 : 0.0001);
+    const slots = slotsInOnePass();
+    const { opId } = await createRun(versionId, four, '10');
+    await drain();
+
+    expect(await opOf(opId)).toMatchObject({ status: 'paused', pauseReason: 'CEILING_REACHED' });
+    const budget = await prisma.llmBudget.findUniqueOrThrow({ where: { id: LLM_BUDGET_ID } });
+    expect(budget.reservedUsd.isZero()).toBe(true);
+    expect(budget.spentUsd.lte(new Prisma.Decimal(ceiling))).toBe(true);
+    // Условие посадки: факт каждого вызова не больше его резерва; языки шли одновременно.
+    const paid = await prisma.llmCall.findMany({
+      where: { operationId: opId, costUsd: { not: null } },
+    });
+    for (const c of paid) expect(c.costUsd!.lte(c.reservedUsd)).toBe(true);
+    expect(slots.peak()).toBeGreaterThanOrEqual(3);
+    expect(translations().length).toBeGreaterThan(0);
+    expect(translations().length).toBeLessThan(8);
+    expect(await prisma.llmTask.count({ where: { operationId: opId, status: 'pending' } })).toBe(0);
   });
 
   it('the source edited while the run stood on another pause: resume refuses and the pause becomes DOSSIER_STALE', async () => {
@@ -2521,6 +2756,117 @@ describe('Translation run (e2e)', () => {
     await auth(
       http().get(`/admin/books/${bookId}/translation-runs`).query({ bookVersionId: 'nope' }),
     ).expect(400);
+  });
+
+  it('history of runs: who, models by stage, cost equal to the report total, outcome by language - after cancel and after done (F05-8)', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const cancelled = await startRun(versionId, { languages: ['fr'] }).expect(202);
+    await auth(http().post(`/admin/translation-runs/${cancelled.body.id as string}/cancel`)).expect(
+      200,
+    );
+    // Отменённый - заметно раньше: порядок страниц не зависит от совпавшей миллисекунды.
+    await prisma.translationRun.update({
+      where: { id: cancelled.body.id as string },
+      data: { createdAt: new Date(Date.now() - 60_000) },
+    });
+    const finished = await startRun(versionId, { languages: ['es'] }).expect(202);
+    await drain();
+    const admin = await prisma.user.findFirstOrThrow({
+      where: { email: `f054-admin-${stamp}@test.com` },
+      select: { id: true, email: true, name: true },
+    });
+
+    const res = await auth(
+      http().get(`/admin/books/${bookId}/translation-runs`).query({ bookVersionId: versionId }),
+    ).expect(200);
+
+    // По номеру, а не по месту: запуски одной миллисекунды упорядочены по случайному id.
+    const items = res.body.items as Array<Record<string, unknown>>;
+    expect(items).toHaveLength(2);
+    const done = items.find((r) => r.id === finished.body.id)!;
+    const stopped = items.find((r) => r.id === cancelled.body.id)!;
+    expect(done).toBeDefined();
+    expect(stopped).toBeDefined();
+    expect(done.createdBy).toEqual(admin);
+    const report = await auth(
+      http().get(`/admin/translation-runs/${finished.body.id as string}/report`),
+    ).expect(200);
+    // Стоимость - все операции запуска (досье, глоссарий), как итог отчёта (§7 п.8).
+    expect(done.costUsd).toBe((report.body as TranslationRunReportDto).totalUsd);
+    expect(
+      new Prisma.Decimal(done.costUsd as string).gt(
+        (done.operation as { spentUsd: string }).spentUsd,
+      ),
+    ).toBe(true);
+    const draft = await prisma.translationRunLanguage.findUniqueOrThrow({
+      where: { runId_language: { runId: finished.body.id as string, language: 'es' } },
+    });
+    expect(done.results).toEqual([
+      {
+        language: 'es',
+        status: 'done',
+        reason: null,
+        reasonText: null,
+        draftVersionId: draft.bookVersionId,
+      },
+    ]);
+    expect(draft.bookVersionId).not.toBeNull();
+    const stages = (
+      done.models as Array<{ stage: string; model: string; fallbacks: string[] }>
+    ).map((m) => m.stage);
+    // Этапы - подпоследовательность конвейера в его порядке.
+    expect(stages).toEqual(expect.arrayContaining(['split', 'translate']));
+    expect(stages).not.toContain('dossier');
+    expect(stages).toEqual(RUN_HISTORY_STAGES.filter((st) => stages.includes(st)));
+    expect(stopped).toMatchObject({
+      id: cancelled.body.id as string,
+      createdBy: admin,
+      results: [{ language: 'fr', status: 'cancelled', reasonText: null, draftVersionId: null }],
+    });
+    const stoppedReport = await auth(
+      http().get(`/admin/translation-runs/${cancelled.body.id as string}/report`),
+    ).expect(200);
+    expect(stopped.costUsd).toBe((stoppedReport.body as TranslationRunReportDto).totalUsd);
+    // Модель этапа - из снимка операции запуска, как её возьмёт шаг.
+    const op = await opOf((done.operation as { id: string }).id);
+    type SnapStage = { stage: string; model: string; fallbacks: string[] };
+    const snap = (op.settingsSnapshot as { stages: SnapStage[] }).stages.find(
+      (x) => x.stage === 'translate',
+    )!;
+    expect((done.models as SnapStage[]).find((m) => m.stage === 'translate')).toEqual({
+      stage: 'translate',
+      model: snap.model,
+      fallbacks: snap.fallbacks,
+    });
+
+    // Удалённый автор - пусто, строка истории остаётся.
+    await prisma.llmOperation.update({
+      where: { id: (stopped.operation as { id: string }).id },
+      data: { createdById: null },
+    });
+    const after = await auth(
+      http().get(`/admin/books/${bookId}/translation-runs`).query({ bookVersionId: versionId }),
+    ).expect(200);
+    expect(after.body.items[1]).toMatchObject({ id: cancelled.body.id as string, createdBy: null });
+
+    // Вторая страница: стоимость своего запуска, а не первого на странице 1.
+    const second = await auth(
+      http()
+        .get(`/admin/books/${bookId}/translation-runs`)
+        .query({ bookVersionId: versionId, page: 2, limit: 1 }),
+    ).expect(200);
+    expect(second.body.items.map((r: { id: string }) => r.id)).toEqual([cancelled.body.id]);
+    expect(second.body.items[0].costUsd).toBe(
+      (stoppedReport.body as TranslationRunReportDto).totalUsd,
+    );
+
+    // Книга без запусков - пустая страница, без группировки трат.
+    const empty = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const none = await auth(http().get(`/admin/books/${empty.bookId}/translation-runs`)).expect(
+      200,
+    );
+    expect(none.body.items).toEqual([]);
+    expect(none.body.pagination.total).toBe(0);
   });
 
   it('a chapter longer than the limit is flagged with its length and limit, the other chapter is assembled (Р8)', async () => {

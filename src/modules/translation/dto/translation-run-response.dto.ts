@@ -147,7 +147,66 @@ export class TranslationRunDto {
   createdAt!: string;
 }
 
-/** Строка запуска в списке книги: без хода по языкам - он в `GET /admin/translation-runs/:id`. */
+/** Кто запустил (решение арбитра `F05 | F05-8`, В4): только эти поля пользователя. */
+export class TranslationRunAuthorDto {
+  @ApiProperty({ type: String, format: 'uuid' })
+  id!: string;
+
+  @ApiProperty({ type: String })
+  email!: string;
+
+  @ApiProperty({ type: String, nullable: true })
+  name!: string | null;
+}
+
+/** Модели этапа, выбранные у запуска: снимок операции и переопределение запуска. */
+export class TranslationRunStageModelDto {
+  @ApiProperty({ type: String, example: 'translate' })
+  stage!: string;
+
+  @ApiProperty({ type: String, example: 'anthropic/claude-sonnet-5.5' })
+  model!: string;
+
+  @ApiProperty({ type: String, isArray: true })
+  fallbacks!: string[];
+}
+
+/** Чем кончился язык запуска - для истории; денег по языкам нет (F05-6 6c, В8). */
+export class TranslationRunLanguageResultDto {
+  @ApiProperty({ enum: Language, enumName: 'Language' })
+  language!: Language;
+
+  @ApiProperty({ enum: TranslationRunLanguageStatus, enumName: 'TranslationRunLanguageStatus' })
+  status!: TranslationRunLanguageStatus;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Code of the last stop of this language, as `reason` of the run progress',
+  })
+  reason!: string | null;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      'Text of the service that refused to create the draft version (reason CREATE_REJECTED), up to 300 characters; empty otherwise',
+  })
+  reasonText!: string | null;
+
+  @ApiProperty({
+    type: String,
+    format: 'uuid',
+    nullable: true,
+    description: 'Draft version of this language; empty before its creation or after its deletion',
+  })
+  draftVersionId!: string | null;
+}
+
+/**
+ * Строка запуска в списке книги: итог по языкам без хода (глава, куски, этап) - ход в
+ * `GET /admin/translation-runs/:id`.
+ */
 export class TranslationRunListItemDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
@@ -175,6 +234,30 @@ export class TranslationRunListItemDto {
 
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: string;
+
+  @ApiProperty({
+    type: () => TranslationRunAuthorDto,
+    nullable: true,
+    description: 'Who started the run; empty when the user is deleted',
+  })
+  createdBy!: TranslationRunAuthorDto | null;
+
+  @ApiProperty({
+    type: () => [TranslationRunStageModelDto],
+    description:
+      'Models chosen for the run by stage, in the pipeline order: the snapshot and the run override of the steps of the run (split to final check); whether a stage runs is read from the live setting at the call; the dossier and glossary run on the live setting; the models actually called are in the report',
+  })
+  models!: TranslationRunStageModelDto[];
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Spent by all operations of the run (dossier, glossaries, retries): totalUsd of its report',
+  })
+  costUsd!: string;
+
+  @ApiProperty({ type: () => [TranslationRunLanguageResultDto] })
+  results!: TranslationRunLanguageResultDto[];
 }
 
 export class TranslationRunLanguageEstimateDto {

@@ -13731,6 +13731,12 @@ export interface components {
       /** @description Chapters the run wrote to the draft; 0 with a draft - a draft without chapters of the run */
       writtenChapters: number;
     };
+    TranslationRunAuthorDto: {
+      email: string;
+      /** Format: uuid */
+      id: string;
+      name: string | null;
+    };
     TranslationRunDto: {
       /**
        * Format: uuid
@@ -13883,6 +13889,19 @@ export interface components {
        */
       translateUsd: string;
     };
+    TranslationRunLanguageResultDto: {
+      /**
+       * Format: uuid
+       * @description Draft version of this language; empty before its creation or after its deletion
+       */
+      draftVersionId: string | null;
+      language: components['schemas']['Language'];
+      /** @description Code of the last stop of this language, as `reason` of the run progress */
+      reason: string | null;
+      /** @description Text of the service that refused to create the draft version (reason CREATE_REJECTED), up to 300 characters; empty otherwise */
+      reasonText: string | null;
+      status: components['schemas']['TranslationRunLanguageStatus'];
+    };
     /** @enum {string} */
     TranslationRunLanguageStatus: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
     TranslationRunListItemDto: {
@@ -13891,13 +13910,24 @@ export interface components {
        * @description Translation source version
        */
       bookVersionId: string;
+      /**
+       * Format: decimal
+       * @description Spent by all operations of the run (dossier, glossaries, retries): totalUsd of its report
+       * @example 100.00000000
+       */
+      costUsd: string;
       /** Format: date-time */
       createdAt: string;
+      /** @description Who started the run; empty when the user is deleted */
+      createdBy: components['schemas']['TranslationRunAuthorDto'] | null;
       /** Format: uuid */
       id: string;
       languages: components['schemas']['Language'][];
+      /** @description Models chosen for the run by stage, in the pipeline order: the snapshot and the run override of the steps of the run (split to final check); whether a stage runs is read from the live setting at the call; the dossier and glossary run on the live setting; the models actually called are in the report */
+      models: components['schemas']['TranslationRunStageModelDto'][];
       /** @description Status, pause reason, spent and limit of the run */
       operation: components['schemas']['LlmOperationDto'];
+      results: components['schemas']['TranslationRunLanguageResultDto'][];
       sourceLanguage: components['schemas']['Language'];
       /** @description Stage models of this run over its snapshot */
       stageModels: components['schemas']['TranslationRunStageModelsDto'];
@@ -13917,6 +13947,13 @@ export interface components {
        * @example 100.00000000
        */
       totalUsd: string;
+    };
+    TranslationRunStageModelDto: {
+      fallbacks: string[];
+      /** @example anthropic/claude-sonnet-5.5 */
+      model: string;
+      /** @example translate */
+      stage: string;
     };
     TranslationRunStageModelsDto: {
       /**

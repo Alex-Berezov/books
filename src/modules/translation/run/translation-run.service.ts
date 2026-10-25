@@ -45,9 +45,10 @@ import {
   readyContext,
   splitEstimator,
 } from '../translate/translate-estimate';
-import { runStageModels } from './run-models';
+import { runModelsOf, runStageModels } from './run-models';
 import {
   CHUNK_CLOSED_STATUSES,
+  RUN_HISTORY_STAGES,
   RUN_OPERATIONS_MAX,
   TRANSLATION_RUN_TASK_KIND,
 } from './translation-run.constants';
@@ -226,8 +227,18 @@ export class TranslationRunService {
       this.prisma.translationRun.findMany({
         where,
         include: {
-          operation: true,
-          languages: { select: { language: true }, orderBy: { language: 'asc' } },
+          // Пользователь - только поля истории (решение арбитра `F05 | F05-8`, В4).
+          operation: { include: { createdBy: { select: { id: true, email: true, name: true } } } },
+          languages: {
+            select: {
+              language: true,
+              status: true,
+              reason: true,
+              reasonText: true,
+              bookVersionId: true,
+            },
+            orderBy: { language: 'asc' },
+          },
         },
         // `id` - второй ключ: запуски одной миллисекунды не меняются местами между страницами.
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
@@ -236,15 +247,35 @@ export class TranslationRunService {
       }),
       this.prisma.translationRun.count({ where }),
     ]);
+    // Стоимость - траты всех операций запуска, как `totalUsd` отчёта (§7 п.8): одна группировка
+    // на страницу, а не запрос на строку.
+    const spent = rows.length
+      ? await this.prisma.llmOperation.groupBy({
+          by: ['translationRunId'],
+          where: { translationRunId: { in: rows.map((r) => r.id) } },
+          _sum: { spentUsd: true },
+        })
+      : [];
+    const spentByRun = new Map(spent.map((g) => [g.translationRunId, g._sum.spentUsd]));
     return paginated(
-      rows.map((run) => ({
+      rows.map(({ operation: { createdBy, ...operation }, ...run }) => ({
         id: run.id,
         bookVersionId: run.bookVersionId,
         sourceLanguage: run.sourceLanguage,
         languages: run.languages.map((l) => l.language),
         stageModels: (run.stageModels ?? {}) as TranslationRunStageModelsDto,
-        operation: toOperationDto(run.operation),
+        operation: toOperationDto(operation),
         createdAt: run.createdAt.toISOString(),
+        createdBy,
+        models: runModelsOf(operation.settingsSnapshot, run.stageModels, RUN_HISTORY_STAGES),
+        costUsd: moneyUsd(spentByRun.get(run.id) ?? zero()),
+        results: run.languages.map((l) => ({
+          language: l.language,
+          status: l.status,
+          reason: l.reason,
+          reasonText: l.reasonText,
+          draftVersionId: l.bookVersionId,
+        })),
       })),
       { page, limit, total },
     );

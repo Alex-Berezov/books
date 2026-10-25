@@ -1,4 +1,8 @@
 import { TranslationChunkStatus } from '@prisma/client';
+import { CHECK_JEV_STAGE, CHECK_SEMANTIC_STAGE } from '../check/check.constants';
+import { FINAL_CHECK_STAGE } from '../final-check/final-check.constants';
+import { METADATA_STAGE } from '../metadata/metadata.constants';
+import { SPLIT_STAGE, TRANSLATE_STAGE } from '../translate/translate.constants';
 
 /** Вид задачи запуска: шаг языка, одна задача на пару «операция, язык» (Р1). */
 export const TRANSLATION_RUN_TASK_KIND = 'translation_run';
@@ -47,3 +51,17 @@ export const CHUNK_STATUS_UNEXPECTED = 'CHUNK_STATUS_UNEXPECTED';
 
 /** Предел текста отказа сервиса в `TranslationRunLanguage.reasonText` (`F05-6`, 6b). */
 export const CREATE_REJECTED_TEXT_MAX = 300;
+
+/**
+ * Этапы, которые шаги запуска зовут с моделями его снимка (`stageModelsOf`), в порядке конвейера:
+ * модели строки истории (`F05-8`). Досье и глоссарий - свои операции на живой настройке этапа,
+ * их модели - в отчёте запуска.
+ */
+export const RUN_HISTORY_STAGES = [
+  SPLIT_STAGE,
+  TRANSLATE_STAGE,
+  CHECK_SEMANTIC_STAGE,
+  CHECK_JEV_STAGE,
+  METADATA_STAGE,
+  FINAL_CHECK_STAGE,
+] as const;
