@@ -54,7 +54,7 @@ export async function demandContext(
       onLimit: input.onLimit,
     },
   };
-  try {
+  return refusalAsDemand(tasks, input.operationId, async () => {
     let dossier = input.dossier ?? null;
     if (!dossier) {
       const demand = await dossiers.demandDossier(input.versionId, {
@@ -67,11 +67,47 @@ export async function demandContext(
     const glossary = await dossiers.demandGlossary(dossier.id, input.language, options);
     if (glossary.status !== 'ready') return notReady(glossary, 'GLOSSARY_BUILDING');
     return { kind: 'ready', dossier, glossary: glossary.row };
+  });
+}
+
+/**
+ * Только досье, без глоссария: заготовка на языке досье (`F05-10`, решение арбитра
+ * `F05 | F05-10`, В6) - переводить имена не с чего. Состояния - как у `demandContext`.
+ */
+export async function demandDossierContext(
+  dossiers: DossierService,
+  tasks: LlmTaskService,
+  input: { versionId: string; operationId: string; waitingFor: string | null },
+): Promise<
+  | Exclude<ContextDemand, { kind: 'ready' }>
+  | { kind: 'ready'; dossier: BookDossier; glossary: null }
+> {
+  return refusalAsDemand(tasks, input.operationId, async () => {
+    const demand = await dossiers.demandDossier(input.versionId, {
+      waiter: {
+        operationId: input.operationId,
+        waitingFor: input.waitingFor,
+        translationRunId: null,
+      },
+    });
+    if (demand.status !== 'ready') return notReady(demand, 'DOSSIER_BUILDING');
+    return { kind: 'ready', dossier: demand.row, glossary: null };
+  });
+}
+
+/** Отказ ручки досье (409/503) - ожидание при «изменено одновременно», иначе пауза `STEP_FAILED`. */
+async function refusalAsDemand<T>(
+  tasks: LlmTaskService,
+  operationId: string,
+  demand: () => Promise<T>,
+): Promise<T | { kind: 'retry'; code: string } | { kind: 'failed'; code: string }> {
+  try {
+    return await demand();
   } catch (error) {
     if (!(error instanceof HttpException)) throw error;
     const code = httpCode(error);
     if (CONTEXT_RETRY_CODES.has(code)) return { kind: 'retry', code };
-    await tasks.pauseOperation(input.operationId, 'STEP_FAILED');
+    await tasks.pauseOperation(operationId, 'STEP_FAILED');
     return { kind: 'failed', code };
   }
 }
@@ -79,7 +115,7 @@ export async function demandContext(
 function notReady<Row extends { id: string }>(
   demand: Exclude<Demand<Row>, { status: 'ready' }>,
   reason: 'DOSSIER_BUILDING' | 'GLOSSARY_BUILDING',
-): ContextDemand {
+): Exclude<ContextDemand, { kind: 'ready' }> {
   if (demand.status === 'wait') return { kind: 'wait', waitingFor: demand.row.id, reason };
   if (demand.status === 'paused') {
     return { kind: 'stopped', reason: demand.reason, blockedBy: demand.builderOperationId };

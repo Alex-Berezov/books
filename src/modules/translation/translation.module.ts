@@ -25,6 +25,13 @@ import { TRANSLATION_RUN_TASK_KIND } from './run/translation-run.constants';
 import { TranslationRunReportService } from './run/translation-run-report.service';
 import { TranslationRunService } from './run/translation-run.service';
 import { TranslationRunTasksHandler } from './run/translation-run-tasks.handler';
+import {
+  CONTENT_DRAFT_STAGE_DEFINITIONS,
+  CONTENT_DRAFT_TASK_KIND,
+} from './content-draft/content-draft.constants';
+import { ContentDraftController } from './content-draft/content-draft.controller';
+import { ContentDraftService } from './content-draft/content-draft.service';
+import { ContentDraftTasksHandler } from './content-draft/content-draft-tasks.handler';
 import { TranslationController } from './translation.controller';
 import { TranslationSourceService } from './translation-source.service';
 import { TRANSLATE_STAGE_DEFINITIONS } from './translate/translate.constants';
@@ -35,13 +42,14 @@ import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constan
 /**
  * Автоперевод книги (F05): исходник по D8, блоки главы, отпечаток текста, досье и глоссарий
  * (`F05-2`), нарезка, перевод куска и сравнение моделей на главе (`F05-3`), шаги запуска
- * перевода по языкам (`F05-4`), повтор и правка куска (`F05-7v`). Этапы, виды задач и виды
- * операций `dossier`, `compare`, `translation_run` и `translation_retry` регистрируются здесь: исполнитель стартует в `onApplicationBootstrap`,
+ * перевода по языкам (`F05-4`), повтор и правка куска (`F05-7v`), заготовки Summary (`F05-10`).
+ * Этапы, виды задач и виды операций `dossier`, `compare`, `translation_run`, `translation_retry`
+ * и `draft` регистрируются здесь: исполнитель стартует в `onApplicationBootstrap`,
  * после этого `onModuleInit`.
  */
 @Module({
   imports: [LlmModule, LlmWorkerModule, BookVersionModule, ChapterModule],
-  controllers: [TranslationController],
+  controllers: [TranslationController, ContentDraftController],
   providers: [
     TranslationSourceService,
     DossierService,
@@ -55,6 +63,8 @@ import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constan
     ChunkRewriteService,
     ChunkRetryService,
     ChunkRetryHandler,
+    ContentDraftService,
+    ContentDraftTasksHandler,
   ],
 })
 export class TranslationModule implements OnModuleInit {
@@ -66,6 +76,7 @@ export class TranslationModule implements OnModuleInit {
     private readonly compareTasks: CompareTasksHandler,
     private readonly runTasks: TranslationRunTasksHandler,
     private readonly retryTasks: ChunkRetryHandler,
+    private readonly draftTasks: ContentDraftTasksHandler,
   ) {}
 
   onModuleInit(): void {
@@ -83,5 +94,8 @@ export class TranslationModule implements OnModuleInit {
     this.kinds.register('translation_run', this.runTasks);
     this.handlers.register(TRANSLATION_RETRY_KIND, this.retryTasks.handler);
     this.kinds.register('translation_retry', this.retryTasks);
+    for (const definition of CONTENT_DRAFT_STAGE_DEFINITIONS) this.stages.register(definition);
+    this.handlers.register(CONTENT_DRAFT_TASK_KIND, this.draftTasks.handler);
+    this.kinds.register('draft', this.draftTasks);
   }
 }

@@ -89,6 +89,8 @@ model BookVersion {
   translationRuns     TranslationRun[]
   /// Язык запуска перевода, создавший эту версию (F05-6, Р18); пусто у ручной.
   translatedBy        TranslationRunLanguage?
+  /// Заготовки пересказа и анализа из досье (F05-10): редактор сохраняет их своими ручками.
+  contentDrafts       ContentDraft[]
   chapters        Chapter[]
   audioChapters   AudioChapter[]
   bookshelf       Bookshelf[]
@@ -4106,6 +4108,8 @@ model LlmOperation {
   glossaries       BookGlossary[]
   /// Сравнение моделей, которое ведёт эта операция (F05-3, вид `compare`).
   translationCompare TranslationCompare?
+  /// Заготовка, которую строит эта операция (F05-10, вид `draft`).
+  contentDraft       ContentDraft?
   /// Запуск перевода, который ведёт эта операция (F05-4, вид `translation_run`).
   translationRun     TranslationRun?    @relation("TranslationRunOperation")
   /// Запуск, ради которого заведена операция (досье, глоссарий, повтор куска) - для отчёта
@@ -4571,4 +4575,54 @@ model TranslationChapter {
 
   @@unique([runLanguageId, chapterNumber])
   @@index([chapterId])
+}
+
+enum ContentDraftKind {
+  summary_sections
+  summary_full
+  summary_brief
+  /// Заготовка анализа - этап `F05-11`; в `F05-10` ручки его не принимают.
+  analysis
+}
+
+/// `failed` - операция кончилась насовсем; пауза операции заготовку не меняет: она `building`,
+/// причина паузы - в `LlmOperation.pauseReason` (решение арбитра `F05 | F05-10`, В1).
+enum ContentDraftStatus {
+  building
+  ready
+  failed
+  discarded
+}
+
+/// Заготовка из досье (F05-10, `tech.md` §2б): черновик для формы вкладки, в `BookSummary` и
+/// `BookSummarySection` не пишется - сохраняет редактор существующими ручками. Одна `building`
+/// на пару (версия, вид) - частичный уникальный индекс сырым SQL в миграции `f05_content_draft`
+/// (решение арбитра `F05 | F05-10`, В7):
+/// drift-check: sql-only index "ContentDraft_building_key"
+model ContentDraft {
+  id            String             @id @default(uuid())
+  bookVersionId String
+  /// Cascade, как у всех производных от версии (решение арбитра `F05 | F05-2`, В7).
+  bookVersion   BookVersion        @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+  kind          ContentDraftKind
+  status        ContentDraftStatus @default(building)
+  /// Язык версии на старте: заготовка пишется на нём.
+  language      Language
+  operationId   String             @unique
+  operation     LlmOperation       @relation(fields: [operationId], references: [id], onDelete: Restrict)
+  /// Черновик: разделы `{ sections: [...] }` по мере готовности или текст `{ text }`; пусто, пока строится.
+  data          Json?
+  /// Модель последнего ответа.
+  model         String?
+  /// Код окончательного отказа (`failed`).
+  failedReason  String?
+  /// Досье и глоссарий, по которым строятся разделы; пусто, пока не готовы, и у полного и краткого.
+  dossierId     String?
+  glossaryId    String?
+  /// Строка досье или глоссария, которую шаг ждал прошлым шагом (`DossierWaiter.waitingFor`).
+  waitingFor    String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([bookVersionId, kind, createdAt])
 }

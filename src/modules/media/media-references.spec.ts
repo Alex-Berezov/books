@@ -106,6 +106,8 @@ const NOT_MEDIA_JSON_REFERENCES: Record<string, string> = {
     'выборы модели split по стыкам - номера блоков, пишет сервер (F05-3)',
   'TranslationCompareChunk.blocks':
     'перевод блоков куска - ответ модели после белого списка разметки, пишет сервер (F05-3)',
+  'ContentDraft.data':
+    'заготовка пересказа - ответ модели, rich HTML через sanitizeRichHtml, пишет сервер (F05-10)',
   'TranslationRun.stageModels': 'модели этапов запуска перевода - id моделей, пишет сервер (F05-4)',
   'TranslationRunLanguage.splitPicks':
     'выборы модели split по стыкам главы - номера блоков, пишет сервер (F05-4)',

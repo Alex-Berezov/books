@@ -274,6 +274,40 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/content-drafts/{id}/discard': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Discard a draft: a draft being built cancels its operation; the dossier and glossary are not cancelled */
+    post: operations['ContentDraftController_discard'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/content-drafts/{id}/sections/{number}/added': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Mark a section of a ready sections draft as added by «Add section»: the card is not offered again; repeating is a no-op */
+    post: operations['ContentDraftController_markSectionAdded'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/contributors': {
     parameters: {
       query?: never;
@@ -2654,6 +2688,41 @@ export interface paths {
     };
     /** Upper cost estimate of building the dossier of this version */
     get: operations['TranslationController_estimate'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/drafts/{kind}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The latest summary draft of this kind that is not discarded, in any status (building, ready, failed); null - none */
+    get: operations['ContentDraftController_latest'];
+    put?: never;
+    /** Build a summary draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded */
+    post: operations['ContentDraftController_start'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/drafts/{kind}/estimate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Upper cost estimate of a summary draft from the dossier */
+    get: operations['ContentDraftController_estimate'];
     put?: never;
     post?: never;
     delete?: never;
@@ -7432,6 +7501,87 @@ export interface components {
       url: string;
       /** @description Width in px (images) */
       width?: number;
+    };
+    ContentDraftDto: {
+      /** @description Section numbers the editor has already added with «Add section» (summary_sections) */
+      addedSections: number[];
+      /** Format: uuid */
+      bookVersionId: string;
+      /** Format: date-time */
+      createdAt: string;
+      /** @description Code of the final refusal (failed) */
+      failedReason: string | null;
+      /** Format: uuid */
+      id: string;
+      /** @enum {string} */
+      kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      model: string | null;
+      operation: components['schemas']['LlmOperationDto'];
+      /** @description Sections in the plan (summary_sections); null until the dossier is ready */
+      plannedSections: number | null;
+      /** @description Question to the editor */
+      question: string | null;
+      /** @description Section drafts so far (summary_sections) */
+      sections: components['schemas']['ContentDraftSectionDto'][] | null;
+      /**
+       * @description A paused operation keeps the draft building: the reason is operation.pauseReason
+       * @enum {string}
+       */
+      status: 'building' | 'ready' | 'failed' | 'discarded';
+      /** @description Rich HTML draft (summary_full, summary_brief) */
+      text: string | null;
+      /** Format: date-time */
+      updatedAt: string;
+      /**
+       * @description What the draft waits for: the dossier or the glossary built by their own operation
+       * @enum {string|null}
+       */
+      waitingFor: 'dossier' | 'glossary' | null;
+    };
+    ContentDraftEstimateDto: {
+      /** @description The dossier is built first by its own operation; null - it is ready */
+      dossier: components['schemas']['CompareContextLineDto'] | null;
+      /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
+      glossary: components['schemas']['CompareContextLineDto'] | null;
+      /** @enum {string} */
+      kind: 'summary_sections' | 'summary_full' | 'summary_brief';
+      /** @description Sections of the dossier plan; null - the plan is not known yet or not a sections draft */
+      sections: number | null;
+      /**
+       * Format: decimal
+       * @description Upper estimate of the draft stage calls
+       * @example 100.00000000
+       */
+      stageUsd: string;
+      /**
+       * Format: decimal
+       * @description Default operation limit: max(stage × 1.5, dossier and glossary limits)
+       * @example 100.00000000
+       */
+      suggestedLimitUsd: string;
+      /** @description The dossier plan is not ready: one section per chapter is assumed */
+      upperBound: boolean;
+    };
+    ContentDraftSectionDto: {
+      /** @description Names not in the dossier */
+      additions: string | null;
+      /** @description Section number of the dossier plan */
+      number: number;
+      /** @description Question to the editor */
+      question: string | null;
+      /** @description First chapter of the section in the plan; null - no such chapter in this version */
+      readerChapter: number | null;
+      /** @description The plan chapter is not among the chapters of this version */
+      readerChapterMissing: boolean;
+      /** @description Rich HTML; empty when the chapters have no text */
+      text: string;
+      title: string;
+    };
+    ContentDraftStateDto: {
+      /** @description The latest draft of this kind that is not discarded, in any status; null - none */
+      draft: components['schemas']['ContentDraftDto'] | null;
     };
     ContributorLinkResponseDto: {
       birthYear: number | null;
@@ -12897,6 +13047,14 @@ export interface components {
       status: string;
       updatedAt: string;
     };
+    StartContentDraftDto: {
+      /**
+       * Format: decimal
+       * @description Limit of the draft operation; default - max(stage estimate × 1.5, limits of the dossier and glossary built first)
+       * @example 100
+       */
+      limitUsd?: string;
+    };
     StartDossierDto: {
       /**
        * Format: decimal
@@ -15624,6 +15782,77 @@ export interface operations {
             pagination: components['schemas']['PaginationInfoDto'];
           };
         };
+      };
+    };
+  };
+  ContentDraftController_discard: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContentDraftDto'];
+        };
+      };
+      /** @description Content draft not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_markSectionAdded: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        number: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContentDraftDto'];
+        };
+      };
+      /** @description DRAFT_SECTION_UNKNOWN: the draft has no such section */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Content draft not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description DRAFT_NOT_READY: not a ready sections draft */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };
@@ -20045,6 +20274,118 @@ export interface operations {
         };
       };
       /** @description SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_latest: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        kind: 'summary_sections' | 'summary_full' | 'summary_brief';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContentDraftStateDto'];
+        };
+      };
+    };
+  };
+  ContentDraftController_start: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        kind: 'summary_sections' | 'summary_full' | 'summary_brief';
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StartContentDraftDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContentDraftDto'];
+        };
+      };
+      /** @description DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description DRAFT_IN_PROGRESS: a draft of this kind is being built; SUMMARY_SECTIONS_MISSING: no saved section with text (summary_full); SUMMARY_FULL_MISSING: no saved full summary with text (summary_brief); DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_DISABLED: no OpenRouter key */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_estimate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        kind: 'summary_sections' | 'summary_full' | 'summary_brief';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['ContentDraftEstimateDto'];
+        };
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description DRAFT_IN_PROGRESS: a draft of this kind is being built; SUMMARY_SECTIONS_MISSING: no saved section with text (summary_full); SUMMARY_FULL_MISSING: no saved full summary with text (summary_brief); DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED */
       409: {
         headers: {
           [name: string]: unknown;

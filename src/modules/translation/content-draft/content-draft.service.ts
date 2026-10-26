@@ -1,0 +1,535 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BookDossier, ContentDraft, Language, LlmOperation, Prisma } from '@prisma/client';
+import { PrismaService } from '../../../prisma/prisma.service';
+import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
+import { moneyUsd } from '../../llm/dto/llm-money';
+import { LlmBudgetService } from '../../llm/llm-budget.service';
+import { LlmService, StageCallEstimator } from '../../llm/llm.service';
+import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
+import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
+import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
+import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
+import { DOSSIER_MAX_CHAPTERS } from '../dossier/dossier.constants';
+import { ContextEstimate, DossierService } from '../dossier/dossier.service';
+import { DossierSummarySectionDto } from '../dto/dossier-data.dto';
+import {
+  ContentDraftDto,
+  ContentDraftEstimateDto,
+  ContentDraftSectionDto,
+  ContentDraftStateDto,
+} from '../dto/content-draft-response.dto';
+import { stageEstimatorFor } from '../llm-model-checks';
+import { contextUpperChars } from '../translate/translate-estimate';
+import {
+  CONTENT_DRAFT_TASK_KIND,
+  DOSSIER_STALE,
+  DRAFT_DOSSIER_MISSING,
+  DRAFT_IN_PROGRESS,
+  DRAFT_LIMIT_FACTOR,
+  DRAFT_LIMIT_TOO_LOW,
+  DRAFT_NOT_READY,
+  DRAFT_SECTION_UNKNOWN,
+  DRAFT_TX_OPTIONS,
+  SUMMARY_FULL_MISSING,
+  SUMMARY_SECTIONS_MISSING,
+  SUMMARY_SECTIONS_STAGE,
+  SummaryDraftKind,
+} from './content-draft.constants';
+import {
+  summaryBriefRequest,
+  summaryFullRequest,
+  summarySectionRequest,
+} from './content-draft.prompts';
+import { chaptersText, htmlToParagraphs } from './content-draft.text';
+
+/** Раздел плана досье (`DossierV1.summaryPlan`): тип - DTO досье, форма меняется вместе с ним. */
+export type PlanSection = Pick<DossierSummarySectionDto, 'number' | 'title' | 'chapters'>;
+
+/** Данные заготовки в `ContentDraft.data`: разделы по мере готовности или текст. */
+export interface DraftData {
+  plannedSections?: number;
+  sections?: ContentDraftSectionDto[];
+  /** Номера разделов, которые редактор уже добавил «Add section» (решение арбитра `F05 | F05-10`, Р1). */
+  addedSections?: number[];
+  text?: string;
+  question?: string | null;
+}
+
+/** Задача заготовки: ключ пары «операция:заготовка» - «продолжить» второй задачи не поставит. */
+export function draftTaskInput(draft: {
+  id: string;
+  bookVersionId: string;
+  language: Language;
+  operationId: string;
+}): EnqueueTaskInput {
+  return {
+    kind: CONTENT_DRAFT_TASK_KIND,
+    operationId: draft.operationId,
+    bookVersionId: draft.bookVersionId,
+    language: draft.language,
+    payload: { draftId: draft.id },
+    pairKey: `${draft.operationId}:${draft.id}`,
+  };
+}
+
+/** План разделов из данных досье: элемент не той формы пропускается (данные пишет код по форме). */
+export function summaryPlanOf(dossierData: unknown): PlanSection[] {
+  const plan = (dossierData as { summaryPlan?: unknown } | null)?.summaryPlan;
+  if (!Array.isArray(plan)) return [];
+  return plan.flatMap((p) => {
+    const e = p as Partial<PlanSection> | null;
+    return e &&
+      Number.isInteger(e.number) &&
+      typeof e.title === 'string' &&
+      Array.isArray(e.chapters)
+      ? [
+          {
+            number: e.number as number,
+            title: e.title,
+            chapters: e.chapters.filter(Number.isInteger),
+          },
+        ]
+      : [];
+  });
+}
+
+/** В HTML есть видимый текст - той же нормализацией, что `@RichHtmlHasText` у сохранения. */
+export const hasVisibleText = (html: string | null | undefined): boolean =>
+  !!html && richHtmlText(html) !== '';
+
+type ContextLine = NonNullable<ContextEstimate['glossary']>;
+
+interface Estimate {
+  dto: ContentDraftEstimateDto;
+  suggestedLimitUsd: Prisma.Decimal;
+  /** Лимит досье или глоссария, которые строятся первыми: лимит заготовки не может быть меньше. */
+  contextLimitUsd: Prisma.Decimal;
+  /** Досье и глоссарий запуска переведённой версии (Р18): заготовка привязывается к ним сразу. */
+  run: { dossierId: string; glossaryId: string | null } | null;
+  language: Language;
+}
+
+/**
+ * Заготовка Summary из досье (`F05-10`; `product.md` §5.1-5.2, `tech.md` §2б): разделы по плану
+ * досье, полный - из сохранённых разделов, очень краткий - из сохранённого полного. Строится
+ * фоном под своей операцией `draft`; в `BookSummary` и `BookSummarySection` не пишет - черновик
+ * сохраняет редактор существующими ручками.
+ */
+@Injectable()
+export class ContentDraftService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly llm: LlmService,
+    private readonly budget: LlmBudgetService,
+    private readonly tasks: LlmTaskService,
+    private readonly dossiers: DossierService,
+  ) {}
+
+  async estimate(versionId: string, kind: SummaryDraftKind): Promise<ContentDraftEstimateDto> {
+    return (await this.estimateOf(versionId, kind)).dto;
+  }
+
+  async start(
+    versionId: string,
+    kind: SummaryDraftKind,
+    limitUsd: Prisma.Decimal | undefined,
+    createdById: string,
+  ): Promise<ContentDraftDto> {
+    this.llm.assertEnabled();
+    const estimate = await this.estimateOf(versionId, kind);
+    // Потолок исчерпан - отказ без операции и без строки (В11 `F05-2`, В2 `F05-10`).
+    if (await this.budget.ceilingReached()) {
+      throw llmTaskConflict('LLM_CEILING_REACHED', 'LLM spending ceiling is reached');
+    }
+    const limit = limitUsd ?? estimate.suggestedLimitUsd;
+    // Досье и глоссарий ждут в остатке лимита заготовки (С12, В9).
+    if (limit.lt(estimate.contextLimitUsd)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: `limitUsd must fit the dossier and glossary built first: at least ${moneyUsd(estimate.contextLimitUsd)}`,
+        code: DRAFT_LIMIT_TOO_LOW,
+      });
+    }
+    const opData = await this.llm.operationData({
+      kind: 'draft',
+      bookVersionId: versionId,
+      limitUsd: limit,
+      createdById,
+    });
+    let id: string;
+    try {
+      id = await this.prisma.$transaction(async (tx) => {
+        // Прежняя готовая или упавшая заготовка того же вида уступает новой (В7).
+        await tx.contentDraft.updateMany({
+          where: { bookVersionId: versionId, kind, status: { in: ['ready', 'failed'] } },
+          data: { status: 'discarded' },
+        });
+        const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
+        const row = await tx.contentDraft.create({
+          data: {
+            bookVersionId: versionId,
+            kind,
+            language: estimate.language,
+            operationId: op.id,
+            dossierId: estimate.run?.dossierId ?? null,
+            glossaryId: estimate.run?.glossaryId ?? null,
+          },
+        });
+        await this.tasks.enqueue(draftTaskInput(row), tx);
+        return row.id;
+      }, DRAFT_TX_OPTIONS);
+    } catch (error) {
+      // Одна строящаяся на пару (версия, вид) - частичным уникальным индексом, а не чтением (L-019).
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        throw llmTaskConflict(DRAFT_IN_PROGRESS, 'A draft of this kind is already being built');
+      }
+      throw error;
+    }
+    return this.get(id);
+  }
+
+  /** Последняя неотброшенная заготовка вида в любом статусе (В3); нет - `null`. */
+  async latest(versionId: string, kind: SummaryDraftKind): Promise<ContentDraftStateDto> {
+    const row = await this.prisma.contentDraft.findFirst({
+      where: { bookVersionId: versionId, kind, status: { not: 'discarded' } },
+      include: { operation: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    return { draft: row ? await this.toDto(row) : null };
+  }
+
+  /**
+   * «Не нужна»: строящаяся - отмена её операции и `discarded` одной транзакцией (В10), готовая
+   * и упавшая - только статус. Досье и глоссарий своих операций не отменяются.
+   */
+  async discard(id: string): Promise<ContentDraftDto> {
+    const row = await this.prisma.contentDraft.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException('Content draft not found');
+    if (row.status === 'building') {
+      await this.tasks.cancelOperation(row.operationId, async (tx) => {
+        await tx.contentDraft.updateMany({
+          where: { id, status: 'building' },
+          data: { status: 'discarded' },
+        });
+      });
+    }
+    // Операция уже кончилась (заготовка успела стать готовой) или строка не строилась.
+    await this.prisma.contentDraft.updateMany({
+      where: { id, status: { not: 'discarded' } },
+      data: { status: 'discarded' },
+    });
+    return this.get(id);
+  }
+
+  /**
+   * Раздел заготовки добавлен редактором (Р1): номер дописывается одним условным UPDATE по jsonb,
+   * без чтения и записи следом (L-019); повтор ничего не меняет. Не `ready` - 409, номера нет
+   * среди разделов - 400.
+   */
+  async markSectionAdded(id: string, number: number): Promise<ContentDraftDto> {
+    const row = await this.prisma.contentDraft.findUnique({ where: { id } });
+    if (!row) throw new NotFoundException('Content draft not found');
+    if (row.status !== 'ready' || row.kind !== 'summary_sections') {
+      throw llmTaskConflict(DRAFT_NOT_READY, 'Only a ready sections draft takes added marks');
+    }
+    const sections = ((row.data ?? {}) as DraftData).sections ?? [];
+    if (!sections.some((s) => s.number === number)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message: `The draft has no section ${number}`,
+        code: DRAFT_SECTION_UNKNOWN,
+      });
+    }
+    const mark = JSON.stringify([number]);
+    const changed = await this.prisma.$executeRaw`
+      UPDATE "ContentDraft"
+      SET "data" = jsonb_set(
+            "data",
+            '{addedSections}',
+            COALESCE("data"->'addedSections', '[]'::jsonb) || ${mark}::jsonb
+          ),
+          "updatedAt" = now()
+      WHERE "id" = ${id}
+        AND "status" = 'ready'
+        AND NOT (COALESCE("data"->'addedSections', '[]'::jsonb) @> ${mark}::jsonb)`;
+    // Ноль строк - номер уже отмечен (повтор) или заготовку отбросили между чтением и записью.
+    if (changed === 0) {
+      const current = await this.prisma.contentDraft.findUnique({ where: { id } });
+      if (current?.status !== 'ready') {
+        throw llmTaskConflict(DRAFT_NOT_READY, 'Only a ready sections draft takes added marks');
+      }
+    }
+    return this.get(id);
+  }
+
+  async get(id: string): Promise<ContentDraftDto> {
+    const row = await this.prisma.contentDraft.findUnique({
+      where: { id },
+      include: { operation: true },
+    });
+    if (!row) throw new NotFoundException('Content draft not found');
+    return this.toDto(row);
+  }
+
+  /** Сохранённые разделы версии с видимым текстом, по номеру (В4); текст - абзацами. */
+  async savedSections(versionId: string): Promise<Array<{ title: string; text: string }>> {
+    const rows = await this.prisma.bookSummarySection.findMany({
+      where: { bookVersionId: versionId },
+      select: { title: true, text: true },
+      orderBy: { number: 'asc' },
+      take: SUMMARY_SECTION_LIMITS.sectionsPerVersion,
+    });
+    // Видимый текст - по тому же разбору, что уходит в промпт: раздел из одной картинки
+    // «сохранённым» не считается (В4).
+    return rows
+      .map((r) => ({ title: r.title, text: htmlToParagraphs(r.text) }))
+      .filter((r) => r.text !== '');
+  }
+
+  /** Сохранённый полный пересказ с видимым текстом абзацами; нет - `null` (В4). */
+  async savedFull(versionId: string): Promise<string | null> {
+    const row = await this.prisma.bookSummary.findUnique({
+      where: { bookVersionId: versionId },
+      select: { summary: true },
+    });
+    const text = row ? htmlToParagraphs(row.summary) : '';
+    return text === '' ? null : text;
+  }
+
+  async languageOf(versionId: string): Promise<Language | null> {
+    const row = await this.prisma.bookVersion.findUnique({
+      where: { id: versionId },
+      select: { language: true },
+    });
+    return row?.language ?? null;
+  }
+
+  // -------------------------------------------------------------------------
+
+  private async toDto(row: ContentDraft & { operation: LlmOperation }): Promise<ContentDraftDto> {
+    const data = (row.data ?? {}) as DraftData;
+    let waitingFor: ContentDraftDto['waitingFor'] = null;
+    if (row.waitingFor && row.status === 'building') {
+      const glossary = await this.prisma.bookGlossary.findUnique({
+        where: { id: row.waitingFor },
+        select: { id: true },
+      });
+      waitingFor = glossary ? 'glossary' : 'dossier';
+    }
+    return {
+      id: row.id,
+      bookVersionId: row.bookVersionId,
+      kind: row.kind,
+      status: row.status,
+      language: row.language,
+      failedReason: row.failedReason,
+      waitingFor,
+      operation: toOperationDto(row.operation),
+      model: row.model,
+      plannedSections: data.plannedSections ?? null,
+      sections: row.kind === 'summary_sections' ? (data.sections ?? []) : null,
+      addedSections: data.addedSections ?? [],
+      text: data.text ?? null,
+      question: data.question ?? null,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    };
+  }
+
+  private async estimateOf(versionId: string, kind: SummaryDraftKind): Promise<Estimate> {
+    const version = await this.prisma.bookVersion.findUnique({
+      where: { id: versionId },
+      select: { language: true, title: true },
+    });
+    if (!version) throw new NotFoundException('Book version not found');
+    if (kind === 'summary_sections') return this.sectionsEstimate(versionId, version);
+
+    const call = await stageEstimatorFor(this.llm, kind);
+    let usd: Prisma.Decimal;
+    if (kind === 'summary_full') {
+      const sections = await this.savedSections(versionId);
+      if (sections.length === 0) {
+        throw llmTaskConflict(
+          SUMMARY_SECTIONS_MISSING,
+          'Save at least one summary section with text first',
+        );
+      }
+      usd = call.estimate(
+        summaryFullRequest({ bookTitle: version.title, language: version.language, sections }),
+      );
+    } else {
+      const full = await this.savedFull(versionId);
+      if (full === null) {
+        throw llmTaskConflict(SUMMARY_FULL_MISSING, 'Save the full summary with text first');
+      }
+      usd = call.estimate(
+        summaryBriefRequest({
+          bookTitle: version.title,
+          language: version.language,
+          fullText: full,
+        }),
+      );
+    }
+    const suggested = usd.mul(DRAFT_LIMIT_FACTOR);
+    return {
+      suggestedLimitUsd: suggested,
+      contextLimitUsd: new Prisma.Decimal(0),
+      run: null,
+      language: version.language,
+      dto: {
+        kind,
+        dossier: null,
+        glossary: null,
+        sections: null,
+        stageUsd: moneyUsd(usd),
+        upperBound: false,
+        suggestedLimitUsd: moneyUsd(suggested),
+      },
+    };
+  }
+
+  /**
+   * Разделы: досье и глоссарий запуска у переведённой версии (Р18, без свежести), иначе
+   * действующее поколение досье исходника - устаревшее даёт 409 `DOSSIER_STALE`, отсутствующее
+   * строится первым строкой оценки (Р5). Глоссарий не нужен на языке досье (В6).
+   */
+  private async sectionsEstimate(
+    versionId: string,
+    version: { language: Language; title: string },
+  ): Promise<Estimate> {
+    const call = await stageEstimatorFor(this.llm, SUMMARY_SECTIONS_STAGE);
+    const run = await this.dossiers.finishedRunContextOf(versionId);
+    let dossier: BookDossier | null;
+    let glossaryData: unknown = null;
+    let dossierLine: ContextLine | null = null;
+    let glossaryLine: ContextLine | null = null;
+    if (run) {
+      if (!run.dossier || run.dossier.status !== 'ready') {
+        throw llmTaskConflict(
+          DRAFT_DOSSIER_MISSING,
+          'The dossier of the translation run that made this version is gone',
+        );
+      }
+      dossier = run.dossier;
+      if (run.glossaryId) {
+        const glossary = await this.prisma.bookGlossary.findUnique({
+          where: { id: run.glossaryId },
+          select: { data: true },
+        });
+        glossaryData = glossary?.data ?? null;
+      }
+    } else {
+      const status = await this.dossiers.status(versionId);
+      if (status.status === 'ready' && status.fresh === false) {
+        throw llmTaskConflict(
+          DOSSIER_STALE,
+          'The source changed after the dossier was built: rebuild the dossier',
+        );
+      }
+      const sourceLanguage = await this.languageOf(status.sourceVersionId);
+      const needsGlossary = sourceLanguage !== version.language;
+      const context = await this.dossiers.contextEstimate(versionId, version.language);
+      dossierLine = context.dossier ? { ...context.dossier, upperBound: false } : null;
+      glossaryLine = needsGlossary ? context.glossary : null;
+      dossier =
+        status.status === 'ready'
+          ? await this.dossiers.latestDossier(status.sourceVersionId)
+          : null;
+      if (dossier && needsGlossary && glossaryLine === null) {
+        const glossary = await this.prisma.bookGlossary.findUnique({
+          where: { dossierId_language: { dossierId: dossier.id, language: version.language } },
+          select: { data: true, status: true },
+        });
+        glossaryData = glossary?.status === 'ready' ? glossary.data : null;
+      }
+    }
+
+    const plan = dossier ? summaryPlanOf(dossier.data) : [];
+    const stage = await this.sectionsStageUsd(
+      versionId,
+      version,
+      call,
+      dossier,
+      glossaryData,
+      plan,
+    );
+    const maxOf = (values: Array<Prisma.Decimal | undefined>) =>
+      values.reduce<Prisma.Decimal>((max, v) => (v && v.gt(max) ? v : max), new Prisma.Decimal(0));
+    const contextLimitUsd = maxOf([
+      dossierLine?.suggestedLimitUsd,
+      glossaryLine?.suggestedLimitUsd,
+    ]);
+    const suggested = maxOf([stage.usd.mul(DRAFT_LIMIT_FACTOR), contextLimitUsd]);
+    const line = (l: ContextLine | null) =>
+      l
+        ? {
+            estimateUsd: moneyUsd(l.estimateUsd),
+            suggestedLimitUsd: moneyUsd(l.suggestedLimitUsd),
+            upperBound: l.upperBound,
+          }
+        : null;
+    return {
+      suggestedLimitUsd: suggested,
+      contextLimitUsd,
+      language: version.language,
+      run: run?.dossier ? { dossierId: run.dossier.id, glossaryId: run.glossaryId } : null,
+      dto: {
+        kind: 'summary_sections',
+        dossier: line(dossierLine),
+        glossary: line(glossaryLine),
+        sections: stage.upperBound ? null : plan.length,
+        stageUsd: moneyUsd(stage.usd),
+        upperBound: stage.upperBound,
+        suggestedLimitUsd: moneyUsd(suggested),
+      },
+    };
+  }
+
+  /**
+   * Вызовы разделов: план известен - по разделу на вызов с текстом его глав; досье ещё нет -
+   * сверху по главе на раздел с досье и глоссарием по размеру ответа их этапов.
+   */
+  private async sectionsStageUsd(
+    versionId: string,
+    version: { language: Language; title: string },
+    call: StageCallEstimator,
+    dossier: BookDossier | null,
+    glossaryData: unknown,
+    plan: PlanSection[],
+  ): Promise<{ usd: Prisma.Decimal; upperBound: boolean }> {
+    const chapters = await this.prisma.chapter.findMany({
+      where: { bookVersionId: versionId },
+      select: { number: true, title: true, content: true },
+      orderBy: { number: 'asc' },
+      // Глав больше потолка досье не бывает: досье по такой книге не строится.
+      take: DOSSIER_MAX_CHAPTERS,
+    });
+    const upperBound = plan.length === 0;
+    const extra = upperBound ? await contextUpperChars(this.llm) : 0;
+    const sections = upperBound
+      ? chapters.map((c) => ({ number: c.number, title: c.title, chapters: [c.number] }))
+      : plan;
+    let usd = new Prisma.Decimal(0);
+    for (const section of sections) {
+      const own = chapters.filter(
+        (c) => section.chapters.includes(c.number) && htmlToParagraphs(c.content) !== '',
+      );
+      usd = usd.add(
+        call.estimate(
+          summarySectionRequest({
+            bookTitle: version.title,
+            language: version.language,
+            dossier: dossier?.data ?? null,
+            glossary: glossaryData,
+            section,
+            chaptersText: chaptersText(own),
+          }),
+          extra,
+        ),
+      );
+    }
+    return { usd, upperBound };
+  }
+}

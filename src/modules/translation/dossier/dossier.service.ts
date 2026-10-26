@@ -6,6 +6,7 @@ import {
   LlmOperation,
   LlmPauseReason,
   Prisma,
+  TranslationRunLanguageStatus,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmBudgetService } from '../../llm/llm-budget.service';
@@ -830,15 +831,59 @@ export class DossierService {
     );
   }
 
-  /** Досье запуска, создавшего эту версию (`TranslationRunLanguage.bookVersionId`, Р18); иначе `null`. */
+  /**
+   * Досье и глоссарий запуска, создавшего эту версию (`TranslationRunLanguage.bookVersionId`,
+   * Р18): статус досье и заготовка (`F05-10`) берут их без проверки свежести. `null` - версия
+   * ручная или исходник. Одно чтение связи на оба места: правило Р18 живёт здесь.
+   */
+  async runContextOf(versionId: string): Promise<{
+    sourceVersionId: string;
+    dossier: BookDossier | null;
+    glossaryId: string | null;
+    status: TranslationRunLanguageStatus;
+  } | null> {
+    const linked = await this.prisma.translationRunLanguage.findUnique({
+      where: { bookVersionId: versionId },
+      select: {
+        glossaryId: true,
+        status: true,
+        run: { select: { bookVersionId: true, dossier: true } },
+      },
+    });
+    return linked
+      ? {
+          sourceVersionId: linked.run.bookVersionId,
+          dossier: linked.run.dossier,
+          glossaryId: linked.glossaryId,
+          status: linked.status,
+        }
+      : null;
+  }
+
+  /**
+   * Досье и глоссарий запуска для заготовки (`F05-10`, решение арбитра `F05 | F05-10`, Р2): язык
+   * запуска ещё пишет главы - 409 `RUN_LANGUAGE_UNFINISHED` (платить за недописанный текст
+   * нельзя); `done`, `failed`, `cancelled` - досье и глоссарий запуска по Р18.
+   */
+  async finishedRunContextOf(
+    versionId: string,
+  ): Promise<{ dossier: BookDossier | null; glossaryId: string | null } | null> {
+    const run = await this.runContextOf(versionId);
+    if (run && (run.status === 'pending' || run.status === 'running')) {
+      throw llmTaskConflict(
+        'RUN_LANGUAGE_UNFINISHED',
+        'The translation run is still writing this version: wait until it finishes',
+      );
+    }
+    return run;
+  }
+
+  /** Досье запуска, создавшего эту версию (Р18); иначе `null`. */
   private async runDossierOf(
     versionId: string,
   ): Promise<{ sourceVersionId: string; row: BookDossier | null } | null> {
-    const linked = await this.prisma.translationRunLanguage.findUnique({
-      where: { bookVersionId: versionId },
-      select: { run: { select: { bookVersionId: true, dossier: true } } },
-    });
-    return linked ? { sourceVersionId: linked.run.bookVersionId, row: linked.run.dossier } : null;
+    const run = await this.runContextOf(versionId);
+    return run ? { sourceVersionId: run.sourceVersionId, row: run.dossier } : null;
   }
 
   /** Ответ `status` по выбранной строке досье и её свежести. */
