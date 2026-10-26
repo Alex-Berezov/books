@@ -63,6 +63,7 @@ function setup() {
       findFirst: jest.fn().mockResolvedValue(null),
       updateMany: jest.fn(),
     },
+    $executeRaw: jest.fn().mockResolvedValue(1),
   };
   const llm = {
     assertEnabled: jest.fn(),
@@ -178,5 +179,24 @@ describe('ContentDraftService (F05-10)', () => {
     await expect(service.latest('v1', 'summary_full')).resolves.toMatchObject({
       draft: { status: 'ready', text: '<p>Full.</p>', sections: null, waitingFor: null },
     });
+  });
+
+  it('added mark: updatedAt is written in UTC explicitly, not by now() of the session (F05-11, Р22)', async () => {
+    const { service, prisma } = setup();
+    const ready = draft({
+      kind: 'summary_sections',
+      status: 'ready',
+      data: { sections: [{ number: 1 }] },
+    });
+    prisma.contentDraft.findUnique.mockResolvedValue(ready);
+    await service.markSectionAdded('d1', 1);
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [strings, ...values] = prisma.$executeRaw.mock.calls[0] as [string[], ...unknown[]];
+    expect(strings.join('?')).not.toMatch(/now\(\)/i);
+    // Вложенный `Prisma.sql` - объект с полем `sql`; голый `Date` или `now()` - нет.
+    const stamps = values
+      .map((v) => (v as { sql?: unknown } | null)?.sql)
+      .filter((v): v is string => typeof v === 'string');
+    expect(stamps).toEqual([expect.stringContaining("AT TIME ZONE 'UTC'")]);
   });
 });

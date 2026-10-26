@@ -1,15 +1,26 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { ContentDraftKind, ContentDraftStatus, Language } from '@prisma/client';
+import {
+  BookAnalysisCharacterDto,
+  BookAnalysisFactsDto,
+  BookAnalysisKeyQuoteDto,
+  BookAnalysisStyleDto,
+} from '../../book-analysis/dto/book-analysis-blocks.dto';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
-import { SUMMARY_DRAFT_KINDS, SummaryDraftKind } from '../content-draft/content-draft.constants';
+import {
+  CONTENT_DRAFT_KINDS,
+  DROPPED_QUOTE_REASONS,
+  DroppedQuoteReason,
+} from '../content-draft/content-draft.constants';
+import { DossierMotifDto } from './dossier-data.dto';
 import { CompareContextLineDto } from './translation-compare-response.dto';
 
 /** Response DTO — только Swagger, без `class-validator` (`STYLE_GUIDE.md` §7). */
 
 export class ContentDraftEstimateDto {
-  @ApiProperty({ enum: SUMMARY_DRAFT_KINDS })
-  kind!: SummaryDraftKind;
+  @ApiProperty({ enum: CONTENT_DRAFT_KINDS })
+  kind!: ContentDraftKind;
 
   @ApiProperty({
     type: CompareContextLineDto,
@@ -39,7 +50,8 @@ export class ContentDraftEstimateDto {
 
   @ApiProperty({
     type: Boolean,
-    description: 'The dossier plan is not ready: one section per chapter is assumed',
+    description:
+      'The dossier is not ready: its size is assumed from the dossier and glossary stages (sections: one per chapter)',
   })
   upperBound!: boolean;
 
@@ -78,6 +90,49 @@ export class ContentDraftSectionDto {
 
   @ApiProperty({ type: String, nullable: true, description: 'Question to the editor' })
   question!: string | null;
+}
+
+/**
+ * JSON импорта вкладки Analysis (`F05-11`, `tech.md` §2б): только эти ключи; ключа нет - импорт
+ * блок не трогает. Блоки - те же классы, что у ответа анализа.
+ */
+export class ContentDraftAnalysisDto {
+  @ApiProperty({ enum: Language })
+  language!: Language;
+
+  @ApiProperty({ type: BookAnalysisFactsDto, required: false })
+  facts?: BookAnalysisFactsDto;
+
+  @ApiProperty({ type: [BookAnalysisCharacterDto], required: false })
+  characters?: BookAnalysisCharacterDto[];
+
+  @ApiProperty({ type: [BookAnalysisKeyQuoteDto], required: false })
+  keyQuotes?: BookAnalysisKeyQuoteDto[];
+
+  @ApiProperty({ type: [BookAnalysisStyleDto], required: false })
+  style?: BookAnalysisStyleDto[];
+}
+
+/** Цитата заготовки Analysis, выкинутая проверкой дословности (решение арбитра `F05 | F05-11`, Р9). */
+export class ContentDraftDroppedQuoteDto {
+  @ApiProperty({
+    type: String,
+    description: 'keyQuotes, characters.<key>.quote or style.<index>.example',
+  })
+  path!: string;
+
+  @ApiProperty({ type: String })
+  text!: string;
+
+  @ApiProperty({ type: Number, nullable: true, description: 'Chapter given by the model' })
+  chapter!: number | null;
+
+  @ApiProperty({
+    enum: DROPPED_QUOTE_REASONS,
+    description:
+      'NOT_FOUND: not word for word within one paragraph of the chapter; NO_CHAPTER: no chapter given; CHAPTER_MISSING: the version has no such chapter; OVER_LIMIT: verified, but over the import limit together with the saved quotes',
+  })
+  reason!: DroppedQuoteReason;
 }
 
 export class ContentDraftDto {
@@ -146,6 +201,45 @@ export class ContentDraftDto {
 
   @ApiProperty({ type: String, nullable: true, description: 'Question to the editor' })
   question!: string | null;
+
+  @ApiProperty({
+    type: ContentDraftAnalysisDto,
+    nullable: true,
+    description:
+      'Analysis import JSON (analysis): language, facts, characters, keyQuotes, style only; built over the saved analysis',
+  })
+  analysis!: ContentDraftAnalysisDto | null;
+
+  @ApiProperty({
+    type: [ContentDraftDroppedQuoteDto],
+    nullable: true,
+    description: 'Quotes thrown away by the word-for-word check (analysis)',
+  })
+  droppedQuotes!: ContentDraftDroppedQuoteDto[] | null;
+
+  @ApiProperty({
+    type: [DossierMotifDto],
+    nullable: true,
+    description:
+      'Recurring motifs of the dossier for the prompt inputs (analysis): chapters of this version only',
+  })
+  motifs!: DossierMotifDto[] | null;
+
+  @ApiProperty({
+    enum: Language,
+    nullable: true,
+    description: 'Language of the dossier the analysis draft was built with',
+  })
+  dossierLanguage!: Language | null;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description:
+      'updatedAt of the saved analysis the draft was built over; null - there was none (analysis)',
+  })
+  analysisUpdatedAt!: string | null;
 
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: string;

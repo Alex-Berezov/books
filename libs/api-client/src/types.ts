@@ -2703,10 +2703,10 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** The latest summary draft of this kind that is not discarded, in any status (building, ready, failed); null - none */
+    /** The latest summary or analysis draft of this kind that is not discarded, in any status (building, ready, failed); null - none */
     get: operations['ContentDraftController_latest'];
     put?: never;
-    /** Build a summary draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded */
+    /** Build a summary or analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded */
     post: operations['ContentDraftController_start'];
     delete?: never;
     options?: never;
@@ -2721,7 +2721,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Upper cost estimate of a summary draft from the dossier */
+    /** Upper cost estimate of a summary or analysis draft from the dossier */
     get: operations['ContentDraftController_estimate'];
     put?: never;
     post?: never;
@@ -7502,13 +7502,47 @@ export interface components {
       /** @description Width in px (images) */
       width?: number;
     };
+    ContentDraftAnalysisDto: {
+      characters?: components['schemas']['BookAnalysisCharacterDto'][];
+      facts?: components['schemas']['BookAnalysisFactsDto'];
+      keyQuotes?: components['schemas']['BookAnalysisKeyQuoteDto'][];
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      style?: components['schemas']['BookAnalysisStyleDto'][];
+    };
+    ContentDraftDroppedQuoteDto: {
+      /** @description Chapter given by the model */
+      chapter: number | null;
+      /** @description keyQuotes, characters.<key>.quote or style.<index>.example */
+      path: string;
+      /**
+       * @description NOT_FOUND: not word for word within one paragraph of the chapter; NO_CHAPTER: no chapter given; CHAPTER_MISSING: the version has no such chapter; OVER_LIMIT: verified, but over the import limit together with the saved quotes
+       * @enum {string}
+       */
+      reason: 'NOT_FOUND' | 'NO_CHAPTER' | 'CHAPTER_MISSING' | 'OVER_LIMIT';
+      text: string;
+    };
     ContentDraftDto: {
       /** @description Section numbers the editor has already added with «Add section» (summary_sections) */
       addedSections: number[];
+      /** @description Analysis import JSON (analysis): language, facts, characters, keyQuotes, style only; built over the saved analysis */
+      analysis: components['schemas']['ContentDraftAnalysisDto'] | null;
+      /**
+       * Format: date-time
+       * @description updatedAt of the saved analysis the draft was built over; null - there was none (analysis)
+       */
+      analysisUpdatedAt: string | null;
       /** Format: uuid */
       bookVersionId: string;
       /** Format: date-time */
       createdAt: string;
+      /**
+       * @description Language of the dossier the analysis draft was built with
+       * @enum {string|null}
+       */
+      dossierLanguage: 'en' | 'es' | 'fr' | 'pt' | 'ru' | null;
+      /** @description Quotes thrown away by the word-for-word check (analysis) */
+      droppedQuotes: components['schemas']['ContentDraftDroppedQuoteDto'][] | null;
       /** @description Code of the final refusal (failed) */
       failedReason: string | null;
       /** Format: uuid */
@@ -7518,6 +7552,8 @@ export interface components {
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       model: string | null;
+      /** @description Recurring motifs of the dossier for the prompt inputs (analysis): chapters of this version only */
+      motifs: components['schemas']['DossierMotifDto'][] | null;
       operation: components['schemas']['LlmOperationDto'];
       /** @description Sections in the plan (summary_sections); null until the dossier is ready */
       plannedSections: number | null;
@@ -7546,7 +7582,7 @@ export interface components {
       /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
       glossary: components['schemas']['CompareContextLineDto'] | null;
       /** @enum {string} */
-      kind: 'summary_sections' | 'summary_full' | 'summary_brief';
+      kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
       /** @description Sections of the dossier plan; null - the plan is not known yet or not a sections draft */
       sections: number | null;
       /**
@@ -7561,7 +7597,7 @@ export interface components {
        * @example 100.00000000
        */
       suggestedLimitUsd: string;
-      /** @description The dossier plan is not ready: one section per chapter is assumed */
+      /** @description The dossier is not ready: its size is assumed from the dossier and glossary stages (sections: one per chapter) */
       upperBound: boolean;
     };
     ContentDraftSectionDto: {
@@ -20288,7 +20324,7 @@ export interface operations {
       header?: never;
       path: {
         id: string;
-        kind: 'summary_sections' | 'summary_full' | 'summary_brief';
+        kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
       };
       cookie?: never;
     };
@@ -20310,7 +20346,7 @@ export interface operations {
       header?: never;
       path: {
         id: string;
-        kind: 'summary_sections' | 'summary_full' | 'summary_brief';
+        kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
       };
       cookie?: never;
     };
@@ -20364,7 +20400,7 @@ export interface operations {
       header?: never;
       path: {
         id: string;
-        kind: 'summary_sections' | 'summary_full' | 'summary_brief';
+        kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
       };
       cookie?: never;
     };

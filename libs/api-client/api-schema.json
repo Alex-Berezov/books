@@ -8092,6 +8092,78 @@
         ],
         "type": "object"
       },
+      "ContentDraftAnalysisDto": {
+        "properties": {
+          "characters": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisCharacterDto"
+            },
+            "type": "array"
+          },
+          "facts": {
+            "$ref": "#/components/schemas/BookAnalysisFactsDto"
+          },
+          "keyQuotes": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisKeyQuoteDto"
+            },
+            "type": "array"
+          },
+          "language": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "style": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisStyleDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "language"
+        ],
+        "type": "object"
+      },
+      "ContentDraftDroppedQuoteDto": {
+        "properties": {
+          "chapter": {
+            "description": "Chapter given by the model",
+            "nullable": true,
+            "type": "number"
+          },
+          "path": {
+            "description": "keyQuotes, characters.<key>.quote or style.<index>.example",
+            "type": "string"
+          },
+          "reason": {
+            "description": "NOT_FOUND: not word for word within one paragraph of the chapter; NO_CHAPTER: no chapter given; CHAPTER_MISSING: the version has no such chapter; OVER_LIMIT: verified, but over the import limit together with the saved quotes",
+            "enum": [
+              "NOT_FOUND",
+              "NO_CHAPTER",
+              "CHAPTER_MISSING",
+              "OVER_LIMIT"
+            ],
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "text",
+          "chapter",
+          "reason"
+        ],
+        "type": "object"
+      },
       "ContentDraftDto": {
         "properties": {
           "addedSections": {
@@ -8101,6 +8173,22 @@
             },
             "type": "array"
           },
+          "analysis": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ContentDraftAnalysisDto"
+              }
+            ],
+            "description": "Analysis import JSON (analysis): language, facts, characters, keyQuotes, style only; built over the saved analysis",
+            "nullable": true,
+            "type": "object"
+          },
+          "analysisUpdatedAt": {
+            "description": "updatedAt of the saved analysis the draft was built over; null - there was none (analysis)",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
           "bookVersionId": {
             "format": "uuid",
             "type": "string"
@@ -8108,6 +8196,26 @@
           "createdAt": {
             "format": "date-time",
             "type": "string"
+          },
+          "dossierLanguage": {
+            "description": "Language of the dossier the analysis draft was built with",
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "droppedQuotes": {
+            "description": "Quotes thrown away by the word-for-word check (analysis)",
+            "items": {
+              "$ref": "#/components/schemas/ContentDraftDroppedQuoteDto"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "failedReason": {
             "description": "Code of the final refusal (failed)",
@@ -8140,6 +8248,14 @@
           "model": {
             "nullable": true,
             "type": "string"
+          },
+          "motifs": {
+            "description": "Recurring motifs of the dossier for the prompt inputs (analysis): chapters of this version only",
+            "items": {
+              "$ref": "#/components/schemas/DossierMotifDto"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "operation": {
             "$ref": "#/components/schemas/LlmOperationDto"
@@ -8206,6 +8322,11 @@
           "addedSections",
           "text",
           "question",
+          "analysis",
+          "droppedQuotes",
+          "motifs",
+          "dossierLanguage",
+          "analysisUpdatedAt",
           "createdAt",
           "updatedAt"
         ],
@@ -8237,7 +8358,8 @@
             "enum": [
               "summary_sections",
               "summary_full",
-              "summary_brief"
+              "summary_brief",
+              "analysis"
             ],
             "type": "string"
           },
@@ -8259,7 +8381,7 @@
             "type": "string"
           },
           "upperBound": {
-            "description": "The dossier plan is not ready: one section per chapter is assumed",
+            "description": "The dossier is not ready: its size is assumed from the dossier and glossary stages (sections: one per chapter)",
             "type": "boolean"
           }
         },
@@ -40125,7 +40247,8 @@
               "enum": [
                 "summary_sections",
                 "summary_full",
-                "summary_brief"
+                "summary_brief",
+                "analysis"
               ],
               "type": "string"
             }
@@ -40148,7 +40271,7 @@
             "bearer": []
           }
         ],
-        "summary": "The latest summary draft of this kind that is not discarded, in any status (building, ready, failed); null - none",
+        "summary": "The latest summary or analysis draft of this kind that is not discarded, in any status (building, ready, failed); null - none",
         "tags": [
           "admin"
         ]
@@ -40173,7 +40296,8 @@
               "enum": [
                 "summary_sections",
                 "summary_full",
-                "summary_brief"
+                "summary_brief",
+                "analysis"
               ],
               "type": "string"
             }
@@ -40218,7 +40342,7 @@
             "bearer": []
           }
         ],
-        "summary": "Build a summary draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded",
+        "summary": "Build a summary or analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded",
         "tags": [
           "admin"
         ]
@@ -40245,7 +40369,8 @@
               "enum": [
                 "summary_sections",
                 "summary_full",
-                "summary_brief"
+                "summary_brief",
+                "analysis"
               ],
               "type": "string"
             }
@@ -40274,7 +40399,7 @@
             "bearer": []
           }
         ],
-        "summary": "Upper cost estimate of a summary draft from the dossier",
+        "summary": "Upper cost estimate of a summary or analysis draft from the dossier",
         "tags": [
           "admin"
         ]

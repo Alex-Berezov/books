@@ -13,7 +13,7 @@ import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
- * F05-10: заготовка Summary из досье. Построение идёт настоящим исполнителем на базе: его
+ * F05-10: заготовка Summary из досье; F05-11 - заготовка Analysis теми же ручками. Построение идёт настоящим исполнителем на базе: его
  * таймер в e2e не заведён (ключа на старте нет, Р25), проходы зовутся руками. Внешний `fetch`
  * подменён всегда: ответ модели выбирается по имени схемы ответа.
  */
@@ -307,18 +307,215 @@ describe('Summary drafts from the dossier (e2e)', () => {
     await app.close();
   });
 
-  it('access: admin only; analysis is not a kind of this batch', async () => {
+  it('access: admin only, analysis too; an unknown kind - 400', async () => {
     const versionId = await sourceBook();
     for (const [method, path] of [
       ['get', `/admin/versions/${versionId}/drafts/summary_sections/estimate`],
       ['get', `/admin/versions/${versionId}/drafts/summary_sections`],
       ['post', `/admin/versions/${versionId}/drafts/summary_sections`],
+      ['get', `/admin/versions/${versionId}/drafts/analysis/estimate`],
+      ['get', `/admin/versions/${versionId}/drafts/analysis`],
+      ['post', `/admin/versions/${versionId}/drafts/analysis`],
       ['post', `/admin/content-drafts/${versionId}/discard`],
     ] as Array<['get' | 'post', string]>) {
       await auth(http()[method](path), 'cm').expect(403);
     }
-    await auth(http().get(`/admin/versions/${versionId}/drafts/analysis`)).expect(400);
+    await auth(http().get(`/admin/versions/${versionId}/drafts/symbols`)).expect(400);
     expect(await latest(versionId, 'summary_sections')).toBeNull();
+    expect(await latest(versionId, 'analysis')).toBeNull();
+  });
+
+  it('analysis on the source: built over the saved analysis, made-up quotes thrown away with a mark, the draft passes the import save, the saved analysis untouched (F05-11)', async () => {
+    const versionId = await sourceBook();
+    await auth(http().put(`/versions/${versionId}/analysis`))
+      .send({
+        language: 'en',
+        facts: { settingPlace: 'Saved town' },
+        characters: [{ key: 'anna', name: 'Anna', role: 'main', description: 'Saved words' }],
+        keyQuotes: [{ text: 'Saved quote', interpretation: 'Saved meaning' }],
+      })
+      .expect(200);
+    const before = await prisma.bookAnalysis.findUniqueOrThrow({
+      where: { bookVersionId: versionId },
+    });
+    const motifDossier = {
+      ...DOSSIER,
+      motifs: [{ image: 'the door', chapters: [2] }],
+    };
+    answer = (name) =>
+      name === 'dossier'
+        ? motifDossier
+        : name === 'analysis_draft'
+          ? {
+              facts: { settingPlace: 'Other', settingTime: '1900s', narrator: '', structure: '' },
+              characters: [
+                {
+                  key: 'anna',
+                  name: 'Anna',
+                  role: 'main',
+                  arcFrom: 'alone',
+                  arcTo: 'at home',
+                  quote: 'Anna in chapter 1.',
+                  quoteChapter: 1,
+                  relations: [],
+                },
+              ],
+              keyQuotes: [
+                { text: 'Anna in chapter 2.', chapter: 2, speakerKey: '' },
+                { text: 'Anna never was here.', chapter: 2, speakerKey: '' },
+                { text: 'Anna in chapter 3.', chapter: 7, speakerKey: '' },
+              ],
+              style: [],
+            }
+          : defaultAnswer(name);
+
+    const estimate = await auth(
+      http().get(`/admin/versions/${versionId}/drafts/analysis/estimate`),
+    ).expect(200);
+    expect(estimate.body).toEqual(
+      expect.objectContaining({ kind: 'analysis', sections: null, upperBound: true }),
+    );
+    expect(estimate.body.dossier).not.toBeNull();
+    await start(versionId, 'analysis').expect(202);
+    await drain();
+
+    const res = await auth(http().get(`/admin/versions/${versionId}/drafts/analysis`)).expect(200);
+    const draft = (res.body as { draft: DraftBody & Record<string, unknown> }).draft;
+    expect(draft.status).toBe('ready');
+    expect(draft.analysis).toEqual({
+      language: 'en',
+      facts: { settingPlace: 'Saved town', settingTime: '1900s' },
+      characters: [
+        {
+          key: 'anna',
+          name: 'Anna',
+          role: 'main',
+          description: 'Saved words',
+          arc: { from: 'alone', to: 'at home' },
+          quote: { text: 'Anna in chapter 1.', chapter: 1 },
+        },
+      ],
+      keyQuotes: [
+        { text: 'Saved quote', interpretation: 'Saved meaning' },
+        { text: 'Anna in chapter 2.', chapter: 2 },
+      ],
+    });
+    expect(draft.droppedQuotes).toEqual([
+      { path: 'keyQuotes', text: 'Anna never was here.', chapter: 2, reason: 'NOT_FOUND' },
+      { path: 'keyQuotes', text: 'Anna in chapter 3.', chapter: 7, reason: 'CHAPTER_MISSING' },
+    ]);
+    expect(draft.motifs).toEqual([{ image: 'the door', chapters: [2] }]);
+    expect(draft.dossierLanguage).toBe('en');
+    expect(draft.analysisUpdatedAt).toBe(before.updatedAt.toISOString());
+    // Модель получила весь текст версии и сохранённый анализ (Р8).
+    const prompt = callsOf('analysis_draft')[0].body.messages[1].content;
+    for (const n of [1, 2, 3]) expect(prompt).toContain(`[READER CHAPTER ${n}]`);
+    expect(prompt).toContain('Saved quote');
+
+    // Заготовка проходит сохранение анализа (проба), а сохранённое не изменилось.
+    await auth(http().put(`/versions/${versionId}/analysis?dryRun=true`))
+      .send(draft.analysis as object)
+      .expect(200);
+    const after = await prisma.bookAnalysis.findUniqueOrThrow({
+      where: { bookVersionId: versionId },
+    });
+    expect(after).toEqual(before);
+  });
+
+  it('analysis on a manual version whose glossary is not built yet: the estimate is an upper bound with the glossary line (F05-11)', async () => {
+    const { ids } = await book([
+      { language: 'en', originalLanguage: 'English', chapters: THREE_CHAPTERS },
+      { language: 'fr', originalLanguage: 'English', chapters: THREE_CHAPTERS },
+    ]);
+    await buildDossier(ids.en as string);
+    const estimate = await auth(
+      http().get(`/admin/versions/${ids.fr as string}/drafts/analysis/estimate`),
+    ).expect(200);
+    expect(estimate.body).toEqual(
+      expect.objectContaining({ kind: 'analysis', dossier: null, upperBound: true }),
+    );
+    expect(estimate.body.glossary).not.toBeNull();
+  });
+
+  it('analysis estimate with a ready dossier is not an upper bound; a limit below the dossier built first - 400 (F05-11)', async () => {
+    const built = await sourceBook();
+    await buildDossier(built);
+    const ready = await auth(
+      http().get(`/admin/versions/${built}/drafts/analysis/estimate`),
+    ).expect(200);
+    expect(ready.body).toEqual(
+      expect.objectContaining({
+        kind: 'analysis',
+        dossier: null,
+        glossary: null,
+        upperBound: false,
+      }),
+    );
+    // Лимит по умолчанию закладывает повтор с замечанием (Р28): этап × (1 + 1) × 1,5.
+    expect(Number(ready.body.suggestedLimitUsd)).toBeCloseTo(Number(ready.body.stageUsd) * 3, 6);
+
+    const fresh = await sourceBook();
+    const res = await start(fresh, 'analysis', { limitUsd: '0.00000001' }).expect(400);
+    expect(res.body.code).toBe('DRAFT_LIMIT_TOO_LOW');
+    expect(await prisma.contentDraft.count({ where: { bookVersionId: fresh } })).toBe(0);
+  });
+
+  it('analysis on a version without chapter text: 409 SOURCE_HAS_NO_CHAPTERS before any operation (F05-11, Р26)', async () => {
+    const { ids } = await book([
+      { language: 'en', originalLanguage: 'English', chapters: THREE_CHAPTERS },
+      {
+        language: 'fr',
+        originalLanguage: 'English',
+        chapters: [{ number: 1, title: 'C1', content: '<p></p>' }],
+      },
+    ]);
+    const empty = ids.fr as string;
+    const est = await auth(http().get(`/admin/versions/${empty}/drafts/analysis/estimate`)).expect(
+      409,
+    );
+    expect(est.body.code).toBe('SOURCE_HAS_NO_CHAPTERS');
+    const opsBefore = await prisma.llmOperation.count();
+    const res = await start(empty, 'analysis').expect(409);
+    expect(res.body.code).toBe('SOURCE_HAS_NO_CHAPTERS');
+    expect(await prisma.contentDraft.count({ where: { bookVersionId: empty } })).toBe(0);
+    expect(await prisma.llmOperation.count()).toBe(opsBefore);
+  });
+
+  it('analysis without a saved analysis: built, analysisUpdatedAt null, nothing written to BookAnalysis (F05-11, Р15)', async () => {
+    const versionId = await sourceBook();
+    answer = (name) =>
+      name === 'analysis_draft'
+        ? {
+            facts: { settingPlace: '', settingTime: '', narrator: '', structure: '' },
+            characters: [],
+            keyQuotes: [{ text: 'Anna in chapter 3.', chapter: 3, speakerKey: '' }],
+            style: [],
+          }
+        : defaultAnswer(name);
+    await start(versionId, 'analysis').expect(202);
+    await drain();
+    const res = await auth(http().get(`/admin/versions/${versionId}/drafts/analysis`)).expect(200);
+    const draft = (res.body as { draft: DraftBody & Record<string, unknown> }).draft;
+    expect(draft.status).toBe('ready');
+    expect(draft.analysisUpdatedAt).toBeNull();
+    expect(draft.analysis).toEqual({
+      language: 'en',
+      keyQuotes: [{ text: 'Anna in chapter 3.', chapter: 3 }],
+    });
+    expect(draft.droppedQuotes).toEqual([]);
+    expect(await prisma.bookAnalysis.count({ where: { bookVersionId: versionId } })).toBe(0);
+  });
+
+  it('analysis: source edited after the dossier - 409 DOSSIER_STALE (F05-11)', async () => {
+    const versionId = await sourceBook();
+    await buildDossier(versionId);
+    await prisma.chapter.updateMany({
+      where: { bookVersionId: versionId, number: 2 },
+      data: { content: '<p>Edited.</p>' },
+    });
+    const res = await start(versionId, 'analysis').expect(409);
+    expect(res.body.code).toBe('DOSSIER_STALE');
+    expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(0);
   });
 
   it('sections on the source: the dossier is built first, no glossary in the dossier language, saved summary untouched', async () => {
@@ -360,6 +557,18 @@ describe('Summary drafts from the dossier (e2e)', () => {
     expect(
       await prisma.bookGlossary.count({ where: { dossier: { sourceVersionId: versionId } } }),
     ).toBe(0);
+    // Поля заготовки Analysis у видов Summary - null, а не пустые списки (F05-11).
+    const raw = await auth(
+      http().get(`/admin/versions/${versionId}/drafts/summary_sections`),
+    ).expect(200);
+    expect(raw.body.draft).toEqual(
+      expect.objectContaining({
+        analysis: null,
+        droppedQuotes: null,
+        motifs: null,
+        analysisUpdatedAt: null,
+      }),
+    );
     // Заготовка не пишет в пересказ версии.
     expect(await prisma.bookSummarySection.count({ where: { bookVersionId: versionId } })).toBe(0);
     expect(await prisma.bookSummary.count({ where: { bookVersionId: versionId } })).toBe(0);

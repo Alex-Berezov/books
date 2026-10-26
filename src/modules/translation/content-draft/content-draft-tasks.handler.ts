@@ -10,9 +10,20 @@ import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-wor
 import { demandContext, demandDossierContext } from '../dossier/context-demand';
 import { DossierService } from '../dossier/dossier.service';
 import { ContentDraftSectionDto } from '../dto/content-draft-response.dto';
+import { DossierMotifDto } from '../dto/dossier-data.dto';
 import { callShaped } from '../llm-shaped-call';
 import { PAUSE_BY_FAILURE } from '../pause-by-failure';
 import {
+  ANALYSIS_DRAFT_SHAPE,
+  AnalysisDraftAnswer,
+  analysisRemarks,
+  buildAnalysisDraft,
+  draftBlocksOf,
+  indexChapters,
+} from './content-draft.analysis';
+import {
+  ANALYSIS_DRAFT_REMARKS,
+  ANALYSIS_DRAFT_STAGE,
   DRAFT_CANCELLED,
   DRAFT_INPUT_MISSING,
   DRAFT_INVALID_RESPONSE,
@@ -23,6 +34,7 @@ import {
   SUMMARY_SECTIONS_STAGE,
 } from './content-draft.constants';
 import {
+  analysisDraftRequest,
   SUMMARY_SECTION_SHAPE,
   SUMMARY_TEXT_SHAPE,
   summaryBriefRequest,
@@ -38,6 +50,21 @@ import {
   summaryPlanOf,
 } from './content-draft.service';
 import { answerToHtml, chaptersText, editorQuestion, htmlToParagraphs } from './content-draft.text';
+
+/**
+ * Мотивы досье для «Вводных» (Р10): главы - только этой версии; элемент не той формы пропускается,
+ * как план разделов в `summaryPlanOf` (данные пишет код по форме, но шаг не должен падать на них).
+ */
+function motifsOf(dossierData: unknown, numbers: ReadonlySet<number>): DossierMotifDto[] {
+  const motifs = (dossierData as { motifs?: unknown } | null)?.motifs;
+  if (!Array.isArray(motifs)) return [];
+  return motifs.flatMap((m) => {
+    const e = m as Partial<DossierMotifDto> | null;
+    if (!e || typeof e.image !== 'string') return [];
+    const chapters = Array.isArray(e.chapters) ? e.chapters : [];
+    return [{ image: e.image, chapters: chapters.filter((n) => numbers.has(n)) }];
+  });
+}
 
 function draftIdOf(task: LlmTask): string | null {
   const id = (task.payload as Record<string, unknown> | null)?.draftId;
@@ -95,10 +122,11 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
       select: { title: true },
     });
     const bookTitle = version?.title ?? '';
-    // Полный или очень краткий уже записан (шаг оборвался на паузе после ответа): итог без
-    // второго вызова модели.
-    if (row.kind !== 'summary_sections' && (row.data as DraftData | null)?.text) {
-      return this.finishText(row);
+    // Полный, очень краткий или анализ уже записан (шаг оборвался на паузе после ответа): итог
+    // без второго вызова модели.
+    const written = row.data as DraftData | null;
+    if (row.kind !== 'summary_sections' && (written?.text || written?.analysis)) {
+      return this.markReady(row);
     }
     if (row.kind === 'summary_full') {
       const sections = await this.drafts.savedSections(row.bookVersionId);
@@ -112,11 +140,14 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
       const request = summaryBriefRequest({ bookTitle, language: row.language, fullText });
       return this.textStep(row, SUMMARY_BRIEF_STAGE, request, ctx);
     }
-    if (row.kind !== 'summary_sections') return this.fail(row, DRAFT_INPUT_MISSING);
+    if (row.kind !== 'summary_sections' && row.kind !== 'analysis') {
+      return this.fail(row, DRAFT_INPUT_MISSING);
+    }
 
     if (!row.dossierId) return this.awaitContext(row);
     const dossier = await this.prisma.bookDossier.findUnique({ where: { id: row.dossierId } });
     if (!dossier) return this.fail(row, DRAFT_INPUT_MISSING);
+    if (row.kind === 'analysis') return this.analysisStep(row, dossier, bookTitle, ctx);
     const plan = summaryPlanOf(dossier.data);
     if (plan.length === 0) return this.fail(row, DRAFT_NO_PLAN);
     const data = (row.data ?? {}) as DraftData;
@@ -287,11 +318,91 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
       data: { data: data as unknown as Prisma.InputJsonValue, model: answer.model },
     });
     if (saved.count === 0) return { kind: 'done' };
-    return this.finishText(row);
+    return this.markReady(row);
   }
 
-  /** Записанный текст - `ready` вместе с концом операции; операция не идёт - ждёт «продолжить». */
-  private async finishText(row: ContentDraft): Promise<LlmTaskStepResult> {
+  /**
+   * Анализ (`F05-11`): один вызов на весь текст версии (Р8). Ответ сливается с сохранённым
+   * анализом кодом, новые цитаты сверяются с текстом своей главы, итог проходит проверки
+   * сохранения анализа - не прошёл, замечание модели и один повтор (Р2). Пишется тем же
+   * порядком, что текст: ответ до итога шага, условием `status = 'building'` (В10).
+   */
+  private async analysisStep(
+    row: ContentDraft,
+    dossier: BookDossier,
+    bookTitle: string,
+    ctx: LlmTaskContext,
+  ): Promise<LlmTaskStepResult> {
+    const chapters = await this.drafts.versionChapters(row.bookVersionId);
+    if (chapters.length === 0) return this.fail(row, DRAFT_INPUT_MISSING);
+    const { stored, updatedAt } = await this.drafts.storedAnalysis(row.bookVersionId);
+    const glossary = row.glossaryId
+      ? await this.prisma.bookGlossary.findUnique({
+          where: { id: row.glossaryId },
+          select: { data: true },
+        })
+      : null;
+    const request = analysisDraftRequest({
+      bookTitle,
+      language: row.language,
+      dossier: dossier.data,
+      glossary: glossary?.data ?? null,
+      stored: draftBlocksOf(stored),
+      chaptersText: chaptersText(chapters),
+    });
+    if (!(await this.llm.stageFit(ANALYSIS_DRAFT_STAGE, request)).fits) {
+      return this.fail(row, DRAFT_TOO_LONG);
+    }
+    // Текст главы для сверки цитат - тот же разбор, что уходит модели: без тегов, сущности
+    // раскодированы (Р5).
+    const texts = indexChapters(
+      new Map(chapters.map((c) => [c.number, htmlToParagraphs(c.content)])),
+    );
+    const build = (value: unknown) =>
+      buildAnalysisDraft({
+        language: row.language,
+        stored,
+        answer: value as AnalysisDraftAnswer,
+        chapters: texts,
+      });
+    const answer = await callShaped(
+      this.llm,
+      row.operationId,
+      ANALYSIS_DRAFT_STAGE,
+      request,
+      ANALYSIS_DRAFT_SHAPE,
+      ctx,
+      {
+        remarks: ANALYSIS_DRAFT_REMARKS,
+        extraErrors: (value) => analysisRemarks(stored, build(value).analysis),
+      },
+    );
+    if (!answer.ok) return this.fail(row, DRAFT_INVALID_RESPONSE);
+    const { analysis, droppedQuotes } = build(answer.value);
+    const sourceLanguage = await this.drafts.languageOf(dossier.sourceVersionId);
+    const numbers = new Set(chapters.map((c) => c.number));
+    const motifs = motifsOf(dossier.data, numbers);
+    const data: DraftData = {
+      analysis,
+      droppedQuotes,
+      motifs,
+      dossierLanguage: sourceLanguage,
+      analysisUpdatedAt: updatedAt,
+    };
+    await ctx.renewLease();
+    const saved = await this.prisma.contentDraft.updateMany({
+      where: { id: row.id, status: 'building' },
+      data: { data: data as unknown as Prisma.InputJsonValue, model: answer.model },
+    });
+    if (saved.count === 0) return { kind: 'done' };
+    return this.markReady(row);
+  }
+
+  /**
+   * Записанный результат (текст или анализ) - `ready` вместе с концом операции; операция не идёт -
+   * ждёт «продолжить».
+   */
+  private async markReady(row: ContentDraft): Promise<LlmTaskStepResult> {
     await this.tasks.completeOperation(row.operationId, async (tx) => {
       await tx.contentDraft.updateMany({
         where: { id: row.id, status: 'building' },

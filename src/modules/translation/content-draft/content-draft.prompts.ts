@@ -1,8 +1,10 @@
 import { Language } from '@prisma/client';
+import { BOOK_ANALYSIS_LIMITS } from '../../book-analysis/dto/book-analysis-blocks.dto';
 import { LlmChatMessage } from '../../llm/openrouter.client';
 import { Shape } from '../dossier/dossier.format';
 import { LANGUAGE_NAMES, shapedRequest } from '../dossier/dossier.prompts';
 import { fenced } from '../fenced-data';
+import { ANALYSIS_DRAFT_SHAPE } from './content-draft.analysis';
 
 /**
  * Промпты заготовки Summary (`F05-10`): этапы 2-4 промпта пересказа владельца
@@ -179,3 +181,78 @@ export const summaryFullRequest = (input: Parameters<typeof summaryFullMessages>
 
 export const summaryBriefRequest = (input: Parameters<typeof summaryBriefMessages>[0]) =>
   shapedRequest('summary_brief', SUMMARY_TEXT_SHAPE, summaryBriefMessages(input));
+
+export interface AnalysisPromptInput {
+  bookTitle: string;
+  language: Language;
+  dossier: unknown;
+  glossary: unknown;
+  /** Сохранённые `facts`, `characters`, `keyQuotes`, `style` версии: модель их не повторяет. */
+  stored: unknown;
+  /** Все главы версии: `[READER CHAPTER n]` и абзацы. */
+  chaptersText: string;
+}
+
+/**
+ * Заготовка Analysis (`F05-11`): только факты по тексту - герои, цитаты, приёмы, место, время,
+ * рассказчик, композиция. Толкований и внешних фактов модель не пишет (`product.md` §5.3);
+ * слияние с сохранённым и проверку цитат делает код (решение арбитра `F05 | F05-11`, Р3).
+ */
+export function analysisDraftMessages(input: AnalysisPromptInput): LlmChatMessage[] {
+  return [
+    {
+      role: 'system',
+      content:
+        `You prepare a draft of the facts for the analysis page of the book "${input.bookTitle}". ` +
+        'Write only what is in the text of the book: no history of writing, no criticism, no ' +
+        'adaptations, no years of work, no sources, no interpretation and no evaluation ("symbolizes", ' +
+        '"shows", "brilliant").\n' +
+        languageRule(input.language) +
+        '\nThe editor has already saved part of the analysis (SAVED). Do not repeat what is ' +
+        'there: return only new characters, quotes and devices, and values for fields that are ' +
+        'empty in SAVED. A saved character or device may be returned again only to fill its ' +
+        'empty fields - with the same key or name.' +
+        '\nRules:' +
+        '\n1. facts: settingPlace, settingTime, narrator (who tells the story and in which ' +
+        'person), structure (parts, chapters, frame) - short phrases; "" when SAVED has the ' +
+        'value or the text does not say.' +
+        '\n2. characters: the main and important secondary characters, at most ' +
+        `${BOOK_ANALYSIS_LIMITS.characters} in all with SAVED. key - lowercase latin letters, ` +
+        'digits and "-", the key of the dossier when it has one. name - by the glossary. role - ' +
+        'main, secondary or minor. arcFrom and arcTo - who the character is at the start and at ' +
+        'the end, a short phrase each, or "" for both. quote - a recognizable line of the ' +
+        'character copied word for word from the chapter quoteChapter, or "" and 0. relations - ' +
+        'to main or secondary characters by key, label - who they are to each other; never to ' +
+        'the character itself.' +
+        ` At most ${BOOK_ANALYSIS_LIMITS.relations} relations per character; a quote at most ` +
+        `${BOOK_ANALYSIS_LIMITS.quote} characters.` +
+        `\n3. keyQuotes: 10-${BOOK_ANALYSIS_LIMITS.keyQuotes} memorable lines with SAVED ` +
+        'included, each copied word for word from the chapter given in chapter (the number ' +
+        `after READER CHAPTER), at most ${BOOK_ANALYSIS_LIMITS.quote} characters; speakerKey - ` +
+        'the key of the speaking character, "" for the narrator or the author.' +
+        `\n4. style: at most ${BOOK_ANALYSIS_LIMITS.style} devices of the author with SAVED: ` +
+        'device - the name, explanation - how it appears in this text (never empty), example - a ' +
+        'passage copied word for word from the chapter exampleChapter, at most ' +
+        `${BOOK_ANALYSIS_LIMITS.quote} characters, or "" and 0.` +
+        '\nA quotation is copied exactly, with the punctuation of the text; never retell, ' +
+        'shorten inside or join two places. A quotation that is not word for word is thrown ' +
+        'away.\n' +
+        DATA_RULE,
+    },
+    {
+      role: 'user',
+      content:
+        fenced('DOSSIER', JSON.stringify(input.dossier)) +
+        '\n\n' +
+        (input.glossary === null
+          ? ''
+          : fenced('GLOSSARY', JSON.stringify(input.glossary)) + '\n\n') +
+        fenced('SAVED', JSON.stringify(input.stored)) +
+        '\n\n' +
+        fenced('CHAPTERS', input.chaptersText),
+    },
+  ];
+}
+
+export const analysisDraftRequest = (input: AnalysisPromptInput) =>
+  shapedRequest('analysis_draft', ANALYSIS_DRAFT_SHAPE, analysisDraftMessages(input));

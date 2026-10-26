@@ -23,7 +23,7 @@ import {
   ApiServiceUnavailableResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { Prisma } from '@prisma/client';
+import { ContentDraftKind, Prisma } from '@prisma/client';
 import { Role, Roles } from '../../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -33,18 +33,18 @@ import {
   ContentDraftStateDto,
 } from '../dto/content-draft-response.dto';
 import { StartContentDraftDto } from '../dto/content-draft-request.dto';
-import { SUMMARY_DRAFT_KINDS, SummaryDraftKind } from './content-draft.constants';
+import { CONTENT_DRAFT_KINDS } from './content-draft.constants';
 import { ContentDraftService } from './content-draft.service';
 
 interface RequestUser {
   userId: string;
 }
 
-/** Вид в адресе: только три вида Summary; `analysis` - этап `F05-11`, здесь 400. */
+/** Вид в адресе: три вида Summary и `analysis` (`F05-11`); иной - 400. */
 const KIND_PIPE = new ParseEnumPipe(
-  Object.fromEntries(SUMMARY_DRAFT_KINDS.map((k) => [k, k])) as Record<
-    SummaryDraftKind,
-    SummaryDraftKind
+  Object.fromEntries(CONTENT_DRAFT_KINDS.map((k) => [k, k])) as Record<
+    ContentDraftKind,
+    ContentDraftKind
   >,
 );
 
@@ -52,9 +52,9 @@ const START_CONFLICTS =
   'DRAFT_IN_PROGRESS: a draft of this kind is being built; SUMMARY_SECTIONS_MISSING: no saved section with text (summary_full); SUMMARY_FULL_MISSING: no saved full summary with text (summary_brief); DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED';
 
 /**
- * Заготовки Summary из досье (`F05-10`) - только `admin` (U6): оценка, старт фоном под своей
- * операцией, последняя заготовка вида и «не нужна». В пересказ версии не пишут - черновик
- * сохраняет редактор ручками Summary.
+ * Заготовки Summary (`F05-10`) и Analysis (`F05-11`) из досье - только `admin` (U6): оценка,
+ * старт фоном под своей операцией, последняя заготовка вида и «не нужна». В пересказ и анализ
+ * версии не пишут - черновик сохраняет редактор ручками Summary и Analysis.
  */
 @ApiTags('admin')
 @ApiBearerAuth()
@@ -65,15 +65,15 @@ export class ContentDraftController {
   constructor(private readonly drafts: ContentDraftService) {}
 
   @Get('versions/:id/drafts/:kind/estimate')
-  @ApiOperation({ summary: 'Upper cost estimate of a summary draft from the dossier' })
+  @ApiOperation({ summary: 'Upper cost estimate of a summary or analysis draft from the dossier' })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiParam({ name: 'kind', enum: SUMMARY_DRAFT_KINDS })
+  @ApiParam({ name: 'kind', enum: CONTENT_DRAFT_KINDS })
   @ApiOkResponse({ type: ContentDraftEstimateDto })
   @ApiNotFoundResponse({ description: 'Book version not found' })
   @ApiConflictResponse({ description: START_CONFLICTS })
   estimate(
     @Param('id') id: string,
-    @Param('kind', KIND_PIPE) kind: SummaryDraftKind,
+    @Param('kind', KIND_PIPE) kind: ContentDraftKind,
   ): Promise<ContentDraftEstimateDto> {
     return this.drafts.estimate(id, kind);
   }
@@ -81,14 +81,14 @@ export class ContentDraftController {
   @Get('versions/:id/drafts/:kind')
   @ApiOperation({
     summary:
-      'The latest summary draft of this kind that is not discarded, in any status (building, ready, failed); null - none',
+      'The latest summary or analysis draft of this kind that is not discarded, in any status (building, ready, failed); null - none',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiParam({ name: 'kind', enum: SUMMARY_DRAFT_KINDS })
+  @ApiParam({ name: 'kind', enum: CONTENT_DRAFT_KINDS })
   @ApiOkResponse({ type: ContentDraftStateDto })
   latest(
     @Param('id') id: string,
-    @Param('kind', KIND_PIPE) kind: SummaryDraftKind,
+    @Param('kind', KIND_PIPE) kind: ContentDraftKind,
   ): Promise<ContentDraftStateDto> {
     return this.drafts.latest(id, kind);
   }
@@ -97,10 +97,10 @@ export class ContentDraftController {
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary:
-      'Build a summary draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded',
+      'Build a summary or analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiParam({ name: 'kind', enum: SUMMARY_DRAFT_KINDS })
+  @ApiParam({ name: 'kind', enum: CONTENT_DRAFT_KINDS })
   @ApiAcceptedResponse({ type: ContentDraftDto })
   @ApiBadRequestResponse({
     description: 'DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first',
@@ -110,7 +110,7 @@ export class ContentDraftController {
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
   start(
     @Param('id') id: string,
-    @Param('kind', KIND_PIPE) kind: SummaryDraftKind,
+    @Param('kind', KIND_PIPE) kind: ContentDraftKind,
     @Body() dto: StartContentDraftDto,
     @Req() req: { user: RequestUser },
   ): Promise<ContentDraftDto> {
