@@ -1,9 +1,10 @@
 import { BookType, type Language, type Prisma, type PrismaClient } from '@prisma/client';
 
 /**
- * Общая часть служебных книг приёмки (`seed-analyses.ts`, `seed-summaries.ts`): книга за цепочкой
- * прав, версия книги, снятие версий вне набора и главы версии. Остальное содержимое версии
- * (анализ, пересказ, разделы, гео-правила, `Seo`) каждый сид заводит сам.
+ * Общая часть служебных книг приёмки (`seed-analyses.ts`, `seed-summaries.ts`,
+ * `seed-translation-sample.ts`): книга за цепочкой прав, версия книги, снятие версий вне набора,
+ * главы версии и редакторский `noindex` (`seedSeoRobots`). Остальное содержимое версии (анализ,
+ * пересказ, разделы, гео-правила) каждый сид заводит сам.
  *
  * Книги приёмки - вне `SEO_CATALOG_BOOKS`, точные числа каталога в `test/seed-dataset.e2e-spec.ts`
  * от них не меняются.
@@ -56,7 +57,8 @@ export async function upsertAcceptanceBook(
 /**
  * Версия книги приёмки на языке: по `(bookId, language)`, поля из набора пишутся при каждом
  * прогоне. Права снимка те же, что у каталога (`seed.ts`), клиренс сид не ведёт. `seoId` - для
- * редакторского `noindex` набора.
+ * редакторского `noindex` набора. Автор по умолчанию - служебный; `originalLanguage` без значения
+ * в наборе - пусто (ручная правка сбрасывается, как остальные поля).
  */
 export async function upsertAcceptanceVersion(
   tx: Prisma.TransactionClient,
@@ -67,12 +69,15 @@ export async function upsertAcceptanceVersion(
     title: string;
     description: string;
     status?: 'published' | 'draft';
+    author?: string;
+    originalLanguage?: string;
   },
 ): Promise<{ id: string; seoId: number | null }> {
   const fields = {
     title: version.title,
     slug: version.slug,
-    author: ACCEPTANCE_AUTHOR,
+    author: version.author ?? ACCEPTANCE_AUTHOR,
+    originalLanguage: version.originalLanguage ?? null,
     description: version.description,
     status: version.status ?? ('published' as const),
     rightsProfileId: rights.profileId,
@@ -125,4 +130,23 @@ export async function upsertAcceptanceChapters(
       select: { id: true },
     });
   }
+}
+
+/**
+ * Редакторский `noindex` книги: `robots` строки `Seo` версии. Версия вне `noindex` набора получает
+ * `robots: null` (индексируется) - ручная правка или прежний набор сбрасываются, как остальное.
+ */
+export async function seedSeoRobots(
+  tx: Prisma.TransactionClient,
+  version: { id: string; seoId: number | null },
+  noindex: boolean,
+): Promise<void> {
+  const robots = noindex ? 'noindex, follow' : null;
+  if (version.seoId !== null) {
+    await tx.seo.update({ where: { id: version.seoId }, data: { robots } });
+    return;
+  }
+  if (!noindex) return;
+  const seo = await tx.seo.create({ data: { robots }, select: { id: true } });
+  await tx.bookVersion.update({ where: { id: version.id }, data: { seoId: seo.id } });
 }

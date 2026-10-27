@@ -96,7 +96,7 @@ describe('Translation compare (e2e)', () => {
   let prisma: PrismaService;
   let worker: LlmWorkerService;
   let fetchSpy: jest.SpyInstance;
-  const tokens: Record<'admin' | 'cm', string> = { admin: '', cm: '' };
+  const tokens: Record<'admin' | 'cm' | 'user', string> = { admin: '', cm: '', user: '' };
   const stamp = Date.now();
   const slugs: string[] = [];
   const calls: Array<{ name: string; model: string; body: ChatBody }> = [];
@@ -140,7 +140,7 @@ describe('Translation compare (e2e)', () => {
     calls.filter((c) => c.name === name && (model === undefined || c.model === model));
 
   const http = () => request(httpServerOf(app));
-  const auth = (r: request.Test, who: 'admin' | 'cm' = 'admin') =>
+  const auth = (r: request.Test, who: 'admin' | 'cm' | 'user' = 'admin') =>
     r.set('Authorization', `Bearer ${tokens[who]}`);
 
   const register = async (email: string) => {
@@ -244,6 +244,10 @@ describe('Translation compare (e2e)', () => {
     await grantStaffRoles(app, cmEmail, [RoleName.content_manager]);
     tokens.admin = await login(adminEmail);
     tokens.cm = await login(cmEmail);
+    // Вошедший без ролей: U6 - 403 на каждой ручке фичи.
+    const userEmail = `f053-user-${stamp}@test.com`;
+    await register(userEmail);
+    tokens.user = await login(userEmail);
     await resetBudget();
   });
 
@@ -287,7 +291,7 @@ describe('Translation compare (e2e)', () => {
     await app.close();
   });
 
-  it('401 without a token, 403 for a content manager on every route', async () => {
+  it('401 without a token, 403 for a content manager and a user without roles on every route', async () => {
     const { ids } = await englishBook();
     const v = ids.en as string;
     const routes: Array<['get' | 'post', string]> = [
@@ -302,6 +306,7 @@ describe('Translation compare (e2e)', () => {
     for (const [method, path] of routes) {
       await http()[method](path).expect(401);
       await auth(http()[method](path), 'cm').expect(403);
+      await auth(http()[method](path), 'user').expect(403);
     }
     expect(calls).toHaveLength(0);
   });

@@ -29,14 +29,14 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
   /** Умолчание этапа `translate` (Р2 `F05 | F05-R`); его запасная - `MODEL`. */
   const TRANSLATOR = 'openai/gpt-5.6-terra';
   const ALT = 'z/alt-model';
-  const CHECKER = 'deepseek/deepseek-v4-pro';
+  const CHECKER = 'z-ai/glm-5.3';
   const MODELS = {
     data: [
       MODEL,
       TRANSLATOR,
       ALT,
       CHECKER,
-      'z-ai/glm-5.3',
+      'deepseek/deepseek-v4-pro',
       'typesafe/jev-router',
       'google/gemma-4-31b-it:free',
     ].map((id) => ({
@@ -90,7 +90,7 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
   let tasks: LlmTaskService;
   let chapters: ChapterService;
   let fetchSpy: jest.SpyInstance;
-  const tokens: Record<'admin' | 'cm', string> = { admin: '', cm: '' };
+  const tokens: Record<'admin' | 'cm' | 'user', string> = { admin: '', cm: '', user: '' };
   const stamp = Date.now();
   const slugs: string[] = [];
   const calls: Array<{ name: string; model: string }> = [];
@@ -157,7 +157,7 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
   };
 
   const http = () => request(httpServerOf(app));
-  const auth = (r: request.Test, who: 'admin' | 'cm' = 'admin') =>
+  const auth = (r: request.Test, who: 'admin' | 'cm' | 'user' = 'admin') =>
     r.set('Authorization', `Bearer ${tokens[who]}`);
   const register = async (email: string) => {
     await http().post('/auth/register').send({ email, password: 'password123' }).expect(201);
@@ -287,6 +287,10 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
     await grantStaffRoles(app, cmEmail, [RoleName.content_manager]);
     tokens.admin = await login(adminEmail);
     tokens.cm = await login(cmEmail);
+    // Вошедший без ролей: U6 - 403 на каждой ручке фичи.
+    const userEmail = `f057v-user-${stamp}@test.com`;
+    await register(userEmail);
+    tokens.user = await login(userEmail);
     await resetBudget();
   });
 
@@ -338,7 +342,7 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
     await app.close();
   });
 
-  it('401 without a token, 403 for a content manager on every route', async () => {
+  it('401 without a token, 403 for a content manager and a user without roles on every route', async () => {
     const id = '00000000-0000-0000-0000-000000000000';
     const routes: Array<['get' | 'post' | 'put', string]> = [
       ['get', `/admin/translation-runs/${id}/chunks?lang=es&chapter=1`],
@@ -348,6 +352,7 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
     for (const [method, path] of routes) {
       await http()[method](path).expect(401);
       await auth(http()[method](path), 'cm').expect(403);
+      await auth(http()[method](path), 'user').expect(403);
     }
     await auth(http().get(`/admin/translation-runs/${id}/chunks?lang=es&chapter=1`)).expect(404);
   });
@@ -906,7 +911,7 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
       status: 'translated',
       operationStatus: 'paused',
       reason: 'CHECK_NO_COMPLIANT_PROVIDER',
-      reasonModels: [CHECKER, 'z-ai/glm-5.3'],
+      reasonModels: [CHECKER, 'deepseek/deepseek-v4-pro'],
     });
   });
 
@@ -1039,6 +1044,52 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
     expect(
       await prisma.translationRunLanguage.findUniqueOrThrow({ where: { id: lang.id } }),
     ).toMatchObject({ flaggedChunks: 0 });
+  });
+
+  it('a retry whose executor died after the model answer was saved, before the step finished, is not paid again (product.md §7 п.5)', async () => {
+    const { chunks } = await translatedBook();
+    mark = 'R1';
+    const res = await auth(http().post(`/admin/translation-chunks/${chunks[0].id}/retry`))
+      .send({ model: ALT, limitUsd: '1' })
+      .expect(202);
+    const retryOpId = res.body.operation.id as string;
+    const retryOf = async () =>
+      (await prisma.translationChunk.findUniqueOrThrow({ where: { id: chunks[0].id } })).retry as {
+        status: string;
+      } | null;
+    // Шаги по одному, пока ответ модели не записан в попытку.
+    for (let i = 0; i < 50 && (await retryOf())?.status !== 'translated'; i++) {
+      await worker.runOnce();
+    }
+    expect(await retryOf()).toMatchObject({ status: 'translated' });
+    const paid = calls.filter((c) => c.name === 'translation');
+    expect(paid).toHaveLength(1);
+
+    // Исполнитель умер после записи ответа, до итога шага: аренда чужая и истекла.
+    const killed = await prisma.llmTask.updateMany({
+      where: { operationId: retryOpId, status: { in: ['pending', 'running'] } },
+      data: { status: 'running', ownerToken: 'dead', leaseUntil: new Date(Date.now() - 1000) },
+    });
+    // Падение и правда подложено: задача повтора есть и перехватывается чужой арендой.
+    expect(killed.count).toBe(1);
+    await drain();
+
+    expect(calls.filter((c) => c.name === 'translation')).toHaveLength(1);
+    const retried = await prisma.translationChunk.findUniqueOrThrow({
+      where: { id: chunks[0].id },
+    });
+    expect(retried).toMatchObject({ status: 'done', model: ALT });
+    expect(retried.retry).toMatchObject({ status: 'applied', operationId: retryOpId });
+    expect(
+      await prisma.llmCall.count({ where: { operationId: retryOpId, stage: 'translate' } }),
+    ).toBe(1);
+    // Ни один этап повтора не оплачен дважды: проверки после перехвата тоже идут по одному разу.
+    const perStage = await prisma.llmCall.groupBy({
+      by: ['stage'],
+      where: { operationId: retryOpId },
+      _count: { _all: true },
+    });
+    expect(perStage.filter((s) => s._count._all !== 1)).toEqual([]);
   });
 
   it('the source chapter edited after the split - 409 CHUNK_SOURCE_CHANGED on retry and edit, before any spending', async () => {

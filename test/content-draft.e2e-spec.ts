@@ -105,7 +105,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
   let prisma: PrismaService;
   let worker: LlmWorkerService;
   let fetchSpy: jest.SpyInstance;
-  const tokens: Record<'admin' | 'cm', string> = { admin: '', cm: '' };
+  const tokens: Record<'admin' | 'cm' | 'user', string> = { admin: '', cm: '', user: '' };
   const stamp = Date.now();
   const slugs: string[] = [];
 
@@ -135,7 +135,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
     typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
 
   const http = () => request(httpServerOf(app));
-  const auth = (r: request.Test, who: 'admin' | 'cm' = 'admin') =>
+  const auth = (r: request.Test, who: 'admin' | 'cm' | 'user' = 'admin') =>
     r.set('Authorization', `Bearer ${tokens[who]}`);
 
   const THREE_CHAPTERS = [1, 2, 3].map((n) => ({
@@ -253,7 +253,8 @@ describe('Summary drafts from the dossier (e2e)', () => {
     worker = app.get(LlmWorkerService);
     const adminEmail = `f0510-admin-${stamp}@test.com`;
     const cmEmail = `f0510-cm-${stamp}@test.com`;
-    for (const email of [adminEmail, cmEmail]) {
+    const userEmail = `f0510-user-${stamp}@test.com`;
+    for (const email of [adminEmail, cmEmail, userEmail]) {
       await http().post('/auth/register').send({ email, password: 'password123' }).expect(201);
     }
     await grantStaffRoles(app, adminEmail);
@@ -261,6 +262,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
     for (const [who, email] of [
       ['admin', adminEmail],
       ['cm', cmEmail],
+      ['user', userEmail],
     ] as const) {
       const res = await http()
         .post('/auth/login')
@@ -320,6 +322,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
       ['post', `/admin/content-drafts/${versionId}/discard`],
     ] as Array<['get' | 'post', string]>) {
       await auth(http()[method](path), 'cm').expect(403);
+      await auth(http()[method](path), 'user').expect(403);
     }
     await auth(http().get(`/admin/versions/${versionId}/drafts/symbols`)).expect(400);
     expect(await latest(versionId, 'summary_sections')).toBeNull();
@@ -987,6 +990,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
         .addedSections,
     ).toEqual([2, 1]);
     await auth(http().post(`/admin/content-drafts/${id}/sections/1/added`), 'cm').expect(403);
+    await auth(http().post(`/admin/content-drafts/${id}/sections/1/added`), 'user').expect(403);
   });
 
   it('translated version: its run still writing - 409 RUN_LANGUAGE_UNFINISHED; a failed run - the run dossier (Р18); the run dossier gone - DRAFT_DOSSIER_MISSING', async () => {

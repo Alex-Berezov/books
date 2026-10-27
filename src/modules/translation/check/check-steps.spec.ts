@@ -259,9 +259,9 @@ describe('verdict, Jev and the fence', () => {
     }
   });
 
-  it('the meaning check leaves room for the reasoning of its model: 8000 tokens (Р4 F05-R)', () => {
+  it('the meaning check leaves room for the reasoning of its model: 16000 tokens (Р4 F05-R, замер F05-9)', () => {
     const semantic = CHECK_STAGE_DEFINITIONS.find((d) => d.stage === CHECK_SEMANTIC_STAGE);
-    expect(semantic?.maxTokens).toBe(8_000);
+    expect(semantic?.maxTokens).toBe(16_000);
   });
 
   it('Jev is on by default with a price cap: the router has no price in the catalog (F05-R)', () => {

@@ -30,6 +30,14 @@ import {
 import { runTaskInput } from '../src/modules/translation/run/translation-run.service';
 import { TranslationRunReportDto } from '../src/modules/translation/dto/translation-run-report-response.dto';
 import { sourceFingerprint } from '../src/modules/translation/source-fingerprint';
+import { corpusChunks, parallelChapters } from '../src/common/testing/language-corpus';
+import { sentencesOf } from '../src/modules/translation/check/language-detector';
+import {
+  ANALYSIS_DRAFT_STAGE,
+  SUMMARY_BRIEF_STAGE,
+  SUMMARY_FULL_STAGE,
+  SUMMARY_SECTIONS_STAGE,
+} from '../src/modules/translation/content-draft/content-draft.constants';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { llmCallName } from './helpers/llm-call-name';
@@ -52,8 +60,8 @@ describe('Translation run (e2e)', () => {
   /** Модель без цены в каталоге. */
   const NO_PRICE = 'z/no-price';
   /** Умолчания сверки смысла: другое семейство, чем модель перевода. */
-  const CHECKER = 'deepseek/deepseek-v4-pro';
-  const CHECKER_ALT = 'z-ai/glm-5.3';
+  const CHECKER = 'z-ai/glm-5.3';
+  const CHECKER_ALT = 'deepseek/deepseek-v4-pro';
   /** Jev: цена динамическая, в каталоге без цены (Р24). */
   const JEV = 'typesafe/jev-router';
   /** Проверяющий того же семейства, что запасная перевода `ALT`. */
@@ -149,7 +157,7 @@ describe('Translation run (e2e)', () => {
   let llm: LlmService;
   let tasks: LlmTaskService;
   let fetchSpy: jest.SpyInstance;
-  const tokens: Record<'admin' | 'cm', string> = { admin: '', cm: '' };
+  const tokens: Record<'admin' | 'cm' | 'user', string> = { admin: '', cm: '', user: '' };
   const stamp = Date.now();
   const slugs: string[] = [];
   const calls: Array<{ name: string; model: string; body: ChatBody }> = [];
@@ -249,7 +257,7 @@ describe('Translation run (e2e)', () => {
   const translations = () => calls.filter((c) => c.name === 'translation');
 
   const http = () => request(httpServerOf(app));
-  const auth = (r: request.Test, who: 'admin' | 'cm' = 'admin') =>
+  const auth = (r: request.Test, who: 'admin' | 'cm' | 'user' = 'admin') =>
     r.set('Authorization', `Bearer ${tokens[who]}`);
 
   const register = async (email: string) => {
@@ -408,6 +416,10 @@ describe('Translation run (e2e)', () => {
     await grantStaffRoles(app, cmEmail, [RoleName.content_manager]);
     tokens.admin = await login(adminEmail);
     tokens.cm = await login(cmEmail);
+    // Вошедший без ролей: U6 - 403 на каждой ручке фичи.
+    const userEmail = `f054-user-${stamp}@test.com`;
+    await register(userEmail);
+    tokens.user = await login(userEmail);
     await resetBudget();
   });
 
@@ -460,7 +472,7 @@ describe('Translation run (e2e)', () => {
     await app.close();
   });
 
-  it('401 without a token, 403 for a content manager on every route', async () => {
+  it('401 without a token, 403 for a content manager and a user without roles on every route', async () => {
     const id = '00000000-0000-0000-0000-000000000000';
     const routes: Array<['get' | 'post', string]> = [
       ['get', `/admin/translation-runs/${id}`],
@@ -475,6 +487,7 @@ describe('Translation run (e2e)', () => {
     for (const [method, path] of routes) {
       await http()[method](path).expect(401);
       await auth(http()[method](path), 'cm').expect(403);
+      await auth(http()[method](path), 'user').expect(403);
     }
     await auth(http().get(`/admin/translation-runs/${id}`)).expect(404);
   });
@@ -649,6 +662,43 @@ describe('Translation run (e2e)', () => {
     expect(own).toHaveLength(3);
     expect(body.operations.map((o) => o.id)).toEqual(own.map((o) => o.id));
     expect(body.operations.map((o) => o.id)).not.toContain(body.operation.id);
+    // Заготовки Summary и Analysis - отдельные кнопки (D2): запуск перевода их не строит.
+    expect(await prisma.contentDraft.count({ where: { bookVersion: { bookId } } })).toBe(0);
+    // Операции и вызовы заготовок по версиям этой книги - ни одной (счёт по книге, а не по базе
+    // воркера: база общая с `content-draft.e2e-spec.ts`).
+    const ofBook = { bookVersion: { bookId } };
+    expect(await prisma.llmOperation.count({ where: { kind: 'draft', ...ofBook } })).toBe(0);
+    expect(
+      await prisma.llmCall.count({
+        where: {
+          operation: ofBook,
+          stage: {
+            in: [
+              SUMMARY_SECTIONS_STAGE,
+              SUMMARY_FULL_STAGE,
+              SUMMARY_BRIEF_STAGE,
+              ANALYSIS_DRAFT_STAGE,
+            ],
+          },
+        },
+      }),
+    ).toBe(0);
+    // Подменённый OpenRouter видел только вызовы запуска: любой другой вызов (в том числе заготовки
+    // под новым именем) - чужое имя в списке. Список имён схем (`llmCallName`) закрыт нарочно:
+    // новый вызов конвейера дописывается сюда осознанно.
+    const runStages = [
+      'dossier_part',
+      'dossier',
+      'glossary',
+      'split',
+      'translation',
+      'check_language_jev',
+      'check_semantic',
+      'check_seam',
+      'final_check',
+      'metadata',
+    ];
+    expect(calls.map((c) => c.name).filter((n) => !runStages.includes(n))).toEqual([]);
   });
 
   /**
@@ -1223,6 +1273,109 @@ describe('Translation run (e2e)', () => {
     expect(JSON.stringify(glossary.data)).not.toContain('Portão');
   });
 
+  it.each([
+    [
+      'dropped',
+      (blocks: Array<{ n: number; text: string }>) => blocks.slice(1),
+      'missing blocks 1',
+    ],
+    [
+      'left empty',
+      (blocks: Array<{ n: number; text: string }>) =>
+        blocks.map((b) => (b.n === 1 ? { n: b.n, text: '' } : b)),
+      'empty text in blocks 1',
+    ],
+  ])(
+    'a paragraph %s by the model is caught by the answer check, sent back twice with the remark and flagged; the next chapter goes on (product.md §7 п.4)',
+    async (_case, broken, remark) => {
+      const { versionId } = await englishBook([
+        { number: 1, title: 'One', content: SHORT },
+        { number: 2, title: 'Two', content: SHORT },
+      ]);
+      const { runId, opId } = await createRun(versionId, ['es']);
+      answer = (name, body) =>
+        name === 'translation' && body.messages[1].content.includes('Reader chapter 1')
+          ? { blocks: broken(blocksOf(body)), glossaryFindings: [] }
+          : defaultAnswer(name, body);
+
+      await drain();
+
+      expect((await opOf(opId)).status).toBe('done');
+      expect(await langOf(runId, 'es')).toMatchObject({ status: 'done', flaggedChunks: 1 });
+      const [first, second] = await chunksOf(runId, 'es');
+      expect(first).toMatchObject({ status: 'flagged', flagReason: 'CHUNK_INVALID_RESPONSE' });
+      // Три оплаченных ответа - в стоимости куска (`product.md` §4).
+      expect(first.costUsd?.toString()).toBe('0.0003');
+      expect(second.status).toBe('done');
+      // Ответ не по форме - свой бюджет: ответ и два повтора с замечанием о номерах блоков
+      // (`TRANSLATE_REMARKS`), затем флаг; провал проверки - один перевод заново (тест ниже).
+      // Два бюджета - решение арбитра `F05 | F05-9`, `product.md` §4.
+      const own = translations().filter((c) =>
+        c.body.messages[1].content.includes('Reader chapter 1'),
+      );
+      expect(own).toHaveLength(3);
+      expect(own[0].body.messages.map((m) => m.content).join('\n')).not.toContain(remark);
+      for (const repeat of [own[1], own[2]]) {
+        expect(repeat.body.messages.map((m) => m.content).join('\n')).toContain(remark);
+      }
+    },
+  );
+
+  it('one Portuguese paragraph among Spanish ones is caught as a foreign block and flagged (product.md §7 п.3)', async () => {
+    // Исходник и «перевод» - параллельные главы корпуса (en и es), блоки по строкам поровну.
+    const [en, es] = [parallelChapters('en')[0], parallelChapters('es')[0]];
+    const count = Math.min(en.split('\n').length, es.split('\n').length);
+    const grouped = (text: string) => {
+      const lines = text.split('\n');
+      return Array.from({ length: count }, (_, i) =>
+        lines
+          .slice(
+            Math.floor((i * lines.length) / count),
+            Math.floor(((i + 1) * lines.length) / count),
+          )
+          .join(' '),
+      );
+    };
+    const esBlocks = grouped(es);
+    const pt = sentencesOf(corpusChunks('pt')[2]).join(' ').split(' ').slice(0, 60).join(' ') + '.';
+    const { versionId } = await englishBook([
+      {
+        number: 1,
+        title: 'One',
+        content: grouped(en)
+          .map((p) => `<p>${p}</p>`)
+          .join(''),
+      },
+    ]);
+    const { runId, opId } = await createRun(versionId, ['es']);
+    answer = (name, body) =>
+      name === 'translation'
+        ? {
+            blocks: blocksOf(body).map((b) => ({
+              n: b.n,
+              text: b.n === 2 ? pt : esBlocks[b.n - 1],
+            })),
+            glossaryFindings: [],
+          }
+        : defaultAnswer(name, body);
+
+    await drain();
+
+    expect((await opOf(opId)).status).toBe('done');
+    const [chunk] = await chunksOf(runId, 'es');
+    expect(chunk).toMatchObject({ status: 'flagged', flagReason: 'FOREIGN_BLOCK' });
+    expect(chunk.verdict).toMatchObject({
+      failures: 2,
+      attempts: [
+        { outcome: 'fail', mechanical: { language: 'es' } },
+        { outcome: 'fail', mechanical: { language: 'es' } },
+      ],
+    });
+    const own = translations();
+    expect(own).toHaveLength(2);
+    expect(own[1].body.messages[1].content).toContain('Blocks 2 are not in Spanish');
+  });
+
   it('a failed meaning check and a lost name: translated again with the remarks, passes the second time; the cost is the sum of all calls', async () => {
     const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
     const { runId, opId } = await createRun(versionId, ['es']);
@@ -1655,11 +1808,11 @@ describe('Translation run (e2e)', () => {
         await drain();
         expect(await opOf(opId)).toMatchObject({ pauseReason: 'NO_COMPLIANT_PROVIDER' });
 
-        // Модель сверки в снимке - одна `deepseek/*`: перевод тем же семейством оставил бы книгу без сверки.
-        const deepseek = await auth(http().post(`/admin/translation-runs/${runId}/resume`))
+        // Модель сверки в снимке - одна (`CHECKER`): перевод тем же семейством оставил бы книгу без сверки.
+        const sameFamily = await auth(http().post(`/admin/translation-runs/${runId}/resume`))
           .send({ stageModels: { translate: CHECKER } })
           .expect(409);
-        expect(deepseek.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
+        expect(sameFamily.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
 
         // Параллельное «продолжить» сменило модели между сверкой и транзакцией - отказ, не запись.
         const operations = app.get(LlmOperationsService);
@@ -4146,7 +4299,7 @@ describe('Translation run (e2e)', () => {
     // Второй кусок перевела модель семейства основного проверяющего (переход по 429).
     await prisma.translationChunk.updateMany({
       where: { runLanguageId: lang.id, chunkIndex: 1 },
-      data: { model: 'deepseek/deepseek-v3' },
+      data: { model: 'z-ai/glm-4.6' },
     });
 
     await drain();
@@ -4594,7 +4747,7 @@ describe('Translation run (e2e)', () => {
     await drain(assembled);
     await prisma.translationChunk.updateMany({
       where: { runLanguageId: lang.id },
-      data: { model: 'deepseek/deepseek-v3' },
+      data: { model: 'z-ai/glm-4.6' },
     });
 
     await drain();
@@ -4616,11 +4769,11 @@ describe('Translation run (e2e)', () => {
     // Куски главы перевели модели семейств основной и запасной итоговой проверки.
     await prisma.translationChunk.updateMany({
       where: { runLanguageId: lang.id, chunkIndex: 0 },
-      data: { model: 'deepseek/deepseek-v3' },
+      data: { model: 'z-ai/glm-4.6' },
     });
     await prisma.translationChunk.updateMany({
       where: { runLanguageId: lang.id, chunkIndex: 1 },
-      data: { model: 'z-ai/glm-4' },
+      data: { model: 'deepseek/deepseek-v3' },
     });
 
     await drain();

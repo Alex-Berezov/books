@@ -103,6 +103,54 @@ describe('buildAnalysisDraft (F05-11)', () => {
     ]);
   });
 
+  it('keys of interpretation and outer blocks in the answer do not reach the draft (product.md §7 п.14)', () => {
+    const answer = emptyAnswer();
+    answer.facts = {
+      settingPlace: 'Paris',
+      settingTime: '',
+      narrator: '',
+      structure: '',
+      genre: 'novel',
+      year: '1890',
+    } as AnalysisDraftAnswer['facts'];
+    answer.characters = [
+      {
+        key: 'anna',
+        name: 'Anna',
+        role: 'main',
+        arcFrom: '',
+        arcTo: '',
+        quote: '',
+        quoteChapter: 0,
+        relations: [],
+        interpretation: 'She stands for freedom.',
+      } as AnalysisDraftAnswer['characters'][number],
+    ];
+    answer.keyQuotes = [
+      {
+        text: 'The house was empty',
+        chapter: 2,
+        speakerKey: '',
+        interpretation: 'Loneliness.',
+      } as AnalysisDraftAnswer['keyQuotes'][number],
+    ];
+    Object.assign(answer, {
+      themes: [{ title: 'Freedom' }],
+      symbols: [{ title: 'House' }],
+      criticism: 'Praised.',
+    });
+    const { analysis } = buildAnalysisDraft({
+      language: 'en',
+      stored: stored(),
+      answer,
+      chapters: CHAPTERS,
+    });
+    expect(Object.keys(analysis).sort()).toEqual(['characters', 'facts', 'keyQuotes', 'language']);
+    expect(analysis.facts).toEqual({ settingPlace: 'Paris' });
+    expect(analysis.characters).toEqual([{ key: 'anna', name: 'Anna', role: 'main' }]);
+    expect(analysis.keyQuotes).toEqual([{ text: 'The house was empty', chapter: 2 }]);
+  });
+
   it('saved fields and elements are carried as they are; only empty ones are filled', () => {
     const answer = emptyAnswer();
     answer.facts = { settingPlace: 'Paris', settingTime: '1890s', narrator: 'Anna', structure: '' };

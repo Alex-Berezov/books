@@ -1,7 +1,8 @@
-import { Language, type Prisma, type PrismaClient } from '@prisma/client';
+import { Language, type PrismaClient } from '@prisma/client';
 import {
   type EnsureRights,
   pruneAcceptanceVersions,
+  seedSeoRobots,
   upsertAcceptanceBook,
   upsertAcceptanceChapters,
   upsertAcceptanceVersion,
@@ -312,23 +313,4 @@ export async function seedSummaryAcceptance(
       { timeout: 60_000, maxWait: 15_000 },
     );
   }
-}
-
-/**
- * Редакторский `noindex` книги: `robots` строки `Seo` версии. Версия вне `noindex` набора получает
- * `robots: null` (индексируется) - ручная правка или прежний набор сбрасываются, как остальное.
- */
-async function seedSeoRobots(
-  tx: Prisma.TransactionClient,
-  version: { id: string; seoId: number | null },
-  noindex: boolean,
-): Promise<void> {
-  const robots = noindex ? 'noindex, follow' : null;
-  if (version.seoId !== null) {
-    await tx.seo.update({ where: { id: version.seoId }, data: { robots } });
-    return;
-  }
-  if (!noindex) return;
-  const seo = await tx.seo.create({ data: { robots }, select: { id: true } });
-  await tx.bookVersion.update({ where: { id: version.id }, data: { seoId: seo.id } });
 }

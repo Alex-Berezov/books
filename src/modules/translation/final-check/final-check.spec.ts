@@ -17,9 +17,9 @@ import {
 const ANNA = { key: 'anna', source: 'Anna', target: 'Ana' };
 
 describe('final check stage default', () => {
-  it('leaves room for the reasoning of its model: 8000 tokens (Р4 F05-R)', () => {
+  it('leaves room for the reasoning of its model: 16000 tokens (Р4 F05-R, Р4б замер F05-9)', () => {
     const final = FINAL_CHECK_STAGE_DEFINITIONS.find((d) => d.stage === FINAL_CHECK_STAGE);
-    expect(final?.maxTokens).toBe(8_000);
+    expect(final?.maxTokens).toBe(16_000);
   });
 });
 
@@ -65,6 +65,25 @@ describe('final check by code', () => {
       { key: 'juan', source: 'Juan', target: 'Juanito' },
     ];
     expect(divergentEntries(entries, 'es').map((e) => e.key)).toEqual(['john']);
+  });
+
+  it('an English possessive in the source form is not a word of its own: the target that holds the name is the same form (живой прогон F05-9)', () => {
+    // «’s» не слово: иначе «s» из «s’il», «s’est» находит исходную форму в любом французском тексте.
+    const station = { key: 'station', source: 'Kurtz’s station', target: 'la station de Kurtz' };
+    expect(divergentEntries([station], 'fr')).toEqual([]);
+    const { findings } = finalCodeCheck(
+      [
+        {
+          number: 1,
+          text: 'S’il vient à la station, vous rencontrerez sans doute monsieur Kurtz.',
+          sourceBlocks: 1,
+          inTranslation: true,
+        },
+      ],
+      [station],
+      'fr',
+    );
+    expect(findings.size).toBe(0);
   });
 
   it('chapters not in the translation are listed, a flagged one is not; an empty assembled chapter is a finding, an empty source chapter is skipped', () => {

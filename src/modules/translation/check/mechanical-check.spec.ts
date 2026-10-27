@@ -252,6 +252,9 @@ describe('checkMechanical', () => {
     // Остальные языки имён не склоняют: имя - целым словом, а не началом другого слова.
     expect(formFound('el Quijote', words('la historia del Quijote'), 'es')).toBe(true);
     expect(formFound('Mark', words("Mark's hat."), 'en')).toBe(true);
+    // Притяжательное «’s» формы - не слово: «Mark’s house» - это «Mark» и «house».
+    expect(formFound('Mark’s house', words('la maison de Mark'), 'fr')).toBe(false);
+    expect(formFound('Kurtz’s station', words('la station de Kurtz'), 'fr')).toBe(true);
     expect(formFound('Mark', words('He went to the market.'), 'en')).toBe(false);
     expect(formFound('Paris', words('Fue para la ciudad.'), 'es')).toBe(false);
     expect(formFound('Clara', words('Está claro.'), 'es')).toBe(false);

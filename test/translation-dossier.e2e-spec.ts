@@ -127,7 +127,7 @@ describe('Translation source and dossier (e2e)', () => {
   let tasks: LlmTaskService;
   let dossiers: DossierService;
   let fetchSpy: jest.SpyInstance;
-  const tokens: Record<'admin' | 'cm', string> = { admin: '', cm: '' };
+  const tokens: Record<'admin' | 'cm' | 'user', string> = { admin: '', cm: '', user: '' };
   const stamp = Date.now();
   const slugs: string[] = [];
 
@@ -188,7 +188,7 @@ describe('Translation source and dossier (e2e)', () => {
   };
 
   const http = () => request(httpServerOf(app));
-  const auth = (r: request.Test, who: 'admin' | 'cm' = 'admin') =>
+  const auth = (r: request.Test, who: 'admin' | 'cm' | 'user' = 'admin') =>
     r.set('Authorization', `Bearer ${tokens[who]}`);
 
   /** Книга с версиями: `versions` - язык → поле «язык оригинала» и главы. */
@@ -288,6 +288,10 @@ describe('Translation source and dossier (e2e)', () => {
     await grantStaffRoles(app, cmEmail, [RoleName.content_manager]);
     tokens.admin = await login(adminEmail);
     tokens.cm = await login(cmEmail);
+    // Вошедший без ролей: U6 - 403 на каждой ручке фичи.
+    const userEmail = `f052-user-${stamp}@test.com`;
+    await register(userEmail);
+    tokens.user = await login(userEmail);
     await resetBudget();
   });
 
@@ -343,12 +347,13 @@ describe('Translation source and dossier (e2e)', () => {
         ['post', `/admin/llm/operations/${opId}/resume`],
       ] as Array<['get' | 'post', string]>;
 
-    it('401 without a token, 403 for a content manager', async () => {
+    it('401 without a token, 403 for a content manager and a user without roles', async () => {
       const { ids } = await englishBook();
       const op = await waiterOperation();
       for (const [method, path] of routes(ids.en as string, op.id, op.id)) {
         await http()[method](path).expect(401);
         await auth(http()[method](path), 'cm').expect(403);
+        await auth(http()[method](path), 'user').expect(403);
       }
       expect(calls).toHaveLength(0);
     });
@@ -385,6 +390,43 @@ describe('Translation source and dossier (e2e)', () => {
         canTranslate: false,
         reason: 'NOT_ORIGINAL_VERSION',
         sourceVersionId: ids.ru,
+      });
+    });
+
+    it('an original outside the five languages: the English version is the source, the French one gets NOT_ENGLISH_VERSION, without English - ENGLISH_VERSION_MISSING', async () => {
+      const { ids } = await book([
+        { language: 'en', originalLanguage: 'Japanese', chapters: TWO_CHAPTERS },
+        { language: 'fr', originalLanguage: 'Japanese', chapters: TWO_CHAPTERS },
+      ]);
+      const fromEn = await auth(http().get(`/admin/versions/${ids.en}/translation-source`)).expect(
+        200,
+      );
+      expect(fromEn.body).toMatchObject({
+        canTranslate: true,
+        reason: null,
+        sourceVersionId: ids.en,
+        sourceLanguage: 'en',
+        originalLanguageRaw: 'Japanese',
+      });
+      const fromFr = await auth(http().get(`/admin/versions/${ids.fr}/translation-source`)).expect(
+        200,
+      );
+      expect(fromFr.body).toMatchObject({
+        canTranslate: false,
+        reason: 'NOT_ENGLISH_VERSION',
+        sourceVersionId: ids.en,
+      });
+
+      const { ids: noEnglish } = await book([
+        { language: 'fr', originalLanguage: 'Japanese', chapters: TWO_CHAPTERS },
+      ]);
+      const missing = await auth(
+        http().get(`/admin/versions/${noEnglish.fr}/translation-source`),
+      ).expect(200);
+      expect(missing.body).toMatchObject({
+        canTranslate: false,
+        reason: 'ENGLISH_VERSION_MISSING',
+        sourceVersionId: null,
       });
     });
 

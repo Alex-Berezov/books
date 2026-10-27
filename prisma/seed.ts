@@ -5,6 +5,7 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { seedAnalysisAcceptance } from './seed-analyses';
 import { seedPageAuthors } from './seed-authors';
 import { seedSummaryAcceptance } from './seed-summaries';
+import { seedTranslationSample } from './seed-translation-sample';
 
 const connectionString = process.env.DATABASE_URL;
 const pool = new Pool({ connectionString });
@@ -986,6 +987,8 @@ async function main() {
   await seedAnalysisAcceptance(prisma, ensureRightsChain);
   // F04-4: служебные книги приёмки вариантов пересказа (очень краткий и разделы) - тоже вне каталога.
   await seedSummaryAcceptance(prisma, ensureRightsChain);
+  // F05-9: книга-образец приёмки автоперевода - вне каталога, черновик под noindex.
+  await seedTranslationSample(prisma, ensureRightsChain);
 
   console.log('Seeded categories, a sample book with versions and the SEO catalog');
 }

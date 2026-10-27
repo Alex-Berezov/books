@@ -28,6 +28,7 @@ import {
   sectionTitle,
   summaryAcceptanceBooks,
 } from '../prisma/seed-summaries';
+import { TRANSLATION_SAMPLE_SLUG, sampleChapterHtml } from '../prisma/seed-translation-sample';
 import { httpServerOf } from './http-server';
 import { grantStaffRoles } from './helpers/staff-roles';
 
@@ -1174,6 +1175,106 @@ describe('Seeded dataset (e2e)', () => {
         await prisma.bookVersion.update({ where: { id: full.id }, data: { seoId: null } });
         await prisma.seo.delete({ where: { id: straySeo.id } });
       }
+    }, 180_000);
+  });
+
+  describe('книга-образец автоперевода (F05-9)', () => {
+    const sample = () =>
+      prisma.bookVersion.findMany({
+        where: { book: { slug: TRANSLATION_SAMPLE_SLUG } },
+        select: {
+          id: true,
+          language: true,
+          status: true,
+          author: true,
+          originalLanguage: true,
+          seo: { select: { robots: true } },
+          chapters: {
+            // `id` - повторный сид переписывает главы на месте, а не пересоздаёт их.
+            select: { id: true, number: true, title: true, content: true },
+            orderBy: { number: 'asc' },
+          },
+        },
+      });
+    const tokensOf = (html: string) =>
+      html
+        .replace(/<[^>]+>/g, ' ')
+        .split(/\s+/)
+        .filter(Boolean).length;
+
+    it('одна версия en - черновик под noindex, две главы образца в разметке читалки, 15-30 тыс. слов', async () => {
+      const versions = await sample();
+      expect(versions).toHaveLength(1);
+      const [en] = versions;
+      expect(en).toMatchObject({
+        language: Language.en,
+        status: 'draft',
+        author: 'Joseph Conrad',
+        originalLanguage: 'English',
+        seo: { robots: 'noindex, follow' },
+      });
+      expect(en.chapters.map((c) => [c.number, c.title])).toEqual([
+        [1, 'I'],
+        [2, 'II'],
+      ]);
+      const total = en.chapters.reduce((n, c) => n + tokensOf(c.content), 0);
+      expect(total).toBeGreaterThanOrEqual(15_000);
+      expect(total).toBeLessThanOrEqual(30_000);
+      for (const { content } of en.chapters) {
+        expect(content.startsWith('<p>')).toBe(true);
+        // Курсив Gutenberg - в `<em>`, сырых подчёркиваний и двойного экранирования нет.
+        expect(content).not.toMatch(/_[^_\s][^_]*_/);
+        expect(content).not.toContain('&amp;amp;');
+      }
+      expect(en.chapters[0].content).toContain('<em>Golden Hind</em>');
+    });
+
+    it('разметка главы образца: абзацы по пустой строке, экранирование, курсив Gutenberg', () => {
+      expect(sampleChapterHtml('\n\nA & b <c>\nnext _line_.\n\n  \n\nTwo > one.\n')).toBe(
+        '<p>A &amp; b &lt;c&gt; next <em>line</em>.</p>\n<p>Two &gt; one.</p>',
+      );
+    });
+
+    it('повторный сид снимает версию перевода и возвращает поля, главы и noindex образца', async () => {
+      const [en] = await sample();
+      const book = await prisma.book.findUniqueOrThrow({
+        where: { slug: TRANSLATION_SAMPLE_SLUG },
+        select: { id: true },
+      });
+      // Как после перевода и ручной правки: версия fr, правка главы, снятый noindex, публикация.
+      await prisma.bookVersion.create({
+        data: {
+          bookId: book.id,
+          language: Language.fr,
+          title: 'Au cœur des ténèbres',
+          author: 'Joseph Conrad',
+          description: 'fr',
+          coverImageUrl: 'https://example.com/cover.jpg',
+          type: 'text',
+          isFree: true,
+          status: 'draft',
+        },
+      });
+      await prisma.chapter.update({
+        where: { bookVersionId_number: { bookVersionId: en.id, number: 1 } },
+        data: { content: '<p>edited</p>' },
+      });
+      await prisma.bookVersion.update({ where: { id: en.id }, data: { status: 'published' } });
+      await prisma.seo.updateMany({
+        where: { bookVersion: { id: en.id } },
+        data: { robots: null },
+      });
+
+      await runSeed('npx prisma db seed', { env: { ...process.env }, timeout: 120_000 });
+
+      const after = await sample();
+      expect(after.map((v) => v.language)).toEqual([Language.en]);
+      expect(after[0]).toMatchObject({
+        id: en.id,
+        status: 'draft',
+        seo: { robots: 'noindex, follow' },
+      });
+      expect(after[0].chapters).toEqual(en.chapters);
     }, 180_000);
   });
 });

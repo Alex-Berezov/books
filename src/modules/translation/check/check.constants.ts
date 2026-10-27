@@ -14,11 +14,15 @@ export const CHECK_JEV_STAGE = 'check_language_jev';
 export const CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
     stage: CHECK_SEMANTIC_STAGE,
-    model: 'deepseek/deepseek-v4-pro',
-    fallbacks: ['z-ai/glm-5.3'],
+    model: 'z-ai/glm-5.3',
+    fallbacks: ['deepseek/deepseek-v4-pro'],
     temperature: 0,
-    // Рассуждения модели входят в ответ: при 2000 вердикт обрезался (Р4 `F05 | F05-R`).
-    maxTokens: 8_000,
+    // Рассуждения модели входят в ответ: при 2000 вердикт обрезался (Р4 `F05 | F05-R`); у
+    // `deepseek-v4-pro` на живом прогоне F05-9 рассуждения съедали и 8000 (27 из 69 вызовов) -
+    // умолчание glm, deepseek в запасных (Р4б, решение арбитра `F05 | F05-9`). У glm 4 из 52 ответов
+    // упёрлись в 8000 на длинных кусках - лимит 16000 (решение `F05 | F05-9`); на отдельных кусках
+    // рассуждения зацикливаются при любом лимите - `LEGACY-478`, выше 16000 не поднимать.
+    maxTokens: 16_000,
     enabled: true,
   },
   {

@@ -77,10 +77,15 @@ const FUNCTION_WORDS_NORMALIZED = new Set([...FUNCTION_WORDS].map((w) => normali
 
 /**
  * Слова формы без артиклей и предлогов («de las», «del», «von»): служебные слова пяти языков
- * не считаются; форма из одних служебных («Will») - целиком.
+ * не считаются; форма из одних служебных («Will») - целиком. Английское притяжательное «’s»
+ * словом не считается («Kurtz’s station» - «kurtz» и «station»): иначе «s» из «s’il» находит
+ * форму в любом французском тексте (живой прогон F05-9).
  */
 function significantWords(form: string): string[] {
-  const words = normalized(form).match(/\p{L}+/gu) ?? [];
+  const words =
+    normalized(form)
+      .replace(/(\p{L})'s(?!\p{L})/gu, '$1')
+      .match(/\p{L}+/gu) ?? [];
   const named = words.filter((w) => !FUNCTION_WORDS_NORMALIZED.has(w));
   return named.length > 0 ? named : words;
 }
