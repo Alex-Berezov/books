@@ -22,7 +22,7 @@ import {
   readStoredAnalysis,
   StoredBookAnalysis,
 } from '../../book-analysis/book-analysis-data';
-import { DOSSIER_MAX_CHAPTERS } from '../dossier/dossier.constants';
+import { chapterPages } from '../chapter-pages';
 import { ContextEstimate, DossierService } from '../dossier/dossier.service';
 import { DossierMotifDto, DossierSummarySectionDto } from '../dto/dossier-data.dto';
 import {
@@ -42,6 +42,7 @@ import {
   DRAFT_LIMIT_TOO_LOW,
   DRAFT_NOT_READY,
   DRAFT_SECTION_UNKNOWN,
+  DRAFT_TOO_LONG,
   DRAFT_TX_OPTIONS,
   SUMMARY_FULL_MISSING,
   SUMMARY_SECTIONS_MISSING,
@@ -340,17 +341,48 @@ export class ContentDraftService {
     return row?.language ?? null;
   }
 
-  /** Главы версии с видимым текстом по номеру; глав больше потолка досье не бывает. */
+  /**
+   * Главы версии с видимым текстом по номеру - страницами (`F05-Rb`) и не дальше входа, который
+   * влезет в вызов анализа: текст копится, пока не перешёл `stageInputCeiling` этапа, дальше
+   * `null` (`DRAFT_TOO_LONG`) без чтения остатка. Усечённого текста не бывает (решение арбитра
+   * `F05 | F05-Rb`, Р2). Контекст моделей неизвестен - читается вся книга, решает провайдер.
+   */
   async versionChapters(
     versionId: string,
+  ): Promise<Array<{ number: number; title: string; content: string }> | null> {
+    const { maxInputChars } = await this.llm.stageInputCeiling(ANALYSIS_DRAFT_STAGE);
+    const chapters: Array<{ number: number; title: string; content: string }> = [];
+    let chars = 0;
+    for await (const page of chapterPages(this.prisma, versionId, {
+      number: true,
+      title: true,
+      content: true,
+    })) {
+      for (const chapter of page) {
+        const text = htmlToParagraphs(chapter.content);
+        if (text === '') continue;
+        chars += text.length;
+        if (maxInputChars !== null && chars > maxInputChars) return null;
+        chapters.push(chapter);
+      }
+    }
+    return chapters;
+  }
+
+  /**
+   * Главы раздела плана по номерам - одна выборка на шаг раздела и его оценку (Р5 `F05-Rb`).
+   * Пустые не отбрасываются: шаг по ним решает номер главы читалки (В5).
+   */
+  sectionChapters(
+    versionId: string,
+    section: Pick<PlanSection, 'chapters'>,
   ): Promise<Array<{ number: number; title: string; content: string }>> {
-    const chapters = await this.prisma.chapter.findMany({
-      where: { bookVersionId: versionId },
+    return this.prisma.chapter.findMany({
+      where: { bookVersionId: versionId, number: { in: section.chapters } },
       select: { number: true, title: true, content: true },
       orderBy: { number: 'asc' },
-      take: DOSSIER_MAX_CHAPTERS,
+      take: section.chapters.length,
     });
-    return chapters.filter((c) => htmlToParagraphs(c.content) !== '');
   }
 
   /**
@@ -603,6 +635,13 @@ export class ContentDraftService {
   ): Promise<Estimate> {
     const call = await stageEstimatorFor(this.llm, ANALYSIS_DRAFT_STAGE);
     const chapters = await this.versionChapters(versionId);
+    // Текст сам не влезает в вызов: сумму по части книги оценка не считает (Р2 `F05-Rb`).
+    if (chapters === null) {
+      throw llmTaskConflict(
+        DRAFT_TOO_LONG,
+        'The version text does not fit the context of the analysis model',
+      );
+    }
     // Без текста глав анализу не из чего строиться: отказ до досье и глоссария (Р26).
     if (chapters.length === 0) {
       throw llmTaskConflict('SOURCE_HAS_NO_CHAPTERS', 'The version has no chapter text');
@@ -645,36 +684,42 @@ export class ContentDraftService {
     glossaryData: unknown,
     plan: PlanSection[],
   ): Promise<{ usd: Prisma.Decimal; upperBound: boolean }> {
-    const chapters = await this.prisma.chapter.findMany({
-      where: { bookVersionId: versionId },
-      select: { number: true, title: true, content: true },
-      orderBy: { number: 'asc' },
-      // Глав больше потолка досье не бывает: досье по такой книге не строится.
-      take: DOSSIER_MAX_CHAPTERS,
-    });
     const upperBound = plan.length === 0;
     const extra = upperBound ? await contextUpperChars(this.llm) : 0;
-    const sections = upperBound
-      ? chapters.map((c) => ({ number: c.number, title: c.title, chapters: [c.number] }))
-      : plan;
+    const sectionUsd = (
+      section: PlanSection,
+      own: Array<{ number: number; title: string; content: string }>,
+    ) =>
+      call.estimate(
+        summarySectionRequest({
+          bookTitle: version.title,
+          language: version.language,
+          dossier: dossier?.data ?? null,
+          glossary: glossaryData,
+          section,
+          chaptersText: chaptersText(own.filter((c) => htmlToParagraphs(c.content) !== '')),
+        }),
+        extra,
+      );
+    // В памяти - только текст текущего раздела (Р2 `F05-Rb`): без плана раздел - глава, главы
+    // идут страницами; по плану - главы раздела своей выборкой.
     let usd = new Prisma.Decimal(0);
-    for (const section of sections) {
-      const own = chapters.filter(
-        (c) => section.chapters.includes(c.number) && htmlToParagraphs(c.content) !== '',
-      );
-      usd = usd.add(
-        call.estimate(
-          summarySectionRequest({
-            bookTitle: version.title,
-            language: version.language,
-            dossier: dossier?.data ?? null,
-            glossary: glossaryData,
-            section,
-            chaptersText: chaptersText(own),
-          }),
-          extra,
-        ),
-      );
+    if (upperBound) {
+      for await (const page of chapterPages(this.prisma, versionId, {
+        number: true,
+        title: true,
+        content: true,
+      })) {
+        for (const c of page) {
+          usd = usd.add(
+            sectionUsd({ number: c.number, title: c.title, chapters: [c.number] }, [c]),
+          );
+        }
+      }
+      return { usd, upperBound };
+    }
+    for (const section of plan) {
+      usd = usd.add(sectionUsd(section, await this.sectionChapters(versionId, section)));
     }
     return { usd, upperBound };
   }

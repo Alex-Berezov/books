@@ -173,12 +173,7 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     ctx: LlmTaskContext,
   ): Promise<LlmTaskStepResult> {
     const section = plan[done.length];
-    const chapters = await this.prisma.chapter.findMany({
-      where: { bookVersionId: row.bookVersionId, number: { in: section.chapters } },
-      select: { number: true, title: true, content: true },
-      orderBy: { number: 'asc' },
-      take: section.chapters.length,
-    });
+    const chapters = await this.drafts.sectionChapters(row.bookVersionId, section);
     // Номер главы читалки - первая глава раздела плана; её нет среди глав версии - пусто
     // с пометкой, не подтягивается к ближайшей (В5).
     const first = section.chapters[0];
@@ -334,6 +329,8 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     ctx: LlmTaskContext,
   ): Promise<LlmTaskStepResult> {
     const chapters = await this.drafts.versionChapters(row.bookVersionId);
+    // Текст сам перешёл вход модели: остаток не читается (Р2 `F05-Rb`).
+    if (chapters === null) return this.fail(row, DRAFT_TOO_LONG);
     if (chapters.length === 0) return this.fail(row, DRAFT_INPUT_MISSING);
     const { stored, updatedAt } = await this.drafts.storedAnalysis(row.bookVersionId);
     const glossary = row.glossaryId

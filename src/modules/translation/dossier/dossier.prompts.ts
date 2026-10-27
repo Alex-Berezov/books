@@ -54,15 +54,21 @@ const SECTION_TITLE_PATTERNS =
   'pt: "Capítulo 5", "Capítulos 5-6", "Primeira parte"; ' +
   'ru: "Глава 5", "Главы 5-6", "Часть первая"';
 
+/** Начало системного сообщения сводки: по нему заглушка OpenRouter в e2e узнаёт вызов без `response_format`. */
+export const DOSSIER_SUMMARY_PROMPT_START =
+  'You merge partial dossiers into one dossier of the part of the book they cover:';
+
 export function dossierSummaryMessages(input: {
   chapters: Array<{ number: number; title: string }>;
-  parts: Array<{ chapterNumber: number; partIndex: number; data: unknown }>;
+  /** Частичные досье кусков или результаты групп прошлого уровня (`F05-Rb`). */
+  parts: object[];
 }): LlmChatMessage[] {
   return [
     {
       role: 'system',
       content:
-        'You merge partial dossiers of every chapter piece into one book dossier. ' +
+        DOSSIER_SUMMARY_PROMPT_START +
+        ' partial dossiers of chapter pieces or dossiers of groups of chapters, in book order. ' +
         FACTS_ONLY +
         '\n- characters: one entry per person (merge variants of the name), stable key in ' +
         'lower-case latin (e.g. "elizabeth-bennet"), firstChapter, fate at the end in one line, ' +

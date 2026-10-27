@@ -2,7 +2,6 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, TranslationRunLanguageStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { moneyUsd } from '../../llm/dto/llm-money';
-import { DOSSIER_MAX_CHAPTERS } from '../dossier/dossier.constants';
 import {
   TranslationReportCostDto,
   TranslationReportFinalCheckDto,
@@ -16,7 +15,11 @@ import {
   finalCheckStateOf,
 } from '../final-check/final-check-state';
 import { metadataStateOf } from '../metadata/metadata-state';
-import { RUN_LANGUAGE_UNFINISHED, RUN_LANGUAGES_MAX } from './translation-run.constants';
+import {
+  RUN_LANGUAGE_UNFINISHED,
+  RUN_LANGUAGES_MAX,
+  RUN_MAX_CHAPTERS,
+} from './translation-run.constants';
 
 /** Поля находки главы наружу: строки и числа по белому списку, длина строк - с пределом. */
 const FINDING_STRINGS = [
@@ -133,7 +136,7 @@ export class TranslationRunReportService {
           findings: true,
         },
         orderBy: { chapterNumber: 'asc' },
-        take: DOSSIER_MAX_CHAPTERS * RUN_LANGUAGES_MAX,
+        take: RUN_MAX_CHAPTERS * RUN_LANGUAGES_MAX,
       }),
       // Строк не больше, чем этапов × моделей: группировка, а не выборка вызовов.
       this.prisma.llmCall.groupBy({

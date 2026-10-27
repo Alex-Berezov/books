@@ -8,6 +8,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { LLM_BUDGET_ID } from '../src/modules/llm/llm-budget.service';
 import { LlmTaskService } from '../src/modules/llm-worker/llm-task.service';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
+import { LlmTaskLeaseLostError } from '../src/modules/llm-worker/llm-worker.errors';
 import { DossierService } from '../src/modules/translation/dossier/dossier.service';
 import {
   DOSSIER_TASK_KIND,
@@ -31,6 +32,10 @@ describe('Translation source and dossier (e2e)', () => {
   const TINY = 'z/tiny-context';
   /** Модель с огромным контекстом: потолок по контексту выше суммы ответов кусков. */
   const HUGE = 'z/huge-context';
+  /** Контекст, в который сводка книги на 250 глав не влезает целиком, а группа глав - влезает (F05-Rb). */
+  const SMALL = 'z/small-context';
+  /** Вход сводки ~24 тыс. символов ((26 620 - 16 000) × 2,26): размеры групп в тестах уровней считаются от него. */
+  const GROUP = 'z/group-context';
   const MODELS = {
     data: [
       ...[MODEL, ALT].map((id) => ({
@@ -43,6 +48,8 @@ describe('Translation source and dossier (e2e)', () => {
         [
           [TINY, 1000],
           [HUGE, 100_000_000],
+          [SMALL, 30_000],
+          [GROUP, 26_620],
         ] as const
       ).map(([id, context]) => ({
         id,
@@ -147,10 +154,16 @@ describe('Translation source and dossier (e2e)', () => {
     const chapters = match
       ? (JSON.parse(match[1]) as Array<{ number: number; title: string }>)
       : DOSSIER.chapters;
+    // Ссылки на главы - только на главы запроса: у группы (F05-Rb) это не первые главы книги.
+    const first = chapters[0]?.number ?? 1;
     return {
       ...DOSSIER,
+      characters: DOSSIER.characters.map((c) => ({ ...c, firstChapter: first })),
+      entities: DOSSIER.entities.map((e) => ({ ...e, firstChapter: first })),
+      chronology: DOSSIER.chronology.map((e) => ({ ...e, chapter: first })),
       chapters: chapters.map((c) => ({ number: c.number, title: c.title, summary: 'S.' })),
-      motifs: [{ image: 'rain', chapters: [chapters[0]?.number ?? 1] }],
+      summaryPlan: DOSSIER.summaryPlan.map((p) => ({ ...p, chapters: [first] })),
+      motifs: [{ image: 'rain', chapters: [first] }],
     };
   };
 
@@ -1434,26 +1447,381 @@ describe('Translation source and dossier (e2e)', () => {
       }
     });
 
-    it('a source over the chapter ceiling is refused, not built from its first chapters', async () => {
-      const chapters = (n: number) =>
-        Array.from({ length: n }, (_, i) => ({
-          number: i + 1,
-          title: `C${i + 1}`,
-          content: '<p>Rain.</p>',
-        }));
-      const atCeiling = await book([
-        { language: 'en', originalLanguage: 'English', chapters: chapters(2000) },
-      ]);
-      await auth(http().get(`/admin/versions/${atCeiling.ids.en}/dossier/estimate`)).expect(200);
+    const numberedChapters = (n: number) =>
+      Array.from({ length: n }, (_, i) => ({
+        number: i + 1,
+        title: `C${i + 1}`,
+        content: '<p>Rain.</p>',
+      }));
+
+    it('a source over 2000 chapters is estimated and built, not refused (F05-Rb)', async () => {
       const { ids } = await book([
-        { language: 'en', originalLanguage: 'English', chapters: chapters(2001) },
+        { language: 'en', originalLanguage: 'English', chapters: numberedChapters(2001) },
       ]);
-      const res = await auth(http().get(`/admin/versions/${ids.en}/dossier/estimate`)).expect(409);
-      expect(res.body).toMatchObject({ code: 'SOURCE_TOO_MANY_CHAPTERS' });
-      const before = await prisma.llmOperation.count();
-      const built = await auth(http().post(`/admin/versions/${ids.en}/dossier`)).expect(409);
-      expect(built.body).toMatchObject({ code: 'SOURCE_TOO_MANY_CHAPTERS' });
-      expect(await prisma.llmOperation.count()).toBe(before);
+      const res = await auth(http().get(`/admin/versions/${ids.en}/dossier/estimate`)).expect(200);
+      expect(res.body).toMatchObject({ chapters: 2001, parts: 2001 });
+      await auth(http().post(`/admin/versions/${ids.en}/dossier`)).expect(202);
+      const row = await dossiers.latestDossier(ids.en as string);
+      expect((row?.plan as unknown[]).length).toBe(2001);
+    });
+
+    describe('summary by groups (F05-Rb)', () => {
+      /** 250 кусков - 250 шагов исполнителя на базе: дольше общего срока теста. */
+      const GROUPS_TIMEOUT_MS = 300_000;
+
+      /**
+       * Проходы до конца построения: кусков больше, чем проходов у `drain`. Шаг `continue` ставится
+       * на «сейчас» по часам процесса, захват сверяет часы базы - срок сдвигается назад.
+       */
+      const drainAll = async () => {
+        for (let i = 0; i < 1000; i++) {
+          await prisma.llmTask.updateMany({
+            where: { kind: DOSSIER_TASK_KIND, status: 'pending' },
+            data: { runAfter: new Date(Date.now() - 1000) },
+          });
+          await worker.runOnce();
+          const left = await prisma.llmTask.count({
+            where: { kind: DOSSIER_TASK_KIND, status: 'pending', operation: { status: 'active' } },
+          });
+          if (left === 0) return;
+        }
+        throw new Error('drainAll did not finish');
+      };
+
+      const setSmall = () =>
+        auth(http().put('/admin/llm/stage-settings/dossier')).send({ model: SMALL }).expect(200);
+
+      afterEach(async () => {
+        await prisma.llmStageSetting.deleteMany({ where: { stage: 'dossier' } });
+      });
+
+      it(
+        'a book that does not fit the context is summed by groups, then by the groups',
+        async () => {
+          const { ids } = await book([
+            { language: 'en', originalLanguage: 'English', chapters: numberedChapters(250) },
+          ]);
+          const plain = await auth(http().get(`/admin/versions/${ids.en}/dossier/estimate`)).expect(
+            200,
+          );
+          await setSmall();
+          const grouped = await auth(
+            http().get(`/admin/versions/${ids.en}/dossier/estimate`),
+          ).expect(200);
+          // Те же куски, но вызовы групп стоят денег: оценка выше, чем у одной сводки.
+          expect(
+            new Prisma.Decimal(grouped.body.estimateUsd as string).gt(
+              new Prisma.Decimal(plain.body.estimateUsd as string),
+            ),
+          ).toBe(true);
+
+          await dossiers.demandDossier(ids.en as string);
+          await drainAll();
+          const row = await dossiers.latestDossier(ids.en as string);
+          expect(row).toMatchObject({ status: 'ready' });
+          const groups = await prisma.bookDossierGroup.findMany({
+            where: { dossierId: row?.id },
+            orderBy: [{ level: 'asc' }, { groupIndex: 'asc' }],
+          });
+          const level0 = groups.filter((g) => g.level === 0);
+          expect(level0.length).toBeGreaterThan(1);
+          expect(groups.every((g) => g.done)).toBe(true);
+          // Группы подряд, без дыр и наложений.
+          expect(level0.reduce((sum, g) => sum + g.itemCount, 0)).toBe(250);
+          expect(level0.map((g) => g.firstItem)).toEqual(
+            level0.map((_, i) => level0.slice(0, i).reduce((sum, g) => sum + g.itemCount, 0)),
+          );
+          // Вызовы: куски, по вызову на группу и одна итоговая сводка.
+          expect(callsOf('dossier_part')).toHaveLength(250);
+          expect(callsOf('dossier')).toHaveLength(groups.length + 1);
+          const data = row?.data as { chapters: Array<{ number: number }> };
+          expect(data.chapters.map((c) => c.number)).toHaveLength(250);
+          // Бюджет закрыт без подвисшего резерва.
+          expect(
+            await prisma.llmOperation.findUnique({ where: { id: row?.operationId as string } }),
+          ).toMatchObject({ status: 'done' });
+        },
+        GROUPS_TIMEOUT_MS,
+      );
+
+      it(
+        'a crash after the answer of a group: the retry does not pay for the group again',
+        async () => {
+          const { ids } = await book([
+            { language: 'en', originalLanguage: 'English', chapters: numberedChapters(250) },
+          ]);
+          await setSmall();
+          await dossiers.demandDossier(ids.en as string);
+          // Первый проход и заведение групп.
+          for (let i = 0; i < 300; i++) {
+            await worker.runOnce();
+            const row = await dossiers.latestDossier(ids.en as string);
+            if (
+              row &&
+              (await prisma.bookDossierGroup.count({ where: { dossierId: row.id } })) > 0
+            ) {
+              break;
+            }
+          }
+          const row = (await dossiers.latestDossier(ids.en as string)) as { id: string };
+          expect(callsOf('dossier')).toHaveLength(0);
+
+          // Шаг ставится на «сейчас» по часам процесса, захват сверяет часы базы: без сдвига
+          // следующий проход может его не увидеть.
+          await prisma.llmTask.updateMany({
+            where: { bookVersionId: ids.en, status: 'pending' },
+            data: { runAfter: new Date(Date.now() - 1000) },
+          });
+          // Ответ первой группы сохранён, а запись итога шага упала.
+          const finish = jest.spyOn(tasks, 'finish').mockRejectedValueOnce(new Error('db down'));
+          await worker.runOnce();
+          finish.mockRestore();
+          expect(callsOf('dossier')).toHaveLength(1);
+          expect(
+            await prisma.bookDossierGroup.count({ where: { dossierId: row.id, done: true } }),
+          ).toBe(1);
+          const task = (await prisma.llmTask.findFirst({
+            where: { kind: DOSSIER_TASK_KIND, status: 'running', bookVersionId: ids.en },
+          })) as LlmTask;
+          await prisma.llmTask.update({
+            where: { id: task.id },
+            data: { leaseUntil: new Date(Date.now() - 1000) },
+          });
+          await drainAll();
+
+          expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({ status: 'ready' });
+          // Первая группа не позвана заново: на каждую группу один вызов и одна итоговая сводка.
+          const groups = await prisma.bookDossierGroup.count({ where: { dossierId: row.id } });
+          expect(callsOf('dossier')).toHaveLength(groups + 1);
+          expect(callsOf('dossier_part')).toHaveLength(250);
+        },
+        GROUPS_TIMEOUT_MS,
+      );
+
+      /** Ответ куска с текстом-заполнителем: размер входа сводки задаёт тест, а не заглушка. */
+      const paddedPart = (chars: number) => ({ ...PART, summary: 'x'.repeat(chars) });
+      /** Ответ сводки (группы или итога) с заполнителем в первой главе. */
+      const paddedDossier = (body: ChatBody | undefined, chars: number) => {
+        const dossier = dossierFor(body);
+        return {
+          ...dossier,
+          chapters: dossier.chapters.map((c, i) =>
+            i === 0 ? { ...c, summary: 'y'.repeat(chars) } : c,
+          ),
+        };
+      };
+      const setGroupModel = () =>
+        auth(http().put('/admin/llm/stage-settings/dossier')).send({ model: GROUP }).expect(200);
+      const groupsOf = async (versionId: string) => {
+        const row = await dossiers.latestDossier(versionId);
+        return prisma.bookDossierGroup.findMany({
+          where: { dossierId: row?.id },
+          orderBy: [{ level: 'asc' }, { groupIndex: 'asc' }],
+        });
+      };
+      const eightChapters = () =>
+        book([{ language: 'en', originalLanguage: 'English', chapters: numberedChapters(8) }]);
+
+      it('results of groups that do not fit together are grouped again: a level above zero, then the summary', async () => {
+        // Вход ~24 тыс. символов: ответы кусков по ~6 тыс. - по два в группу; ответы групп по
+        // ~6 тыс. - четыре не влезают, по два влезают: уровень 1 из двух групп, итог из двух.
+        answer = (name, body) =>
+          name === 'dossier_part'
+            ? paddedPart(5_600)
+            : name === 'dossier'
+              ? paddedDossier(body, 4_600)
+              : defaultAnswer(name, body);
+        const { ids } = await eightChapters();
+        await setGroupModel();
+        await dossiers.demandDossier(ids.en as string);
+        await drainAll();
+        expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({ status: 'ready' });
+        const groups = await groupsOf(ids.en as string);
+        expect(groups.map((g) => [g.level, g.firstItem, g.itemCount])).toEqual([
+          [0, 0, 2],
+          [0, 2, 2],
+          [0, 4, 2],
+          [0, 6, 2],
+          [1, 0, 2],
+          [1, 2, 2],
+        ]);
+        expect(
+          groups.filter((g) => g.level === 1).map((g) => [g.firstChapter, g.lastChapter]),
+        ).toEqual([
+          [1, 4],
+          [5, 8],
+        ]);
+        expect(groups.every((g) => g.done)).toBe(true);
+        expect(callsOf('dossier')).toHaveLength(groups.length + 1);
+      });
+
+      it('a level above zero that does not halve fails DOSSIER_TOO_LONG without paying for that level (Р3)', async () => {
+        // Ответы групп по ~8 тыс.: ни одна пара не влезает - уровень 1 из четырёх групп по одной
+        // ничего не сужает, отказ без вызова.
+        answer = (name, body) =>
+          name === 'dossier_part'
+            ? paddedPart(5_600)
+            : name === 'dossier'
+              ? paddedDossier(body, 6_600)
+              : defaultAnswer(name, body);
+        const { ids } = await eightChapters();
+        await setGroupModel();
+        await dossiers.demandDossier(ids.en as string);
+        await drainAll();
+        expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({
+          status: 'failed',
+          failedReason: 'DOSSIER_TOO_LONG',
+        });
+        const groups = await groupsOf(ids.en as string);
+        expect(groups.map((g) => g.level)).toEqual([0, 0, 0, 0]);
+        expect(callsOf('dossier')).toHaveLength(4);
+      });
+
+      it('a group is sized with the titles of every chapter, as the summary is', async () => {
+        // Две пустые главы по краям с длинными названиями: со своими названиями четыре куска влезли
+        // бы одной группой, а итог со всеми названиями - нет. Группы меряются как итог - по два.
+        answer = (name, body) =>
+          name === 'dossier_part' ? paddedPart(2_400) : defaultAnswer(name, body);
+        const long = 'T'.repeat(4_000);
+        const chapters = [
+          { number: 1, title: long, content: '' },
+          ...[2, 3, 4, 5].map((n) => ({ number: n, title: `C${n}`, content: '<p>Rain.</p>' })),
+          { number: 6, title: long, content: '' },
+        ];
+        const { ids } = await book([{ language: 'en', originalLanguage: 'English', chapters }]);
+        await setGroupModel();
+        await dossiers.demandDossier(ids.en as string);
+        await drainAll();
+        expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({ status: 'ready' });
+        const groups = await groupsOf(ids.en as string);
+        expect(groups.map((g) => [g.level, g.itemCount])).toEqual([
+          [0, 2],
+          [0, 2],
+        ]);
+        expect(callsOf('dossier')).toHaveLength(3);
+      });
+
+      it('the stage model changed to a smaller context after the groups were set: DOSSIER_TOO_LONG without a call (Р4)', async () => {
+        answer = (name, body) =>
+          name === 'dossier_part' ? paddedPart(5_600) : defaultAnswer(name, body);
+        const { ids } = await eightChapters();
+        await setGroupModel();
+        await dossiers.demandDossier(ids.en as string);
+        for (let i = 0; i < 50 && (await groupsOf(ids.en as string)).length === 0; i++) {
+          await prisma.llmTask.updateMany({
+            where: { kind: DOSSIER_TASK_KIND, status: 'pending' },
+            data: { runAfter: new Date(Date.now() - 1000) },
+          });
+          await worker.runOnce();
+        }
+        expect((await groupsOf(ids.en as string)).length).toBeGreaterThan(1);
+        expect(callsOf('dossier')).toHaveLength(0);
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: TINY })
+          .expect(200);
+        await drainAll();
+        expect(callsOf('dossier')).toHaveLength(0);
+        expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({
+          status: 'failed',
+          failedReason: 'DOSSIER_TOO_LONG',
+          model: TINY,
+        });
+        // Ждущий при той же модели строку не перестраивает (`tooLongAgain`).
+        const waiter = await waiterOperation();
+        const demand = await dossiers.demandDossier(ids.en as string, {
+          waiter: { operationId: waiter.id },
+        });
+        expect(demand.status).toBe('failed');
+      });
+
+      it('the lease is lost while the level was being packed: no group rows are written (Р5)', async () => {
+        answer = (name, body) =>
+          name === 'dossier_part' ? paddedPart(5_600) : defaultAnswer(name, body);
+        const { ids } = await eightChapters();
+        await setGroupModel();
+        await dossiers.demandDossier(ids.en as string);
+        const row = (await dossiers.latestDossier(ids.en as string)) as { id: string };
+        // Первый проход целиком: восемь кусков сохранены, уровень ещё не заведён.
+        for (
+          let i = 0;
+          i < 50 && (await prisma.bookDossierPart.count({ where: { dossierId: row.id } })) < 8;
+          i++
+        ) {
+          await prisma.llmTask.updateMany({
+            where: { kind: DOSSIER_TASK_KIND, status: 'pending' },
+            data: { runAfter: new Date(Date.now() - 1000) },
+          });
+          await worker.runOnce();
+        }
+        expect(await prisma.bookDossierPart.count({ where: { dossierId: row.id } })).toBe(8);
+        expect(await prisma.bookDossierGroup.count({ where: { dossierId: row.id } })).toBe(0);
+        await prisma.llmTask.updateMany({
+          where: { kind: DOSSIER_TASK_KIND, status: 'pending' },
+          data: { runAfter: new Date(Date.now() - 1000) },
+        });
+        // Пока шли пробы упаковки, аренду отдали другому: строки уровня этот шаг не пишет.
+        const renew = jest
+          .spyOn(tasks, 'renewLease')
+          .mockImplementation((taskId: string) =>
+            Promise.reject(new LlmTaskLeaseLostError(taskId)),
+          );
+        await worker.runOnce();
+        expect(renew).toHaveBeenCalled();
+        renew.mockRestore();
+        expect(await prisma.bookDossierGroup.count({ where: { dossierId: row.id } })).toBe(0);
+        expect(callsOf('dossier')).toHaveLength(0);
+      });
+
+      it('the row is taken over while the level was being packed: the old step writes no group rows (Р7)', async () => {
+        answer = (name, body) =>
+          name === 'dossier_part' ? paddedPart(5_600) : defaultAnswer(name, body);
+        const { ids } = await eightChapters();
+        await setGroupModel();
+        await dossiers.demandDossier(ids.en as string);
+        const row = (await dossiers.latestDossier(ids.en as string)) as { id: string };
+        for (
+          let i = 0;
+          i < 50 && (await prisma.bookDossierPart.count({ where: { dossierId: row.id } })) < 8;
+          i++
+        ) {
+          await prisma.llmTask.updateMany({
+            where: { kind: DOSSIER_TASK_KIND, status: 'pending' },
+            data: { runAfter: new Date(Date.now() - 1000) },
+          });
+          await worker.runOnce();
+        }
+        expect(await prisma.bookDossierPart.count({ where: { dossierId: row.id } })).toBe(8);
+        await prisma.llmTask.updateMany({
+          where: { kind: DOSSIER_TASK_KIND, status: 'pending' },
+          data: { runAfter: new Date(Date.now() - 1000) },
+        });
+        // Аренда задачи жива, но строку, пока шла упаковка, перехватила другая операция.
+        const taker = await waiterOperation();
+        const renew = jest.spyOn(tasks, 'renewLease').mockImplementation(async () => {
+          await prisma.bookDossier.update({
+            where: { id: row.id },
+            data: { operationId: taker.id },
+          });
+        });
+        await worker.runOnce();
+        expect(renew).toHaveBeenCalled();
+        renew.mockRestore();
+        expect(await prisma.bookDossierGroup.count({ where: { dossierId: row.id } })).toBe(0);
+        expect(callsOf('dossier')).toHaveLength(0);
+      });
+
+      it('a group that does not fit even alone fails the row with DOSSIER_TOO_LONG', async () => {
+        const { ids } = await englishBook();
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: TINY })
+          .expect(200);
+        await dossiers.demandDossier(ids.en as string);
+        await drain();
+        expect(callsOf('dossier')).toHaveLength(0);
+        const row = await dossiers.latestDossier(ids.en as string);
+        expect(row).toMatchObject({ status: 'failed', failedReason: 'DOSSIER_TOO_LONG' });
+        expect(await prisma.bookDossierGroup.count({ where: { dossierId: row?.id } })).toBe(0);
+      });
     });
 
     it('a planned part whose chapter is gone closes the row with DOSSIER_SOURCE_CHANGED', async () => {

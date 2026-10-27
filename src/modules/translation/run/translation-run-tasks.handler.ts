@@ -65,7 +65,6 @@ import {
   seamProblems,
   seamRequest,
 } from '../check/seam-check';
-import { DOSSIER_MAX_CHAPTERS } from '../dossier/dossier.constants';
 import { FinalChapter, FinalFinding, finalCodeCheck } from '../final-check/final-check-code';
 import {
   FINAL_CHECK_NO_COMPLIANT_PROVIDER,
@@ -114,6 +113,7 @@ import {
   CHUNK_STATUS_UNEXPECTED,
   RUN_LANGUAGE_UNFINISHED,
   RUN_LANGUAGES_MAX,
+  RUN_MAX_CHAPTERS,
   RUN_TX_OPTIONS,
   FINAL_CODE_TX_OPTIONS,
   DOSSIER_LIMIT_TOO_LOW,
@@ -909,19 +909,19 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
         where: { bookVersionId: lang.run.bookVersionId },
         select: { number: true, content: true },
         orderBy: { number: 'asc' },
-        take: DOSSIER_MAX_CHAPTERS,
+        take: RUN_MAX_CHAPTERS,
       }),
       this.prisma.translationChapter.findMany({
         where: { runLanguageId: lang.id },
         select: { ...CHAPTER_FINDINGS_SELECT, status: true },
         orderBy: { chapterNumber: 'asc' },
-        take: DOSSIER_MAX_CHAPTERS,
+        take: RUN_MAX_CHAPTERS,
       }),
       this.prisma.translationChunk.findMany({
         where: { runLanguageId: lang.id },
         select: { ...ASSEMBLY_CHUNK_SELECT, chapterNumber: true },
         orderBy: [{ chapterNumber: 'asc' }, { chunkIndex: 'asc' }],
-        take: DOSSIER_MAX_CHAPTERS * RUN_CHAPTER_CHUNKS_MAX,
+        take: RUN_MAX_CHAPTERS * RUN_CHAPTER_CHUNKS_MAX,
       }),
     ]);
     const byChapter = new Map<number, typeof chunks>();

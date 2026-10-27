@@ -57,9 +57,6 @@ function setup(
     bookDossier: {
       findUnique: jest.fn().mockResolvedValue({ id: 'dos1', data: { summaryPlan: PLAN } }),
     },
-    chapter: {
-      findMany: jest.fn().mockResolvedValue([{ number: 1, title: 'C1', content: '<p>Anna.</p>' }]),
-    },
     bookGlossary: { findUnique: jest.fn().mockResolvedValue(null) },
   };
   const llm = {
@@ -83,6 +80,9 @@ function setup(
     savedSections: jest.fn().mockResolvedValue([{ title: 'S', text: 'Saved.' }]),
     savedFull: jest.fn().mockResolvedValue('Saved full.'),
     languageOf: jest.fn().mockResolvedValue('en'),
+    sectionChapters: jest
+      .fn()
+      .mockResolvedValue([{ number: 1, title: 'C1', content: '<p>Anna.</p>' }]),
     versionChapters: jest
       .fn()
       .mockResolvedValue([{ number: 1, title: 'C1', content: '<p>Anna came &amp; left.</p>' }]),
@@ -181,8 +181,8 @@ describe('ContentDraftTasksHandler (F05-10)', () => {
   });
 
   it('chapters without visible text - an empty section without a model call', async () => {
-    const { handler, prisma, llm } = setup(draftRow());
-    prisma.chapter.findMany.mockResolvedValue([{ number: 1, title: 'C1', content: '<p></p>' }]);
+    const { handler, prisma, llm, drafts } = setup(draftRow());
+    drafts.sectionChapters.mockResolvedValue([{ number: 1, title: 'C1', content: '<p></p>' }]);
     await handler.handler.run(task, ctx);
     expect(llm.callStage).not.toHaveBeenCalled();
     const [arg] = prisma.contentDraft.updateMany.mock.calls[0] as [
@@ -443,6 +443,18 @@ describe('ContentDraftTasksHandler, analysis (F05-11)', () => {
   it('the whole text does not fit the model - DRAFT_TOO_LONG without a call', async () => {
     const { handler, llm, tx } = setup(analysisRow(), answer('x'));
     llm.stageFit.mockResolvedValue({ fits: false, model: 'm' });
+    await handler.handler.run(task, ctx);
+    expect(llm.callStage).not.toHaveBeenCalled();
+    expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.contentDraft.updateMany).toHaveBeenCalledWith({
+      where: { id: 'd1', status: 'building' },
+      data: { status: 'failed', failedReason: 'DRAFT_TOO_LONG' },
+    });
+  });
+
+  it('a text past the analysis model input - DRAFT_TOO_LONG without a call (F05-Rb, Р2)', async () => {
+    const { handler, llm, tx, drafts } = setup(analysisRow(), answer('x'));
+    drafts.versionChapters.mockResolvedValue(null);
     await handler.handler.run(task, ctx);
     expect(llm.callStage).not.toHaveBeenCalled();
     expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);

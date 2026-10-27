@@ -7,7 +7,7 @@ import { LlmModelInfo, LlmModelsService } from './llm-models.service';
 import { LlmStageRegistry } from './llm-stages.registry';
 import { LlmConfig } from './llm.config';
 import { LlmService } from './llm.service';
-import { LlmCallModel, OpenRouterClient } from './openrouter.client';
+import { LlmCallModel, OpenRouterClient, SUMMARY_INPUT_CHARS_PER_TOKEN } from './openrouter.client';
 
 const D = (v: string | number) => new Prisma.Decimal(v);
 
@@ -456,6 +456,31 @@ describe('LlmService', () => {
       await expect(service.stageFit('on', request(395_000))).resolves.toMatchObject({
         fits: true,
       });
+    });
+
+    it('the summary divisor 2.26 refuses what fits at 2.5 (F05-Rb, Р1)', async () => {
+      // 395k символов влезают в 160k по 2,5 (тест выше), по 2,26 это уже ~174,8k токенов входа.
+      models.list.mockResolvedValue(ctxModels(160_000));
+      await expect(
+        service.stageFit('on', request(395_000), undefined, [], SUMMARY_INPUT_CHARS_PER_TOKEN),
+      ).resolves.toMatchObject({ fits: false });
+      const ceiling = await service.stageInputCeiling('on', {
+        charsPerToken: SUMMARY_INPUT_CHARS_PER_TOKEN,
+      });
+      const plain = await service.stageInputCeiling('on');
+      expect(ceiling.maxInputChars).toBeLessThan(395_000);
+      expect(plain.maxInputChars).toBeGreaterThanOrEqual(395_000);
+      // Граница одна у stageFit и stageInputCeiling: ровно на ней влезает, символом больше - нет.
+      const edge = plain.maxInputChars as number;
+      const fitsAt = (chars: number) =>
+        service.stageFit('on', { messages: [{ role: 'user', content: 'x'.repeat(chars - 16) }] });
+      await expect(fitsAt(Math.floor(edge))).resolves.toMatchObject({ fits: true });
+      await expect(fitsAt(Math.floor(edge) + 1)).resolves.toMatchObject({ fits: false });
+    });
+
+    it('the input ceiling is null when no model context is known', async () => {
+      models.list.mockResolvedValue(ctxModels(null));
+      await expect(service.stageInputCeiling('on')).resolves.toMatchObject({ maxInputChars: null });
     });
 
     it('900k chars do not fit a 200k context', async () => {

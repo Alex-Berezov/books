@@ -1708,6 +1708,25 @@ describe('Translation run (e2e)', () => {
     ).toBe(0);
   });
 
+  it('more than 2000 chapters with empty ones among them: estimate and start refuse 409 SOURCE_TOO_MANY_CHAPTERS (F05-Rb)', async () => {
+    // 2001 глава, из них две пустые: непустых 1999 - потолок считается по всем главам, иначе
+    // шаги запуска с тем же `take` молча потеряли бы последнюю главу.
+    const chapters = Array.from({ length: 2001 }, (_, i) => ({
+      number: i + 1,
+      title: `C${i + 1}`,
+      content: i === 3 || i === 7 ? '' : SHORT,
+    }));
+    const { versionId } = await englishBook(chapters);
+    const refused = await auth(
+      http()
+        .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+        .query({ languages: 'es' }),
+    ).expect(409);
+    expect(refused.body).toMatchObject({ code: 'SOURCE_TOO_MANY_CHAPTERS' });
+    const start = await startRun(versionId, { languages: ['es'] }).expect(409);
+    expect(start.body).toMatchObject({ code: 'SOURCE_TOO_MANY_CHAPTERS' });
+  });
+
   it('the estimate counts Jev per piece while the stage is on; off - not counted and no refusal (Р9 F05-R)', async () => {
     const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
     const checkUsdOf = async () => {

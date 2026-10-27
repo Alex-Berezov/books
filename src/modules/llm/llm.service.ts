@@ -55,6 +55,19 @@ export interface CreateOperationInput {
 }
 
 /**
+ * Символов входа, которые влезут в контекст вместе с ответом: (контекст - `maxTokens`) × делитель.
+ * Одна формула на `stageFit`, `stageInputCeiling` и оценку сводки досье (решение арбитра
+ * `F05 | F05-Rb`, Р5): правка границы не обходит ни одного из них.
+ */
+export function inputCeilingChars(
+  contextLength: number,
+  maxTokens: number,
+  charsPerToken: number,
+): number {
+  return (contextLength - maxTokens) * charsPerToken;
+}
+
+/**
  * Оценка вызова этапа: вход по той же оценке токенов, что у резерва клиента, выход - `maxTokens`.
  * `extraInputTokens` - вход, которого в запросе ещё нет (ответы прошлых шагов).
  */
@@ -261,13 +274,40 @@ export class LlmService implements OnModuleInit {
    * Влезет ли вызов этапа в контекст: вход в токенах (символы / `INPUT_CHARS_PER_TOKEN`) плюс
    * `maxTokens` против наименьшего контекста основной и запасных моделей (вызов может уйти на
    * любую). Контекст неизвестен ни у одной - влезает, решает провайдер. Цена не нужна.
+   * `charsPerToken` - делитель входа: у сводки досье из чистого JSON свой (`F05-Rb`, Р1).
    */
   async stageFit(
     stage: string,
     request: Pick<LlmChatRequest, 'messages' | 'jsonSchema'>,
     modelId?: string,
     fallbacks: readonly string[] = [],
+    charsPerToken: number = INPUT_CHARS_PER_TOKEN,
   ): Promise<{ fits: boolean; model: string }> {
+    const { maxInputChars, model } = await this.stageInputCeiling(stage, {
+      model: modelId,
+      fallbacks,
+      charsPerToken,
+    });
+    return {
+      fits: maxInputChars === null || estimateInputTokens(request) <= maxInputChars,
+      model,
+    };
+  }
+
+  /**
+   * Сколько символов входа влезет в вызов этапа: (наименьший контекст основной и запасных -
+   * `maxTokens`) × делитель - та же граница, что у `stageFit`. `null` - контекст неизвестен ни
+   * у одной модели. Нужна тому, кто читает вход страницами и останавливается на границе
+   * (заготовки `F05-Rb`, Р2), а не собирает его целиком ради одной проверки.
+   */
+  async stageInputCeiling(
+    stage: string,
+    options: {
+      model?: string;
+      fallbacks?: readonly string[];
+      charsPerToken?: number;
+    } = {},
+  ): Promise<{ maxInputChars: number | null; model: string }> {
     const setting = await this.getStageSetting(stage);
     const known = await this.known();
     // Модели - ровно те, что уйдут в вызов (`callModels`, как в `callStage`): запасная без цены
@@ -275,19 +315,21 @@ export class LlmService implements OnModuleInit {
     const { primaryId, fallbacks: called } = this.callModels(
       stage,
       setting,
-      { model: modelId, fallbacks },
+      { model: options.model, fallbacks: options.fallbacks ?? [] },
       known,
     );
     const contexts = [primaryId, ...called.map((m) => m.id)]
       .map((id) => known.get(id)?.contextLength)
       .filter((c): c is number => typeof c === 'number');
-    // Вход - в настоящих токенах (символы / INPUT_CHARS_PER_TOKEN), а не верхней границей резерва:
-    // символ за токен ложно отказал бы книге, которая влезает (решение арбитра `F05 | F05-2`).
-    const need =
-      Math.ceil(estimateInputTokens(request) / INPUT_CHARS_PER_TOKEN) + setting.maxTokens;
+    // Вход - в настоящих токенах (символы / делитель), а не верхней границей резерва: символ
+    // за токен ложно отказал бы книге, которая влезает (решение арбитра `F05 | F05-2`).
+    const charsPerToken = options.charsPerToken ?? INPUT_CHARS_PER_TOKEN;
     return {
-      fits: contexts.length === 0 || need <= Math.min(...contexts),
-      model: modelId ?? setting.model,
+      maxInputChars:
+        contexts.length === 0
+          ? null
+          : inputCeilingChars(Math.min(...contexts), setting.maxTokens, charsPerToken),
+      model: options.model ?? setting.model,
     };
   }
 

@@ -88,6 +88,11 @@ export function readPlan(value: unknown): DossierPlanEntry[] {
   });
 }
 
+/** Число кусков плана: потолок выборок частичных досье и групп строки. */
+export function planPartsCount(plan: readonly DossierPlanEntry[]): number {
+  return plan.reduce((sum, e) => sum + e.parts, 0);
+}
+
 /** Первый несохранённый кусок плана; `null` - первый проход закончен. */
 export function nextPlannedPart(
   plan: readonly DossierPlanEntry[],

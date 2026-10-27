@@ -11,9 +11,6 @@ export const GLOSSARY_TASK_KIND = 'glossary';
 /** Лимит операции досье - оценка × 1,5 (`F05-2`, шаг 7), если редактор не задал свой. */
 export const DOSSIER_LIMIT_FACTOR = '1.5';
 
-/** Глав в исходнике досье: больше - 409 `SOURCE_TOO_MANY_CHAPTERS`, выборка без потолка не пишется. */
-export const DOSSIER_MAX_CHAPTERS = 2_000;
-
 /**
  * Умолчания этапов (`tech.md` §3: Claude, длинный контекст), запасная - `GPT_TERRA_MODEL`.
  */

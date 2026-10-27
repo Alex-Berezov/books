@@ -200,3 +200,60 @@ describe('ContentDraftService (F05-10)', () => {
     expect(stamps).toEqual([expect.stringContaining("AT TIME ZONE 'UTC'")]);
   });
 });
+
+describe('ContentDraftService.versionChapters (F05-Rb, Р2)', () => {
+  /** Главы 1..total, у каждой 10 символов текста; выборка исполняет курсор, порядок и take. */
+  const chaptersDb = (total: number) =>
+    jest.fn((args: { where: { number: { gt?: number; gte?: number } }; take: number }) => {
+      const after = args.where.number.gt ?? 0;
+      return Promise.resolve(
+        Array.from({ length: total }, (_, i) => ({
+          number: i + 1,
+          title: `C${i + 1}`,
+          content: i === 4 ? '<p></p>' : '<p>0123456789</p>',
+        }))
+          .filter((c) => c.number > after)
+          .slice(0, args.take),
+      );
+    });
+
+  const withChapters = (total: number, maxInputChars: number | null) => {
+    const { service, prisma, llm } = setup();
+    const findMany = chaptersDb(total);
+    Object.assign(prisma, { chapter: { findMany } });
+    Object.assign(llm, {
+      stageInputCeiling: jest.fn().mockResolvedValue({ maxInputChars, model: 'm' }),
+    });
+    return { service, findMany };
+  };
+
+  it('reads every chapter by pages past 2000 when the context is unknown, empty ones dropped', async () => {
+    const { service, findMany } = withChapters(2_001, null);
+    const chapters = await service.versionChapters('v1');
+    expect(chapters).toHaveLength(2_000);
+    expect(chapters?.[chapters.length - 1].number).toBe(2_001);
+    expect(chapters?.some((c) => c.number === 5)).toBe(false);
+    expect(findMany).toHaveBeenCalledTimes(21);
+  });
+
+  it('stops at the input ceiling with null and does not read the rest of the book', async () => {
+    const { service, findMany } = withChapters(2_001, 1_500);
+    await expect(service.versionChapters('v1')).resolves.toBeNull();
+    // 151 глава с текстом переходит 1500 символов на второй странице: третья не читается.
+    expect(findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('a text exactly at the ceiling still fits', async () => {
+    const { service } = withChapters(11, 100);
+    // 10 глав с текстом по 10 символов (пятая пустая) - ровно 100.
+    await expect(service.versionChapters('v1')).resolves.toHaveLength(10);
+  });
+});
+
+describe('ContentDraftService analysis estimate (F05-Rb, Р2)', () => {
+  it('a text past the analysis model input is 409 DRAFT_TOO_LONG, not a sum for a part of the book', async () => {
+    const { service } = setup();
+    jest.spyOn(service, 'versionChapters').mockResolvedValue(null);
+    await expect(codeOf(service.estimate('v1', 'analysis'))).resolves.toBe('DRAFT_TOO_LONG');
+  });
+});

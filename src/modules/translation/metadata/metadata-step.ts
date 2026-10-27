@@ -1,10 +1,10 @@
 import { Language, Prisma } from '@prisma/client';
-import { DOSSIER_MAX_CHAPTERS } from '../dossier/dossier.constants';
 import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
 import { LlmError } from '../../llm/llm.errors';
 import { LlmService, StageCallEstimator } from '../../llm/llm.service';
 import { LlmTaskContext } from '../../llm-worker/llm-task.types';
 import { ChapterLayout, splitChapter } from '../chapter-blocks';
+import { allChapters } from '../chapter-pages';
 import { NameEntry, nameEntriesOf } from '../check/mechanical-check';
 import { callShaped } from '../llm-shaped-call';
 import { StageModels } from '../run/run-models';
@@ -38,20 +38,16 @@ export async function metadataSourceFields(
       title: true,
       author: true,
       description: true,
-      chapters: {
-        select: { number: true, title: true },
-        orderBy: { number: 'asc' },
-        take: DOSSIER_MAX_CHAPTERS,
-      },
     },
   });
   if (!version) return null;
+  const chapters = await allChapters(db, versionId, { number: true, title: true });
   return {
     sourceLanguage,
     title: version.title,
     author: version.author,
     description: version.description,
-    chapterTitles: version.chapters,
+    chapterTitles: chapters,
   };
 }
 

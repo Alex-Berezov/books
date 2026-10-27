@@ -4,6 +4,12 @@ import { FINAL_CHECK_STAGE } from '../final-check/final-check.constants';
 import { METADATA_STAGE } from '../metadata/metadata.constants';
 import { SPLIT_STAGE, TRANSLATE_STAGE } from '../translate/translate.constants';
 
+/**
+ * Глав в исходнике запуска перевода: больше - 409 `SOURCE_TOO_MANY_CHAPTERS` - выборки запуска
+ * собираются в памяти. Досье глав не считает и читает их страницами (`F05-Rb`).
+ */
+export const RUN_MAX_CHAPTERS = 2_000;
+
 /** Вид задачи запуска: шаг языка, одна задача на пару «операция, язык» (Р1). */
 export const TRANSLATION_RUN_TASK_KIND = 'translation_run';
 
@@ -34,7 +40,7 @@ export const RUN_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
 
 /**
  * Транзакция находок итоговой проверки кодом - запись главы (и счётчика) на каждую главу языка,
- * до `DOSSIER_MAX_CHAPTERS`: свой срок, как у соседей с длинным обходом (`AUTHOR_DELETE_TX_OPTIONS`,
+ * до `RUN_MAX_CHAPTERS`: свой срок, как у соседей с длинным обходом (`AUTHOR_DELETE_TX_OPTIONS`,
  * `author.service.ts`), а не пара записей `RUN_TX_OPTIONS` (L-020).
  */
 export const FINAL_CODE_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;

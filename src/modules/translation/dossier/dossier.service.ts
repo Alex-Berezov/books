@@ -11,15 +11,19 @@ import {
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmBudgetService } from '../../llm/llm-budget.service';
 import { LlmError } from '../../llm/llm.errors';
-import { LlmService, StageCallEstimator } from '../../llm/llm.service';
-import { ANSWER_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
+import { inputCeilingChars, LlmService, StageCallEstimator } from '../../llm/llm.service';
+import {
+  ANSWER_CHARS_PER_TOKEN,
+  estimateInputTokens,
+  SUMMARY_INPUT_CHARS_PER_TOKEN,
+} from '../../llm/openrouter.client';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
-import { FingerprintChapter, sourceFingerprint } from '../source-fingerprint';
+import { chapterPages } from '../chapter-pages';
+import { sourceFingerprint } from '../source-fingerprint';
 import { TranslationSourceService } from '../translation-source.service';
 import {
   DOSSIER_LIMIT_FACTOR,
-  DOSSIER_MAX_CHAPTERS,
   DOSSIER_SOURCE_CHANGED,
   DOSSIER_STAGE,
   DOSSIER_TASK_KIND,
@@ -28,9 +32,23 @@ import {
   GLOSSARY_TASK_KIND,
 } from './dossier.constants';
 import { DossierEstimateDto, DossierStatusDto, GlossaryDto } from '../dto/translation-response.dto';
-import { DossierPartPlan, partKey, planDossierParts, planEntries } from './dossier-parts';
+import { summaryLevels } from './dossier-groups';
+import {
+  DossierPartPlan,
+  DossierPlanEntry,
+  partKey,
+  planDossierParts,
+  planEntries,
+  planPartsCount,
+  readPlan,
+} from './dossier-parts';
 import { toDossierStatusDto, toEstimateDto, toGlossaryDto } from './dossier.mapper';
 import { dossierPartRequest, dossierSummaryRequest, glossaryRequest } from './dossier.prompts';
+
+interface ChapterTitle {
+  number: number;
+  title: string;
+}
 
 /** Заводка строителя: операция, строка и первая задача - короткими INSERT (`L-020`). */
 const BUILD_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
@@ -144,21 +162,29 @@ export class DossierService {
     return { bookId, sourceVersionId: dossierSourceVersionId };
   }
 
-  /** Главы исходника; больше потолка - 409, а не досье по первым главам книги. */
-  async chaptersOf(versionId: string): Promise<FingerprintChapter[]> {
-    const chapters = await this.prisma.chapter.findMany({
-      where: { bookVersionId: versionId },
-      select: { number: true, title: true, content: true },
-      orderBy: { number: 'asc' },
-      take: DOSSIER_MAX_CHAPTERS + 1,
-    });
-    if (chapters.length > DOSSIER_MAX_CHAPTERS) {
-      throw llmTaskConflict(
-        'SOURCE_TOO_MANY_CHAPTERS',
-        `The source has more than ${DOSSIER_MAX_CHAPTERS} chapters`,
-      );
+  /**
+   * Обход исходника страницами (`F05-Rb`): куски первого прохода отдаются `visit` по одному и в
+   * памяти не копятся, остаются названия глав и сжатый план. Потолка на число глав нет.
+   */
+  private async walkSource(
+    sourceVersionId: string,
+    visit: (part: DossierPartPlan) => Promise<void> | void,
+  ): Promise<{ titles: ChapterTitle[]; entries: DossierPlanEntry[]; parts: number }> {
+    const titles: ChapterTitle[] = [];
+    const entries: DossierPlanEntry[] = [];
+    let parts = 0;
+    for await (const page of chapterPages(this.prisma, sourceVersionId, {
+      number: true,
+      title: true,
+      content: true,
+    })) {
+      for (const chapter of page) titles.push({ number: chapter.number, title: chapter.title });
+      const plans = planDossierParts(page);
+      for (const plan of plans) await visit(plan);
+      entries.push(...planEntries(plans));
+      parts += plans.length;
     }
-    return chapters;
+    return { titles, entries, parts };
   }
 
   latestDossier(sourceVersionId: string): Promise<BookDossier | null> {
@@ -303,14 +329,11 @@ export class DossierService {
 
   private async estimateOf(versionId: string): Promise<DossierEstimate> {
     const { sourceVersionId } = await this.dossierSourceOf(versionId);
-    const chapters = await this.chaptersOf(sourceVersionId);
-    const plans = planDossierParts(chapters);
-    if (plans.length === 0) throw this.noChapters();
-    const estimateUsd = await this.estimatePlans(plans, chapters);
+    const { estimateUsd, entries, parts } = await this.estimateSource(sourceVersionId);
     return {
       sourceVersionId,
-      chapters: new Set(plans.map((p) => p.chapterNumber)).size,
-      parts: plans.length,
+      chapters: entries.length,
+      parts,
       estimateUsd,
       suggestedLimitUsd: estimateUsd.mul(DOSSIER_LIMIT_FACTOR),
     };
@@ -426,11 +449,8 @@ export class DossierService {
     this.llm.assertEnabled();
     if (!input.options.waiter) await this.assertCeilingRoom();
     // Текст читается один раз на старте: план хранится в строке, шаг читает свою главу.
-    const chapters = await this.chaptersOf(input.sourceVersionId);
-    const plans = planDossierParts(chapters);
-    if (plans.length === 0) throw this.noChapters();
     // Оценка нужна и при лимите редактора: модель без цены - 409 `LLM_NO_PRICE` до операции.
-    const estimate = await this.estimatePlans(plans, chapters);
+    const { estimateUsd: estimate, entries } = await this.estimateSource(input.sourceVersionId);
     const limitUsd = input.options.limitUsd ?? estimate.mul(DOSSIER_LIMIT_FACTOR);
     if (!(await this.waiterFits(input.options, limitUsd))) return 'waiter-limit';
     const opData = await this.llm.operationData({
@@ -449,7 +469,7 @@ export class DossierService {
             sourceVersionId: input.sourceVersionId,
             generation: input.generation,
             fingerprint: input.fingerprint,
-            plan: planEntries(plans) as unknown as Prisma.InputJsonValue,
+            plan: entries as unknown as Prisma.InputJsonValue,
             operationId: op.id,
           },
         });
@@ -474,17 +494,14 @@ export class DossierService {
     // закрывается, следующий, кому досье нужно, строит новое поколение.
     const verdict = await this.builderVerdict(row, op, options, 'bookDossier', fresh);
     if (verdict !== 'takeover') return verdict;
-    const chapters = await this.chaptersOf(row.sourceVersionId);
-    const all = planDossierParts(chapters);
     const done = await this.prisma.bookDossierPart.findMany({
       where: { dossierId: row.id },
       select: { chapterNumber: true, partIndex: true },
-      take: all.length,
+      take: planPartsCount(readPlan(row.plan)),
     });
     const saved = new Set(done.map((p) => partKey(p.chapterNumber, p.partIndex)));
-    const remaining = all.filter((p) => !saved.has(partKey(p.chapterNumber, p.partIndex)));
     // Сводка оценивается по всем кускам: её вход - все частичные, и уже сохранённые тоже.
-    const estimate = await this.estimatePlans(remaining, chapters, all);
+    const { estimateUsd: estimate } = await this.estimateSource(row.sourceVersionId, saved);
     const taken = await this.takeOver(
       row,
       'bookDossier',
@@ -774,22 +791,28 @@ export class DossierService {
     return id ? this.prisma.llmOperation.findUnique({ where: { id } }) : Promise.resolve(null);
   }
 
-  private async estimatePlans(
-    plans: DossierPartPlan[],
-    chapters: FingerprintChapter[],
-    allPlans: DossierPartPlan[] = plans,
-  ): Promise<Prisma.Decimal> {
-    const call = await this.estimator(DOSSIER_STAGE);
-    let total = new Prisma.Decimal(0);
-    for (const plan of plans) total = total.add(call.estimate(dossierPartRequest(plan)));
-    // Вход сводки - частичные досье всех кусков. Ответ куска не длиннее `maxTokens` токенов, то
-    // есть до `maxTokens × ANSWER_CHARS_PER_TOKEN` символов JSON, а резерв клиента считает
-    // символ за токен.
-    const summary = dossierSummaryRequest({
-      chapters: chapters.map((c) => ({ number: c.number, title: c.title })),
-      parts: [],
+  /**
+   * Оценка построения сверху: куски первого прохода (кроме `saved`) плюс сводка по ответам всех
+   * кусков. Сводка, которая не влезает в контекст, считается с вызовами групп по уровням.
+   */
+  private async estimateSource(
+    sourceVersionId: string,
+    saved: ReadonlySet<string> = new Set(),
+  ): Promise<{ estimateUsd: Prisma.Decimal; entries: DossierPlanEntry[]; parts: number }> {
+    const held: { call?: StageCallEstimator } = {};
+    let partsUsd = new Prisma.Decimal(0);
+    const { titles, entries, parts } = await this.walkSource(sourceVersionId, async (part) => {
+      const call = (held.call ??= await this.estimator(DOSSIER_STAGE));
+      if (saved.has(partKey(part.chapterNumber, part.partIndex))) return;
+      partsUsd = partsUsd.add(call.estimate(dossierPartRequest(part)));
     });
-    return total.add(call.estimate(summary, summaryAnswersChars(allPlans.length, call)));
+    const { call } = held;
+    if (!call || parts === 0) throw this.noChapters();
+    return {
+      estimateUsd: partsUsd.add(summaryUsd(call, titles, parts)),
+      entries,
+      parts,
+    };
   }
 
   private async estimateGlossary(
@@ -958,6 +981,37 @@ function summaryAnswersChars(parts: number, call: StageCallEstimator): number {
   return call.contextLength === null
     ? answers
     : Math.min(answers, call.contextLength * ANSWER_CHARS_PER_TOKEN);
+}
+
+/**
+ * Сверху: сколько стоит сводка из `parts` ответов кусков. Влезает в контекст - один вызов; не
+ * влезает - вызовы групп по уровням (`summaryLevels`) и итоговая сводка (`F05-Rb`). В группу
+ * помещается столько ответов, сколько остаётся от контекста после названий глав и ответа.
+ */
+function summaryUsd(
+  call: StageCallEstimator,
+  titles: ChapterTitle[],
+  parts: number,
+): Prisma.Decimal {
+  const base = dossierSummaryRequest({ chapters: titles, parts: [] });
+  const answerChars = call.maxTokens * ANSWER_CHARS_PER_TOKEN;
+  const room =
+    call.contextLength === null
+      ? 0
+      : inputCeilingChars(call.contextLength, call.maxTokens, SUMMARY_INPUT_CHARS_PER_TOKEN) -
+        estimateInputTokens(base);
+  // Контекст неизвестен или в него не влезает даже ответ - групп нет: сводка не уйдёт вовсе
+  // (`DOSSIER_TOO_LONG` без вызова), оценка остаётся одной сводкой, как раньше.
+  const capacity =
+    call.contextLength === null || room <= 0
+      ? Number.POSITIVE_INFINITY
+      : Math.max(1, Math.floor(room / answerChars));
+  const { groupsPerLevel, finalItems } = summaryLevels(parts, capacity);
+  let usd = call.estimate(base, summaryAnswersChars(finalItems, call));
+  for (const groups of groupsPerLevel) {
+    usd = usd.add(call.estimate(base, summaryAnswersChars(capacity, call)).mul(groups));
+  }
+  return usd;
 }
 
 /**

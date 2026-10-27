@@ -4254,6 +4254,7 @@ model BookDossier {
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
   parts           BookDossierPart[]
+  groups          BookDossierGroup[]
   glossaries      BookGlossary[]
   translationRuns TranslationRun[]
 
@@ -4278,6 +4279,31 @@ model BookDossierPart {
   createdAt     DateTime    @default(now())
 
   @@unique([dossierId, chapterNumber, partIndex])
+}
+
+/// Сводка группы подряд идущих элементов (`F05-Rb`): вход сводки не влез в контекст модели, поэтому его делят
+/// на группы. Уровень 0 - группы частичных досье, уровень N - группы результатов уровня N-1. Строки уровня
+/// заводятся разом, после продления аренды и только пока строка досье строится под операцией шага (Р7):
+/// перехватчик со своей упаковкой их не смешает. `done` и `data` пишет шаг группы после продления аренды.
+model BookDossierGroup {
+  id           String      @id @default(uuid())
+  dossierId    String
+  dossier      BookDossier @relation(fields: [dossierId], references: [id], onDelete: Cascade)
+  level        Int
+  groupIndex   Int
+  /// Номер первого элемента уровня (по порядку) и сколько элементов в группе.
+  firstItem    Int
+  itemCount    Int
+  /// Главы читалки, которые покрывает группа: по ним проверяется ответ.
+  firstChapter Int
+  lastChapter  Int
+  done         Boolean     @default(false)
+  data         Json?
+  /// Вызов, давший ответ (`LlmCall.id`); ссылки нет - журнал вызовов живёт отдельно.
+  callId       String?
+  createdAt    DateTime    @default(now())
+
+  @@unique([dossierId, level, groupIndex])
 }
 
 /// Глоссарий пары (досье, язык): один на пару, общий для перевода и заготовок этого языка.

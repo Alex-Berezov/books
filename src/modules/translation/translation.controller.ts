@@ -117,8 +117,7 @@ export class TranslationController {
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: DossierEstimateDto })
   @ApiConflictResponse({
-    description:
-      'SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+    description: 'SOURCE_HAS_NO_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
   })
   estimate(@Param('id') id: string): Promise<DossierEstimateDto> {
     return this.dossiers.estimate(id);
@@ -144,7 +143,7 @@ export class TranslationController {
   @ApiAcceptedResponse({ type: DossierStatusDto })
   @ApiConflictResponse({
     description:
-      'DOSSIER_FRESH: a fresh dossier exists; DOSSIER_OF_RUN: the version was made by a translation run, its dossier is the run dossier; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again',
+      'DOSSIER_FRESH: a fresh dossier exists; DOSSIER_OF_RUN: the version was made by a translation run, its dossier is the run dossier; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again',
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
   build(
@@ -185,7 +184,7 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Version or chapter not found' })
   @ApiConflictResponse({
     description:
-      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+      'The version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_MODELS_UNAVAILABLE' })
   compareEstimate(
@@ -209,7 +208,7 @@ export class TranslationController {
   @ApiNotFoundResponse({ description: 'Version or chapter not found' })
   @ApiConflictResponse({
     description:
-      'LLM_CEILING_REACHED: the spending ceiling is reached; the version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; SOURCE_TOO_MANY_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+      'LLM_CEILING_REACHED: the spending ceiling is reached; the version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
   })
   @ApiServiceUnavailableResponse({
     description: 'LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE',

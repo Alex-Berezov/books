@@ -1,15 +1,16 @@
 import { Injectable } from '@nestjs/common';
-import { LlmOperation, LlmTask, Prisma } from '@prisma/client';
+import { BookDossier, LlmOperation, LlmTask, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmService } from '../../llm/llm.service';
+import { estimateInputTokens, SUMMARY_INPUT_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
 import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.registry';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
+import { allChapters } from '../chapter-pages';
 import { callShaped, ShapedAnswer } from '../llm-shaped-call';
 import { sourceFingerprint } from '../source-fingerprint';
 import {
   DOSSIER_INVALID_RESPONSE,
-  DOSSIER_MAX_CHAPTERS,
   DOSSIER_SOURCE_CHANGED,
   DOSSIER_STAGE,
   DOSSIER_TOO_LONG,
@@ -24,7 +25,15 @@ import {
   GLOSSARY_SHAPE,
   Shape,
 } from './dossier.format';
-import { nextPlannedPart, partKey, planChapterParts, readPlan } from './dossier-parts';
+import { GroupItem, levelNarrows, packGroups, summaryInputChars } from './dossier-groups';
+import {
+  DossierPlanEntry,
+  nextPlannedPart,
+  planPartsCount,
+  partKey,
+  planChapterParts,
+  readPlan,
+} from './dossier-parts';
 import {
   dossierPartRequest,
   dossierSummaryRequest,
@@ -129,7 +138,7 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
     const savedKeys = await this.prisma.bookDossierPart.findMany({
       where: { dossierId: row.id },
       select: { chapterNumber: true, partIndex: true },
-      take: plan.reduce((sum, e) => sum + e.parts, 0),
+      take: planPartsCount(plan),
     });
     const next = nextPlannedPart(
       plan,
@@ -175,35 +184,155 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       return { kind: 'continue' };
     }
 
-    // Сводка: названия глав и все частичные досье - один раз за построение.
-    const [chapters, parts] = await Promise.all([
-      this.prisma.chapter.findMany({
-        where: { bookVersionId: row.sourceVersionId },
-        select: { number: true, title: true },
-        orderBy: { number: 'asc' },
-        take: DOSSIER_MAX_CHAPTERS,
-      }),
-      this.prisma.bookDossierPart.findMany({
-        where: { dossierId: row.id },
-        select: { chapterNumber: true, partIndex: true, data: true },
-        orderBy: [{ chapterNumber: 'asc' }, { partIndex: 'asc' }],
-        // Кусков не больше, чем в плане строки: выборка ограничена им.
-        take: plan.reduce((sum, e) => sum + e.parts, 0),
-      }),
-    ]);
+    return this.summarize(row, plan, task, ctx);
+  }
+
+  /**
+   * Сводка (`F05-Rb`). Вход влезает в контекст - один вызов, как раньше. Не влезает - группы
+   * подряд идущих элементов, каждая своим шагом, затем те же правила к результатам групп:
+   * уровень с одним вызовом и есть итог. Строки групп уровня заводятся разом, поэтому границы
+   * не плывут, если модель этапа сменили посреди построения; результат группы пишется после
+   * продления аренды, и повтор шага её не оплачивает.
+   */
+  private async summarize(
+    row: BookDossier,
+    plan: DossierPlanEntry[],
+    task: LlmTask,
+    ctx: LlmTaskContext,
+  ): Promise<LlmTaskStepResult> {
     const planned = plan.map((e) => e.chapterNumber);
-    const summary = dossierSummaryRequest({ chapters, parts });
-    const stage = await this.llm.stageFit(DOSSIER_STAGE, summary);
-    if (!stage.fits) {
-      // Сводка не влезает в контекст: вызов заплатил бы и отказал. Строка `failed` сразу,
-      // без перехвата; модель - чтобы ждущий не строил ту же строку той же моделью заново.
-      await this.tasks.failOperation(task.operationId, async (tx) => {
-        await this.dossiers.failRow('bookDossier', row.id, task.operationId, tx, {
-          failedReason: DOSSIER_TOO_LONG,
-          model: stage.model,
-        });
+    const partsTotal = planPartsCount(plan);
+    // Верхний уровень - отдельным запросом, строки - только его: на уровне групп не больше, чем
+    // элементов уровня ниже, то есть не больше кусков плана.
+    const top = await this.prisma.bookDossierGroup.aggregate({
+      where: { dossierId: row.id },
+      _max: { level: true },
+    });
+    const topLevel = top._max.level ?? -1;
+    const groups =
+      topLevel < 0
+        ? []
+        : await this.prisma.bookDossierGroup.findMany({
+            where: { dossierId: row.id, level: topLevel },
+            select: {
+              id: true,
+              level: true,
+              firstItem: true,
+              itemCount: true,
+              firstChapter: true,
+              lastChapter: true,
+              done: true,
+            },
+            orderBy: { groupIndex: 'asc' },
+            take: partsTotal,
+          });
+    const pending = groups.find((g) => !g.done);
+
+    if (pending) {
+      const items = await this.loadItems(
+        row.id,
+        pending.level - 1,
+        pending.firstItem,
+        pending.itemCount,
+      );
+      // Шаг группы читает только названия своих глав.
+      const own = await allChapters(
+        this.prisma,
+        row.sourceVersionId,
+        { number: true, title: true },
+        { from: pending.firstChapter, to: pending.lastChapter },
+      );
+      const request = dossierSummaryRequest({ chapters: own, parts: items.map((i) => i.entry) });
+      const stage = await this.summaryFit(request);
+      if (!stage.fits) return this.failTooLong(row, task, stage.model);
+      const answer = await this.callShaped(
+        task.operationId,
+        DOSSIER_STAGE,
+        request,
+        DOSSIER_SHAPE,
+        ctx,
+        (value) =>
+          dossierChapterErrors(
+            value,
+            planned.filter((n) => n >= pending.firstChapter && n <= pending.lastChapter),
+            own.map((c) => c.number),
+          ),
+      );
+      if (!answer.ok) {
+        await this.failBuild('bookDossier', row.id, task.operationId, row.takeovers);
+        return { kind: 'fail', reason: DOSSIER_INVALID_RESPONSE };
+      }
+      await ctx.renewLease();
+      await this.prisma.bookDossierGroup.updateMany({
+        where: { id: pending.id, done: false },
+        data: { done: true, data: answer.value as Prisma.InputJsonValue, callId: answer.callId },
       });
-      return { kind: 'fail', reason: DOSSIER_TOO_LONG };
+      return { kind: 'continue' };
+    }
+
+    const titles = await allChapters(this.prisma, row.sourceVersionId, {
+      number: true,
+      title: true,
+    });
+    const items = await this.loadItems(
+      row.id,
+      topLevel,
+      0,
+      topLevel < 0 ? partsTotal : groups.length,
+    );
+    const summary = dossierSummaryRequest({ chapters: titles, parts: items.map((i) => i.entry) });
+    const stage = await this.summaryFit(summary);
+    if (!stage.fits) {
+      // Группа меряется с названиями всех глав, как итоговая сводка: иначе группы влезли бы,
+      // а итог из их ответов - нет, и отказ пришёл бы после оплаты всех групп. Граница и длины
+      // элементов - один раз, проба - сложение (Р6 `F05 | F05-Rb`): упаковка не ходит в базу и не
+      // сериализует вход на каждой пробе и не переживает аренду.
+      const { maxInputChars } = await this.llm.stageInputCeiling(DOSSIER_STAGE, {
+        charsPerToken: SUMMARY_INPUT_CHARS_PER_TOKEN,
+      });
+      const emptyChars = estimateInputTokens(
+        dossierSummaryRequest({ chapters: titles, parts: [] }),
+      );
+      const lengths = new Map(items.map((i) => [i, JSON.stringify(i.entry).length]));
+      const spans = await packGroups(items, (group) =>
+        Promise.resolve(
+          maxInputChars === null ||
+            summaryInputChars(
+              emptyChars,
+              group.map((i) => lengths.get(i) ?? 0),
+            ) <= maxInputChars,
+        ),
+      );
+      // Элемент не влез сам или уровень выше нулевого не сужается хотя бы вдвое (Р3).
+      if (!spans || !levelNarrows(topLevel + 1, items.length, spans.length)) {
+        return this.failTooLong(row, task, stage.model);
+      }
+      // Пробы упаковки долгие: аренду могли отдать другому, и его границы уже записаны. Без
+      // аренды строки уровня не пишутся (как куски, `L-019`; Р5 `F05 | F05-Rb`).
+      await ctx.renewLease();
+      // Строку могли перехватить, а модель этапа - сменить: тогда у перехватчика своя упаковка.
+      // Уровень пишется, только пока строка строится под операцией этой задачи; условная запись
+      // берёт замок строки, а перехват меняет `operationId` той же строки - они не пересекаются
+      // (решение арбитра `F05 | F05-Rb`, Р7).
+      const written = await this.prisma.$transaction(async (tx) => {
+        const own = await tx.bookDossier.updateMany({
+          where: { id: row.id, status: 'building', operationId: task.operationId },
+          data: { updatedAt: new Date() },
+        });
+        if (own.count === 0) return false;
+        await tx.bookDossierGroup.createMany({
+          data: spans.map((span, groupIndex) => ({
+            dossierId: row.id,
+            level: topLevel + 1,
+            groupIndex,
+            ...span,
+          })),
+          skipDuplicates: true,
+        });
+        return true;
+      });
+      // Строку перехватили: шаг этой задачи больше никому не нужен.
+      return written ? { kind: 'continue' } : { kind: 'done' };
     }
     const answer = await this.callShaped(
       task.operationId,
@@ -215,7 +344,7 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
         dossierChapterErrors(
           value,
           planned,
-          chapters.map((c) => c.number),
+          titles.map((c) => c.number),
         ),
     );
     if (!answer.ok) {
@@ -237,6 +366,67 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       });
     });
     return { kind: 'done' };
+  }
+
+  /** Влезет ли вход сводки досье: делитель JSON-входа, а не прозы (Р1 `F05 | F05-Rb`). */
+  private summaryFit(request: ShapedRequest): Promise<{ fits: boolean; model: string }> {
+    return this.llm.stageFit(DOSSIER_STAGE, request, undefined, [], SUMMARY_INPUT_CHARS_PER_TOKEN);
+  }
+
+  /**
+   * Сводка не влезает и делить нечем: вызов заплатил бы и отказал. Строка `failed` сразу, без
+   * перехвата; модель - чтобы ждущий не строил ту же строку той же моделью заново.
+   */
+  private async failTooLong(
+    row: BookDossier,
+    task: LlmTask,
+    model: string,
+  ): Promise<LlmTaskStepResult> {
+    await this.tasks.failOperation(task.operationId, async (tx) => {
+      await this.dossiers.failRow('bookDossier', row.id, task.operationId, tx, {
+        failedReason: DOSSIER_TOO_LONG,
+        model,
+      });
+    });
+    return { kind: 'fail', reason: DOSSIER_TOO_LONG };
+  }
+
+  /**
+   * Элементы сводки по порядку: частичные досье кусков (`itemLevel` -1) или результаты групп
+   * уровня `itemLevel`. `count` не больше числа кусков плана, выборка ограничена им.
+   */
+  private async loadItems(
+    dossierId: string,
+    itemLevel: number,
+    skip: number,
+    count: number,
+  ): Promise<GroupItem[]> {
+    if (itemLevel < 0) {
+      const parts = await this.prisma.bookDossierPart.findMany({
+        where: { dossierId },
+        select: { chapterNumber: true, partIndex: true, data: true },
+        orderBy: [{ chapterNumber: 'asc' }, { partIndex: 'asc' }],
+        skip,
+        take: count,
+      });
+      return parts.map((p) => ({
+        firstChapter: p.chapterNumber,
+        lastChapter: p.chapterNumber,
+        entry: p,
+      }));
+    }
+    const results = await this.prisma.bookDossierGroup.findMany({
+      where: { dossierId, level: itemLevel, done: true },
+      select: { firstChapter: true, lastChapter: true, data: true },
+      orderBy: { groupIndex: 'asc' },
+      skip,
+      take: count,
+    });
+    return results.map((g) => ({
+      firstChapter: g.firstChapter,
+      lastChapter: g.lastChapter,
+      entry: g,
+    }));
   }
 
   private async runGlossary(task: LlmTask, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {

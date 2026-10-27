@@ -23,7 +23,6 @@ import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { LlmOperationsService } from '../../llm-worker/llm-operations.service';
 import { EnqueueTaskInput, LlmTaskService, pairKeyOf } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
-import { DOSSIER_MAX_CHAPTERS } from '../dossier/dossier.constants';
 import { DossierService } from '../dossier/dossier.service';
 import { assertKnownModels, stageEstimatorFor } from '../llm-model-checks';
 import { TranslationTargetReason } from '../translation-source';
@@ -55,6 +54,7 @@ import { runModelsOf, runStageModels } from './run-models';
 import {
   CHUNK_CLOSED_STATUSES,
   RUN_HISTORY_STAGES,
+  RUN_MAX_CHAPTERS,
   RUN_OPERATIONS_MAX,
   TRANSLATION_RUN_TASK_KIND,
 } from './translation-run.constants';
@@ -297,12 +297,12 @@ export class TranslationRunService {
       l.blockedByOperationId ? [l.blockedByOperationId] : [],
     );
     const [chapters, chunks, own, blocking] = await Promise.all([
-      // Номера глав исходника - для «глава N из M»; глав не больше предела досье.
+      // Номера глав исходника - для «глава N из M»; глав не больше потолка запуска (`RUN_MAX_CHAPTERS`, проверен по всем главам).
       this.prisma.chapter.findMany({
         where: { bookVersionId: run.bookVersionId },
         select: { number: true },
         orderBy: { number: 'asc' },
-        take: DOSSIER_MAX_CHAPTERS,
+        take: RUN_MAX_CHAPTERS,
       }),
       // Строк не больше, чем языков × статусов куска: группировка, а не выборка кусков.
       this.prisma.translationChunk.groupBy({
@@ -441,18 +441,22 @@ export class TranslationRunService {
     const sourceLanguage = await this.assertSource(versionId, query.languages);
     if (query.translateModel) await assertKnownModels(this.llm, [query.translateModel]);
     const call = await stageEstimatorFor(this.llm, TRANSLATE_STAGE, query.translateModel);
+    // Потолок - по всем главам, пустые тоже: выборки шагов запуска (финальная проверка, «глава N
+    // из M») берут все главы с тем же `take`, и лишние молча ушли бы за край (`F05-Rb`, круг 2).
+    const total = await this.prisma.chapter.count({ where: { bookVersionId: versionId } });
+    if (total > RUN_MAX_CHAPTERS) {
+      throw llmTaskConflict(
+        'SOURCE_TOO_MANY_CHAPTERS',
+        `The source has more than ${RUN_MAX_CHAPTERS} chapters`,
+      );
+    }
     const chapters = await this.prisma.chapter.findMany({
       where: { bookVersionId: versionId, content: { not: '' } },
       select: { number: true, content: true },
       orderBy: { number: 'asc' },
-      take: DOSSIER_MAX_CHAPTERS + 1,
+      // Глав не больше потолка - проверено выше по всем главам.
+      take: RUN_MAX_CHAPTERS,
     });
-    if (chapters.length > DOSSIER_MAX_CHAPTERS) {
-      throw llmTaskConflict(
-        'SOURCE_TOO_MANY_CHAPTERS',
-        `The source has more than ${DOSSIER_MAX_CHAPTERS} chapters`,
-      );
-    }
     const nearLimit = RICH_HTML_MAX_LENGTH.body * NEAR_LIMIT_SHARE;
     const nearLimitChapters = chapters
       .filter((c) => sanitizeRichHtml(c.content).length >= nearLimit)
