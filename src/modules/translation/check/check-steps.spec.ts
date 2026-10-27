@@ -8,7 +8,13 @@ import { shapeErrors } from '../dossier/dossier.format';
 import { fenced } from '../fenced-data';
 import { passesThroughOptional } from '../pause-by-failure';
 import { planChapter } from '../translate/translate-estimate';
-import { chapterCheckUsd, chapterSeamUsd, checkEstimator } from './check-estimate';
+import {
+  chapterCheckUsd,
+  chapterJevUsd,
+  chapterSeamUsd,
+  checkEstimator,
+  jevCallUsd,
+} from './check-estimate';
 import {
   attemptSeed,
   cappedRemarks,
@@ -17,6 +23,18 @@ import {
   verdictOf,
 } from './chunk-verdict';
 import { JEV_SHAPE, jevMessages } from './jev-check';
+import {
+  FINAL_CHECK_STAGE,
+  FINAL_CHECK_STAGE_DEFINITIONS,
+} from '../final-check/final-check.constants';
+import { TRANSLATE_STAGE, TRANSLATE_STAGE_DEFINITIONS } from '../translate/translate.constants';
+import {
+  CHECK_JEV_STAGE,
+  CHECK_SEMANTIC_STAGE,
+  CHECK_STAGE_DEFINITIONS,
+  JEV_TEXT_MAX_CHARS,
+} from './check.constants';
+import { familyOf } from './semantic-check';
 import { checkSemantic, semanticInputOf } from './semantic-step';
 import { checkJev } from './jev-step';
 
@@ -189,7 +207,68 @@ describe('check estimate', () => {
   });
 });
 
+describe('Jev in the check estimate (Р9 F05-R)', () => {
+  it('a call per piece with the translation cut to JEV_TEXT_MAX_CHARS while the stage is on', async () => {
+    const plan = await planChapter(
+      1,
+      Array.from({ length: 40 }, (_, i) => `<p>Line ${i} ${'word '.repeat(99)}</p>`).join(''),
+    );
+    expect(plan.chunks.length).toBeGreaterThan(1);
+    const on = fakeLlm({ models: ['typesafe/jev'] });
+    const perCall = await jevCallUsd(on.llm);
+    expect((on.llm.stageCallEstimator as jest.Mock).mock.calls).toEqual([['check_language_jev']]);
+    // Оценщик заглушки - длина сообщений: вызов с текстом до `JEV_TEXT_MAX_CHARS`.
+    expect(perCall!.gte(JEV_TEXT_MAX_CHARS)).toBe(true);
+    expect(chapterJevUsd(perCall, plan).toString()).toBe(
+      perCall!.mul(plan.chunks.length).toString(),
+    );
+  });
+
+  it('the stage off or its model without a price: not in the estimate and no refusal', async () => {
+    const off = fakeLlm({ models: ['typesafe/jev'], estimator: { enabled: false } });
+    expect(await jevCallUsd(off.llm)).toBeNull();
+    const noPrice = fakeLlm({ models: ['typesafe/jev'] });
+    (noPrice.llm.stageCallEstimator as jest.Mock).mockRejectedValueOnce(
+      new LlmError('LLM_NO_PRICE', 'x'),
+    );
+    expect(await jevCallUsd(noPrice.llm)).toBeNull();
+    const broken = fakeLlm({ models: ['typesafe/jev'] });
+    (broken.llm.stageCallEstimator as jest.Mock).mockRejectedValueOnce(new Error('db down'));
+    await expect(jevCallUsd(broken.llm)).rejects.toThrow('db down');
+    const plan = await planChapter(1, '<p>One short line.</p>');
+    expect(chapterJevUsd(null, plan).toString()).toBe('0');
+  });
+});
+
 describe('verdict, Jev and the fence', () => {
+  it('the default translator and its fallback are of another family than every default checker (Р2 F05-R)', () => {
+    const translate = TRANSLATE_STAGE_DEFINITIONS.find((d) => d.stage === TRANSLATE_STAGE);
+    expect(translate).toMatchObject({
+      model: 'openai/gpt-5.6-terra',
+      fallbacks: ['anthropic/claude-sonnet-5.5'],
+    });
+    const translators = new Set([translate!.model, ...translate!.fallbacks].map(familyOf));
+    const checks = [
+      CHECK_STAGE_DEFINITIONS.find((d) => d.stage === CHECK_SEMANTIC_STAGE),
+      FINAL_CHECK_STAGE_DEFINITIONS.find((d) => d.stage === FINAL_CHECK_STAGE),
+    ];
+    for (const check of checks) {
+      for (const model of [check!.model, ...check!.fallbacks]) {
+        expect(translators.has(familyOf(model))).toBe(false);
+      }
+    }
+  });
+
+  it('the meaning check leaves room for the reasoning of its model: 8000 tokens (Р4 F05-R)', () => {
+    const semantic = CHECK_STAGE_DEFINITIONS.find((d) => d.stage === CHECK_SEMANTIC_STAGE);
+    expect(semantic?.maxTokens).toBe(8_000);
+  });
+
+  it('Jev is on by default with a price cap: the router has no price in the catalog (F05-R)', () => {
+    const jev = CHECK_STAGE_DEFINITIONS.find((d) => d.stage === CHECK_JEV_STAGE);
+    expect(jev).toMatchObject({ enabled: true, maxPricePerMTok: '5' });
+  });
+
   it('a verdict of another form is read as none: the check starts clean', () => {
     expect(verdictOf(null)).toBeNull();
     expect(verdictOf({ seed: 'x', failures: 0, remarks: [], attempts: [] })).toBeNull();

@@ -1,5 +1,6 @@
 import { ContentDraftKind } from '@prisma/client';
 import { LlmStageDefinition } from '../../llm/llm-stages.registry';
+import { GPT_TERRA_MODEL } from '../translate/translate.constants';
 
 /** Этапы заготовок (`tech.md` §2б): у Summary имя этапа совпадает с видом, у Analysis - нет. */
 export const SUMMARY_SECTIONS_STAGE = 'summary_sections';
@@ -44,14 +45,14 @@ export const ANALYSIS_DRAFT_REMARKS = 1;
 export const DRAFT_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
 
 /**
- * Умолчания этапов (`tech.md` §3: Claude, длинный контекст). Запасных в коде нет, как у досье:
- * их ставит редактор на экране «LLM settings».
+ * Умолчания этапов (`tech.md` §3: Claude, длинный контекст), запасная - `GPT_TERRA_MODEL`,
+ * как у досье.
  */
 export const CONTENT_DRAFT_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
     stage: SUMMARY_SECTIONS_STAGE,
     model: 'anthropic/claude-sonnet-5.5',
-    fallbacks: [],
+    fallbacks: [GPT_TERRA_MODEL],
     temperature: 0.3,
     maxTokens: 4_000,
     enabled: true,
@@ -59,7 +60,7 @@ export const CONTENT_DRAFT_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
     stage: SUMMARY_FULL_STAGE,
     model: 'anthropic/claude-sonnet-5.5',
-    fallbacks: [],
+    fallbacks: [GPT_TERRA_MODEL],
     temperature: 0.3,
     maxTokens: 16_000,
     enabled: true,
@@ -67,7 +68,7 @@ export const CONTENT_DRAFT_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
     stage: SUMMARY_BRIEF_STAGE,
     model: 'anthropic/claude-sonnet-5.5',
-    fallbacks: [],
+    fallbacks: [GPT_TERRA_MODEL],
     temperature: 0.3,
     maxTokens: 6_000,
     enabled: true,
@@ -75,7 +76,7 @@ export const CONTENT_DRAFT_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
     stage: ANALYSIS_DRAFT_STAGE,
     model: 'anthropic/claude-sonnet-5.5',
-    fallbacks: [],
+    fallbacks: [GPT_TERRA_MODEL],
     temperature: 0.2,
     // Ответ - до 20 героев, 12 цитат и 10 приёмов с примерами.
     maxTokens: 12_000,

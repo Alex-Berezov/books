@@ -11,6 +11,7 @@ import { llmTaskConflict } from '../src/modules/llm-worker/llm-worker.errors';
 import { DossierService } from '../src/modules/translation/dossier/dossier.service';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
+import { llmCallName } from './helpers/llm-call-name';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
@@ -255,7 +256,7 @@ describe('Translation compare (e2e)', () => {
       if (urlOf(url).endsWith('/models')) return Promise.resolve(json(MODELS));
       if (urlOf(url).endsWith('/chat/completions')) {
         const body = JSON.parse((init as RequestInit).body as string) as ChatBody;
-        const name = body.response_format?.json_schema?.name ?? '';
+        const name = llmCallName(body);
         calls.push({ name, model: body.model, body });
         return Promise.resolve(
           json({

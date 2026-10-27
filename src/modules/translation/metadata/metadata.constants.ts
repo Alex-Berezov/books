@@ -1,17 +1,18 @@
 import { LlmStageDefinition } from '../../llm/llm-stages.registry';
+import { GPT_TERRA_MODEL } from '../translate/translate.constants';
 
 export const METADATA_STAGE = 'metadata';
 
 /**
  * Умолчание этапа `metadata` (`tech.md` §3: «как `dossier`, `glossary`» - Claude, длинный контекст
  * и качество чтения). Описание книги идёт блоками и бывает длинным (до `RICH_HTML_MAX_LENGTH.text`),
- * поэтому выход - как у перевода куска.
+ * поэтому выход - как у перевода куска. Запасная - `GPT_TERRA_MODEL`.
  */
 export const METADATA_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
     stage: METADATA_STAGE,
     model: 'anthropic/claude-sonnet-5.5',
-    fallbacks: [],
+    fallbacks: [GPT_TERRA_MODEL],
     temperature: 0.2,
     maxTokens: 16_000,
     enabled: true,

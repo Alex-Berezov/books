@@ -32,6 +32,7 @@ import { TranslationRunReportDto } from '../src/modules/translation/dto/translat
 import { sourceFingerprint } from '../src/modules/translation/source-fingerprint';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
+import { llmCallName } from './helpers/llm-call-name';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
@@ -43,6 +44,8 @@ import { grantStaffRoles } from './helpers/staff-roles';
 describe('Translation run (e2e)', () => {
   const FAKE_KEY = 'sk-or-e2e-fake-key';
   const MODEL = 'anthropic/claude-sonnet-5.5';
+  /** Умолчание этапа `translate` (Р2 `F05 | F05-R`); его запасная - `MODEL`. */
+  const TRANSLATOR = 'openai/gpt-5.6-terra';
   const ALT = 'z/alt-model';
   /** Модель с крошечным контекстом: кусок с досье в неё не влезает. */
   const TINY = 'z/tiny-context';
@@ -58,6 +61,7 @@ describe('Translation run (e2e)', () => {
   const MODELS = {
     data: [
       MODEL,
+      TRANSLATOR,
       ALT,
       TINY,
       NO_PRICE,
@@ -66,7 +70,7 @@ describe('Translation run (e2e)', () => {
       JEV,
       Z_CHECKER,
       'google/gemma-4-31b-it:free',
-      'minimax/minimax-m3.1-flash:free',
+      'xingchen-agi/xing4.0-29b-a4b:free',
     ].map((id) => ({
       id,
       name: id,
@@ -412,7 +416,10 @@ describe('Translation run (e2e)', () => {
     calls.length = 0;
     answer = defaultAnswer;
     keepNames = false;
-    jevTargetOf = () => 'es';
+    // Jev включён по умолчанию (`F05-R`): называет язык подменённого перевода - по его метке.
+    jevTargetOf = (body) =>
+      /<<<TEXT\n(EN|ES|FR|PT|RU) /.exec(body.messages[1]?.content ?? '')?.[1].toLowerCase() ??
+      'unsure';
     dossier = DOSSIER;
     refuse = () => null;
     during = () => Promise.resolve();
@@ -421,7 +428,7 @@ describe('Translation run (e2e)', () => {
       if (urlOf(url).endsWith('/models')) return json(MODELS);
       if (urlOf(url).endsWith('/chat/completions')) {
         const body = JSON.parse((init as RequestInit).body as string) as ChatBody;
-        const name = body.response_format?.json_schema?.name ?? '';
+        const name = llmCallName(body);
         calls.push({ name, model: body.model, body });
         await during(name);
         const refused = refuse(name, body);
@@ -527,8 +534,8 @@ describe('Translation run (e2e)', () => {
         [1, 1],
         [2, 0],
       ]);
-      // Кусок проверен (`F05-5`): механика прошла, Jev выключен, смысл - моделью другого
-      // семейства; стоимость куска - перевод плюс сверка смысла.
+      // Кусок проверен (`F05-5`): механика прошла, Jev (включён по умолчанию с `F05-R`) назвал
+      // язык перевода, смысл - моделью другого семейства; перевод - умолчанием этапа (Р2).
       expect(chunks.every((c) => c.status === 'done')).toBe(true);
       for (const c of chunks) {
         expect(c.verdict).toMatchObject({
@@ -536,18 +543,24 @@ describe('Translation run (e2e)', () => {
           remarks: [],
           attempts: [
             {
-              translatedBy: MODEL,
+              translatedBy: TRANSLATOR,
               outcome: 'pass',
-              jev: { kind: 'disabled' },
+              jev: { kind: 'answered', language },
               semantic: { model: CHECKER },
               mechanical: { failures: [] },
             },
           ],
         });
       }
-      expect(chunks.map((c) => c.costUsd?.toString())).toEqual(['0.0002', '0.0002', '0.0002']);
-      // Jev выключен по умолчанию - не зовётся, механика кодом работает.
-      expect(calls.filter((c) => c.name === 'check_language_jev')).toHaveLength(0);
+      expect(chunks.map((c) => c.costUsd?.toString())).toEqual(['0.0003', '0.0003', '0.0003']);
+      // Jev включён по умолчанию - один вызов на кусок языка.
+      expect(
+        calls.filter(
+          (c) =>
+            c.name === 'check_language_jev' &&
+            c.body.messages[1].content.includes(`<<<TEXT\n${language.toUpperCase()} `),
+        ),
+      ).toHaveLength(3);
       expect((chunks[0].blocks as Array<{ text: string }>)[0].text).toMatch(
         new RegExp(`^${language.toUpperCase()} Ana 0`),
       );
@@ -1240,8 +1253,8 @@ describe('Translation run (e2e)', () => {
         { outcome: 'pass', semantic: { model: CHECKER } },
       ],
     });
-    // Перевод и сверка смысла дважды - сумма четырёх ответов (В7).
-    expect(chunk.costUsd?.toString()).toBe('0.0004');
+    // Перевод, Jev и сверка смысла дважды - сумма шести ответов (В7).
+    expect(chunk.costUsd?.toString()).toBe('0.0006');
     expect(await langOf(runId, 'es')).toMatchObject({ flaggedChunks: 0 });
     // Имя, которого механика не нашла по основе («Ana» в «ES Anna»), - вопрос сверке смысла.
     expect(checks()[0].body.messages[1].content).toContain('anna: Anna → Ana');
@@ -1273,8 +1286,8 @@ describe('Translation run (e2e)', () => {
         { outcome: 'invalid', translatedBy: '', translateCostUsd: '0.0003' },
       ],
     });
-    // Перевод, сверка смысла и три ответа не по форме при переводе заново.
-    expect(chunk.costUsd?.toString()).toBe('0.0005');
+    // Перевод, Jev, сверка смысла и три ответа не по форме при переводе заново.
+    expect(chunk.costUsd?.toString()).toBe('0.0006');
   });
 
   it('unsure of the meaning check is no failure: the piece is done without a second translation', async () => {
@@ -1498,7 +1511,8 @@ describe('Translation run (e2e)', () => {
     expect(chunk.verdict).toMatchObject({
       attempts: [{ outcome: 'invalid', semantic: { answer: null, costUsd: '0.0002' } }],
     });
-    expect(chunk.costUsd?.toString()).toBe('0.0003');
+    // Перевод, Jev и два ответа сверки смысла.
+    expect(chunk.costUsd?.toString()).toBe('0.0004');
     expect(translations()).toHaveLength(1);
   });
 
@@ -1528,7 +1542,7 @@ describe('Translation run (e2e)', () => {
     const paused = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
     expect(paused.body.languages[0]).toMatchObject({ stage: 'check' });
     const same = await auth(http().post(`/admin/translation-runs/${runId}/resume`))
-      .send({ stageModels: { check_semantic: MODEL } })
+      .send({ stageModels: { check_semantic: TRANSLATOR } })
       .expect(409);
     expect(same.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
     await auth(http().post(`/admin/translation-runs/${runId}/resume`))
@@ -1563,9 +1577,10 @@ describe('Translation run (e2e)', () => {
     expect(chunk.status).toBe('done');
     expect(chunk.verdict).toMatchObject({
       failures: 0,
-      attempts: [{ translatedBy: MODEL, translateCostUsd: '0.0001', outcome: 'pass' }],
+      attempts: [{ translatedBy: TRANSLATOR, translateCostUsd: '0.0001', outcome: 'pass' }],
     });
-    expect(chunk.costUsd?.toString()).toBe('0.0002');
+    // Перевод, Jev и сверка смысла.
+    expect(chunk.costUsd?.toString()).toBe('0.0003');
   });
 
   it('the meaning check stage disabled: estimate and start refuse 409; disabled mid-run - the piece is flagged CHECK_STAGE_UNAVAILABLE and the language goes on', async () => {
@@ -1631,7 +1646,7 @@ describe('Translation run (e2e)', () => {
         const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
         const { runId, opId } = await createRun(versionId, ['es']);
         refuse = (name, body) =>
-          name === 'translation' && body.model === MODEL
+          name === 'translation' && [TRANSLATOR, MODEL].includes(body.model)
             ? json(
                 { error: { code: 404, message: 'No endpoints found matching your data policy' } },
                 404,
@@ -1676,7 +1691,7 @@ describe('Translation run (e2e)', () => {
     const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
     const estimate = (query: Record<string, string>) =>
       auth(http().get(`/admin/versions/${versionId}/translation-runs/estimate`).query(query));
-    await withStages([{ stage: 'check_semantic', model: MODEL, fallbacks: [] }], async () => {
+    await withStages([{ stage: 'check_semantic', model: TRANSLATOR, fallbacks: [] }], async () => {
       const refused = await estimate({ languages: 'es' }).expect(409);
       expect(refused.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
       const start = await startRun(versionId, { languages: ['es'] }).expect(409);
@@ -1693,30 +1708,53 @@ describe('Translation run (e2e)', () => {
     ).toBe(0);
   });
 
-  it('a stop found while the pause button already stopped the run still sets its reason', async () => {
-    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
-    const { runId, opId } = await createRun(versionId, ['es']);
-    refuse = (name, body) =>
-      name === 'translation' && body.model === MODEL
-        ? json(
-            { error: { code: 404, message: 'No endpoints found matching your data policy' } },
-            404,
-          )
-        : null;
-    during = async (name) => {
-      // Редактор нажал «пауза», пока шёл вызов перевода.
-      if (name === 'translation') await tasks.pauseOperation(opId, null);
+  it('the estimate counts Jev per piece while the stage is on; off - not counted and no refusal (Р9 F05-R)', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    const checkUsdOf = async () => {
+      const res = await auth(
+        http()
+          .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+          .query({ languages: 'es' }),
+      ).expect(200);
+      return new Prisma.Decimal((res.body.languages as Array<{ checkUsd: string }>)[0].checkUsd);
     };
-
-    await drain();
-
-    expect(await opOf(opId)).toMatchObject({
-      status: 'paused',
-      pauseReason: 'NO_COMPLIANT_PROVIDER',
+    const on = await checkUsdOf();
+    let off = on;
+    await withStages([{ ...JEV_ON, enabled: false }], async () => {
+      off = await checkUsdOf();
     });
-    expect(await langOf(runId, 'es')).toMatchObject({
-      reason: 'LLM_NO_COMPLIANT_PROVIDER',
-      reasonModels: [MODEL],
+    // Два куска главы - два вызова Jev по потолку цены этапа со служебным входом роутера.
+    // `isPositive()` у Decimal верно и для нуля - нужна строгая разница.
+    expect(on.sub(off).gt(0)).toBe(true);
+  });
+
+  it('a stop found while the pause button already stopped the run still sets its reason', async () => {
+    // Одна модель перевода: её отказ - последний, пауза не обрывает переход на запасную.
+    await withStages([{ stage: 'translate', model: TRANSLATOR, fallbacks: [] }], async () => {
+      const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+      const { runId, opId } = await createRun(versionId, ['es']);
+      refuse = (name, body) =>
+        name === 'translation' && body.model === TRANSLATOR
+          ? json(
+              { error: { code: 404, message: 'No endpoints found matching your data policy' } },
+              404,
+            )
+          : null;
+      during = async (name) => {
+        // Редактор нажал «пауза», пока шёл вызов перевода.
+        if (name === 'translation') await tasks.pauseOperation(opId, null);
+      };
+
+      await drain();
+
+      expect(await opOf(opId)).toMatchObject({
+        status: 'paused',
+        pauseReason: 'NO_COMPLIANT_PROVIDER',
+      });
+      expect(await langOf(runId, 'es')).toMatchObject({
+        reason: 'LLM_NO_COMPLIANT_PROVIDER',
+        reasonModels: [TRANSLATOR],
+      });
     });
   });
 
@@ -1860,14 +1898,14 @@ describe('Translation run (e2e)', () => {
     }
 
     expect((await opOf(opId)).status).toBe('done');
-    expect(translations().map((c) => c.model)).toEqual([MODEL]);
+    expect(translations().map((c) => c.model)).toEqual([TRANSLATOR]);
   });
 
   it('every provider refuses: paused NO_COMPLIANT_PROVIDER; resume with stageModels goes on that model', async () => {
     const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
     const { runId, opId } = await createRun(versionId, ['es']);
     refuse = (name, body) =>
-      name === 'translation' && body.model === MODEL
+      name === 'translation' && [TRANSLATOR, MODEL].includes(body.model)
         ? json(
             { error: { code: 404, message: 'No endpoints found matching your data policy' } },
             404,
@@ -1882,7 +1920,7 @@ describe('Translation run (e2e)', () => {
     });
     expect(await langOf(runId, 'es')).toMatchObject({
       reason: 'LLM_NO_COMPLIANT_PROVIDER',
-      reasonModels: [MODEL],
+      reasonModels: [TRANSLATOR, MODEL],
     });
 
     // Отказанное «продолжить» (повтор куска держит язык - отказ уже внутри транзакции, после
@@ -2628,7 +2666,7 @@ describe('Translation run (e2e)', () => {
 
     const before = await estimate();
     expect(before).toMatchObject({
-      translateModel: MODEL,
+      translateModel: TRANSLATOR,
       chapters: 2,
       chunks: 3,
       upperBound: true,
@@ -3048,7 +3086,8 @@ describe('Translation run (e2e)', () => {
     expect(await langOf(runId, 'es')).toMatchObject({
       status: 'running',
       reason: 'METADATA_NO_COMPLIANT_PROVIDER',
-      reasonModels: [MODEL],
+      // Основная и запасная этапа (Р7 `F05 | F05-R`: запасная - та же модель, что умолчание перевода).
+      reasonModels: [MODEL, TRANSLATOR],
       metadata: null,
     });
     const paused = await auth(http().get(`/admin/translation-runs/${runId}`)).expect(200);
@@ -4251,7 +4290,7 @@ describe('Translation run (e2e)', () => {
       reasonModels: [CHECKER, CHECKER_ALT],
     });
     const same = await auth(http().post(`/admin/translation-runs/${runId}/resume`))
-      .send({ stageModels: { final_check: MODEL } })
+      .send({ stageModels: { final_check: TRANSLATOR } })
       .expect(409);
     expect(same.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
     await auth(http().post(`/admin/translation-runs/${runId}/resume`))
@@ -4270,7 +4309,7 @@ describe('Translation run (e2e)', () => {
     ]);
     const estimate = (query: Record<string, string>) =>
       auth(http().get(`/admin/versions/${versionId}/translation-runs/estimate`).query(query));
-    await withStages([{ stage: 'final_check', model: MODEL, fallbacks: [] }], async () => {
+    await withStages([{ stage: 'final_check', model: TRANSLATOR, fallbacks: [] }], async () => {
       const refused = await estimate({ languages: 'es' }).expect(409);
       expect(refused.body).toMatchObject({ code: 'CHECK_MODEL_SAME_FAMILY' });
       const start = await startRun(versionId, { languages: ['es'] }).expect(409);
@@ -4301,6 +4340,7 @@ describe('Translation run (e2e)', () => {
       glossary: 0.00017,
       translation: 0.00019,
       check_semantic: 0.00023,
+      check_language_jev: 0.00041,
       check_seam: 0.00029,
       final_check: 0.00031,
       metadata: 0.00037,
@@ -4381,6 +4421,7 @@ describe('Translation run (e2e)', () => {
         'glossary',
         'split',
         'translate',
+        'check_language_jev',
         'check_semantic',
         'final_check',
         'metadata',

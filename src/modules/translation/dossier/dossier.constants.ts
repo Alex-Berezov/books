@@ -1,4 +1,5 @@
 import { LlmStageDefinition } from '../../llm/llm-stages.registry';
+import { GPT_TERRA_MODEL } from '../translate/translate.constants';
 
 export const DOSSIER_STAGE = 'dossier';
 export const GLOSSARY_STAGE = 'glossary';
@@ -14,14 +15,13 @@ export const DOSSIER_LIMIT_FACTOR = '1.5';
 export const DOSSIER_MAX_CHAPTERS = 2_000;
 
 /**
- * Умолчания этапов (`tech.md` §3: Claude, длинный контекст). Запасных в коде нет: их ставит
- * редактор на экране «LLM settings», модель перевода и запасные выбирает `F05-R`.
+ * Умолчания этапов (`tech.md` §3: Claude, длинный контекст), запасная - `GPT_TERRA_MODEL`.
  */
 export const DOSSIER_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
     stage: DOSSIER_STAGE,
     model: 'anthropic/claude-sonnet-5.5',
-    fallbacks: [],
+    fallbacks: [GPT_TERRA_MODEL],
     temperature: 0.2,
     maxTokens: 16_000,
     enabled: true,
@@ -29,7 +29,7 @@ export const DOSSIER_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
     stage: GLOSSARY_STAGE,
     model: 'anthropic/claude-sonnet-5.5',
-    fallbacks: [],
+    fallbacks: [GPT_TERRA_MODEL],
     temperature: 0.2,
     maxTokens: 16_000,
     enabled: true,

@@ -1,7 +1,11 @@
 import { splitChapter } from '../chapter-blocks';
 import { shapeErrors } from '../dossier/dossier.format';
 import { divergentEntries, finalCodeCheck, fragmentOf } from './final-check-code';
-import { FINAL_FINDING_CODES } from './final-check.constants';
+import {
+  FINAL_CHECK_STAGE,
+  FINAL_CHECK_STAGE_DEFINITIONS,
+  FINAL_FINDING_CODES,
+} from './final-check.constants';
 import {
   anchoredIssues,
   FINAL_CHECK_SHAPE,
@@ -11,6 +15,13 @@ import {
 } from './final-check.prompts';
 
 const ANNA = { key: 'anna', source: 'Anna', target: 'Ana' };
+
+describe('final check stage default', () => {
+  it('leaves room for the reasoning of its model: 8000 tokens (Р4 F05-R)', () => {
+    const final = FINAL_CHECK_STAGE_DEFINITIONS.find((d) => d.stage === FINAL_CHECK_STAGE);
+    expect(final?.maxTokens).toBe(8_000);
+  });
+});
 
 describe('final check by code', () => {
   it('the source spelling of a name the glossary renders otherwise is a finding with its chapter and fragment', () => {

@@ -12,7 +12,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmBudgetService } from '../../llm/llm-budget.service';
 import { LlmError } from '../../llm/llm.errors';
 import { LlmService, StageCallEstimator } from '../../llm/llm.service';
-import { CHARS_PER_TOKEN } from '../../llm/openrouter.client';
+import { ANSWER_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
 import { FingerprintChapter, sourceFingerprint } from '../source-fingerprint';
@@ -294,7 +294,7 @@ export class DossierService {
     for (const language of languages) {
       const upper = call.estimate(
         glossaryRequest({ dossier: null, language }),
-        dossierCall.maxTokens * CHARS_PER_TOKEN,
+        dossierCall.maxTokens * ANSWER_CHARS_PER_TOKEN,
       );
       glossaries.set(language, glossaryLine(upper, true));
     }
@@ -783,7 +783,8 @@ export class DossierService {
     let total = new Prisma.Decimal(0);
     for (const plan of plans) total = total.add(call.estimate(dossierPartRequest(plan)));
     // Вход сводки - частичные досье всех кусков. Ответ куска не длиннее `maxTokens` токенов, то
-    // есть до `maxTokens × CHARS_PER_TOKEN` символов JSON, а резерв клиента считает символ за токен.
+    // есть до `maxTokens × ANSWER_CHARS_PER_TOKEN` символов JSON, а резерв клиента считает
+    // символ за токен.
     const summary = dossierSummaryRequest({
       chapters: chapters.map((c) => ({ number: c.number, title: c.title })),
       parts: [],
@@ -953,10 +954,10 @@ export function glossaryTaskInput(
  * контекст в символах. Без потолка лимит длинной книги раздувался бы на порядки.
  */
 function summaryAnswersChars(parts: number, call: StageCallEstimator): number {
-  const answers = parts * call.maxTokens * CHARS_PER_TOKEN;
+  const answers = parts * call.maxTokens * ANSWER_CHARS_PER_TOKEN;
   return call.contextLength === null
     ? answers
-    : Math.min(answers, call.contextLength * CHARS_PER_TOKEN);
+    : Math.min(answers, call.contextLength * ANSWER_CHARS_PER_TOKEN);
 }
 
 /**

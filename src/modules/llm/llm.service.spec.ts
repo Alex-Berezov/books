@@ -229,6 +229,25 @@ describe('LlmService', () => {
       );
     });
 
+    it('stageCallEstimator of a model priced by the cap adds the service input of a router, as the reserve does (Р6 F05-R)', async () => {
+      prisma.llmStageSetting.findUnique.mockResolvedValue(
+        row({ model: 'c/dynamic', maxPricePerMTok: D('5') }),
+      );
+      const request = { messages: [{ role: 'user' as const, content: 'x'.repeat(100) }] };
+      const router = await service.stageCallEstimator('jev');
+      // (100 + 16 + 1000 служебных) × 5 / 1M + maxTokens × 5 / 1M.
+      expect(router.estimate(request).toFixed(8)).toBe(
+        D(1116 + router.maxTokens)
+          .mul('0.000005')
+          .toFixed(8),
+      );
+      prisma.llmStageSetting.findUnique.mockResolvedValue(row({}));
+      const priced = await service.stageCallEstimator('jev');
+      expect(priced.estimate(request).toFixed(8)).toBe(
+        D(116).mul('0.000001').add(D(priced.maxTokens).mul('0.000002')).toFixed(8),
+      );
+    });
+
     it('operationData puts the prices of the compared models into the snapshot', async () => {
       const data = await service.operationData({
         kind: 'compare',
@@ -419,6 +438,22 @@ describe('LlmService', () => {
     it('counts the input in tokens, not characters: 250k chars fit a 200k context', async () => {
       models.list.mockResolvedValue(ctxModels(200_000));
       await expect(service.stageFit('on', request(250_000))).resolves.toMatchObject({
+        fits: true,
+      });
+    });
+
+    it('counts 2.5 characters a token (F05-R, Р3): 440k chars do not fit a 160k context', async () => {
+      // По 4 символа на токен это 110k и «влезало»; провайдер отвечал отказом уже оплаченному вызову.
+      models.list.mockResolvedValue(ctxModels(160_000));
+      await expect(service.stageFit('on', request(440_000))).resolves.toMatchObject({
+        fits: false,
+      });
+    });
+
+    it('395k chars still fit a 160k context: the divisor is 2.5, not below (F05-R, Р3)', async () => {
+      // 395 016 / 2,5 = 158 007 + maxTokens влезает; при 2,4 - 164 590 и уже нет.
+      models.list.mockResolvedValue(ctxModels(160_000));
+      await expect(service.stageFit('on', request(395_000))).resolves.toMatchObject({
         fits: true,
       });
     });

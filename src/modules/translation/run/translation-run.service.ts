@@ -28,7 +28,13 @@ import { DossierService } from '../dossier/dossier.service';
 import { assertKnownModels, stageEstimatorFor } from '../llm-model-checks';
 import { TranslationTargetReason } from '../translation-source';
 import { TranslationSourceService } from '../translation-source.service';
-import { chapterCheckUsd, chapterSeamUsd, checkEstimator } from '../check/check-estimate';
+import {
+  chapterCheckUsd,
+  chapterJevUsd,
+  chapterSeamUsd,
+  checkEstimator,
+  jevCallUsd,
+} from '../check/check-estimate';
 import { CHECK_NO_COMPLIANT_PROVIDER, CHECK_SEMANTIC_STAGE } from '../check/check.constants';
 import { independentCheckModels } from '../check/check-models';
 import { FINAL_CHECK_STAGE } from '../final-check/final-check.constants';
@@ -468,9 +474,10 @@ export class TranslationRunService {
     const split = await splitEstimator(this.llm);
     const translateModel =
       query.translateModel ?? (await this.llm.getStageSetting(TRANSLATE_STAGE)).model;
-    const [check, finalCheck] = await Promise.all([
+    const [check, finalCheck, jev] = await Promise.all([
       checkEstimator(this.llm, translateModel),
       finalCheckEstimator(this.llm, translateModel),
+      jevCallUsd(this.llm),
     ]);
     const metadata = await stageEstimatorFor(this.llm, METADATA_STAGE);
     // Нарезка - на каждый язык своя (выборы стыков хранит язык запуска).
@@ -516,7 +523,8 @@ export class TranslationRunService {
                 translateMaxTokens: call.maxTokens,
               }),
             )
-            .add(chapterSeamUsd(check, plan, pair)),
+            .add(chapterSeamUsd(check, plan, pair))
+            .add(chapterJevUsd(jev, plan)),
         zero(),
       );
       const finalCheckUsd = plans.reduce(

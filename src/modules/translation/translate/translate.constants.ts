@@ -1,27 +1,35 @@
 import { LlmStageDefinition } from '../../llm/llm-stages.registry';
 
 export const SPLIT_STAGE = 'split';
+
+/**
+ * GPT-5.6 Terra - умолчание перевода (Р2 `F05 | F05-R`) и запасная этапов на Claude: досье,
+ * глоссарий, поля версии, заготовки (Р7). Сверена с каталогом в `F05-R`: есть цена, строгие схемы
+ * всех этапов прошли живую пробу, контекст не меньше, чем у Claude. Этапы проверок её не берут.
+ */
+export const GPT_TERRA_MODEL = 'openai/gpt-5.6-terra';
 export const TRANSLATE_STAGE = 'translate';
 
 /**
  * Умолчания этапов (`tech.md` §3). `split` - бесплатные модели, последний запасной - код
- * (`fallbackBoundary`, Р7); `translate` - Claude, запасных в коде нет: модель перевода и запасные
- * выбирает `F05-R` по сравнению (U7), до тех пор их ставит редактор на экране «LLM settings»
- * (решение арбитра `F05 | F05-2` о запасных без точных id).
+ * (`fallbackBoundary`, Р7); запасная `minimax/minimax-m3.1-flash:free` пропала из каталога -
+ * замена бесплатной того же класса, принимающей запрет хранения данных (`F05-R`, шаг 1);
+ * `translate` - GPT-5.6 Terra, запасная Claude Sonnet 5.5: выбор по сравнению на одной главе
+ * (U7, решение арбитра `F05 | F05-R`, Р2); оба другого семейства, чем проверяющие.
  */
 export const TRANSLATE_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
     stage: SPLIT_STAGE,
     model: 'google/gemma-4-31b-it:free',
-    fallbacks: ['minimax/minimax-m3.1-flash:free'],
+    fallbacks: ['xingchen-agi/xing4.0-29b-a4b:free'],
     temperature: 0,
     maxTokens: 200,
     enabled: true,
   },
   {
     stage: TRANSLATE_STAGE,
-    model: 'anthropic/claude-sonnet-5.5',
-    fallbacks: [],
+    model: GPT_TERRA_MODEL,
+    fallbacks: ['anthropic/claude-sonnet-5.5'],
     temperature: 0.2,
     maxTokens: 16_000,
     enabled: true,

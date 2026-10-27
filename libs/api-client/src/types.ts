@@ -14045,7 +14045,7 @@ export interface components {
     TranslationRunLanguageEstimateDto: {
       /**
        * Format: decimal
-       * @description Upper estimate: one meaning check per piece and one per joint of pieces by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)
+       * @description Upper estimate: one meaning check per piece and one per joint of pieces by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY), plus one Jev call per piece while the stage is on and priced
        * @example 100.00000000
        */
       checkUsd: string;

@@ -1,5 +1,5 @@
 import { Language } from '@prisma/client';
-import { LlmChatMessage } from '../../llm/openrouter.client';
+import { LlmChatMessage, LlmJsonSchema } from '../../llm/openrouter.client';
 import { DossierPartPlan } from './dossier-parts';
 import { DOSSIER_PART_SHAPE, DOSSIER_SHAPE, GLOSSARY_SHAPE, jsonSchemaOf } from './dossier.format';
 
@@ -152,14 +152,21 @@ export function withAnswerForm(
   return messages.map((m, i) => (i === 0 ? { ...m, content: m.content + form } : m));
 }
 
-/** Сообщения с формой ответа и схема для `response_format` - одним целым на вызов и оценку. */
+/**
+ * Сообщения с формой ответа и схема для `response_format` - одним целым на вызов и оценку.
+ * `textOnly` - схема только в тексте (`LlmJsonSchema.textOnly`).
+ */
 export function shapedRequest(
   name: string,
   shape: Parameters<typeof jsonSchemaOf>[0],
   messages: LlmChatMessage[],
-): { messages: LlmChatMessage[]; jsonSchema: { name: string; schema: Record<string, unknown> } } {
+  options: { textOnly?: boolean } = {},
+): { messages: LlmChatMessage[]; jsonSchema: LlmJsonSchema } {
   const schema = jsonSchemaOf(shape);
-  return { messages: withAnswerForm(messages, schema), jsonSchema: { name, schema } };
+  const jsonSchema: LlmJsonSchema = options.textOnly
+    ? { name, schema, textOnly: true }
+    : { name, schema };
+  return { messages: withAnswerForm(messages, schema), jsonSchema };
 }
 
 export type ShapedRequest = ReturnType<typeof shapedRequest>;
@@ -167,8 +174,9 @@ export type ShapedRequest = ReturnType<typeof shapedRequest>;
 export const dossierPartRequest = (part: DossierPartPlan) =>
   shapedRequest('dossier_part', DOSSIER_PART_SHAPE, dossierPartMessages(part));
 
+/** Схема сводки - только в тексте: Claude не компилирует её грамматику (Р1 `F05 | F05-R`). */
 export const dossierSummaryRequest = (input: Parameters<typeof dossierSummaryMessages>[0]) =>
-  shapedRequest('dossier', DOSSIER_SHAPE, dossierSummaryMessages(input));
+  shapedRequest('dossier', DOSSIER_SHAPE, dossierSummaryMessages(input), { textOnly: true });
 
 export const glossaryRequest = (input: Parameters<typeof glossaryMessages>[0]) =>
   shapedRequest('glossary', GLOSSARY_SHAPE, glossaryMessages(input));

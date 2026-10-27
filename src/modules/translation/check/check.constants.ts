@@ -6,10 +6,10 @@ export const CHECK_JEV_STAGE = 'check_language_jev';
 /**
  * Умолчания этапов проверки (`tech.md` §3). `check_mechanical` - только код, модели у него нет,
  * поэтому в реестр LLM не входит. `check_semantic` - модели другого семейства, чем умолчание
- * перевода (Claude); правило семейств сверяет каждый вызов с моделью, фактически переведшей
- * кусок. `check_language_jev` выключен до замера в `F05-R` (D7): строка этапа, сохранённая
- * на экране, закрепляет `enabled` (решение арбитра `F05 | F05-1s`); цена у модели динамическая -
- * резерв по потолку (Р24).
+ * перевода и его запасная (GPT и Claude, Р2 `F05 | F05-R`); правило семейств сверяет каждый
+ * вызов с моделью, фактически переведшей кусок. `check_language_jev` включён по замеру `F05-R` (D7: 30 из 30 текстов пяти языков,
+ * $0,0001-0,0003 за вызов); строка этапа, сохранённая на экране, закрепляет `enabled` (решение
+ * арбитра `F05 | F05-1s`); цена у модели динамическая - резерв по потолку (Р24).
  */
 export const CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   {
@@ -17,7 +17,8 @@ export const CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     model: 'deepseek/deepseek-v4-pro',
     fallbacks: ['z-ai/glm-5.3'],
     temperature: 0,
-    maxTokens: 2_000,
+    // Рассуждения модели входят в ответ: при 2000 вердикт обрезался (Р4 `F05 | F05-R`).
+    maxTokens: 8_000,
     enabled: true,
   },
   {
@@ -26,7 +27,7 @@ export const CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     fallbacks: [],
     temperature: 0,
     maxTokens: 50,
-    enabled: false,
+    enabled: true,
     maxPricePerMTok: '5',
   },
 ];

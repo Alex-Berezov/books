@@ -281,7 +281,7 @@ export class TranslationRunLanguageEstimateDto {
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'Upper estimate: one meaning check per piece and one per joint of pieces by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY)',
+      'Upper estimate: one meaning check per piece and one per joint of pieces by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY), plus one Jev call per piece while the stage is on and priced',
   })
   checkUsd!: string;
 

@@ -27,6 +27,18 @@ export interface LlmCallModel {
   maxPricePerMTok?: Prisma.Decimal;
 }
 
+/** Схема ответа вызова. */
+export interface LlmJsonSchema {
+  name: string;
+  schema: Record<string, unknown>;
+  /**
+   * Схема только в тексте запроса, без `response_format`: строгую грамматику такой схемы модель
+   * не компилирует (сводка досье на Claude - 400 «compiled grammar is too large»; решение арбитра
+   * `F05 | F05-R`, Р1). Ответ сверяет вызывающий, как у модели без `structured_outputs`.
+   */
+  textOnly?: boolean;
+}
+
 export interface LlmChatRequest {
   operationId: string;
   stage: string;
@@ -35,8 +47,11 @@ export interface LlmChatRequest {
   messages: LlmChatMessage[];
   temperature: number | null;
   maxTokens: number;
-  /** Ответ - JSON по схеме: схема уходит в `response_format`, где модель её принимает. */
-  jsonSchema?: { name: string; schema: Record<string, unknown> };
+  /**
+   * Ответ - JSON по схеме: схема уходит в `response_format`, где модель её принимает и схема
+   * не помечена `textOnly`; иначе модель видит её только в тексте запроса.
+   */
+  jsonSchema?: LlmJsonSchema;
   /** Зовётся перед каждой попыткой (исполнитель продлевает аренду); бросило - вызова нет. */
   beforeAttempt?: () => Promise<void> | void;
   /**
@@ -74,11 +89,30 @@ const BACKOFF_BASE_MS = 1_000;
 const BACKOFF_MAX_MS = 8_000;
 
 /**
- * Символов на токен для латиницы и кириллицы - для сверки с контекстом модели и для входа,
- * которого в запросе ещё нет. Резерв считает вход сверху (токен на символ, `estimateInputTokens`)
- * и этим числом не пользуется. Калибровка по `usage.prompt_tokens` - `F05-R`.
+ * Символов на токен входа - для сверки с контекстом модели (`stageFit`). Замер `F05-R` по
+ * `usage.prompt_tokens`: кусок досье 2,6, сводка 2,51 (разметка блоков и JSON дробятся мельче
+ * прозы); с запасом в сторону большего числа токенов (решение арбитра `F05 | F05-R`, Р3).
+ * Резерв считает вход сверху (токен на символ, `estimateInputTokens`) и этим числом не пользуется.
  */
-export const CHARS_PER_TOKEN = 4;
+export const INPUT_CHARS_PER_TOKEN = 2.5;
+
+/**
+ * Символов на токен ответа - оценка сверху длины ответа в символах из `maxTokens` (вход
+ * следующего вызова, которого ещё нет). Больше - значит с запасом (Р3 `F05 | F05-R`).
+ */
+export const ANSWER_CHARS_PER_TOKEN = 4;
+
+/**
+ * Служебный вход роутера сверх запроса: модель без своей цены (`typesafe/jev-router`) дописывает
+ * свой промпт - замер `F05-R` ~350 токенов. Добавляется к резерву только модели, оценённой
+ * по потолку `maxPricePerMTok`, - иначе резерв не верхняя граница (решение арбитра `F05 | F05-R`, Р6).
+ */
+const ROUTER_OVERHEAD_INPUT_TOKENS = 1_000;
+
+/** Токены входа для резерва модели: модель по потолку цены - с запасом на служебный вход роутера. */
+export function reserveInputTokens(model: LlmCallModel, inputTokens: number): number {
+  return model.maxPricePerMTok ? inputTokens + ROUTER_OVERHEAD_INPUT_TOKENS : inputTokens;
+}
 
 /**
  * Оценка токенов входа без токенизатора: токен на символ плюс служебные токены сообщения
@@ -93,6 +127,22 @@ export function estimateInputTokens(
   // Схема ответа уходит провайдеру в `response_format` и тоже оплачивается как вход.
   const schema = request.jsonSchema ? JSON.stringify(request.jsonSchema.schema).length : 0;
   return messages + schema;
+}
+
+/** Ограда ```json … ``` вокруг всего ответа: без `response_format` модель может обернуть JSON. */
+const JSON_FENCE = /^```(?:json)?[ \t]*\r?\n([\s\S]*?)\s*```$/i;
+
+/**
+ * JSON ответа; `undefined` - не JSON. Ответ целиком в ограде разбирается без неё: так отвечают
+ * модели без строгой схемы (`textOnly`, Р1 `F05 | F05-R`). Текст вокруг JSON не вырезается.
+ */
+function parseJsonAnswer(content: string): unknown {
+  const fenced = JSON_FENCE.exec(content.trim());
+  try {
+    return JSON.parse(fenced ? fenced[1] : content) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -183,7 +233,7 @@ export class OpenRouterClient {
     // считать её резервом с повтором нельзя, и резерв без вызова не остаётся висеть.
     const payload = JSON.stringify(this.buildBody(request, model));
     const estimate = model.inputPrice
-      .mul(inputTokens)
+      .mul(reserveInputTokens(model, inputTokens))
       .add(model.outputPrice.mul(request.maxTokens));
     const { callId } = await this.budget.reserve({
       operationId: request.operationId,
@@ -321,11 +371,11 @@ export class OpenRouterClient {
     };
     if (request.jsonSchema) {
       // Невалидный JSON - ошибка содержания наверх: повтор с замечанием решает этап, не клиент.
-      try {
-        result.json = JSON.parse(content) as unknown;
-      } catch {
+      const json = parseJsonAnswer(content);
+      if (json === undefined) {
         throw new LlmError('LLM_INVALID_RESPONSE', `Model ${actualModel} returned invalid JSON`);
       }
+      result.json = json;
     }
     return { kind: 'ok', result };
   }
@@ -347,7 +397,7 @@ export class OpenRouterClient {
       usage: { include: true },
     };
     if (request.temperature !== null) body.temperature = request.temperature;
-    if (request.jsonSchema && model.structuredOutputs) {
+    if (request.jsonSchema && model.structuredOutputs && !request.jsonSchema.textOnly) {
       body.response_format = {
         type: 'json_schema',
         json_schema: {

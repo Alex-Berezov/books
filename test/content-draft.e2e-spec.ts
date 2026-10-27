@@ -10,6 +10,7 @@ import { LLM_BUDGET_ID } from '../src/modules/llm/llm-budget.service';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
+import { llmCallName } from './helpers/llm-call-name';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
@@ -278,7 +279,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
       if (urlOf(url).endsWith('/models')) return json(MODELS);
       if (urlOf(url).endsWith('/chat/completions')) {
         const body = JSON.parse((init as RequestInit).body as string) as ChatBody;
-        const name = body.response_format?.json_schema?.name ?? '';
+        const name = llmCallName(body);
         calls.push({ name, body });
         return json({
           model: body.model,

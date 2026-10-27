@@ -22,13 +22,15 @@ import { LlmStageDefinition, LlmStageRegistry } from './llm-stages.registry';
 import { LlmConfig } from './llm.config';
 import { LlmError, llmDisabled } from './llm.errors';
 import {
-  CHARS_PER_TOKEN,
+  INPUT_CHARS_PER_TOKEN,
   estimateInputTokens,
   LlmCallModel,
   LlmChatMessage,
   LlmChatRequest,
   LlmChatResult,
+  LlmJsonSchema,
   OpenRouterClient,
+  reserveInputTokens,
 } from './openrouter.client';
 
 const PER_MTOK = new Prisma.Decimal(1_000_000);
@@ -69,7 +71,7 @@ export interface StageCallEstimator {
 }
 
 export interface CallStageOptions {
-  jsonSchema?: { name: string; schema: Record<string, unknown> };
+  jsonSchema?: LlmJsonSchema;
   beforeAttempt?: () => Promise<void> | void;
   signal?: AbortSignal;
   taskId?: string | null;
@@ -249,12 +251,14 @@ export class LlmService implements OnModuleInit {
       enabled: setting.enabled,
       contextLength: contexts.length > 0 ? Math.min(...contexts) : null,
       estimate: (request, extraInputTokens = 0) =>
-        model.inputPrice.mul(estimateInputTokens(request) + extraInputTokens).add(output),
+        model.inputPrice
+          .mul(reserveInputTokens(model, estimateInputTokens(request) + extraInputTokens))
+          .add(output),
     };
   }
 
   /**
-   * Влезет ли вызов этапа в контекст: вход в токенах (символы / `CHARS_PER_TOKEN`) плюс
+   * Влезет ли вызов этапа в контекст: вход в токенах (символы / `INPUT_CHARS_PER_TOKEN`) плюс
    * `maxTokens` против наименьшего контекста основной и запасных моделей (вызов может уйти на
    * любую). Контекст неизвестен ни у одной - влезает, решает провайдер. Цена не нужна.
    */
@@ -277,9 +281,10 @@ export class LlmService implements OnModuleInit {
     const contexts = [primaryId, ...called.map((m) => m.id)]
       .map((id) => known.get(id)?.contextLength)
       .filter((c): c is number => typeof c === 'number');
-    // Вход - в настоящих токенах (символы / CHARS_PER_TOKEN), а не верхней границей резерва:
+    // Вход - в настоящих токенах (символы / INPUT_CHARS_PER_TOKEN), а не верхней границей резерва:
     // символ за токен ложно отказал бы книге, которая влезает (решение арбитра `F05 | F05-2`).
-    const need = Math.ceil(estimateInputTokens(request) / CHARS_PER_TOKEN) + setting.maxTokens;
+    const need =
+      Math.ceil(estimateInputTokens(request) / INPUT_CHARS_PER_TOKEN) + setting.maxTokens;
     return {
       fits: contexts.length === 0 || need <= Math.min(...contexts),
       model: modelId ?? setting.model,

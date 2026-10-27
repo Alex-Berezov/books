@@ -15,6 +15,7 @@ import {
 } from '../src/modules/translation/dossier/dossier.constants';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
+import { llmCallName } from './helpers/llm-call-name';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
@@ -285,7 +286,7 @@ describe('Translation source and dossier (e2e)', () => {
       if (urlOf(url).endsWith('/models')) return Promise.resolve(json(MODELS));
       if (urlOf(url).endsWith('/chat/completions')) {
         const body = JSON.parse((init as RequestInit).body as string) as ChatBody;
-        const name = body.response_format?.json_schema?.name ?? '';
+        const name = llmCallName(body);
         calls.push({ name, model: body.model, body });
         return Promise.resolve(
           json({
@@ -424,6 +425,14 @@ describe('Translation source and dossier (e2e)', () => {
       expect(callsOf('dossier')).toHaveLength(1);
       // Схема ответа - и в `response_format`, и в системном сообщении.
       expect(calls[0].body.messages[0].content).toContain('Answer with JSON only');
+      expect(calls[0].body.response_format).toMatchObject({
+        type: 'json_schema',
+        json_schema: { name: 'dossier_part', strict: true },
+      });
+      // Сводка - схема только в тексте: Claude не компилирует её грамматику (Р1 `F05 | F05-R`).
+      const [summary] = callsOf('dossier');
+      expect(summary.body.response_format).toBeUndefined();
+      expect(summary.body.messages[0].content).toContain('Answer with JSON only');
       const ready = await auth(http().get(`/admin/versions/${ids.en}/dossier`)).expect(200);
       expect(ready.body).toMatchObject({
         status: 'ready',

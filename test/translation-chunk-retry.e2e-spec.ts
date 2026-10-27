@@ -15,6 +15,7 @@ import { runTaskInput } from '../src/modules/translation/run/translation-run.ser
 import { chapterFingerprint } from '../src/modules/translation/source-fingerprint';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
+import { llmCallName } from './helpers/llm-call-name';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
@@ -25,11 +26,14 @@ import { grantStaffRoles } from './helpers/staff-roles';
 describe('Translation chunks: view, retry, edit (e2e)', () => {
   const FAKE_KEY = 'sk-or-e2e-fake-key';
   const MODEL = 'anthropic/claude-sonnet-5.5';
+  /** Умолчание этапа `translate` (Р2 `F05 | F05-R`); его запасная - `MODEL`. */
+  const TRANSLATOR = 'openai/gpt-5.6-terra';
   const ALT = 'z/alt-model';
   const CHECKER = 'deepseek/deepseek-v4-pro';
   const MODELS = {
     data: [
       MODEL,
+      TRANSLATOR,
       ALT,
       CHECKER,
       'z-ai/glm-5.3',
@@ -142,6 +146,8 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
       return { verdict: 'pass', samples: [], omissions: [], nameFlags: [], remarks: [] };
     }
     if (name === 'check_seam') return { verdict: 'pass', problems: [] };
+    // Jev включён по умолчанию (`F05-R`); переводы здесь испанские.
+    if (name === 'check_language_jev') return { language: 'es' };
     if (name === 'final_check') return { verdict: 'pass', issues: [] };
     if (name === 'split') {
       const first = /^\[(\d+)\]/m.exec(body.messages[1]?.content ?? '');
@@ -293,7 +299,7 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
       if (urlOf(url).endsWith('/models')) return Promise.resolve(json(MODELS));
       if (urlOf(url).endsWith('/chat/completions')) {
         const body = JSON.parse((init as RequestInit).body as string) as ChatBody;
-        const name = body.response_format?.json_schema?.name ?? '';
+        const name = llmCallName(body);
         calls.push({ name, model: body.model });
         if (name === refusedStage) {
           return Promise.resolve(
@@ -377,7 +383,12 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
         'status',
       ].sort(),
     );
-    expect(first).toMatchObject({ status: 'done', model: MODEL, retry: null, editedAt: null });
+    expect(first).toMatchObject({
+      status: 'done',
+      model: TRANSLATOR,
+      retry: null,
+      editedAt: null,
+    });
     expect((first.blocks as unknown[])[0]).toEqual({
       n: 1,
       source: expect.stringContaining('Line 0') as unknown,

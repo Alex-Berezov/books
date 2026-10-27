@@ -165,6 +165,25 @@ describe('OpenRouterClient', () => {
     expect(settled[0].costUsd.toFixed(2)).toBe('0.50');
   });
 
+  it('JSON wrapped whole in a ```json fence is parsed; text around JSON is still not JSON (Р1 F05-R)', async () => {
+    const answer = (content: string) =>
+      ok({ model: 'a/primary', choices: [{ message: { content } }], usage: { cost: 0.1 } });
+    fetchSpy
+      .mockResolvedValueOnce(answer('```json\n{"answer":42}\n```'))
+      .mockResolvedValueOnce(answer('```JSON\n{"answer":42}```'))
+      .mockResolvedValueOnce(answer('Here it is:\n```json\n{"answer":42}\n```'));
+    const schema = { name: 'a', schema: {}, textOnly: true };
+    // Тег ограды в любом регистре, закрывающая ограда - и вплотную к JSON.
+    for (let i = 0; i < 2; i++) {
+      await expect(client.chat(request({ jsonSchema: schema }))).resolves.toMatchObject({
+        json: { answer: 42 },
+      });
+    }
+    await expect(client.chat(request({ jsonSchema: schema }))).rejects.toMatchObject({
+      code: 'LLM_INVALID_RESPONSE',
+    });
+  });
+
   it('calls beforeAttempt before every attempt; its failure stops the call', async () => {
     const beforeAttempt = jest.fn();
     fetchSpy.mockResolvedValueOnce(fail(500)).mockResolvedValueOnce(success(0));
@@ -231,6 +250,25 @@ describe('OpenRouterClient', () => {
       .estimateUsd;
     // (1000 + 16) × 0.000001
     expect(estimate.toFixed(8)).toBe('0.00101600');
+  });
+
+  it('a model priced by the stage cap reserves the service input of a router too (Р6 F05-R)', async () => {
+    fetchSpy.mockResolvedValueOnce(success(0)).mockResolvedValueOnce(success(0));
+    const messages = [{ role: 'user' as const, content: 'x'.repeat(1000) }];
+    const capped: LlmCallModel = {
+      ...model('c/dynamic'),
+      inputPrice: new Prisma.Decimal('0.000005'),
+      outputPrice: new Prisma.Decimal('0.000005'),
+      maxPricePerMTok: new Prisma.Decimal('5'),
+    };
+    await client.chat(request({ messages, maxTokens: 0, models: [capped] }));
+    await client.chat(request({ messages, maxTokens: 0, models: [model('a/primary')] }));
+    const [router, priced] = budget.reserve.mock.calls.map(
+      (c) => (c[0] as { estimateUsd: Prisma.Decimal }).estimateUsd,
+    );
+    // (1000 + 16 + 1000 служебных) × 0.000005; у модели с ценой каталога надбавки нет.
+    expect(router.toFixed(8)).toBe('0.01008000');
+    expect(priced.toFixed(8)).toBe('0.00101600');
   });
 
   it('a 200 with an error body is handled by its code (429 -> fallback)', async () => {
@@ -318,6 +356,14 @@ describe('OpenRouterClient', () => {
       const [withSchema, without] = sentBodies();
       expect(withSchema.response_format).toMatchObject({ type: 'json_schema' });
       expect(without).not.toHaveProperty('response_format');
+    });
+
+    it('a text-only schema is not sent as response_format even to a structured model', async () => {
+      fetchSpy.mockResolvedValueOnce(success(0));
+      await client.chat(
+        request({ jsonSchema: { name: 's', schema: { type: 'object' }, textOnly: true } }),
+      );
+      expect(sentBodies()[0]).not.toHaveProperty('response_format');
     });
 
     it('temperature null is not sent', async () => {

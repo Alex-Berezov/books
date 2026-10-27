@@ -1,10 +1,12 @@
 import { Language, Prisma } from '@prisma/client';
+import { LlmError } from '../../llm/llm.errors';
 import { LlmService, StageCallEstimator } from '../../llm/llm.service';
 import { stageEstimatorFor } from '../llm-model-checks';
 import { ChapterPlan } from '../translate/translate-estimate';
 import { chunkBlocks } from '../translate/translate-piece';
-import { CHECK_SEMANTIC_STAGE } from './check.constants';
+import { CHECK_JEV_STAGE, CHECK_SEMANTIC_STAGE, JEV_TEXT_MAX_CHARS } from './check.constants';
 import { independentCheckModels } from './check-models';
+import { jevRequest } from './jev-check';
 import { seamInputOf, seamRequest } from './seam-check';
 import { semanticRequest } from './semantic-check';
 import { semanticInputOf } from './semantic-step';
@@ -12,9 +14,33 @@ import { semanticInputOf } from './semantic-step';
 /**
  * Сверка смысла в оценке запуска (решения арбитра `F05 | F05-5`, поле `checkUsd`): вызов на кусок
  * моделью, которую возьмёт запуск, - первой другого семейства, чем модель перевода. Повторы
- * перевода, повтор проверки и Jev оценка не считает. Оценка сверху по основной модели перевода:
- * переход перевода на запасную другого семейства может сменить и проверяющего.
+ * перевода и повтор проверки оценка не считает. Оценка сверху по основной модели перевода:
+ * переход перевода на запасную другого семейства может сменить и проверяющего. Jev - тоже
+ * в `checkUsd`, вызов на кусок, пока этап включён (решение арбитра `F05 | F05-R`, Р9).
  */
+
+/**
+ * Вызов Jev сверху - один на оценку: вход - перевод, обрезанный до `JEV_TEXT_MAX_CHARS`; цена -
+ * по потолку этапа (`maxPricePerMTok`, Р24) со служебным входом роутера (Р6), как у резерва.
+ * `null` - Jev в оценку не входит и старт не блокирует: этап выключен или у модели нет цены
+ * (шаг такой Jev пропускает, он необязателен).
+ */
+export async function jevCallUsd(llm: LlmService): Promise<Prisma.Decimal | null> {
+  let call: StageCallEstimator;
+  try {
+    call = await llm.stageCallEstimator(CHECK_JEV_STAGE);
+  } catch (error) {
+    if (error instanceof LlmError && error.code === 'LLM_NO_PRICE') return null;
+    throw error;
+  }
+  return call.enabled ? call.estimate(jevRequest('x'.repeat(JEV_TEXT_MAX_CHARS))) : null;
+}
+
+/** Jev всех кусков главы: вызов на кусок с переводимым текстом. */
+export function chapterJevUsd(perCall: Prisma.Decimal | null, plan: ChapterPlan): Prisma.Decimal {
+  if (!perCall) return new Prisma.Decimal(0);
+  return perCall.mul(plan.chunks.filter((c) => chunkBlocks(plan.layout, c).length > 0).length);
+}
 
 /**
  * Оценщик сверки смысла - модель, которую возьмёт запуск. Модели другого семейства нет - 409

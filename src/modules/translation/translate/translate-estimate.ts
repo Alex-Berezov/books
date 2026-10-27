@@ -2,7 +2,7 @@ import { Language, Prisma } from '@prisma/client';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { LlmError } from '../../llm/llm.errors';
 import { LlmService, StageCallEstimator } from '../../llm/llm.service';
-import { CHARS_PER_TOKEN } from '../../llm/openrouter.client';
+import { ANSWER_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
 import { ChapterLayout, splitChapter } from '../chapter-blocks';
 import {
   ChapterChunk,
@@ -123,5 +123,5 @@ export async function contextUpperChars(llm: LlmService): Promise<number> {
     llm.getStageSetting(DOSSIER_STAGE),
     llm.getStageSetting(GLOSSARY_STAGE),
   ]);
-  return (dossier.maxTokens + glossary.maxTokens) * CHARS_PER_TOKEN;
+  return (dossier.maxTokens + glossary.maxTokens) * ANSWER_CHARS_PER_TOKEN;
 }

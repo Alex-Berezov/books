@@ -181,6 +181,22 @@ describe('dossier prompts', () => {
     );
   });
 
+  it('only the summary schema stays in the text: Claude does not compile its grammar (Р1 F05-R)', () => {
+    const summary = dossierSummaryRequest({ chapters: [], parts: [] });
+    expect(summary.jsonSchema.textOnly).toBe(true);
+    expect(summary.messages[0].content).toContain(JSON.stringify(summary.jsonSchema.schema));
+    const part = dossierPartRequest({
+      chapterNumber: 1,
+      chapterTitle: 'A',
+      partIndex: 0,
+      text: '[1] A',
+    });
+    expect(part.jsonSchema).not.toHaveProperty('textOnly');
+    expect(glossaryRequest({ dossier: {}, language: 'fr' }).jsonSchema).not.toHaveProperty(
+      'textOnly',
+    );
+  });
+
   it('the glossary request names the target language', () => {
     const request = glossaryRequest({ dossier: { characters: [] }, language: 'fr' });
     expect(request.jsonSchema.name).toBe('glossary');

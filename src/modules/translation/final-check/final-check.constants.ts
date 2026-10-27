@@ -4,8 +4,9 @@ export const FINAL_CHECK_STAGE = 'final_check';
 
 /**
  * Умолчание итоговой проверки (`tech.md` §3: «как `check_semantic`»): модель другого семейства, чем
- * умолчание перевода (Claude), и запасная третьего семейства - иначе перевод запасной перевода
- * (`deepseek`) не стартовал бы (решение арбитра `F05 | F05-6`, 6c /fix круг 2, В2). Правило семейств -
+ * умолчание перевода и его запасная (GPT и Claude, Р2 `F05 | F05-R`), и запасная третьего семейства -
+ * иначе перевод моделью `deepseek`, выбранной редактором, не стартовал бы (решение арбитра
+ * `F05 | F05-6`, 6c /fix круг 2, В2). Правило семейств -
  * на каждом вызове против моделей кусков главы и на оценке, старте, «продолжить» (6c В5).
  */
 export const FINAL_CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
@@ -14,7 +15,8 @@ export const FINAL_CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     model: 'deepseek/deepseek-v4-pro',
     fallbacks: ['z-ai/glm-5.3'],
     temperature: 0,
-    maxTokens: 2_000,
+    // Рассуждения модели входят в ответ: при 2000 вердикт обрезался (Р4 `F05 | F05-R`).
+    maxTokens: 8_000,
     enabled: true,
   },
 ];
