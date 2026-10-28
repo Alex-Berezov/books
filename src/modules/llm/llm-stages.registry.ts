@@ -14,6 +14,13 @@ export interface LlmStageDefinition {
    * (`typesafe/jev-router`, Р24). Строка: деньги в Decimal, без float.
    */
   maxPricePerMTok?: string;
+  /**
+   * Токенов ответа, которые рассуждения не съедают: потолок рассуждений вызова - действующий
+   * `maxTokens` минус резерв, не ниже 1024 (`reasoningCeiling` в `llm.service.ts`), уходит
+   * провайдеру как `reasoning.max_tokens`. Только у проверяющих
+   * этапов (`LEGACY-478`, решение арбитра `F05 | F05-13`); нет - рассуждения без потолка.
+   */
+  reasoningAnswerReserve?: number;
 }
 
 /**

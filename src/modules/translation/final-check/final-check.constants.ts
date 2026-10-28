@@ -1,4 +1,5 @@
 import { LlmStageDefinition } from '../../llm/llm-stages.registry';
+import { CHECK_REASONING_ANSWER_RESERVE } from '../check/check.constants';
 
 export const FINAL_CHECK_STAGE = 'final_check';
 
@@ -19,6 +20,8 @@ export const FINAL_CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     // Вход больше, чем у сверки куска (начало и конец главы): на живом прогоне F05-9 glm упёрся
     // в 8000 в 4 вызовах из 10 - лимит 16000, как у `check_semantic` (решения `F05 | F05-9`).
     maxTokens: 16_000,
+    // Потолок рассуждений, как у `check_semantic` (`LEGACY-478`, решение арбитра `F05 | F05-13`).
+    reasoningAnswerReserve: CHECK_REASONING_ANSWER_RESERVE,
     enabled: true,
   },
 ];

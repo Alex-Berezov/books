@@ -4,6 +4,12 @@ export const CHECK_SEMANTIC_STAGE = 'check_semantic';
 export const CHECK_JEV_STAGE = 'check_language_jev';
 
 /**
+ * Токенов ответа проверяющего, которые рассуждения не съедают (`LEGACY-478`). Общий для проверяющих
+ * этапов: `final_check` берёт его отсюда же (решение арбитра `F05 | F05-13`).
+ */
+export const CHECK_REASONING_ANSWER_RESERVE = 4_000;
+
+/**
  * Умолчания этапов проверки (`tech.md` §3). `check_mechanical` - только код, модели у него нет,
  * поэтому в реестр LLM не входит. `check_semantic` - модели другого семейства, чем умолчание
  * перевода и его запасная (GPT и Claude, Р2 `F05 | F05-R`); правило семейств сверяет каждый
@@ -21,8 +27,10 @@ export const CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     // `deepseek-v4-pro` на живом прогоне F05-9 рассуждения съедали и 8000 (27 из 69 вызовов) -
     // умолчание glm, deepseek в запасных (Р4б, решение арбитра `F05 | F05-9`). У glm 4 из 52 ответов
     // упёрлись в 8000 на длинных кусках - лимит 16000 (решение `F05 | F05-9`); на отдельных кусках
-    // рассуждения зацикливаются при любом лимите - `LEGACY-478`, выше 16000 не поднимать.
+    // рассуждения зацикливались при любом лимите - потолок рассуждений `maxTokens` минус резерв
+    // на вердикт (`LEGACY-478`, решение арбитра `F05 | F05-13`); выше 16000 не поднимать.
     maxTokens: 16_000,
+    reasoningAnswerReserve: CHECK_REASONING_ANSWER_RESERVE,
     enabled: true,
   },
   {

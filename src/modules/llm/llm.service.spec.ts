@@ -93,6 +93,16 @@ describe('LlmService', () => {
       maxTokens: 100,
       enabled: false,
     });
+    // Проверяющий этап с резервом ответа - как `check_semantic` (`LEGACY-478`).
+    registry.register({
+      stage: 'checker',
+      model: 'a/priced',
+      fallbacks: [],
+      temperature: 0,
+      maxTokens: 6_000,
+      enabled: true,
+      reasoningAnswerReserve: 4_000,
+    });
     service = new LlmService(
       prisma as unknown as PrismaService,
       new LlmConfig({ get: () => key } as unknown as ConfigService),
@@ -159,6 +169,40 @@ describe('LlmService', () => {
       expect(sent.beforeAttempt).toBe(beforeAttempt);
       expect(sent.signal).toBe(signal);
       expect(sent.taskId).toBe('task-1');
+    });
+
+    // Потолок рассуждений проверяющих (`LEGACY-478`, решение арбитра `F05 | F05-13`).
+    describe('reasoning ceiling', () => {
+      const callOf = (stage: string) =>
+        service.callStage('op', stage, [{ role: 'user', content: 'x' }]);
+      const sentCeiling = () =>
+        (client.chat.mock.calls[0][0] as { reasoningMaxTokens?: number }).reasoningMaxTokens;
+
+      it('a stage with an answer reserve sends maxTokens minus the reserve', async () => {
+        await callOf('checker');
+        expect(client.chat).toHaveBeenCalledTimes(1);
+        expect(sentCeiling()).toBe(2_000);
+      });
+
+      it('a stage without a reserve sends no ceiling', async () => {
+        await callOf('on');
+        expect(client.chat).toHaveBeenCalledTimes(1);
+        expect(sentCeiling()).toBeUndefined();
+      });
+
+      it('a row lowering maxTokens lowers the ceiling, not below 1024; at or below the reserve there is none', async () => {
+        for (const maxTokens of [16_000, 5_024, 5_023, 4_001, 4_000]) {
+          prisma.llmStageSetting.findUnique.mockResolvedValueOnce(
+            row({ stage: 'checker', maxTokens, enabled: true }),
+          );
+          await callOf('checker');
+        }
+        expect(client.chat).toHaveBeenCalledTimes(5);
+        const sent = client.chat.mock.calls.map(
+          (c) => (c[0] as { reasoningMaxTokens?: number }).reasoningMaxTokens,
+        );
+        expect(sent).toEqual([12_000, 1_024, 1_024, 1_024, undefined]);
+      });
     });
 
     it('a row without temperature keeps the stage default', async () => {

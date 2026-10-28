@@ -445,12 +445,30 @@ export class LlmService implements OnModuleInit {
       messages,
       temperature: setting.temperature,
       maxTokens: setting.maxTokens,
+      reasoningMaxTokens: reasoningCeiling(setting),
       jsonSchema: options.jsonSchema,
       beforeAttempt: options.beforeAttempt,
       signal: options.signal,
       taskId: options.taskId,
     });
   }
+}
+
+/**
+ * Наименьший потолок рассуждений, который принимают все провайдеры (у Anthropic бюджет
+ * рассуждений не меньше 1024): меньший остаток поднимается до него.
+ */
+const REASONING_MIN_TOKENS = 1_024;
+
+/**
+ * Потолок рассуждений от действующего `maxTokens`: лимит, сниженный на экране, опускает и его,
+ * но не ниже `REASONING_MIN_TOKENS`. Лимит не больше резерва - потолка нет (решение арбитра
+ * `F05 | F05-13a`, нижняя граница).
+ */
+function reasoningCeiling(setting: EffectiveStageSetting): number | undefined {
+  const reserve = setting.reasoningAnswerReserve;
+  if (reserve === undefined || setting.maxTokens <= reserve) return undefined;
+  return Math.max(REASONING_MIN_TOKENS, setting.maxTokens - reserve);
 }
 
 function hasPrice(model: LlmModelInfo): boolean {
@@ -505,6 +523,7 @@ function merge(def: LlmStageDefinition, row: LlmStageSetting | undefined): Effec
     fallbacks,
     temperature: row.temperature ?? def.temperature,
     maxTokens: row.maxTokens ?? def.maxTokens,
+    reasoningAnswerReserve: def.reasoningAnswerReserve,
     enabled: row.enabled,
     maxPricePerMTok:
       row.maxPricePerMTok ?? (def.maxPricePerMTok ? new Prisma.Decimal(def.maxPricePerMTok) : null),

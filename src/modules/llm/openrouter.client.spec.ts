@@ -398,6 +398,16 @@ describe('OpenRouterClient', () => {
       expect(sentBodies()[0]).not.toHaveProperty('response_format');
     });
 
+    it('reasoning.max_tokens is sent only when the request carries a ceiling (LEGACY-478)', async () => {
+      fetchSpy.mockResolvedValueOnce(success(0)).mockResolvedValueOnce(success(0));
+      await client.chat(request({ reasoningMaxTokens: 12_000 }));
+      await client.chat(request());
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      const [capped, plain] = sentBodies();
+      expect(capped.reasoning).toEqual({ max_tokens: 12_000 });
+      expect(plain).not.toHaveProperty('reasoning');
+    });
+
     it('temperature null is not sent', async () => {
       fetchSpy.mockResolvedValueOnce(success(0));
       await client.chat(request({ temperature: null }));

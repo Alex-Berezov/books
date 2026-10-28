@@ -47,6 +47,8 @@ export interface LlmChatRequest {
   messages: LlmChatMessage[];
   temperature: number | null;
   maxTokens: number;
+  /** Потолок рассуждений модели внутри `maxTokens` (`reasoning.max_tokens`); нет - без потолка. */
+  reasoningMaxTokens?: number;
   /**
    * Ответ - JSON по схеме: схема уходит в `response_format`, где модель её принимает и схема
    * не помечена `textOnly`; иначе модель видит её только в тексте запроса.
@@ -410,6 +412,9 @@ export class OpenRouterClient {
       usage: { include: true },
     };
     if (request.temperature !== null) body.temperature = request.temperature;
+    if (request.reasoningMaxTokens !== undefined) {
+      body.reasoning = { max_tokens: request.reasoningMaxTokens };
+    }
     if (request.jsonSchema && model.structuredOutputs && !request.jsonSchema.textOnly) {
       body.response_format = {
         type: 'json_schema',
