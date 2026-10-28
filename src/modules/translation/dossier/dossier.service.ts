@@ -34,7 +34,9 @@ import {
 import { DossierEstimateDto, DossierStatusDto, GlossaryDto } from '../dto/translation-response.dto';
 import {
   dossierListLimits,
+  exceedsChapterCap,
   level0GroupsUpperBound,
+  refusedBeforeParts,
   summaryCapacity,
   summaryItemChars,
   summaryLevels,
@@ -54,6 +56,7 @@ import { toDossierStatusDto, toEstimateDto, toGlossaryDto } from './dossier.mapp
 import {
   dossierPartRequest,
   dossierSummaryRequest,
+  emptyMergeInputChars,
   glossaryRequest,
   ShapedRequest,
 } from './dossier.prompts';
@@ -406,6 +409,8 @@ export class DossierService {
           fresh: latest ? fresh(latest) : true,
         };
       }
+      // Отказ на старте (`F05-13b`): ждущий уже на паузе той же транзакцией, что и строка.
+      if (started?.status === 'failed') return { status: 'failed', row: started, fresh: true };
       if (started) return { status: 'wait', row: started, fresh: true };
       // P2002: строку того же поколения вставил другой - следующий круг пойдёт за ним.
     }
@@ -463,7 +468,14 @@ export class DossierService {
     if (!input.options.waiter) await this.assertCeilingRoom();
     // Текст читается один раз на старте: план хранится в строке, шаг читает свою главу.
     // Оценка нужна и при лимите редактора: модель без цены - 409 `LLM_NO_PRICE` до операции.
-    const { estimateUsd: estimate, entries } = await this.estimateSource(input.sourceVersionId);
+    const {
+      estimateUsd: estimate,
+      entries,
+      titles,
+    } = await this.estimateSource(input.sourceVersionId);
+    // Сводка заведомо откажет `DOSSIER_TOO_LONG`: куски не ставятся и не оплачиваются (`LEGACY-477`).
+    const refusing = await this.findRefusingModel(titles, entries.length);
+    if (refusing) return this.failAtStart(input, refusing);
     const limitUsd = input.options.limitUsd ?? estimate.mul(DOSSIER_LIMIT_FACTOR);
     if (!(await this.waiterFits(input.options, limitUsd))) return 'waiter-limit';
     const opData = await this.llm.operationData({
@@ -494,6 +506,66 @@ export class DossierService {
       if (isUniqueViolation(error)) return null;
       throw error;
     }
+  }
+
+  /**
+   * Модель этапа, если сводка заведомо откажет `DOSSIER_TOO_LONG` (`refusedBeforeParts`), иначе
+   * `null`. Граница входа - `stageInputCeiling`, как у обработчика перед записью уровня 0: модели
+   * без цены в неё не входят, вызов на них не уйдёт.
+   */
+  private async findRefusingModel(
+    titles: ChapterTitle[],
+    chapters: number,
+  ): Promise<string | null> {
+    const { maxTokens } = await this.llm.getStageSetting(DOSSIER_STAGE);
+    // Глав не больше K - отказа на старте не бывает, границу и мерку не считаем.
+    if (!exceedsChapterCap(chapters, maxTokens)) return null;
+    const { maxInputChars, model } = await this.llm.stageInputCeiling(DOSSIER_STAGE, {
+      charsPerToken: SUMMARY_INPUT_CHARS_PER_TOKEN,
+    });
+    const emptyMerged = emptyMergeInputChars(titles, dossierListLimits(maxTokens));
+    return refusedBeforeParts(chapters, maxInputChars, emptyMerged, maxTokens) ? model : null;
+  }
+
+  /**
+   * Строка `failed` сразу, без операции и задач: ни один платный вызов не ушёл. Модель - чтобы
+   * ждущий не строил ту же строку той же моделью заново (`tooLongAgain`). Строка и пауза ждущего -
+   * одной транзакцией, как в `builderVerdict` (Р20): обрыв между ними оставил бы ждущего `active`.
+   */
+  private async failAtStart(
+    input: {
+      bookId: string;
+      sourceVersionId: string;
+      generation: number;
+      fingerprint: string;
+      options: DemandOptions;
+    },
+    model: string,
+  ): Promise<BookDossier | null> {
+    const made: { row?: BookDossier } = {};
+    const create = async (db: Prisma.TransactionClient) => {
+      made.row = await db.bookDossier.create({
+        data: {
+          bookId: input.bookId,
+          sourceVersionId: input.sourceVersionId,
+          generation: input.generation,
+          fingerprint: input.fingerprint,
+          status: 'failed',
+          failedReason: DOSSIER_TOO_LONG,
+          model,
+        },
+      });
+    };
+    const { waiter } = input.options;
+    try {
+      if (waiter) await this.tasks.pauseOperation(waiter.operationId, 'STEP_FAILED', create);
+      else await create(this.prisma);
+    } catch (error) {
+      // Строку того же поколения вставил другой: пауза откатилась вместе со вставкой.
+      if (isUniqueViolation(error)) return null;
+      throw error;
+    }
+    return made.row ?? null;
   }
 
   /** `null` - перехват ушёл другому ждущему, строку надо перечитать. */
@@ -811,7 +883,12 @@ export class DossierService {
   private async estimateSource(
     sourceVersionId: string,
     saved: ReadonlySet<string> = new Set(),
-  ): Promise<{ estimateUsd: Prisma.Decimal; entries: DossierPlanEntry[]; parts: number }> {
+  ): Promise<{
+    estimateUsd: Prisma.Decimal;
+    entries: DossierPlanEntry[];
+    parts: number;
+    titles: ChapterTitle[];
+  }> {
     const held: { call?: StageCallEstimator } = {};
     let partsUsd = new Prisma.Decimal(0);
     const { titles, entries, parts } = await this.walkSource(sourceVersionId, async (part) => {
@@ -825,6 +902,7 @@ export class DossierService {
       estimateUsd: partsUsd.add(summaryUsd(call, titles, parts, entries.length)),
       entries,
       parts,
+      titles,
     };
   }
 

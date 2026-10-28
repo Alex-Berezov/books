@@ -9,12 +9,14 @@ import {
   groupChapterCap,
   levelNarrows,
   packGroups,
+  refusedBeforeParts,
   SUMMARY_ITEM_WRAPPER_CHARS,
   summaryCapacity,
   summaryInputChars,
+  summaryItemChars,
   summaryLevels,
 } from './dossier-groups';
-import { dossierSummaryRequest } from './dossier.prompts';
+import { dossierSummaryRequest, emptyMergeInputChars } from './dossier.prompts';
 
 const item = (chapter: number): GroupItem => ({
   firstChapter: chapter,
@@ -148,22 +150,22 @@ describe('summaryInputChars (Р6)', () => {
 });
 
 describe('chapter limit of a level 0 group (F05-12)', () => {
-  it('a fifth of maxTokens at 80 tokens a chapter, recounted from the stage setting', () => {
-    expect(groupChapterCap(16_000)).toBe(40);
-    expect(groupChapterCap(2_000)).toBe(5);
+  it('40 % of maxTokens at 350 tokens a chapter, recounted from the stage setting', () => {
+    expect(groupChapterCap(16_000)).toBe(18);
+    expect(groupChapterCap(2_000)).toBe(2);
     expect(groupChapterCap(100)).toBe(1);
   });
 
   it('groups are needed above the limit, not at it', () => {
-    expect(exceedsChapterCap(40, 16_000)).toBe(false);
-    expect(exceedsChapterCap(41, 16_000)).toBe(true);
+    expect(exceedsChapterCap(18, 16_000)).toBe(false);
+    expect(exceedsChapterCap(19, 16_000)).toBe(true);
   });
 
   it('level 0 groups for the estimate: none when one summary fits, otherwise both limits added up', () => {
-    expect(level0GroupsUpperBound(40, 40, Number.POSITIVE_INFINITY, 16_000)).toBe(0);
-    expect(level0GroupsUpperBound(250, 250, Number.POSITIVE_INFINITY, 16_000)).toBe(7);
-    // Упаковка закрывает группу по тому пределу, что настал раньше: 10 по входу, 2 по главам, 1.
-    expect(level0GroupsUpperBound(100, 80, 10, 16_000)).toBe(13);
+    expect(level0GroupsUpperBound(18, 18, Number.POSITIVE_INFINITY, 16_000)).toBe(0);
+    expect(level0GroupsUpperBound(250, 250, Number.POSITIVE_INFINITY, 16_000)).toBe(14);
+    // Упаковка закрывает группу по тому пределу, что настал раньше: 10 по входу, 4 по главам, 1.
+    expect(level0GroupsUpperBound(100, 80, 10, 16_000)).toBe(15);
     // Групп не больше кусков.
     expect(level0GroupsUpperBound(3, 3, 1, 16_000)).toBe(3);
   });
@@ -248,5 +250,42 @@ describe('summaryCapacity (F05-12, Р3 revised)', () => {
         inner + SUMMARY_ITEM_WRAPPER_CHARS,
       );
     }
+  });
+});
+
+describe('refusal before the parts are paid (F05-13b)', () => {
+  // maxTokens 16 000: K = 18, два ответа группы выше уровня 0 - 2 × (64 000 + обёртка) символов.
+  const twoAnswers = 2 * summaryItemChars(16_000);
+
+  it('refuses only over the chapter limit and only when two group answers do not fit above', () => {
+    expect(refusedBeforeParts(19, twoAnswers + 999, 1_000, 16_000)).toBe(true);
+    expect(refusedBeforeParts(19, twoAnswers + 1_000, 1_000, 16_000)).toBe(false);
+    // Глав не больше K - одна сводка или группы по входу, отказ решает обработчик.
+    expect(refusedBeforeParts(18, 0, 1_000, 16_000)).toBe(false);
+  });
+
+  it('an unknown input ceiling never refuses, as in the handler', () => {
+    expect(refusedBeforeParts(313, null, 1_000, 16_000)).toBe(false);
+  });
+
+  it('a ceiling below the empty request refuses, as upperLevelFits does in the handler', () => {
+    expect(refusedBeforeParts(19, 500, 1_000, 16_000)).toBe(true);
+  });
+
+  it('the empty upper-level input is the merge request with every chapter title, counted against the ceiling', () => {
+    const titles = Array.from({ length: 19 }, (_, i) => ({
+      number: i + 1,
+      title: 'T'.repeat(500),
+    }));
+    const limits = dossierListLimits(16_000);
+    const empty = emptyMergeInputChars(titles, limits);
+    // Названия всех глав входят в мерку символ в символ: длиннее на 400 у каждой - мерка на 19 × 400.
+    const short = emptyMergeInputChars(
+      titles.map((t) => ({ ...t, title: 'T'.repeat(100) })),
+      limits,
+    );
+    expect(empty - short).toBe(19 * 400);
+    expect(refusedBeforeParts(19, twoAnswers + empty - 1, empty, 16_000)).toBe(true);
+    expect(refusedBeforeParts(19, twoAnswers + 19 * 500, empty, 16_000)).toBe(true);
   });
 });

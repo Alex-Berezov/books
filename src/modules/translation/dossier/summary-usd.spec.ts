@@ -28,35 +28,35 @@ const titles = (n: number) =>
 describe('summaryUsd', () => {
   it('a single summary counts each answer with the JSON wrapper of its item and the comma', () => {
     const { call, extras } = estimator(2_000, null);
-    summaryUsd(call, titles(3), 3, 3);
+    summaryUsd(call, titles(2), 3, 2);
     expect(extras).toEqual([3 * (2_000 * ANSWER_CHARS_PER_TOKEN + SUMMARY_ITEM_WRAPPER_CHARS)]);
   });
 
   it('more chapters than a group may list: level 0 groups and a final summary, even when the input fits', () => {
-    // maxTokens 16 000 - по 40 глав в группе: 250 глав - семь групп и итог.
+    // maxTokens 16 000 - по 18 глав в группе: 250 глав - четырнадцать групп и итог.
     const { call, extras } = estimator(16_000, null);
     const usd = summaryUsd(call, titles(250), 250, 250);
     const item = 16_000 * ANSWER_CHARS_PER_TOKEN + SUMMARY_ITEM_WRAPPER_CHARS;
-    // Групп сверху ⌊250/40⌋ + 1 = 7: шесть вызовов без входа кусков, один - с ответами всех 250
-    // кусков (группы делят куски), итог - из семи ответов групп.
-    expect(extras).toEqual([0, 250 * item, 7 * item]);
+    // Групп сверху ⌊250/18⌋ + 1 = 14: тринадцать вызовов без входа кусков, один - с ответами всех
+    // 250 кусков (группы делят куски), итог - из четырнадцати ответов групп.
+    expect(extras).toEqual([0, 250 * item, 14 * item]);
     const call$ = (chars: number) =>
       new Prisma.Decimal(0.01).add(new Prisma.Decimal(chars).div(100_000));
     expect(usd.toString()).toBe(
       call$(0)
-        .mul(6)
+        .mul(13)
         .add(call$(250 * item))
-        .add(call$(7 * item))
+        .add(call$(14 * item))
         .toString(),
     );
   });
 
   it('chapters up to the limit and an input that fits: one call; one chapter more - groups', () => {
     const at = estimator(16_000, null);
-    summaryUsd(at.call, titles(40), 40, 40);
+    summaryUsd(at.call, titles(18), 18, 18);
     expect(at.extras).toHaveLength(1);
     const over = estimator(16_000, null);
-    summaryUsd(over.call, titles(41), 41, 41);
+    summaryUsd(over.call, titles(19), 19, 19);
     expect(over.extras).toHaveLength(3);
   });
 
@@ -64,16 +64,16 @@ describe('summaryUsd', () => {
     const many = estimator(16_000, null);
     const few = estimator(16_000, null);
     const grouped = summaryUsd(many.call, titles(250), 250, 250);
-    const single = summaryUsd(few.call, titles(40), 250, 40);
+    const single = summaryUsd(few.call, titles(18), 250, 18);
     expect(grouped.gt(single)).toBe(true);
   });
 
   it('a known context: level 0 groups by the input, levels above by the input without chapter lists', () => {
-    // maxTokens 2 000 (по 5 глав в группе), контекст 40 000: во вход влезает ~9 ответов.
+    // maxTokens 2 000 (по 2 главы в группе), контекст 40 000: во вход влезает ~9 ответов.
     const { call, extras } = estimator(2_000, 40_000);
     const usd = summaryUsd(call, titles(60), 60, 60);
     const item = 2_000 * ANSWER_CHARS_PER_TOKEN + SUMMARY_ITEM_WRAPPER_CHARS;
-    // Уровень 0: шесть групп по главам и входу вперемешку - вызовы без кусков плюс один со всеми.
+    // Уровень 0: группы по главам (по 2) и входу вперемешку - вызовы без кусков плюс один со всеми.
     expect(extras[0]).toBe(0);
     expect(extras[1]).toBe(60 * item);
     // Уровни выше - вход из ответов групп по ёмкости уровня (не меньше двух), итог - остаток.

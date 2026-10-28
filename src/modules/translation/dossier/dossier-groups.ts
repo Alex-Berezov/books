@@ -8,12 +8,13 @@ import { ANSWER_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
  */
 
 /**
- * Токенов ответа на главу в `chapters` и `summaryPlan` группы уровня 0: на них отдана пятая часть
- * `maxTokens` - остальное занимают персонажи, сущности и события, которые в сборнике растут с числом
- * глав так же (решение арбитра `F05 | F05-12`, живой отказ группы).
+ * Предел глав группы уровня 0: K = ⌊доля × `maxTokens` / токенов на главу⌋ = 18 при 16 000. Это
+ * подобранная граница, а не раскладка ответа: живая группа 18 басен ответила 14 687 из 16 000
+ * токенов, ~816 на главу со всеми списками, - запас 8 %. При 80 токенах и 20 % (K = 40) ответ
+ * упирался в `maxTokens` (решение арбитра `F05 | F05-13b`, живой отказ `F05-12`).
  */
-const CHAPTER_ANSWER_TOKENS = 80;
-const CHAPTER_LISTS_SHARE = 0.2;
+const CHAPTER_ANSWER_TOKENS = 350;
+const CHAPTER_LISTS_SHARE = 0.4;
 
 /**
  * Сколько глав в группе уровня 0 (`F05-12`): `chapters` и `summaryPlan` пишет только уровень 0,
@@ -131,6 +132,38 @@ export const UPPER_LEVEL_MIN_ITEMS = 2;
  */
 export function upperLevelFits(roomChars: number, maxTokens: number): boolean {
   return summaryCapacity(roomChars, maxTokens) >= UPPER_LEVEL_MIN_ITEMS;
+}
+
+/**
+ * Откажет ли сводка `DOSSIER_TOO_LONG` ещё до кусков (`F05-13b`, `LEGACY-477`): глав больше
+ * `groupChapterCap` - уровень 0 будет из нескольких групп, а выше него не влезают два ответа
+ * группы (`upperLevelFits`, то же правило у обработчика перед записью уровня 0). `maxInputChars` -
+ * граница входа этапа (`stageInputCeiling`), `emptyMergedChars` - вход уровня выше без ответов;
+ * граница неизвестна - не отказывает, как и обработчик.
+ */
+export function refusedBeforeParts(
+  chapters: number,
+  maxInputChars: number | null,
+  emptyMergedChars: number,
+  maxTokens: number,
+): boolean {
+  return (
+    exceedsChapterCap(chapters, maxTokens) &&
+    upperLevelBlocked(maxInputChars, emptyMergedChars, maxTokens)
+  );
+}
+
+/**
+ * Уровень выше нулевого не сузится: при известной границе входа `maxInputChars` в него заведомо
+ * не влезают два ответа группы. Одно правило на обработчик перед записью уровня 0 из нескольких
+ * групп и на отказ на старте (`refusedBeforeParts`); граница неизвестна - не отказывает.
+ */
+export function upperLevelBlocked(
+  maxInputChars: number | null,
+  emptyMergedChars: number,
+  maxTokens: number,
+): boolean {
+  return maxInputChars !== null && !upperLevelFits(maxInputChars - emptyMergedChars, maxTokens);
 }
 
 /** Число разных глав в элементах уровня 0: у каждого куска одна глава. */

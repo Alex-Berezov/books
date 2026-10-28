@@ -40,7 +40,7 @@ import {
   levelNarrows,
   packGroups,
   summaryInputChars,
-  upperLevelFits,
+  upperLevelBlocked,
 } from './dossier-groups';
 import {
   DossierPlanEntry,
@@ -52,6 +52,7 @@ import {
 } from './dossier-parts';
 import {
   dossierPartRequest,
+  emptyMergeInputChars,
   dossierSummaryRequest,
   glossaryRequest,
   ShapedRequest,
@@ -358,13 +359,12 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       // Пересмотр Р3 (`F05 | F05-12`): уровень 0 из нескольких групп платит, только когда выше
       // него в вызов заведомо влезают два ответа группы, - иначе следующий уровень не сузится,
       // и отказ пришёл бы после оплаты всего уровня 0.
-      if (level === 0 && spans.length > 1 && maxInputChars !== null) {
-        const upperEmpty = estimateInputTokens(
-          dossierSummaryRequest({ chapters: titles, parts: [], merge: true, limits }),
-        );
-        if (!upperLevelFits(maxInputChars - upperEmpty, maxTokens)) {
-          return this.failTooLong(row, task, stage.model);
-        }
+      if (
+        level === 0 &&
+        spans.length > 1 &&
+        upperLevelBlocked(maxInputChars, emptyMergeInputChars(titles, limits), maxTokens)
+      ) {
+        return this.failTooLong(row, task, stage.model);
       }
       // Пробы упаковки долгие: аренду могли отдать другому, и его границы уже записаны. Без
       // аренды строки уровня не пишутся (как куски, `L-019`; Р5 `F05 | F05-Rb`).

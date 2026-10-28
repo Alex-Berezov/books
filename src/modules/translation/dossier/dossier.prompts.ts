@@ -1,5 +1,5 @@
 import { Language } from '@prisma/client';
-import { LlmChatMessage, LlmJsonSchema } from '../../llm/openrouter.client';
+import { estimateInputTokens, LlmChatMessage, LlmJsonSchema } from '../../llm/openrouter.client';
 import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
 import { DossierListLimits } from './dossier-groups';
 import { DossierPartPlan } from './dossier-parts';
@@ -219,6 +219,15 @@ export const dossierSummaryRequest = (input: Parameters<typeof dossierSummaryMes
     dossierSummaryMessages(input),
     { textOnly: true },
   );
+
+/**
+ * Вход уровня выше нулевого без ответов групп: названия всех глав и потолки списков. Одна мерка
+ * на проверку обработчика перед записью уровня 0 и на отказ на старте (`F05-13b`).
+ */
+export const emptyMergeInputChars = (
+  chapters: Parameters<typeof dossierSummaryMessages>[0]['chapters'],
+  limits: DossierListLimits,
+) => estimateInputTokens(dossierSummaryRequest({ chapters, parts: [], merge: true, limits }));
 
 export const glossaryRequest = (input: Parameters<typeof glossaryMessages>[0]) =>
   shapedRequest('glossary', GLOSSARY_SHAPE, glossaryMessages(input));
