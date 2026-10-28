@@ -51,3 +51,14 @@ describe('call timeout of the translation stages', () => {
     expect(withTimeout.map((d) => d.callTimeoutMs)).toEqual([420_000, 420_000]);
   });
 });
+
+// Оборванный лимитом ответ без вердикта не повторяется - только у проверяющих (`LEGACY-480`,
+// решение арбитра `F05 | F05-13d`): перевод, досье и глоссарий по-прежнему повторяют с замечанием.
+describe('truncation without a remark retry', () => {
+  it('only the meaning check and the final check end the model on a cut-off answer', () => {
+    const flagged = all.filter((d) => d.truncationEndsModel === true);
+    expect(flagged.map((d) => d.stage).sort()).toEqual(
+      [CHECK_SEMANTIC_STAGE, FINAL_CHECK_STAGE].sort(),
+    );
+  });
+});

@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { LlmBudgetService, SettleInput } from './llm-budget.service';
 import { parsePrice } from './llm-models.service';
 import { LlmConfig } from './llm.config';
-import { LlmError, llmDisabled } from './llm.errors';
+import { LlmError, LlmTruncatedError, llmDisabled } from './llm.errors';
 
 export interface LlmChatMessage {
   role: 'system' | 'user' | 'assistant';
@@ -51,6 +51,8 @@ export interface LlmChatRequest {
   reasoningMaxTokens?: number;
   /** Таймаут попытки этапа, мс, не ниже общего `LLM_CALL_TIMEOUT_MS`; нет - общий (`LEGACY-479`). */
   callTimeoutMs?: number;
+  /** Ответ, оборванный лимитом без JSON, не повторяется - следующая модель (`LEGACY-480`). */
+  truncationEndsModel?: boolean;
   /**
    * Ответ - JSON по схеме: схема уходит в `response_format`, где модель её принимает и схема
    * не помечена `textOnly`; иначе модель видит её только в тексте запроса.
@@ -76,7 +78,14 @@ export interface LlmChatResult {
   provider: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
+  /** Факт ответа плюс оплаченные оборванные ответы прежних моделей вызова (`truncationEndsModel`). */
   costUsd: Prisma.Decimal;
+  /**
+   * Ответ получен после обрыва прежней модели (`LEGACY-480`): ответ не по форме повтором с
+   * замечанием не исправляется - повтор начал бы цепочку с оборванной модели и оплатил бы её снова
+   * (решение арбитра `F05 | F05-13d`).
+   */
+  afterTruncation?: true;
 }
 
 interface OpenRouterChatBody {
@@ -175,7 +184,13 @@ const BEFORE_CONNECT_CODES = new Set([
 type AttemptOutcome =
   | { kind: 'ok'; result: LlmChatResult }
   | { kind: 'retry'; errorClass: string; nextModel: boolean }
-  | { kind: 'next_model'; errorClass: string };
+  | { kind: 'next_model'; errorClass: string }
+  /**
+   * Ответ оплачен, но без текста или без разбираемого JSON. `truncated` - оборван лимитом у этапа
+   * `truncationEndsModel` (`LEGACY-480`), `invalid` - прочие.
+   */
+  | { kind: 'truncated'; costUsd: Prisma.Decimal; message: string }
+  | { kind: 'invalid'; costUsd: Prisma.Decimal; message: string };
 
 /**
  * Клиент OpenRouter на глобальном `fetch` (Р2). Повторы и переход на запасную модель - только
@@ -204,6 +219,8 @@ export class OpenRouterClient {
     const noCompliant: string[] = [];
     let attempt = 0;
     let lastError = '';
+    let wasTruncated = false;
+    let unusedUsd = new Prisma.Decimal(0);
 
     for (let m = 0; m < request.models.length; m++) {
       const model = request.models[m];
@@ -212,8 +229,36 @@ export class OpenRouterClient {
         if (tryNo > 1) await this.sleep(backoffMs(tryNo - 1), request.signal);
         throwIfAborted(request.signal);
         attempt += 1;
-        const outcome = await this.attempt(request, model, attempt, inputTokens);
-        if (outcome.kind === 'ok') return outcome.result;
+        const outcome = await this.attempt(request, model, attempt, inputTokens).catch(
+          (error: unknown) => {
+            // Запрос к запасной после обрыва отвергнут (4xx, не собран): исход как до перехода
+            // к ней - иначе повтор шага снова оплатит обрыв (решение арбитра `F05 | F05-13d`,
+            // круг 3). Прерывание, деньги и бюджет остаются паузой.
+            if (wasTruncated && error instanceof LlmError && error.code === 'LLM_PROVIDER_ERROR') {
+              throw new LlmTruncatedError(`${error.message} after a cut-off`, unusedUsd);
+            }
+            throw error;
+          },
+        );
+        if (outcome.kind === 'ok') {
+          const { result } = outcome;
+          if (!wasTruncated) return result;
+          return { ...result, costUsd: result.costUsd.add(unusedUsd), afterTruncation: true };
+        }
+        if (outcome.kind === 'invalid' && !wasTruncated) {
+          // Ответ не по форме - ошибка содержания наверх: повтор с замечанием решает этап, не клиент.
+          throw new LlmError('LLM_INVALID_RESPONSE', outcome.message);
+        }
+        if (outcome.kind === 'truncated' || outcome.kind === 'invalid') {
+          // Оборванный ответ не повторяется: та же модель с тем же входом оборвётся так же. После
+          // обрыва и ответ не по форме - отказ без замечания, иначе повтор этапа снова оплатит обрыв.
+          wasTruncated = true;
+          unusedUsd = unusedUsd.add(outcome.costUsd);
+          if (outcome.kind === 'invalid' || isLast) {
+            throw new LlmTruncatedError(outcome.message, unusedUsd);
+          }
+          break;
+        }
         lastError = outcome.errorClass;
         if (outcome.kind === 'next_model') {
           if (outcome.errorClass === 'no_compliant_provider') noCompliant.push(model.id);
@@ -224,6 +269,14 @@ export class OpenRouterClient {
       }
     }
 
+    if (wasTruncated) {
+      // После обрыва запасная недоступна: исход как до перехода к ней - ответ не по форме со
+      // стоимостью; повтор шага снова оплатил бы обрыв (решение арбитра `F05 | F05-13d`, круг 3).
+      throw new LlmTruncatedError(
+        `All models after a cut-off failed for stage "${request.stage}" (last: ${lastError})`,
+        unusedUsd,
+      );
+    }
     if (noCompliant.length === request.models.length) {
       throw new LlmError(
         'LLM_NO_COMPLIANT_PROVIDER',
@@ -378,9 +431,19 @@ export class OpenRouterClient {
 
     const content = body?.choices?.[0]?.message?.content;
     this.logAnswer(request.stage, actualModel, attempt, body, completionTokens, content);
-    if (typeof content !== 'string') {
-      throw new LlmError('LLM_INVALID_RESPONSE', `Model ${actualModel} returned no content`);
-    }
+    // Ответ без содержания оплачен: у этапа `truncationEndsModel` оборванный лимитом - свой исход
+    // (`LEGACY-480`), остальные - ошибка содержания.
+    const unusable = (reason: string): AttemptOutcome =>
+      request.truncationEndsModel === true && body?.choices?.[0]?.finish_reason === 'length'
+        ? {
+            kind: 'truncated',
+            costUsd: fact.cost,
+            message: `Model ${actualModel} answer was cut off by the token limit`,
+          }
+        : { kind: 'invalid', costUsd: fact.cost, message: `Model ${actualModel} ${reason}` };
+    if (typeof content !== 'string') return unusable('returned no content');
+    const json = request.jsonSchema ? parseJsonAnswer(content) : undefined;
+    if (request.jsonSchema && json === undefined) return unusable('returned invalid JSON');
     const result: LlmChatResult = {
       callId,
       content,
@@ -390,14 +453,7 @@ export class OpenRouterClient {
       outputTokens: completionTokens,
       costUsd: fact.cost,
     };
-    if (request.jsonSchema) {
-      // Невалидный JSON - ошибка содержания наверх: повтор с замечанием решает этап, не клиент.
-      const json = parseJsonAnswer(content);
-      if (json === undefined) {
-        throw new LlmError('LLM_INVALID_RESPONSE', `Model ${actualModel} returned invalid JSON`);
-      }
-      result.json = json;
-    }
+    if (request.jsonSchema) result.json = json;
     return { kind: 'ok', result };
   }
 

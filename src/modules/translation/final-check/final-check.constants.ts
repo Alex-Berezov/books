@@ -23,6 +23,8 @@ export const FINAL_CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     // Потолок рассуждений, как у `check_semantic` (`LEGACY-478`, решение арбитра `F05 | F05-13`).
     reasoningAnswerReserve: CHECK_REASONING_ANSWER_RESERVE,
     callTimeoutMs: CHECK_CALL_TIMEOUT_MS,
+    // Оборванный лимитом ответ без вердикта не повторяется (`LEGACY-480`, решение `F05 | F05-13d`).
+    truncationEndsModel: true,
     enabled: true,
   },
 ];

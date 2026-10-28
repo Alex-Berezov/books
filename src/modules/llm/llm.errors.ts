@@ -1,4 +1,5 @@
 import { ServiceUnavailableException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 
 /**
  * Отказы модуля LLM, которые ловит вызывающий код (исполнитель `F05-1w`, этапы конвейера).
@@ -32,6 +33,22 @@ export class LlmError extends Error {
   ) {
     super(message);
     this.name = 'LlmError';
+  }
+}
+
+/**
+ * Отказ этапа `truncationEndsModel` после оборванного лимитом ответа (`LEGACY-480`): последняя
+ * модель оборвана, или после обрыва следующая ответила не по форме. Содержание неверно, но повтора
+ * с замечанием нет - он начал бы цепочку с оборванной модели и оплатил бы её снова. `costUsd` -
+ * факт всех оплаченных ответов вызова без содержания.
+ */
+export class LlmTruncatedError extends LlmError {
+  constructor(
+    message: string,
+    readonly costUsd: Prisma.Decimal,
+  ) {
+    super('LLM_INVALID_RESPONSE', message);
+    this.name = 'LlmTruncatedError';
   }
 }
 

@@ -103,6 +103,7 @@ describe('LlmService', () => {
       enabled: true,
       reasoningAnswerReserve: 4_000,
       callTimeoutMs: 420_000,
+      truncationEndsModel: true,
     });
     service = new LlmService(
       prisma as unknown as PrismaService,
@@ -232,6 +233,29 @@ describe('LlmService', () => {
         await service.callStage('op', 'on', [{ role: 'user', content: 'x' }]);
         expect(client.chat).toHaveBeenCalledTimes(1);
         expect(sentTimeout()).toBeUndefined();
+      });
+
+      // Оборванный ответ без повтора (`LEGACY-480`, решение арбитра `F05 | F05-13d`): признак
+      // из определения, сохранённая строка экрана его не снимает.
+      it('the truncation flag goes from the definition, also over a saved row', async () => {
+        const sentFlag = (n: number) =>
+          (client.chat.mock.calls[n][0] as { truncationEndsModel?: boolean }).truncationEndsModel;
+        prisma.llmStageSetting.findUnique.mockResolvedValueOnce(
+          row({ stage: 'checker', maxTokens: 16_000, enabled: true }),
+        );
+        await service.callStage('op', 'checker', [{ role: 'user', content: 'x' }]);
+        await service.callStage('op', 'on', [{ role: 'user', content: 'x' }]);
+        expect(sentFlag(0)).toBe(true);
+        expect(sentFlag(1)).toBeUndefined();
+      });
+
+      it('the truncation flag goes from the definition without a saved row', async () => {
+        prisma.llmStageSetting.findUnique.mockResolvedValueOnce(null);
+        await service.callStage('op', 'checker', [{ role: 'user', content: 'x' }]);
+        expect(client.chat).toHaveBeenCalledTimes(1);
+        expect(
+          (client.chat.mock.calls[0][0] as { truncationEndsModel?: boolean }).truncationEndsModel,
+        ).toBe(true);
       });
     });
 

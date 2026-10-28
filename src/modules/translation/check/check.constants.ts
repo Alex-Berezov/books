@@ -41,6 +41,8 @@ export const CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     maxTokens: 16_000,
     reasoningAnswerReserve: CHECK_REASONING_ANSWER_RESERVE,
     callTimeoutMs: CHECK_CALL_TIMEOUT_MS,
+    // Оборванный лимитом ответ без вердикта не повторяется (`LEGACY-480`, решение `F05 | F05-13d`).
+    truncationEndsModel: true,
     enabled: true,
   },
   {

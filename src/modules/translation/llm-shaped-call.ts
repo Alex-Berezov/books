@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { LlmError } from '../llm/llm.errors';
+import { LlmError, LlmTruncatedError } from '../llm/llm.errors';
 import { LlmService } from '../llm/llm.service';
 import { LlmChatResult } from '../llm/openrouter.client';
 import { LlmTaskContext } from '../llm-worker/llm-task.types';
@@ -8,7 +8,8 @@ import { shapeRemark, ShapedRequest } from './dossier/dossier.prompts';
 
 /**
  * `costUsd` - сумма факта всех ответов вызова, с повторами по замечанию (решение арбитра
- * `F05 | F05-4a`, В7); попытка, оборвавшаяся ошибкой без ответа, в неё не входит.
+ * `F05 | F05-4a`, В7); попытка, оборвавшаяся ошибкой без ответа, в неё не входит. Оплаченные
+ * ответы, оборванные лимитом (`LlmTruncatedError`, `LEGACY-480`), входят.
  */
 export type ShapedAnswer =
   | { ok: true; value: unknown; model: string; callId: string; costUsd: Prisma.Decimal }
@@ -26,7 +27,9 @@ export interface ShapedCallOptions {
 
 /**
  * Вызов этапа с ответом по форме (`tech.md` §5): не по форме или не JSON - повтор с замечанием,
- * повторы кончились - `{ ok: false }`. Прочие отказы модуля LLM уходят вызывающему: бюджет -
+ * повторы кончились - `{ ok: false }`. После обрыва лимитом у этапа `truncationEndsModel` повтора
+ * нет - `{ ok: false }` сразу: повтор начал бы цепочку с оборванной модели и оплатил бы её снова
+ * (решения арбитра `F05 | F05-13d`). Прочие отказы модуля LLM уходят вызывающему: бюджет -
  * пауза, остальное решает обработчик. Каждая попытка - с опциями исполнителя (аренда, сигнал).
  */
 export async function callShaped(
@@ -52,6 +55,10 @@ export async function callShaped(
         fallbacks: options.fallbacks,
       });
     } catch (error) {
+      // Этап `truncationEndsModel`: оборвана последняя модель или после обрыва следующая ответила
+      // не JSON (`LEGACY-480`) - повтор оплатил бы обрыв снова, отказ сразу, оплаченное в стоимости.
+      if (error instanceof LlmTruncatedError)
+        return { ok: false, costUsd: costUsd.add(error.costUsd) };
       if (!(error instanceof LlmError) || error.code !== 'LLM_INVALID_RESPONSE') throw error;
       if (attempt === options.remarks) return { ok: false, costUsd };
       conversation = [
@@ -66,7 +73,8 @@ export async function callShaped(
     if (errors.length === 0) {
       return { ok: true, value: result.json, model: result.model, callId: result.callId, costUsd };
     }
-    if (attempt === options.remarks) return { ok: false, costUsd };
+    // После обрыва повтор с замечанием снова оплатил бы оборванную модель (решение `F05 | F05-13d`).
+    if (attempt === options.remarks || result.afterTruncation) return { ok: false, costUsd };
     conversation = [...messages, ...shapeRemark(result.content, errors)];
   }
   return { ok: false, costUsd };

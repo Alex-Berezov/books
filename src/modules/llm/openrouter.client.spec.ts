@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { LlmBudgetService, SettleInput } from './llm-budget.service';
 import { LlmConfig } from './llm.config';
-import { LlmBudgetExceededError } from './llm.errors';
+import { LlmBudgetExceededError, LlmTruncatedError } from './llm.errors';
 import { LlmCallModel, LlmChatRequest, OpenRouterClient } from './openrouter.client';
 
 const KEY = 'sk-or-test-secret-key-0123456789';
@@ -297,6 +297,204 @@ describe('OpenRouterClient', () => {
       'LLM call answered: stage=test_stage model=a/primary attempt=1 finish=unknown ' +
         'completionTokens=50 reasoningTokens=unknown contentChars=13',
     );
+  });
+
+  // Ответ, оборванный лимитом без JSON, у этапа `truncationEndsModel` не повторяется: повтор
+  // с тем же входом оборвётся так же и оплатится заново (`LEGACY-480`, решение `F05 | F05-13d`).
+  describe('answer cut off by the token limit (LEGACY-480)', () => {
+    const cut = (content: string | null, cost: number) =>
+      ok({
+        model: 'a/primary',
+        choices: [{ message: { content }, finish_reason: 'length' }],
+        usage: { prompt_tokens: 100, completion_tokens: 16_000, cost },
+      });
+    const schema = { jsonSchema: { name: 'a', schema: {} } };
+
+    it('on a non-last model goes to the next one after one call, the cut answer is in the cost', async () => {
+      fetchSpy.mockResolvedValueOnce(cut('{"verd', 0.04)).mockResolvedValueOnce(success(0.01));
+      const result = await client.chat(request({ ...schema, truncationEndsModel: true }));
+
+      expect(sentBodies().map((b) => b.model)).toEqual(['a/primary', 'b/fallback']);
+      expect(result.json).toEqual({ answer: 42 });
+      expect(result.costUsd.toFixed(8)).toBe('0.05000000');
+      expect(result.afterTruncation).toBe(true);
+      expect(settled.map((s) => s.costUsd.toFixed(2))).toEqual(['0.04', '0.01']);
+    });
+
+    it('two cut-off models in a row add up, the third answers', async () => {
+      fetchSpy
+        .mockResolvedValueOnce(cut('{"verd', 0.04))
+        .mockResolvedValueOnce(cut(null, 0.03))
+        .mockResolvedValueOnce(success(0.01));
+      const result = await client.chat(
+        request({
+          ...schema,
+          truncationEndsModel: true,
+          models: [model('a/primary'), model('b/fallback'), model('c/third')],
+        }),
+      );
+      expect(sentBodies().map((b) => b.model)).toEqual(['a/primary', 'b/fallback', 'c/third']);
+      expect(result.costUsd.toFixed(8)).toBe('0.08000000');
+      expect(result.afterTruncation).toBe(true);
+    });
+
+    it('a cut-off, then the fallback fails on transport three times: a cut-off refusal with the cost', async () => {
+      fetchSpy
+        .mockResolvedValueOnce(cut('{"verd', 0.04))
+        .mockResolvedValueOnce(fail(503))
+        .mockResolvedValueOnce(fail(503))
+        .mockResolvedValueOnce(fail(503));
+      const error = (await client
+        .chat(request({ ...schema, truncationEndsModel: true }))
+        .catch((e: unknown) => e)) as LlmTruncatedError;
+
+      expect(error).toBeInstanceOf(LlmTruncatedError);
+      expect(error.message).toContain('last: http_503');
+      expect(error.costUsd.toFixed(8)).toBe('0.04000000');
+      expect(fetchSpy).toHaveBeenCalledTimes(4);
+    });
+
+    it('a cut-off, then the fallback has no compliant provider: a cut-off refusal with the cost', async () => {
+      fetchSpy
+        .mockResolvedValueOnce(cut('{"verd', 0.04))
+        .mockResolvedValueOnce(fail(404, 'No endpoints found matching your data policy'));
+      const error = (await client
+        .chat(request({ ...schema, truncationEndsModel: true }))
+        .catch((e: unknown) => e)) as LlmTruncatedError;
+
+      expect(error).toBeInstanceOf(LlmTruncatedError);
+      expect(error.costUsd.toFixed(8)).toBe('0.04000000');
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('a cut-off, then the fallback request is rejected (4xx): a cut-off refusal with the cost', async () => {
+      fetchSpy.mockResolvedValueOnce(cut('{"verd', 0.04)).mockResolvedValueOnce(fail(422));
+      const error = (await client
+        .chat(request({ ...schema, truncationEndsModel: true }))
+        .catch((e: unknown) => e)) as LlmTruncatedError;
+
+      expect(error).toBeInstanceOf(LlmTruncatedError);
+      expect(error.costUsd.toFixed(8)).toBe('0.04000000');
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('a cut-off, then no money on the fallback: the funds refusal goes up as is', async () => {
+      fetchSpy.mockResolvedValueOnce(cut('{"verd', 0.04)).mockResolvedValueOnce(fail(402));
+      const error = await client
+        .chat(request({ ...schema, truncationEndsModel: true }))
+        .catch((e: unknown) => e);
+
+      expect(error).not.toBeInstanceOf(LlmTruncatedError);
+      expect(error).toMatchObject({ code: 'LLM_INSUFFICIENT_FUNDS' });
+    });
+
+    it('a cut-off, then the budget refuses the fallback reserve: the budget refusal goes up as is', async () => {
+      fetchSpy.mockResolvedValueOnce(cut('{"verd', 0.04));
+      budget.reserve
+        .mockImplementationOnce(() => Promise.resolve({ callId: 'call-1' }))
+        .mockImplementationOnce(() => Promise.reject(new LlmBudgetExceededError('operation')));
+      const error = await client
+        .chat(request({ ...schema, truncationEndsModel: true }))
+        .catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(LlmBudgetExceededError);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('a cut-off, then an external abort: the abort goes up as is', async () => {
+      const controller = new AbortController();
+      fetchSpy.mockImplementationOnce(() => {
+        controller.abort();
+        return Promise.resolve(cut('{"verd', 0.04));
+      });
+      const error = await client
+        .chat(request({ ...schema, truncationEndsModel: true, signal: controller.signal }))
+        .catch((e: unknown) => e);
+
+      expect(error).not.toBeInstanceOf(LlmTruncatedError);
+      expect(error).toMatchObject({ code: 'LLM_ABORTED' });
+    });
+
+    it('an answer without a cut-off carries no truncation mark', async () => {
+      fetchSpy.mockResolvedValueOnce(success(0.01));
+      const result = await client.chat(request({ ...schema, truncationEndsModel: true }));
+      expect(result.afterTruncation).toBeUndefined();
+      expect(result.costUsd.toFixed(8)).toBe('0.01000000');
+    });
+
+    it('a cut-off on the fallback too refuses with both paid costs, no content counts too', async () => {
+      fetchSpy.mockResolvedValueOnce(cut(null, 0.04)).mockResolvedValueOnce(cut('{', 0.03));
+      const error = (await client
+        .chat(request({ ...schema, truncationEndsModel: true }))
+        .catch((e: unknown) => e)) as LlmTruncatedError;
+
+      expect(error).toBeInstanceOf(LlmTruncatedError);
+      expect(error.code).toBe('LLM_INVALID_RESPONSE');
+      expect(error.costUsd.toFixed(8)).toBe('0.07000000');
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+    });
+
+    it('a cut-off answer whose JSON parses is taken as is', async () => {
+      fetchSpy.mockResolvedValueOnce(cut('{"answer":42}', 0.04));
+      const result = await client.chat(request({ ...schema, truncationEndsModel: true }));
+      expect(result.json).toEqual({ answer: 42 });
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('after a cut-off answer, a bad answer of the next model refuses without a remark retry', async () => {
+      fetchSpy.mockResolvedValueOnce(cut('{"verd', 0.04)).mockResolvedValueOnce(
+        ok({
+          model: 'b/fallback',
+          choices: [{ message: { content: 'not json' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 100, completion_tokens: 50, cost: 0.01 },
+        }),
+      );
+      const error = (await client
+        .chat(request({ ...schema, truncationEndsModel: true }))
+        .catch((e: unknown) => e)) as LlmTruncatedError;
+
+      // Повтор этапа с замечанием начал бы цепочку с оборванной модели и оплатил бы её снова.
+      expect(error).toBeInstanceOf(LlmTruncatedError);
+      expect(error.costUsd.toFixed(8)).toBe('0.05000000');
+      expect(sentBodies().map((b) => b.model)).toEqual(['a/primary', 'b/fallback']);
+    });
+
+    it('without a schema: no text is a cut-off, a cut text is taken as is', async () => {
+      fetchSpy.mockResolvedValueOnce(cut(null, 0.04)).mockResolvedValueOnce(success(0.01));
+      const next = await client.chat(request({ truncationEndsModel: true }));
+      expect(sentBodies().map((b) => b.model)).toEqual(['a/primary', 'b/fallback']);
+      expect(next.costUsd.toFixed(8)).toBe('0.05000000');
+
+      fetchSpy.mockClear();
+      fetchSpy.mockResolvedValueOnce(cut('half a sentence', 0.04));
+      const taken = await client.chat(request({ truncationEndsModel: true }));
+      expect(taken.content).toBe('half a sentence');
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('without the flag a cut-off answer stays an ordinary invalid response', async () => {
+      fetchSpy.mockResolvedValueOnce(cut('{"verd', 0.04));
+      const plain = (await client.chat(request(schema)).catch((e: unknown) => e)) as Error;
+      expect(plain).toMatchObject({ code: 'LLM_INVALID_RESPONSE' });
+      expect(plain).not.toBeInstanceOf(LlmTruncatedError);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('with finish=stop a bad answer stays an ordinary invalid response', async () => {
+      fetchSpy.mockResolvedValueOnce(
+        ok({
+          model: 'a/primary',
+          choices: [{ message: { content: '{"verd' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 100, completion_tokens: 50, cost: 0.01 },
+        }),
+      );
+      const stopped = (await client
+        .chat(request({ ...schema, truncationEndsModel: true }))
+        .catch((e: unknown) => e)) as Error;
+      expect(stopped).toMatchObject({ code: 'LLM_INVALID_RESPONSE' });
+      expect(stopped).not.toBeInstanceOf(LlmTruncatedError);
+      expect(sentBodies().map((b) => b.model)).toEqual(['a/primary']);
+    });
   });
 
   describe('fact without usage.cost', () => {
