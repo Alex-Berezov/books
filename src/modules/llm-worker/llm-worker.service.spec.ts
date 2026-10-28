@@ -4,6 +4,7 @@ import { LlmTask } from '@prisma/client';
 import { BackgroundJobsRegistry } from '../background-jobs/background-jobs.registry';
 import { LlmBudgetService } from '../llm/llm-budget.service';
 import { LlmConfig } from '../llm/llm.config';
+import { LlmStageRegistry } from '../llm/llm-stages.registry';
 import { LlmBudgetExceededError, LlmError } from '../llm/llm.errors';
 import { LlmTaskHandlerRegistry } from './llm-task-handler.registry';
 import { LlmTaskService } from './llm-task.service';
@@ -13,6 +14,7 @@ import { LlmWorkerService, stepFailureCode } from './llm-worker.service';
 describe('LlmWorkerService', () => {
   let env: Record<string, string | undefined>;
   let registry: BackgroundJobsRegistry;
+  let stages: LlmStageRegistry;
   let handlers: LlmTaskHandlerRegistry;
   let tasks: {
     claim: jest.Mock;
@@ -37,6 +39,7 @@ describe('LlmWorkerService', () => {
       new LlmConfig(config),
       new LlmWorkerConfig(config),
       registry,
+      stages,
     );
   };
 
@@ -46,6 +49,7 @@ describe('LlmWorkerService', () => {
   beforeEach(() => {
     env = { OPENROUTER_API_KEY: 'sk-or-test', LLM_CALL_TIMEOUT_MS: '1234' };
     registry = new BackgroundJobsRegistry();
+    stages = new LlmStageRegistry();
     handlers = new LlmTaskHandlerRegistry();
     tasks = {
       claim: jest.fn().mockResolvedValue(null),
@@ -114,6 +118,23 @@ describe('LlmWorkerService', () => {
 
       await jest.advanceTimersByTimeAsync(60_000);
       expect(budget.releaseStaleCalls).toHaveBeenCalledTimes(2);
+    });
+
+    // Живая попытка этапа с таймаутом длиннее общего не закрывается как зависшая (`LEGACY-479`).
+    it('the stale threshold follows the longest stage timeout', async () => {
+      stages.register({
+        stage: 'slow',
+        model: 'a/m',
+        fallbacks: [],
+        temperature: 0,
+        maxTokens: 10,
+        enabled: true,
+        callTimeoutMs: 5_000,
+      });
+      worker.onApplicationBootstrap();
+      await jest.advanceTimersByTimeAsync(0);
+      expect(budget.releaseStaleCalls).toHaveBeenCalledTimes(1);
+      expect(budget.releaseStaleCalls).toHaveBeenCalledWith(5_000);
     });
 
     it('a cleanup that hangs does not hold claiming back', async () => {

@@ -9,6 +9,7 @@ import { randomUUID } from 'crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { utcTimestamp } from '../../shared/prisma/utc-timestamp';
 import { LlmConfig } from '../llm/llm.config';
+import { LlmStageRegistry } from '../llm/llm-stages.registry';
 import { LlmWorkerConfig } from './llm-worker.config';
 import {
   LlmTaskStepResult,
@@ -82,11 +83,15 @@ export class LlmTaskService {
     private readonly prisma: PrismaService,
     private readonly llmConfig: LlmConfig,
     private readonly config: LlmWorkerConfig,
+    private readonly stages: LlmStageRegistry,
   ) {}
 
-  /** Аренда в два таймаута вызова: одна попытка не длиннее таймаута, продление - перед каждой. */
+  /**
+   * Аренда в два таймаута вызова: одна попытка не длиннее таймаута, продление - перед каждой.
+   * Таймаут - самый длинный среди этапов (`LEGACY-479`): задача не знает, какой этап позовёт.
+   */
   leaseMs(): number {
-    return 2 * this.llmConfig.callTimeoutMs();
+    return 2 * this.stages.longestCallTimeoutMs(this.llmConfig.callTimeoutMs());
   }
 
   /**

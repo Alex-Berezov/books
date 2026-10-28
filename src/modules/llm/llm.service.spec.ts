@@ -102,6 +102,7 @@ describe('LlmService', () => {
       maxTokens: 6_000,
       enabled: true,
       reasoningAnswerReserve: 4_000,
+      callTimeoutMs: 420_000,
     });
     service = new LlmService(
       prisma as unknown as PrismaService,
@@ -202,6 +203,35 @@ describe('LlmService', () => {
           (c) => (c[0] as { reasoningMaxTokens?: number }).reasoningMaxTokens,
         );
         expect(sent).toEqual([12_000, 1_024, 1_024, 1_024, undefined]);
+      });
+    });
+
+    // Таймаут по этапу (`LEGACY-479`, решение арбитра `F05 | F05-13c`): только в коде, строка
+    // настроек его не перекрывает.
+    describe('stage call timeout', () => {
+      const sentTimeout = () =>
+        (client.chat.mock.calls[0][0] as { callTimeoutMs?: number }).callTimeoutMs;
+
+      it('a stage with its own timeout sends it, also over a saved row', async () => {
+        prisma.llmStageSetting.findUnique.mockResolvedValueOnce(
+          row({ stage: 'checker', maxTokens: 16_000, enabled: true }),
+        );
+        await service.callStage('op', 'checker', [{ role: 'user', content: 'x' }]);
+        expect(client.chat).toHaveBeenCalledTimes(1);
+        expect(sentTimeout()).toBe(420_000);
+      });
+
+      it('a stage with its own timeout and no saved row sends it from the definition', async () => {
+        prisma.llmStageSetting.findUnique.mockResolvedValueOnce(null);
+        await service.callStage('op', 'checker', [{ role: 'user', content: 'x' }]);
+        expect(client.chat).toHaveBeenCalledTimes(1);
+        expect(sentTimeout()).toBe(420_000);
+      });
+
+      it('a stage without one sends none - the common timeout applies', async () => {
+        await service.callStage('op', 'on', [{ role: 'user', content: 'x' }]);
+        expect(client.chat).toHaveBeenCalledTimes(1);
+        expect(sentTimeout()).toBeUndefined();
       });
     });
 

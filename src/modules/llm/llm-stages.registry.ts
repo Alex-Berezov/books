@@ -21,6 +21,13 @@ export interface LlmStageDefinition {
    * этапов (`LEGACY-478`, решение арбитра `F05 | F05-13`); нет - рассуждения без потолка.
    */
   reasoningAnswerReserve?: number;
+  /**
+   * Таймаут вызова этапа, мс; нет - общий `LLM_CALL_TIMEOUT_MS`, больший общий действует и здесь.
+   * Только в коде, не на экране: запасная проверяющая `deepseek-v4-pro` отвечает на длинном куске
+   * за 310-340 с (`LEGACY-479`, решение арбитра `F05 | F05-13c`). От наибольшего из таймаутов считаются аренда задачи
+   * и чистка зависших вызовов (`longestCallTimeoutMs`).
+   */
+  callTimeoutMs?: number;
 }
 
 /**
@@ -45,5 +52,13 @@ export class LlmStageRegistry {
 
   list(): LlmStageDefinition[] {
     return [...this.stages.values()].sort((a, b) => a.stage.localeCompare(b.stage));
+  }
+
+  /**
+   * Самый длинный таймаут вызова среди этапов и общего: попытка любого этапа не длиннее его,
+   * поэтому аренда задачи и порог зависшего вызова считаются от него, а не от общего.
+   */
+  longestCallTimeoutMs(defaultMs: number): number {
+    return Math.max(defaultMs, ...[...this.stages.values()].map((s) => s.callTimeoutMs ?? 0));
   }
 }

@@ -446,6 +446,7 @@ export class LlmService implements OnModuleInit {
       temperature: setting.temperature,
       maxTokens: setting.maxTokens,
       reasoningMaxTokens: reasoningCeiling(setting),
+      callTimeoutMs: setting.callTimeoutMs,
       jsonSchema: options.jsonSchema,
       beforeAttempt: options.beforeAttempt,
       signal: options.signal,
@@ -524,6 +525,7 @@ function merge(def: LlmStageDefinition, row: LlmStageSetting | undefined): Effec
     temperature: row.temperature ?? def.temperature,
     maxTokens: row.maxTokens ?? def.maxTokens,
     reasoningAnswerReserve: def.reasoningAnswerReserve,
+    callTimeoutMs: def.callTimeoutMs,
     enabled: row.enabled,
     maxPricePerMTok:
       row.maxPricePerMTok ?? (def.maxPricePerMTok ? new Prisma.Decimal(def.maxPricePerMTok) : null),

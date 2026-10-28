@@ -13,16 +13,16 @@ import { CHECK_SEMANTIC_STAGE, CHECK_STAGE_DEFINITIONS } from './check.constants
  * у перевода, досье, полей версии и заготовок рассуждения без потолка, как раньше. Сам потолок
  * (`maxTokens` минус резерв) в тело запроса кладут `LlmService.callStage` и клиент - их спеки.
  */
-describe('reasoning answer reserve of the translation stages', () => {
-  const all = [
-    ...DOSSIER_STAGE_DEFINITIONS,
-    ...TRANSLATE_STAGE_DEFINITIONS,
-    ...CHECK_STAGE_DEFINITIONS,
-    ...METADATA_STAGE_DEFINITIONS,
-    ...FINAL_CHECK_STAGE_DEFINITIONS,
-    ...CONTENT_DRAFT_STAGE_DEFINITIONS,
-  ];
+const all = [
+  ...DOSSIER_STAGE_DEFINITIONS,
+  ...TRANSLATE_STAGE_DEFINITIONS,
+  ...CHECK_STAGE_DEFINITIONS,
+  ...METADATA_STAGE_DEFINITIONS,
+  ...FINAL_CHECK_STAGE_DEFINITIONS,
+  ...CONTENT_DRAFT_STAGE_DEFINITIONS,
+];
 
+describe('reasoning answer reserve of the translation stages', () => {
   it('only the meaning check and the final check carry a reserve', () => {
     const withReserve = all
       .filter((d) => d.reasoningAnswerReserve !== undefined)
@@ -37,5 +37,17 @@ describe('reasoning answer reserve of the translation stages', () => {
       expect(definition?.maxTokens).toBe(16_000);
       expect(definition?.reasoningAnswerReserve).toBe(4_000);
     }
+  });
+});
+
+// Таймаут вызова 420 с - только у проверяющих (`LEGACY-479`, решение арбитра `F05 | F05-13c`):
+// остальные этапы - общий таймаут.
+describe('call timeout of the translation stages', () => {
+  it('only the meaning check and the final check carry their own call timeout, 420 s', () => {
+    const withTimeout = all.filter((d) => d.callTimeoutMs !== undefined);
+    expect(withTimeout.map((d) => d.stage).sort()).toEqual(
+      [CHECK_SEMANTIC_STAGE, FINAL_CHECK_STAGE].sort(),
+    );
+    expect(withTimeout.map((d) => d.callTimeoutMs)).toEqual([420_000, 420_000]);
   });
 });

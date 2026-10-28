@@ -49,6 +49,8 @@ export interface LlmChatRequest {
   maxTokens: number;
   /** Потолок рассуждений модели внутри `maxTokens` (`reasoning.max_tokens`); нет - без потолка. */
   reasoningMaxTokens?: number;
+  /** Таймаут попытки этапа, мс, не ниже общего `LLM_CALL_TIMEOUT_MS`; нет - общий (`LEGACY-479`). */
+  callTimeoutMs?: number;
   /**
    * Ответ - JSON по схеме: схема уходит в `response_format`, где модель её принимает и схема
    * не помечена `textOnly`; иначе модель видит её только в тексте запроса.
@@ -268,7 +270,11 @@ export class OpenRouterClient {
       await settle({ costUsd: zero, costEstimated: false, errorClass: 'aborted' });
       throw aborted();
     }
-    const timeout = AbortSignal.timeout(this.config.callTimeoutMs());
+    // Таймаут этапа - нижняя граница: общий, поднятый окружением выше, действует и на этап
+    // (решение арбитра `F05 | F05-13c`, круг 1).
+    const timeout = AbortSignal.timeout(
+      Math.max(request.callTimeoutMs ?? 0, this.config.callTimeoutMs()),
+    );
     let res: Response;
     try {
       res = await fetch(`${this.config.baseUrl()}/chat/completions`, {

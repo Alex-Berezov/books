@@ -1,5 +1,5 @@
 import { LlmStageDefinition } from '../../llm/llm-stages.registry';
-import { CHECK_REASONING_ANSWER_RESERVE } from '../check/check.constants';
+import { CHECK_CALL_TIMEOUT_MS, CHECK_REASONING_ANSWER_RESERVE } from '../check/check.constants';
 
 export const FINAL_CHECK_STAGE = 'final_check';
 
@@ -22,6 +22,7 @@ export const FINAL_CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     maxTokens: 16_000,
     // Потолок рассуждений, как у `check_semantic` (`LEGACY-478`, решение арбитра `F05 | F05-13`).
     reasoningAnswerReserve: CHECK_REASONING_ANSWER_RESERVE,
+    callTimeoutMs: CHECK_CALL_TIMEOUT_MS,
     enabled: true,
   },
 ];

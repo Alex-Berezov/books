@@ -150,6 +150,53 @@ describe('OpenRouterClient', () => {
     expect(settled[0].costUsd.equals(reserve)).toBe(true);
   });
 
+  // Таймаут этапа (`LEGACY-479`, решение арбитра `F05 | F05-13c`): длиннее общего - попытка
+  // ждёт по нему; общий больше этапа - действует общий (этап - нижняя граница).
+  describe('stage call timeout', () => {
+    const answerAfter = (ms: number) =>
+      fetchSpy.mockImplementation((_url: string, init: RequestInit) => {
+        return new Promise((resolve, reject) => {
+          const t = setTimeout(
+            () =>
+              resolve(
+                ok({
+                  model: 'a/primary',
+                  choices: [{ message: { content: '{"ok":true}' } }],
+                  usage: { cost: 0.01 },
+                }),
+              ),
+            ms,
+          );
+          init.signal?.addEventListener('abort', () => {
+            clearTimeout(t);
+            reject(init.signal?.reason as Error);
+          });
+        });
+      });
+
+    it('a stage timeout longer than the common one lets a slow answer arrive', async () => {
+      env.LLM_CALL_TIMEOUT_MS = '50';
+      answerAfter(200);
+      const r = await client.chat({
+        ...request({ models: [model('a/primary')] }),
+        callTimeoutMs: 5_000,
+      });
+      expect(r.model).toBe('a/primary');
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it('a common timeout longer than the stage one is not cut down to it', async () => {
+      env.LLM_CALL_TIMEOUT_MS = '5000';
+      answerAfter(200);
+      const r = await client.chat({
+        ...request({ models: [model('a/primary')] }),
+        callTimeoutMs: 50,
+      });
+      expect(r.model).toBe('a/primary');
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('invalid JSON is a content error, booked with its real cost', async () => {
     fetchSpy.mockResolvedValueOnce(
       ok({

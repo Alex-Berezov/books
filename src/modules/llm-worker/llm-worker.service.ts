@@ -11,6 +11,7 @@ import { closeWithin } from '../../shared/shutdown/graceful-close';
 import { BackgroundJobsRegistry } from '../background-jobs/background-jobs.registry';
 import { LlmBudgetService } from '../llm/llm-budget.service';
 import { LlmConfig } from '../llm/llm.config';
+import { LlmStageRegistry } from '../llm/llm-stages.registry';
 import { LlmBudgetExceededError, LlmError } from '../llm/llm.errors';
 import { LlmTaskHandlerRegistry } from './llm-task-handler.registry';
 import { LlmTaskService } from './llm-task.service';
@@ -77,6 +78,7 @@ export class LlmWorkerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly llmConfig: LlmConfig,
     private readonly config: LlmWorkerConfig,
     private readonly backgroundJobs: BackgroundJobsRegistry,
+    private readonly stages: LlmStageRegistry,
   ) {}
 
   // Не `onModuleInit`: модули конвейера регистрируют обработчики в своём `onModuleInit` и
@@ -145,7 +147,11 @@ export class LlmWorkerService implements OnApplicationBootstrap, OnModuleDestroy
     if (orphaned > 0) {
       this.logger.warn(`Cancelled ${orphaned} orphaned LLM task(s) of stopped operations`);
     }
-    const released = await this.budget.releaseStaleCalls(this.llmConfig.callTimeoutMs());
+    // Порог - от самого длинного таймаута этапа: живую попытку проверяющего (420 с) чистка
+    // с общими 180 с закрыла бы фактом = резерв (`LEGACY-479`).
+    const released = await this.budget.releaseStaleCalls(
+      this.stages.longestCallTimeoutMs(this.llmConfig.callTimeoutMs()),
+    );
     if (released > 0) {
       this.logger.warn(`Released ${released} stale LLM call(s) at fact = reserve`);
     }

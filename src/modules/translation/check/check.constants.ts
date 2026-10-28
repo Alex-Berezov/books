@@ -10,6 +10,15 @@ export const CHECK_JEV_STAGE = 'check_language_jev';
 export const CHECK_REASONING_ANSWER_RESERVE = 4_000;
 
 /**
+ * Таймаут вызова проверяющих этапов (`LEGACY-479`, решение арбитра `F05 | F05-13c`): запасная
+ * `deepseek-v4-pro` потолок рассуждений не соблюдает и пишет ~42 токена в секунду - на куске
+ * книги-образца вердикт при 16 000 пришёл за 317,6 с (13 236 токенов), при меньшем лимите ответ
+ * обрывается без вердикта. 420 с покрывают 16 000 токенов на этой скорости. Общий таймаут
+ * остальных этапов - 180 с.
+ */
+export const CHECK_CALL_TIMEOUT_MS = 420_000;
+
+/**
  * Умолчания этапов проверки (`tech.md` §3). `check_mechanical` - только код, модели у него нет,
  * поэтому в реестр LLM не входит. `check_semantic` - модели другого семейства, чем умолчание
  * перевода и его запасная (GPT и Claude, Р2 `F05 | F05-R`); правило семейств сверяет каждый
@@ -31,6 +40,7 @@ export const CHECK_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     // на вердикт (`LEGACY-478`, решение арбитра `F05 | F05-13`); выше 16000 не поднимать.
     maxTokens: 16_000,
     reasoningAnswerReserve: CHECK_REASONING_ANSWER_RESERVE,
+    callTimeoutMs: CHECK_CALL_TIMEOUT_MS,
     enabled: true,
   },
   {
