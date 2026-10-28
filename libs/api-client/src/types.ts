@@ -8981,6 +8981,10 @@ export interface components {
       /** @description The source text still matches the fingerprint of the dossier */
       fresh: boolean | null;
       generation: number | null;
+      /** @description Summary groups already answered, all levels (F05-12); 0 when the summary needs no groups */
+      groupsDone: number;
+      /** @description Summary groups set so far, all levels: a level is set only when the one below it is done, so the total grows while the dossier is built */
+      groupsTotal: number;
       /** Format: uuid */
       id: string | null;
       model: string | null;

@@ -78,8 +78,13 @@ export interface LlmChatResult {
 interface OpenRouterChatBody {
   model?: unknown;
   provider?: unknown;
-  choices?: Array<{ message?: { content?: unknown } }>;
-  usage?: { prompt_tokens?: unknown; completion_tokens?: unknown; cost?: unknown };
+  choices?: Array<{ message?: { content?: unknown }; finish_reason?: unknown }>;
+  usage?: {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    cost?: unknown;
+    completion_tokens_details?: { reasoning_tokens?: unknown };
+  };
   error?: { code?: unknown; message?: unknown };
 }
 
@@ -364,6 +369,7 @@ export class OpenRouterClient {
     });
 
     const content = body?.choices?.[0]?.message?.content;
+    this.logAnswer(request.stage, actualModel, attempt, body, completionTokens, content);
     if (typeof content !== 'string') {
       throw new LlmError('LLM_INVALID_RESPONSE', `Model ${actualModel} returned no content`);
     }
@@ -415,6 +421,29 @@ export class OpenRouterClient {
       };
     }
     return body;
+  }
+
+  /**
+   * Исход ответа (решение арбитра `F05 | F05-12`, второй живой отказ группы): на что ушёл выход -
+   * `finish_reason`, токены ответа, из них рассуждения, длина текста в символах. Только числа и
+   * причина, как у `warn`: ни ключа, ни текста запроса и ответа.
+   */
+  private logAnswer(
+    stage: string,
+    model: string,
+    attempt: number,
+    body: OpenRouterChatBody | null,
+    completionTokens: number | null,
+    content: unknown,
+  ): void {
+    const finish = body?.choices?.[0]?.finish_reason;
+    const reasoning = toInt(body?.usage?.completion_tokens_details?.reasoning_tokens);
+    this.logger.log(
+      `LLM call answered: stage=${stage} model=${model} attempt=${attempt} ` +
+        `finish=${typeof finish === 'string' && /^[a-z_]{1,32}$/.test(finish) ? finish : 'unknown'} ` +
+        `completionTokens=${completionTokens ?? 'unknown'} reasoningTokens=${reasoning ?? 'unknown'} ` +
+        `contentChars=${typeof content === 'string' ? content.length : 'none'}`,
+    );
   }
 
   /** Только этап, модель, попытка и класс отказа: ни ключа, ни текста запроса и ответа. */

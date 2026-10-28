@@ -20,12 +20,28 @@ import { PAUSE_BY_FAILURE } from '../pause-by-failure';
 import {
   DOSSIER_FORMAT_VERSION,
   DOSSIER_PART_SHAPE,
+  assembleDossier,
+  DOSSIER_MERGE_SHAPE,
   DOSSIER_SHAPE,
   dossierChapterErrors,
+  dossierMergeErrors,
   GLOSSARY_SHAPE,
+  GroupLists,
+  missingChapters,
   Shape,
+  withoutAssembledFields,
 } from './dossier.format';
-import { GroupItem, levelNarrows, packGroups, summaryInputChars } from './dossier-groups';
+import {
+  distinctChapters,
+  dossierListLimits,
+  exceedsChapterCap,
+  GroupItem,
+  groupSectionCap,
+  levelNarrows,
+  packGroups,
+  summaryInputChars,
+  upperLevelFits,
+} from './dossier-groups';
 import {
   DossierPlanEntry,
   nextPlannedPart,
@@ -188,11 +204,14 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
   }
 
   /**
-   * Сводка (`F05-Rb`). Вход влезает в контекст - один вызов, как раньше. Не влезает - группы
-   * подряд идущих элементов, каждая своим шагом, затем те же правила к результатам групп:
-   * уровень с одним вызовом и есть итог. Строки групп уровня заводятся разом, поэтому границы
-   * не плывут, если модель этапа сменили посреди построения; результат группы пишется после
-   * продления аренды, и повтор шага её не оплачивает.
+   * Сводка (`F05-Rb`). Вход влезает в контекст и глав не больше `groupChapterCap` - один вызов,
+   * как раньше. Иначе - группы подряд идущих элементов, каждая своим шагом, затем те же правила
+   * к результатам групп: уровень с одним вызовом и есть итог. `chapters` и `summaryPlan` пишут
+   * только группы уровня 0, не больше `groupChapterCap` глав каждая; выше и в итоге их склеивает
+   * код (`assembleDossier`), остальные списки ограничены промптом от `maxTokens` (решения
+   * арбитра `F05 | F05-12`); соблюдает ли модель потолки - живой прогон не подтвердил (`LEGACY-477`). Строки групп уровня заводятся разом, поэтому границы не плывут, если
+   * модель этапа сменили посреди построения; результат группы пишется после продления аренды, и
+   * повтор шага её не оплачивает.
    */
   private async summarize(
     row: BookDossier,
@@ -202,6 +221,8 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
   ): Promise<LlmTaskStepResult> {
     const planned = plan.map((e) => e.chapterNumber);
     const partsTotal = planPartsCount(plan);
+    const { maxTokens } = await this.llm.getStageSetting(DOSSIER_STAGE);
+    const limits = dossierListLimits(maxTokens);
     // Верхний уровень - отдельным запросом, строки - только его: на уровне групп не больше, чем
     // элементов уровня ниже, то есть не больше кусков плана.
     const top = await this.prisma.bookDossierGroup.aggregate({
@@ -242,30 +263,45 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
         { number: true, title: true },
         { from: pending.firstChapter, to: pending.lastChapter },
       );
-      const request = dossierSummaryRequest({ chapters: own, parts: items.map((i) => i.entry) });
+      const ownNumbers = own.map((c) => c.number);
+      const ownPlanned = planned.filter(
+        (n) => n >= pending.firstChapter && n <= pending.lastChapter,
+      );
+      // Списки глав и разделов пишет только уровень 0 (`F05-12`), разделов - своей долей потолка.
+      const isLevel0 = pending.level === 0;
+      const request = dossierSummaryRequest({
+        chapters: own,
+        parts: items.map((i) => i.entry),
+        merge: !isLevel0,
+        limits,
+        maxSections: groupSectionCap(ownPlanned.length, planned.length, groups.length),
+      });
       const stage = await this.summaryFit(request);
-      if (!stage.fits) return this.failTooLong(row, task, stage.model);
+      // Заведённую группу не перепаковывают (Р4 `F05 | F05-Rb`): если `maxTokens` этапа снизили
+      // посреди построения и её главы больше не помещаются в ответ, - отказ до вызова (`F05-12`).
+      if (!stage.fits || (isLevel0 && exceedsChapterCap(ownPlanned.length, maxTokens))) {
+        return this.failTooLong(row, task, stage.model);
+      }
       const answer = await this.callShaped(
         task.operationId,
         DOSSIER_STAGE,
         request,
-        DOSSIER_SHAPE,
+        isLevel0 ? DOSSIER_SHAPE : DOSSIER_MERGE_SHAPE,
         ctx,
         (value) =>
-          dossierChapterErrors(
-            value,
-            planned.filter((n) => n >= pending.firstChapter && n <= pending.lastChapter),
-            own.map((c) => c.number),
-          ),
+          isLevel0
+            ? dossierChapterErrors(value, ownPlanned, ownNumbers)
+            : dossierMergeErrors(value, ownNumbers),
       );
       if (!answer.ok) {
         await this.failBuild('bookDossier', row.id, task.operationId, row.takeovers);
         return { kind: 'fail', reason: DOSSIER_INVALID_RESPONSE };
       }
       await ctx.renewLease();
+      const data = isLevel0 ? answer.value : withoutAssembledFields(answer.value as object);
       await this.prisma.bookDossierGroup.updateMany({
         where: { id: pending.id, done: false },
-        data: { done: true, data: answer.value as Prisma.InputJsonValue, callId: answer.callId },
+        data: { done: true, data: data as Prisma.InputJsonValue, callId: answer.callId },
       });
       return { kind: 'continue' };
     }
@@ -274,15 +310,25 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       number: true,
       title: true,
     });
+    const titleNumbers = titles.map((c) => c.number);
     const items = await this.loadItems(
       row.id,
       topLevel,
       0,
       topLevel < 0 ? partsTotal : groups.length,
     );
-    const summary = dossierSummaryRequest({ chapters: titles, parts: items.map((i) => i.entry) });
+    // Над группами итог пишет досье без списков глав и разделов - их склеивает код.
+    const isMerge = topLevel >= 0;
+    const summary = dossierSummaryRequest({
+      chapters: titles,
+      parts: items.map((i) => i.entry),
+      merge: isMerge,
+      limits,
+    });
     const stage = await this.summaryFit(summary);
-    if (!stage.fits) {
+    // Без групп одна сводка перечислила бы все главы одним ответом - больше предела глав нельзя.
+    const hasTooManyChapters = !isMerge && exceedsChapterCap(planned.length, maxTokens);
+    if (!stage.fits || hasTooManyChapters) {
       // Группа меряется с названиями всех глав, как итоговая сводка: иначе группы влезли бы,
       // а итог из их ответов - нет, и отказ пришёл бы после оплаты всех групп. Граница и длины
       // элементов - один раз, проба - сложение (Р6 `F05 | F05-Rb`): упаковка не ходит в базу и не
@@ -290,22 +336,35 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       const { maxInputChars } = await this.llm.stageInputCeiling(DOSSIER_STAGE, {
         charsPerToken: SUMMARY_INPUT_CHARS_PER_TOKEN,
       });
+      const level = topLevel + 1;
       const emptyChars = estimateInputTokens(
-        dossierSummaryRequest({ chapters: titles, parts: [] }),
+        dossierSummaryRequest({ chapters: titles, parts: [], merge: isMerge, limits }),
       );
       const lengths = new Map(items.map((i) => [i, JSON.stringify(i.entry).length]));
       const spans = await packGroups(items, (group) =>
         Promise.resolve(
-          maxInputChars === null ||
+          (maxInputChars === null ||
             summaryInputChars(
               emptyChars,
               group.map((i) => lengths.get(i) ?? 0),
-            ) <= maxInputChars,
+            ) <= maxInputChars) &&
+            (level > 0 || !exceedsChapterCap(distinctChapters(group), maxTokens)),
         ),
       );
       // Элемент не влез сам или уровень выше нулевого не сужается хотя бы вдвое (Р3).
-      if (!spans || !levelNarrows(topLevel + 1, items.length, spans.length)) {
+      if (!spans || !levelNarrows(level, items.length, spans.length)) {
         return this.failTooLong(row, task, stage.model);
+      }
+      // Пересмотр Р3 (`F05 | F05-12`): уровень 0 из нескольких групп платит, только когда выше
+      // него в вызов заведомо влезают два ответа группы, - иначе следующий уровень не сузится,
+      // и отказ пришёл бы после оплаты всего уровня 0.
+      if (level === 0 && spans.length > 1 && maxInputChars !== null) {
+        const upperEmpty = estimateInputTokens(
+          dossierSummaryRequest({ chapters: titles, parts: [], merge: true, limits }),
+        );
+        if (!upperLevelFits(maxInputChars - upperEmpty, maxTokens)) {
+          return this.failTooLong(row, task, stage.model);
+        }
       }
       // Пробы упаковки долгие: аренду могли отдать другому, и его границы уже записаны. Без
       // аренды строки уровня не пишутся (как куски, `L-019`; Р5 `F05 | F05-Rb`).
@@ -323,7 +382,7 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
         await tx.bookDossierGroup.createMany({
           data: spans.map((span, groupIndex) => ({
             dossierId: row.id,
-            level: topLevel + 1,
+            level,
             groupIndex,
             ...span,
           })),
@@ -334,23 +393,29 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       // Строку перехватили: шаг этой задачи больше никому не нужен.
       return written ? { kind: 'continue' } : { kind: 'done' };
     }
+    // Списки групп уровня 0 - до итогового вызова: группы проверены по своим диапазонам, а дыра
+    // между ними видна только на всём плане, и отказ по ней - до оплаты итога.
+    const lists = isMerge ? await this.level0Lists(row.id, partsTotal) : null;
+    if (lists && missingChapters(lists, planned).length > 0) {
+      await this.failBuild('bookDossier', row.id, task.operationId, row.takeovers);
+      return { kind: 'fail', reason: DOSSIER_INVALID_RESPONSE };
+    }
     const answer = await this.callShaped(
       task.operationId,
       DOSSIER_STAGE,
       summary,
-      DOSSIER_SHAPE,
+      isMerge ? DOSSIER_MERGE_SHAPE : DOSSIER_SHAPE,
       ctx,
       (value) =>
-        dossierChapterErrors(
-          value,
-          planned,
-          titles.map((c) => c.number),
-        ),
+        isMerge
+          ? dossierMergeErrors(value, titleNumbers)
+          : dossierChapterErrors(value, planned, titleNumbers),
     );
     if (!answer.ok) {
       await this.failBuild('bookDossier', row.id, task.operationId, row.takeovers);
       return { kind: 'fail', reason: DOSSIER_INVALID_RESPONSE };
     }
+    const data = lists ? assembleDossier(answer.value as object, lists) : answer.value;
     await ctx.renewLease();
     // Строка `ready` и закрытие операции - одной записью: отказ закрытия не оставит готовое досье
     // под операцией `failed`. Строку уже перехватили - операцию закрывает перехватчик.
@@ -359,13 +424,26 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
         where: { id: row.id, status: 'building', operationId: task.operationId },
         data: {
           status: 'ready',
-          data: answer.value as Prisma.InputJsonValue,
+          data: data as Prisma.InputJsonValue,
           formatVersion: DOSSIER_FORMAT_VERSION,
           model: answer.model,
         },
       });
     });
     return { kind: 'done' };
+  }
+
+  /** Списки глав и разделов групп уровня 0 по порядку книги - для склейки досье (`F05-12`). */
+  private async level0Lists(dossierId: string, partsTotal: number): Promise<GroupLists[]> {
+    // Групп уровня 0 не больше кусков плана.
+    const level0 = await this.prisma.bookDossierGroup.findMany({
+      where: { dossierId, level: 0, done: true },
+      select: { data: true },
+      orderBy: { groupIndex: 'asc' },
+      take: partsTotal,
+    });
+    // Данные группы записаны после проверки ответа по `DOSSIER_SHAPE`: списки в них есть.
+    return level0.map((g) => g.data as unknown as GroupLists);
   }
 
   /** Влезет ли вход сводки досье: делитель JSON-входа, а не прозы (Р1 `F05 | F05-Rb`). */
@@ -422,10 +500,11 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       skip,
       take: count,
     });
+    // Наверх результат группы уходит без списков глав и разделов: их склеивает код (`F05-12`).
     return results.map((g) => ({
       firstChapter: g.firstChapter,
       lastChapter: g.lastChapter,
-      entry: g,
+      entry: { ...g, data: withoutAssembledFields(g.data as object) },
     }));
   }
 

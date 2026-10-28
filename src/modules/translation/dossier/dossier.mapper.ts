@@ -53,6 +53,8 @@ export function toDossierStatusDto(input: {
   row: BookDossier | null;
   fresh: boolean | null;
   partsDone: number;
+  groupsDone: number;
+  groupsTotal: number;
   operation: LlmOperation | null;
   previousOperation: LlmOperation | null;
 }): DossierStatusDto {
@@ -66,6 +68,8 @@ export function toDossierStatusDto(input: {
     formatVersion: row?.status === 'ready' ? row.formatVersion : null,
     model: row?.model ?? null,
     partsDone: input.partsDone,
+    groupsDone: input.groupsDone,
+    groupsTotal: input.groupsTotal,
     failedReason: row?.failedReason ?? null,
     operation: input.operation ? toOperationDto(input.operation) : null,
     previousOperation: input.previousOperation ? toOperationDto(input.previousOperation) : null,

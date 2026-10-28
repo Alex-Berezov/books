@@ -4,6 +4,8 @@
  * проверяется кодом: не по форме - повтор с замечанием, затем отказ шага.
  */
 
+import { DossierChapterDto, DossierSummarySectionDto } from '../dto/dossier-data.dto';
+
 export const DOSSIER_FORMAT_VERSION = 1;
 
 // Тип досье и глоссария в коде - DTO ответа (`dto/dossier-data.dto.ts`): данные пишутся только
@@ -36,7 +38,7 @@ const ADDRESS = obj({ to: str, form: str });
 const RELATION = obj({ to: str, label: str });
 const ENTITY_KIND = { enum: ['place', 'object', 'organization', 'term'] } as const;
 
-export const DOSSIER_SHAPE = obj({
+const DOSSIER_FIELDS: Record<string, Shape> = {
   characters: arr(
     obj({
       key: str,
@@ -66,7 +68,21 @@ export const DOSSIER_SHAPE = obj({
     devices: arr(obj({ name: str, howShown: str, example: str, chapter: int })),
   }),
   motifs: arr(obj({ image: str, chapters: arr(int) })),
-});
+};
+
+export const DOSSIER_SHAPE = obj(DOSSIER_FIELDS);
+
+/**
+ * Поля досье, которые пишет только группа уровня 0 (или единственная сводка): выше уровня 0 и в
+ * итоге их склеивает код (`assembleDossier`), иначе ответ рос бы с числом глав книги и обрезался
+ * в `maxTokens` после оплаты всех групп (решение арбитра `F05 | F05-12`).
+ */
+const CODE_ASSEMBLED_FIELDS = ['chapters', 'summaryPlan'] as const;
+
+/** Ответ сводки выше уровня 0 и итога по группам: досье без `CODE_ASSEMBLED_FIELDS`. */
+export const DOSSIER_MERGE_SHAPE = obj(
+  withoutAssembledFields(DOSSIER_FIELDS) as Record<string, Shape>,
+);
 
 export const DOSSIER_PART_SHAPE = obj({
   summary: str,
@@ -152,54 +168,158 @@ export function dossierChapterErrors(
 ): string[] {
   const dossier = value as {
     chapters: Array<{ number: number }>;
-    characters: Array<{ firstChapter: number }>;
-    entities: Array<{ firstChapter: number }>;
-    chronology: Array<{ chapter: number }>;
     summaryPlan: Array<{ chapters: number[] }>;
-    structure: { parts: Array<{ chapters: number[] }> };
-    voice: { devices: Array<{ chapter: number }> };
-    motifs: Array<{ chapters: number[] }>;
   };
   const known = new Set(existing);
   const errors: string[] = [];
   const listed = new Set(dossier.chapters.map((c) => c.number));
   const missing = required.filter((n) => !listed.has(n));
   if (missing.length > 0) errors.push(`$.chapters: missing reader chapters ${missing.join(', ')}`);
-  const check = (path: string, numbers: number[]) => {
-    const wrong = numbers.filter((n) => !known.has(n));
-    if (wrong.length > 0) errors.push(`${path}: unknown reader chapters ${wrong.join(', ')}`);
-  };
-  check(
-    '$.chapters',
-    dossier.chapters.map((c) => c.number),
-  );
-  check(
-    '$.characters[].firstChapter',
-    dossier.characters.map((c) => c.firstChapter),
-  );
-  check(
-    '$.entities[].firstChapter',
-    dossier.entities.map((e) => e.firstChapter),
-  );
-  check(
-    '$.chronology[].chapter',
-    dossier.chronology.map((c) => c.chapter),
-  );
-  check(
-    '$.summaryPlan[].chapters',
-    dossier.summaryPlan.flatMap((s) => s.chapters),
-  );
-  check(
-    '$.structure.parts[].chapters',
-    dossier.structure.parts.flatMap((p) => p.chapters),
-  );
-  check(
-    '$.voice.devices[].chapter',
-    dossier.voice.devices.map((d) => d.chapter),
-  );
-  check(
-    '$.motifs[].chapters',
-    dossier.motifs.flatMap((m) => m.chapters),
+  errors.push(
+    ...unknownChapters(
+      '$.chapters',
+      dossier.chapters.map((c) => c.number),
+      known,
+    ),
+    ...dossierMergeErrors(value, existing),
+    ...unknownChapters(
+      '$.summaryPlan[].chapters',
+      dossier.summaryPlan.flatMap((s) => s.chapters),
+      known,
+    ),
   );
   return errors;
+}
+
+/**
+ * Номера глав сводки без `CODE_ASSEMBLED_FIELDS` (выше уровня 0 и итог по группам, `F05-12`):
+ * только существующие главы.
+ */
+export function dossierMergeErrors(value: unknown, existing: readonly number[]): string[] {
+  const dossier = value as {
+    characters: Array<{ firstChapter: number }>;
+    entities: Array<{ firstChapter: number }>;
+    chronology: Array<{ chapter: number }>;
+    structure: { parts: Array<{ chapters: number[] }> };
+    voice: { devices: Array<{ chapter: number }> };
+    motifs: Array<{ chapters: number[] }>;
+  };
+  const known = new Set(existing);
+  return [
+    ...unknownChapters(
+      '$.characters[].firstChapter',
+      dossier.characters.map((c) => c.firstChapter),
+      known,
+    ),
+    ...unknownChapters(
+      '$.entities[].firstChapter',
+      dossier.entities.map((e) => e.firstChapter),
+      known,
+    ),
+    ...unknownChapters(
+      '$.chronology[].chapter',
+      dossier.chronology.map((c) => c.chapter),
+      known,
+    ),
+    ...unknownChapters(
+      '$.structure.parts[].chapters',
+      dossier.structure.parts.flatMap((p) => p.chapters),
+      known,
+    ),
+    ...unknownChapters(
+      '$.voice.devices[].chapter',
+      dossier.voice.devices.map((d) => d.chapter),
+      known,
+    ),
+    ...unknownChapters(
+      '$.motifs[].chapters',
+      dossier.motifs.flatMap((m) => m.chapters),
+      known,
+    ),
+  ];
+}
+
+function unknownChapters(path: string, numbers: number[], known: ReadonlySet<number>): string[] {
+  const wrong = numbers.filter((n) => !known.has(n));
+  return wrong.length > 0 ? [`${path}: unknown reader chapters ${wrong.join(', ')}`] : [];
+}
+
+/** Значение без `CODE_ASSEMBLED_FIELDS`: так результат группы уходит на уровень выше. */
+export function withoutAssembledFields(value: object): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value).filter(
+      ([key]) => !(CODE_ASSEMBLED_FIELDS as readonly string[]).includes(key),
+    ),
+  );
+}
+
+// Записи списков - типы DTO досье: форма и DTO меняются вместе (`dossier.format.spec.ts`).
+type ChapterEntry = Pick<DossierChapterDto, 'number' | 'title' | 'summary'>;
+type PlanSection = Pick<DossierSummarySectionDto, 'number' | 'title' | 'chapters' | 'why'>;
+
+/** Списки, которые пишет группа уровня 0 и склеивает код (`CODE_ASSEMBLED_FIELDS`). */
+export interface GroupLists {
+  chapters: ChapterEntry[];
+  summaryPlan: PlanSection[];
+}
+
+/** Главы плана, которых нет ни в одном списке групп уровня 0: дыра между их диапазонами. */
+export function missingChapters(
+  groups: readonly GroupLists[],
+  planned: readonly number[],
+): number[] {
+  const listed = new Set(groups.flatMap((g) => g.chapters.map((c) => c.number)));
+  return planned.filter((n) => !listed.has(n));
+}
+
+/**
+ * Досье из ответа итога по группам и ответов групп уровня 0 в порядке книги (`F05-12`):
+ * `chapters` - по номеру; глава, чьи куски попали в две группы, - одна запись с первым непустым
+ * названием и пересказами по порядку; `summaryPlan` - разделы групп подряд (`joinPlans`), номера
+ * заново с 1. Поля - в порядке `DOSSIER_SHAPE`.
+ */
+export function assembleDossier(
+  merged: object,
+  groups: readonly GroupLists[],
+): Record<string, unknown> {
+  const byNumber = new Map<number, ChapterEntry>();
+  for (const chapter of groups.flatMap((g) => g.chapters)) {
+    const seen = byNumber.get(chapter.number);
+    byNumber.set(
+      chapter.number,
+      seen
+        ? {
+            number: seen.number,
+            title: seen.title || chapter.title,
+            summary: [seen.summary, chapter.summary].filter(Boolean).join(' '),
+          }
+        : { number: chapter.number, title: chapter.title, summary: chapter.summary },
+    );
+  }
+  const assembled: Record<string, unknown> = {
+    ...withoutAssembledFields(merged),
+    chapters: [...byNumber.values()].sort((a, b) => a.number - b.number),
+    summaryPlan: joinPlans(groups.map((g) => g.summaryPlan)),
+  };
+  return Object.fromEntries(Object.keys(DOSSIER_FIELDS).map((key) => [key, assembled[key]]));
+}
+
+/**
+ * Планы групп подряд. Глава, чьи куски попали в две группы, есть в разделе на стыке у обеих:
+ * первый раздел следующей группы, задевший главы последнего взятого, вливается в него (главы -
+ * объединением), иначе заготовка пересказа получила бы эту главу дважды.
+ */
+function joinPlans(plans: ReadonlyArray<readonly PlanSection[]>): PlanSection[] {
+  const joined: PlanSection[] = [];
+  for (const plan of plans) {
+    plan.forEach((section, i) => {
+      const last = joined[joined.length - 1];
+      if (i === 0 && last && section.chapters.some((n) => last.chapters.includes(n))) {
+        last.chapters = [...new Set([...last.chapters, ...section.chapters])].sort((a, b) => a - b);
+        return;
+      }
+      joined.push({ ...section, chapters: [...section.chapters] });
+    });
+  }
+  return joined.map((section, i) => ({ ...section, number: i + 1 }));
 }

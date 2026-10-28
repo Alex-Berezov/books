@@ -11,8 +11,12 @@ import {
   readPlan,
 } from './dossier-parts';
 import {
+  assembleDossier,
+  DOSSIER_MERGE_SHAPE,
   DOSSIER_PART_SHAPE,
+  DOSSIER_SHAPE,
   dossierChapterErrors,
+  dossierMergeErrors,
   GLOSSARY_SHAPE,
   jsonSchemaOf,
   shapeErrors,
@@ -23,6 +27,7 @@ import {
   glossaryRequest,
   shapeRemark,
 } from './dossier.prompts';
+import { dossierListLimits } from './dossier-groups';
 
 describe('planDossierParts', () => {
   it('one part per chapter with numbered translatable blocks; chapters without text give none', () => {
@@ -146,6 +151,109 @@ describe('dossier form checks', () => {
       '$.entities[].firstChapter: unknown reader chapters 9',
     ]);
   });
+
+  it('above level 0 the answer has no chapter list and plan: only cited chapters are checked (F05-12)', () => {
+    expect(
+      Object.keys((jsonSchemaOf(DOSSIER_MERGE_SHAPE) as { properties: object }).properties),
+    ).toEqual(
+      Object.keys((jsonSchemaOf(DOSSIER_SHAPE) as { properties: object }).properties).filter(
+        (k) => k !== 'chapters' && k !== 'summaryPlan',
+      ),
+    );
+    const merged = {
+      characters: [{ firstChapter: 1 }],
+      entities: [{ firstChapter: 9 }],
+      chronology: [],
+      structure: { parts: [{ chapters: [7] }] },
+      voice: { devices: [] },
+      motifs: [],
+    };
+    expect(dossierMergeErrors(merged, [1, 2, 3])).toEqual([
+      '$.entities[].firstChapter: unknown reader chapters 9',
+      '$.structure.parts[].chapters: unknown reader chapters 7',
+    ]);
+    // Каждое поле с главами проверяется своим путём.
+    expect(
+      dossierMergeErrors(
+        {
+          characters: [{ firstChapter: 4 }],
+          entities: [{ firstChapter: 5 }],
+          chronology: [{ chapter: 6 }],
+          structure: { parts: [{ chapters: [7] }] },
+          voice: { devices: [{ chapter: 8 }] },
+          motifs: [{ chapters: [9] }],
+        },
+        [1],
+      ),
+    ).toEqual([
+      '$.characters[].firstChapter: unknown reader chapters 4',
+      '$.entities[].firstChapter: unknown reader chapters 5',
+      '$.chronology[].chapter: unknown reader chapters 6',
+      '$.structure.parts[].chapters: unknown reader chapters 7',
+      '$.voice.devices[].chapter: unknown reader chapters 8',
+      '$.motifs[].chapters: unknown reader chapters 9',
+    ]);
+  });
+
+  it('the code assembles chapters and plan from level 0 groups in book order (F05-12)', () => {
+    const merged = {
+      characters: [],
+      entities: [],
+      narration: { person: 'third', form: 'prose', notes: '' },
+      setting: { place: '', time: '' },
+      structure: { parts: [], notes: '' },
+      chronology: [],
+      // Лишние списки в ответе итога не попадают в досье: их пишет код.
+      chapters: [{ number: 99, title: 'bogus', summary: '' }],
+      summaryPlan: [],
+      voice: { pace: '', sentenceLength: '', lexicon: '', irony: '', devices: [] },
+      motifs: [],
+    };
+    const dossier = assembleDossier(merged, [
+      {
+        chapters: [
+          { number: 1, title: 'One', summary: 'A.' },
+          { number: 2, title: '', summary: 'B1.' },
+        ],
+        summaryPlan: [
+          { number: 1, title: 'Chapter 1', chapters: [1], why: '' },
+          { number: 2, title: 'Chapter 2', chapters: [2], why: '' },
+        ],
+      },
+      {
+        // Куски главы 2 попали в обе группы: одна запись, пересказы по порядку.
+        chapters: [
+          { number: 2, title: 'Two', summary: 'B2.' },
+          { number: 3, title: 'Three', summary: 'C.' },
+        ],
+        summaryPlan: [
+          { number: 1, title: 'Chapter 2', chapters: [2], why: '' },
+          { number: 2, title: 'Chapter 3', chapters: [3], why: '' },
+        ],
+      },
+    ]);
+    expect(Object.keys(dossier)).toEqual(
+      Object.keys((jsonSchemaOf(DOSSIER_SHAPE) as { properties: object }).properties),
+    );
+    expect(dossier.chapters).toEqual([
+      { number: 1, title: 'One', summary: 'A.' },
+      { number: 2, title: 'Two', summary: 'B1. B2.' },
+      { number: 3, title: 'Three', summary: 'C.' },
+    ]);
+    // Раздел главы 2 на стыке групп - один, номера заново.
+    expect(
+      (dossier.summaryPlan as Array<{ number: number; chapters: number[] }>).map((s) => [
+        s.number,
+        s.chapters,
+      ]),
+    ).toEqual([
+      [1, [1]],
+      [2, [2]],
+      [3, [3]],
+    ]);
+    expect(shapeErrors(dossier, DOSSIER_SHAPE)).toEqual([]);
+    expect(dossierChapterErrors(dossier, [1, 2, 3], [1, 2, 3])).toEqual([]);
+  });
 });
 
 describe('dossier prompts', () => {
@@ -170,6 +278,7 @@ describe('dossier prompts', () => {
     const request = dossierSummaryRequest({
       chapters: [{ number: 1, title: 'One' }],
       parts: [{ chapterNumber: 1, partIndex: 0, data: { summary: 'S' } }],
+      limits: dossierListLimits(16_000),
     });
     expect(request.jsonSchema.name).toBe('dossier');
     expect(request.messages[0].content).toContain('"Глава 5"');
@@ -181,8 +290,25 @@ describe('dossier prompts', () => {
     );
   });
 
+  it('every summary level carries the list caps; only level 0 and a single summary ask for chapter lists (F05-12)', () => {
+    const limits = { characters: 64, entities: 50, chronology: 7 };
+    for (const merge of [false, true]) {
+      const system = dossierSummaryRequest({ chapters: [], parts: [], merge, limits }).messages[0]
+        .content;
+      expect(system).toContain('At most 64 characters');
+      expect(system).toContain('drop episodic ones first');
+      expect(system).toContain('at most 50, the ones that recur first');
+      expect(system).toContain('at most 7 events');
+      expect(system.includes('every reader chapter')).toBe(!merge);
+    }
+  });
+
   it('only the summary schema stays in the text: Claude does not compile its grammar (Р1 F05-R)', () => {
-    const summary = dossierSummaryRequest({ chapters: [], parts: [] });
+    const summary = dossierSummaryRequest({
+      chapters: [],
+      parts: [],
+      limits: dossierListLimits(16_000),
+    });
     expect(summary.jsonSchema.textOnly).toBe(true);
     expect(summary.messages[0].content).toContain(JSON.stringify(summary.jsonSchema.schema));
     const part = dossierPartRequest({

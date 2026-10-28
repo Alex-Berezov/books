@@ -220,6 +220,38 @@ describe('OpenRouterClient', () => {
     expect(headers.Authorization).toBe(`Bearer ${KEY}`);
   });
 
+  it('logs how the answer ended: finish reason, answer and reasoning tokens, text length - never the text (F05-12)', async () => {
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+    fetchSpy.mockResolvedValueOnce(
+      ok({
+        model: 'a/primary',
+        choices: [{ message: { content: '{"answer":42}' }, finish_reason: 'length' }],
+        usage: {
+          prompt_tokens: 100,
+          completion_tokens: 16_000,
+          completion_tokens_details: { reasoning_tokens: 15_200 },
+        },
+      }),
+    );
+    await client.chat(request());
+    const lines = log.mock.calls.map((call) => String(call[0]));
+    expect(lines).toContain(
+      'LLM call answered: stage=test_stage model=a/primary attempt=1 finish=length ' +
+        'completionTokens=16000 reasoningTokens=15200 contentChars=13',
+    );
+    expect(JSON.stringify(lines)).not.toContain('"answer":42');
+    expect(JSON.stringify(lines)).not.toContain('secret book text');
+
+    // Без деталей у провайдера - «unknown», а не ноль.
+    log.mockClear();
+    fetchSpy.mockResolvedValueOnce(success(0));
+    await client.chat(request());
+    expect(log.mock.calls.map((call) => String(call[0]))).toContain(
+      'LLM call answered: stage=test_stage model=a/primary attempt=1 finish=unknown ' +
+        'completionTokens=50 reasoningTokens=unknown contentChars=13',
+    );
+  });
+
   describe('fact without usage.cost', () => {
     it('tokens × the price of this attempt, marked as an estimate', async () => {
       fetchSpy.mockResolvedValueOnce(success());

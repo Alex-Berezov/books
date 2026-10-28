@@ -1,8 +1,16 @@
-import { estimateInputTokens } from '../../llm/openrouter.client';
+import { ANSWER_CHARS_PER_TOKEN, estimateInputTokens } from '../../llm/openrouter.client';
 import {
+  distinctChapters,
+  dossierListLimits,
+  exceedsChapterCap,
+  groupSectionCap,
+  level0GroupsUpperBound,
   GroupItem,
+  groupChapterCap,
   levelNarrows,
   packGroups,
+  SUMMARY_ITEM_WRAPPER_CHARS,
+  summaryCapacity,
   summaryInputChars,
   summaryLevels,
 } from './dossier-groups';
@@ -123,17 +131,122 @@ describe('summaryInputChars (Р6)', () => {
         events: [{ event: `e${i}`, orderNote: '' }],
       },
     });
-    const empty = estimateInputTokens(dossierSummaryRequest({ chapters, parts: [] }));
+    const limits = dossierListLimits(16_000);
+    const empty = estimateInputTokens(dossierSummaryRequest({ chapters, parts: [], limits }));
     for (const size of [0, 1, 2, 5, 17]) {
       for (let round = 0; round < 5; round++) {
         const parts = Array.from({ length: size }, (_, i) => entry(i));
-        const real = estimateInputTokens(dossierSummaryRequest({ chapters, parts }));
+        const real = estimateInputTokens(dossierSummaryRequest({ chapters, parts, limits }));
         const summed = summaryInputChars(
           empty,
           parts.map((p) => JSON.stringify(p).length),
         );
         expect(summed).toBe(real);
       }
+    }
+  });
+});
+
+describe('chapter limit of a level 0 group (F05-12)', () => {
+  it('a fifth of maxTokens at 80 tokens a chapter, recounted from the stage setting', () => {
+    expect(groupChapterCap(16_000)).toBe(40);
+    expect(groupChapterCap(2_000)).toBe(5);
+    expect(groupChapterCap(100)).toBe(1);
+  });
+
+  it('groups are needed above the limit, not at it', () => {
+    expect(exceedsChapterCap(40, 16_000)).toBe(false);
+    expect(exceedsChapterCap(41, 16_000)).toBe(true);
+  });
+
+  it('level 0 groups for the estimate: none when one summary fits, otherwise both limits added up', () => {
+    expect(level0GroupsUpperBound(40, 40, Number.POSITIVE_INFINITY, 16_000)).toBe(0);
+    expect(level0GroupsUpperBound(250, 250, Number.POSITIVE_INFINITY, 16_000)).toBe(7);
+    // Упаковка закрывает группу по тому пределу, что настал раньше: 10 по входу, 2 по главам, 1.
+    expect(level0GroupsUpperBound(100, 80, 10, 16_000)).toBe(13);
+    // Групп не больше кусков.
+    expect(level0GroupsUpperBound(3, 3, 1, 16_000)).toBe(3);
+  });
+
+  it('a level 0 group gets its share of the 200 sections, at least one, and the shares fit the cap', () => {
+    expect(groupSectionCap(40, 40, 1)).toBe(195);
+    expect(groupSectionCap(40, 2_001, 51)).toBe(3);
+    expect(groupSectionCap(1, 2_001, 51)).toBe(1);
+    const shares = [40, 40, 40, 40, 40, 40, 10].map((n) => groupSectionCap(n, 250, 7));
+    expect(shares.reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(200);
+    // Глава 21 разрезана между двумя группами и считается у обеих: 21 + 21 из 41 главы.
+    expect(groupSectionCap(21, 41, 2) * 2).toBeLessThanOrEqual(200);
+  });
+
+  it('the estimate bound is never below the groups the packing really makes, both limits mixed', async () => {
+    /** Повторяемый генератор: сбой воспроизводится тем же тестом. */
+    let state = 11;
+    const next = () => {
+      state = (state * 1_103_515_245 + 12_345) % 2_147_483_648;
+      return state / 2_147_483_648;
+    };
+    for (let round = 0; round < 40; round++) {
+      // Главы по 1-6 кусков, куски разной длины: предел по входу и по главам срабатывают вперемешку.
+      const pieces: Array<GroupItem & { size: number }> = [];
+      const chapters = 20 + Math.floor(next() * 200);
+      for (let c = 1; c <= chapters; c++) {
+        const count = 1 + Math.floor(next() * 6);
+        for (let i = 0; i < count; i++) {
+          pieces.push({ ...item(c), size: 1 + Math.floor(next() * 100) });
+        }
+      }
+      const maxTokens = [400, 2_000, 16_000][round % 3];
+      const capacity = 2 + Math.floor(next() * 30);
+      // Упаковка по входу: элемент не больше одного «ответа», в группе не больше `capacity` ответов.
+      const sizes = new Map<GroupItem, number>(pieces.map((p) => [p, p.size]));
+      const spans = await packGroups(pieces, (group) =>
+        Promise.resolve(
+          group.reduce((sum, p) => sum + (sizes.get(p) ?? 0), 0) <= capacity * 100 &&
+            distinctChapters(group) <= groupChapterCap(maxTokens),
+        ),
+      );
+      const bound = level0GroupsUpperBound(pieces.length, chapters, capacity, maxTokens);
+      expect(spans).not.toBeNull();
+      if ((spans ?? []).length > 1) expect(bound).toBeGreaterThanOrEqual((spans ?? []).length);
+    }
+  });
+
+  it('caps characters, entities and chronology from maxTokens, at least one each', () => {
+    expect(dossierListLimits(16_000)).toEqual({ characters: 64, entities: 50, chronology: 50 });
+    expect(dossierListLimits(2_000)).toEqual({ characters: 8, entities: 6, chronology: 6 });
+    expect(dossierListLimits(100)).toEqual({ characters: 1, entities: 1, chronology: 1 });
+  });
+
+  it('counts chapters, not pieces: pieces of one chapter count once', () => {
+    const pieces = [item(1), item(1), item(2), item(3), item(3)];
+    expect(distinctChapters(pieces)).toBe(3);
+  });
+
+  it('packs groups under the chapter limit even when the input would fit whole', async () => {
+    const all = Array.from({ length: 250 }, (_, i) => item(i + 1));
+    const spans = await packGroups(all, (group) => Promise.resolve(distinctChapters(group) <= 100));
+    expect(spans?.map((s) => s.itemCount)).toEqual([100, 100, 50]);
+  });
+});
+
+describe('summaryCapacity (F05-12, Р3 revised)', () => {
+  it('answers of maxTokens with the item wrapper that surely fit the room', () => {
+    const answer = 2_000 * ANSWER_CHARS_PER_TOKEN + SUMMARY_ITEM_WRAPPER_CHARS;
+    expect(summaryCapacity(2 * answer, 2_000)).toBe(2);
+    expect(summaryCapacity(2 * answer - 1, 2_000)).toBe(1);
+    expect(summaryCapacity(-5, 2_000)).toBe(-1);
+  });
+
+  it('the wrapper covers the JSON of a piece and of a group around the answer, with the comma', () => {
+    const data = { summary: 'x' };
+    const inner = JSON.stringify(data).length;
+    for (const entry of [
+      { chapterNumber: 12_345, partIndex: 7, data },
+      { firstChapter: 1_000, lastChapter: 12_345, data },
+    ]) {
+      expect(JSON.stringify(entry).length + 1).toBeLessThanOrEqual(
+        inner + SUMMARY_ITEM_WRAPPER_CHARS,
+      );
     }
   });
 });

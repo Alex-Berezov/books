@@ -34,8 +34,16 @@ describe('Translation source and dossier (e2e)', () => {
   const HUGE = 'z/huge-context';
   /** Контекст, в который сводка книги на 250 глав не влезает целиком, а группа глав - влезает (F05-Rb). */
   const SMALL = 'z/small-context';
-  /** Вход сводки ~24 тыс. символов ((26 620 - 16 000) × 2,26): размеры групп в тестах уровней считаются от него. */
+  /**
+   * Вход сводки ~24 тыс. символов ((12 620 - 2 000) × 2,26 при `maxTokens` 2 000 у `setGroupModel`):
+   * размеры групп в тестах уровней считаются от него.
+   */
   const GROUP = 'z/group-context';
+  /**
+   * Тот же вход ~24 тыс. символов ((26 620 - 16 000) × 2,26), но при `maxTokens` 16 000: выше
+   * уровня 0 в вызов заведомо не влезают два ответа группы (`F05-12`, пересмотр Р3).
+   */
+  const NARROW = 'z/narrow-context';
   const MODELS = {
     data: [
       ...[MODEL, ALT].map((id) => ({
@@ -49,7 +57,8 @@ describe('Translation source and dossier (e2e)', () => {
           [TINY, 1000],
           [HUGE, 100_000_000],
           [SMALL, 30_000],
-          [GROUP, 26_620],
+          [GROUP, 12_620],
+          [NARROW, 26_620],
         ] as const
       ).map(([id, context]) => ({
         id,
@@ -1530,8 +1539,14 @@ describe('Translation source and dossier (e2e)', () => {
         throw new Error('drainAll did not finish');
       };
 
+      /**
+       * `maxTokens` 2 000: по 12 глав в группе уровня 0 (`F05-12`), и выше уровня 0 в контекст
+       * SMALL влезает несколько ответов групп.
+       */
       const setSmall = () =>
-        auth(http().put('/admin/llm/stage-settings/dossier')).send({ model: SMALL }).expect(200);
+        auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: SMALL, maxTokens: 2_000 })
+          .expect(200);
 
       afterEach(async () => {
         await prisma.llmStageSetting.deleteMany({ where: { stage: 'dossier' } });
@@ -1543,6 +1558,10 @@ describe('Translation source and dossier (e2e)', () => {
           const { ids } = await book([
             { language: 'en', originalLanguage: 'English', chapters: numberedChapters(250) },
           ]);
+          // Огромный контекст при том же `maxTokens`: группы - только по пределу глав (`F05-12`).
+          await auth(http().put('/admin/llm/stage-settings/dossier'))
+            .send({ model: HUGE, maxTokens: 2_000 })
+            .expect(200);
           const plain = await auth(http().get(`/admin/versions/${ids.en}/dossier/estimate`)).expect(
             200,
           );
@@ -1550,7 +1569,7 @@ describe('Translation source and dossier (e2e)', () => {
           const grouped = await auth(
             http().get(`/admin/versions/${ids.en}/dossier/estimate`),
           ).expect(200);
-          // Те же куски, но вызовы групп стоят денег: оценка выше, чем у одной сводки.
+          // Те же куски, но в маленький контекст влезает меньше ответов: групп больше, оценка выше.
           expect(
             new Prisma.Decimal(grouped.body.estimateUsd as string).gt(
               new Prisma.Decimal(plain.body.estimateUsd as string),
@@ -1582,6 +1601,99 @@ describe('Translation source and dossier (e2e)', () => {
           expect(
             await prisma.llmOperation.findUnique({ where: { id: row?.operationId as string } }),
           ).toMatchObject({ status: 'done' });
+        },
+        GROUPS_TIMEOUT_MS,
+      );
+
+      it(
+        'a book over the chapter limit of one answer: groups list their chapters, the code assembles the dossier (F05-12)',
+        async () => {
+          // Контекст неизвестен - вход влез бы одной сводкой, но 250 глав одним ответом не
+          // перечислить в 16 000 токенов: группы по 40 глав, итог без списков.
+          const { ids } = await book([
+            { language: 'en', originalLanguage: 'English', chapters: numberedChapters(250) },
+          ]);
+          await dossiers.demandDossier(ids.en as string);
+          await drainAll();
+          const row = await dossiers.latestDossier(ids.en as string);
+          expect(row).toMatchObject({ status: 'ready' });
+          const groups = await groupsOf(ids.en as string);
+          expect(groups.map((g) => [g.level, g.firstChapter, g.lastChapter])).toEqual([
+            [0, 1, 40],
+            [0, 41, 80],
+            [0, 81, 120],
+            [0, 121, 160],
+            [0, 161, 200],
+            [0, 201, 240],
+            [0, 241, 250],
+          ]);
+          // Куски, по вызову на группу, один итог - и больше ничего.
+          expect(callsOf('dossier_part')).toHaveLength(250);
+          const summaries = callsOf('dossier');
+          expect(summaries).toHaveLength(8);
+          // Группы пишут списки своих глав, итог - нет: у него их и не просят.
+          const [last] = summaries.slice(-1);
+          expect(last.body.messages[0].content).toContain(
+            'chapters and summaryPlan are assembled separately',
+          );
+          expect(last.body.messages[0].content).not.toContain('every reader chapter');
+          for (const group of summaries.slice(0, 7)) {
+            expect(group.body.messages[0].content).toContain('every reader chapter');
+            // Своя доля потолка разделов: 40 глав из 250 при семи группах - 31 раздел, хвост в 10 - 7.
+            expect(group.body.messages[0].content).toMatch(/At most (31|7) sections/);
+            expect(group.body.messages[0].content).toContain('At most 64 characters');
+          }
+          expect(last.body.messages[0].content).toContain('At most 64 characters');
+          const data = row?.data as {
+            chapters: Array<{ number: number }>;
+            summaryPlan: Array<{ number: number }>;
+          };
+          expect(data.chapters.map((c) => c.number)).toEqual(
+            Array.from({ length: 250 }, (_, i) => i + 1),
+          );
+          // Разделы семи групп подряд, номера заново.
+          expect(data.summaryPlan.map((s) => s.number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+          // Ход групп виден в статусе (`F05-12`, Р6 `F05-Rb`).
+          const status = await auth(http().get(`/admin/versions/${ids.en}/dossier`)).expect(200);
+          expect(status.body).toMatchObject({
+            status: 'ready',
+            partsDone: 250,
+            groupsDone: 7,
+            groupsTotal: 7,
+          });
+        },
+        GROUPS_TIMEOUT_MS,
+      );
+
+      it(
+        'exactly the chapter limit: one summary without groups; one chapter more: groups (F05-12)',
+        async () => {
+          const at = await book([
+            { language: 'en', originalLanguage: 'English', chapters: numberedChapters(40) },
+          ]);
+          await dossiers.demandDossier(at.ids.en as string);
+          await drainAll();
+          expect(await groupsOf(at.ids.en as string)).toEqual([]);
+          expect(callsOf('dossier')).toHaveLength(1);
+          const status = await auth(http().get(`/admin/versions/${at.ids.en}/dossier`)).expect(200);
+          expect(status.body).toMatchObject({ status: 'ready', groupsDone: 0, groupsTotal: 0 });
+
+          calls.length = 0;
+          const over = await book([
+            { language: 'en', originalLanguage: 'English', chapters: numberedChapters(41) },
+          ]);
+          await dossiers.demandDossier(over.ids.en as string);
+          await drainAll();
+          expect(
+            (await groupsOf(over.ids.en as string)).map((g) => [g.firstChapter, g.lastChapter]),
+          ).toEqual([
+            [1, 40],
+            [41, 41],
+          ]);
+          expect(callsOf('dossier')).toHaveLength(3);
+          expect(await dossiers.latestDossier(over.ids.en as string)).toMatchObject({
+            status: 'ready',
+          });
         },
         GROUPS_TIMEOUT_MS,
       );
@@ -1642,18 +1754,18 @@ describe('Translation source and dossier (e2e)', () => {
 
       /** Ответ куска с текстом-заполнителем: размер входа сводки задаёт тест, а не заглушка. */
       const paddedPart = (chars: number) => ({ ...PART, summary: 'x'.repeat(chars) });
-      /** Ответ сводки (группы или итога) с заполнителем в первой главе. */
+      /**
+       * Ответ сводки (группы или итога) с заполнителем в заметках о повествовании: списки глав
+       * и разделов наверх не уходят (`F05-12`), заполнитель в них не дошёл бы до уровня выше.
+       */
       const paddedDossier = (body: ChatBody | undefined, chars: number) => {
         const dossier = dossierFor(body);
-        return {
-          ...dossier,
-          chapters: dossier.chapters.map((c, i) =>
-            i === 0 ? { ...c, summary: 'y'.repeat(chars) } : c,
-          ),
-        };
+        return { ...dossier, narration: { ...dossier.narration, notes: 'y'.repeat(chars) } };
       };
       const setGroupModel = () =>
-        auth(http().put('/admin/llm/stage-settings/dossier')).send({ model: GROUP }).expect(200);
+        auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: GROUP, maxTokens: 2_000 })
+          .expect(200);
       const groupsOf = async (versionId: string) => {
         const row = await dossiers.latestDossier(versionId);
         return prisma.bookDossierGroup.findMany({
@@ -1666,12 +1778,13 @@ describe('Translation source and dossier (e2e)', () => {
 
       it('results of groups that do not fit together are grouped again: a level above zero, then the summary', async () => {
         // Вход ~24 тыс. символов: ответы кусков по ~6 тыс. - по два в группу; ответы групп по
-        // ~6 тыс. - четыре не влезают, по два влезают: уровень 1 из двух групп, итог из двух.
+        // ~7 тыс. (без списков глав, вход уровня выше - без их правил) - три не влезают, по два
+        // влезают: уровень 1 из двух групп, итог из двух.
         answer = (name, body) =>
           name === 'dossier_part'
             ? paddedPart(5_600)
             : name === 'dossier'
-              ? paddedDossier(body, 4_600)
+              ? paddedDossier(body, 6_000)
               : defaultAnswer(name, body);
         const { ids } = await eightChapters();
         await setGroupModel();
@@ -1695,16 +1808,24 @@ describe('Translation source and dossier (e2e)', () => {
         ]);
         expect(groups.every((g) => g.done)).toBe(true);
         expect(callsOf('dossier')).toHaveLength(groups.length + 1);
+        // Выше уровня 0 результаты групп уходят без списков глав и разделов (`F05-12`).
+        const above = callsOf('dossier').filter((c) =>
+          c.body.messages[0].content.includes('assembled separately'),
+        );
+        expect(above).toHaveLength(3);
+        for (const call of above) {
+          expect(call.body.messages[1].content).not.toContain('"summaryPlan"');
+        }
       });
 
       it('a level above zero that does not halve fails DOSSIER_TOO_LONG without paying for that level (Р3)', async () => {
-        // Ответы групп по ~8 тыс.: ни одна пара не влезает - уровень 1 из четырёх групп по одной
+        // Ответы групп по ~9 тыс.: ни одна пара не влезает - уровень 1 из четырёх групп по одной
         // ничего не сужает, отказ без вызова.
         answer = (name, body) =>
           name === 'dossier_part'
             ? paddedPart(5_600)
             : name === 'dossier'
-              ? paddedDossier(body, 6_600)
+              ? paddedDossier(body, 8_000)
               : defaultAnswer(name, body);
         const { ids } = await eightChapters();
         await setGroupModel();
@@ -1719,11 +1840,117 @@ describe('Translation source and dossier (e2e)', () => {
         expect(callsOf('dossier')).toHaveLength(4);
       });
 
+      it('level 0 of single groups whose next level could not narrow fails DOSSIER_TOO_LONG before paying for a group (F05-12)', async () => {
+        // Вход ~24 тыс. символов, ответы кусков по ~12 тыс.: в группе уровня 0 по одному куску.
+        // При `maxTokens` 16 000 выше уровня 0 заведомо не влезают два ответа группы - уровень 1
+        // не сузился бы, и отказ пришёл бы после оплаты восьми групп. Отказ - до первой из них.
+        answer = (name, body) =>
+          name === 'dossier_part' ? paddedPart(12_000) : defaultAnswer(name, body);
+        const { ids } = await eightChapters();
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: NARROW })
+          .expect(200);
+        await dossiers.demandDossier(ids.en as string);
+        await drainAll();
+        expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({
+          status: 'failed',
+          failedReason: 'DOSSIER_TOO_LONG',
+          model: NARROW,
+        });
+        expect(await groupsOf(ids.en as string)).toEqual([]);
+        expect(callsOf('dossier_part')).toHaveLength(8);
+        expect(callsOf('dossier')).toHaveLength(0);
+      });
+
+      /** Проходы, пока все заведённые группы уровня 0 не ответят; итог ещё не позван. */
+      const answerLevel0 = async (versionId: string) => {
+        for (let i = 0; i < 60; i++) {
+          const groups = await groupsOf(versionId);
+          if (groups.length > 0 && groups.every((g) => g.done)) return;
+          await prisma.llmTask.updateMany({
+            where: { kind: DOSSIER_TASK_KIND, status: 'pending' },
+            data: { runAfter: new Date(Date.now() - 1000) },
+          });
+          await worker.runOnce();
+        }
+        throw new Error('level 0 did not finish');
+      };
+
+      it('a hole between the chapter lists of level 0 groups fails the row before the final call is paid (F05-12)', async () => {
+        answer = (name, body) =>
+          name === 'dossier_part' ? paddedPart(5_600) : defaultAnswer(name, body);
+        const { ids } = await eightChapters();
+        await setGroupModel();
+        await dossiers.demandDossier(ids.en as string);
+        // Ход групп виден в статусе посреди построения.
+        for (let i = 0; i < 60; i++) {
+          const groups = await groupsOf(ids.en as string);
+          if (groups.some((g) => g.done)) break;
+          await prisma.llmTask.updateMany({
+            where: { kind: DOSSIER_TASK_KIND, status: 'pending' },
+            data: { runAfter: new Date(Date.now() - 1000) },
+          });
+          await worker.runOnce();
+        }
+        const mid = await auth(http().get(`/admin/versions/${ids.en}/dossier`)).expect(200);
+        expect(mid.body).toMatchObject({ status: 'building', groupsDone: 1, groupsTotal: 4 });
+
+        await answerLevel0(ids.en as string);
+        const [, second] = await groupsOf(ids.en as string);
+        const data = second.data as { chapters: Array<{ number: number }> };
+        // Глава 3 пропала из списка своей группы.
+        await prisma.bookDossierGroup.update({
+          where: { id: second.id },
+          data: { data: { ...data, chapters: data.chapters.filter((c) => c.number !== 3) } },
+        });
+        const paid = callsOf('dossier').length;
+        await drainAll();
+        expect(callsOf('dossier')).toHaveLength(paid);
+        // Строка ждёт одного перехвата (Р20), операция закрыта отказом по ответу модели.
+        const row = await dossiers.latestDossier(ids.en as string);
+        expect(row).toMatchObject({ status: 'building', takeovers: 0, failedReason: null });
+        expect(
+          await prisma.llmOperation.findUnique({ where: { id: row?.operationId as string } }),
+        ).toMatchObject({ status: 'failed' });
+        expect(
+          await prisma.llmTask.findFirst({
+            where: { operationId: row?.operationId as string, kind: DOSSIER_TASK_KIND },
+            orderBy: { createdAt: 'desc' },
+          }),
+        ).toMatchObject({ lastError: 'DOSSIER_INVALID_RESPONSE' });
+      });
+
+      it('maxTokens lowered after level 0 was set so that a group lists too many chapters: DOSSIER_TOO_LONG without a call (F05-12)', async () => {
+        answer = (name, body) =>
+          name === 'dossier_part' ? paddedPart(5_600) : defaultAnswer(name, body);
+        const { ids } = await eightChapters();
+        await setGroupModel();
+        await dossiers.demandDossier(ids.en as string);
+        for (let i = 0; i < 50 && (await groupsOf(ids.en as string)).length === 0; i++) {
+          await prisma.llmTask.updateMany({
+            where: { kind: DOSSIER_TASK_KIND, status: 'pending' },
+            data: { runAfter: new Date(Date.now() - 1000) },
+          });
+          await worker.runOnce();
+        }
+        expect((await groupsOf(ids.en as string)).map((g) => g.itemCount)).toEqual([2, 2, 2, 2]);
+        // 400 токенов - по одной главе в группе: заведённые по две не перепаковываются (Р4).
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: GROUP, maxTokens: 400 })
+          .expect(200);
+        await drainAll();
+        expect(callsOf('dossier')).toHaveLength(0);
+        expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({
+          status: 'failed',
+          failedReason: 'DOSSIER_TOO_LONG',
+        });
+      });
+
       it('a group is sized with the titles of every chapter, as the summary is', async () => {
         // Две пустые главы по краям с длинными названиями: со своими названиями четыре куска влезли
         // бы одной группой, а итог со всеми названиями - нет. Группы меряются как итог - по два.
         answer = (name, body) =>
-          name === 'dossier_part' ? paddedPart(2_400) : defaultAnswer(name, body);
+          name === 'dossier_part' ? paddedPart(3_200) : defaultAnswer(name, body);
         const long = 'T'.repeat(4_000);
         const chapters = [
           { number: 1, title: long, content: '' },
@@ -1731,7 +1958,11 @@ describe('Translation source and dossier (e2e)', () => {
           { number: 6, title: long, content: '' },
         ];
         const { ids } = await book([{ language: 'en', originalLanguage: 'English', chapters }]);
-        await setGroupModel();
+        // `maxTokens` 1 000: вход ~26 тыс. символов, и выше уровня 0 при всех названиях глав
+        // заведомо влезают два ответа группы (`F05-12`) - иначе отказ до оплаты групп.
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: GROUP, maxTokens: 1_000 })
+          .expect(200);
         await dossiers.demandDossier(ids.en as string);
         await drainAll();
         expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({ status: 'ready' });

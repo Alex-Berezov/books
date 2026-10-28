@@ -1,7 +1,15 @@
 import { Language } from '@prisma/client';
 import { LlmChatMessage, LlmJsonSchema } from '../../llm/openrouter.client';
+import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
+import { DossierListLimits } from './dossier-groups';
 import { DossierPartPlan } from './dossier-parts';
-import { DOSSIER_PART_SHAPE, DOSSIER_SHAPE, GLOSSARY_SHAPE, jsonSchemaOf } from './dossier.format';
+import {
+  DOSSIER_MERGE_SHAPE,
+  DOSSIER_PART_SHAPE,
+  DOSSIER_SHAPE,
+  GLOSSARY_SHAPE,
+  jsonSchemaOf,
+} from './dossier.format';
 
 /**
  * Промпты этапов `dossier` и `glossary` (`F05-2`, шаг 9). Правила плана разделов - этап 1
@@ -54,6 +62,24 @@ const SECTION_TITLE_PATTERNS =
   'pt: "Capítulo 5", "Capítulos 5-6", "Primeira parte"; ' +
   'ru: "Глава 5", "Главы 5-6", "Часть первая"';
 
+/**
+ * Правила списков глав и разделов: их пишет только сводка, которая видит главы (`F05-12`).
+ * `maxSections` - доля группы в потолке разделов пересказа (`SUMMARY_SECTION_LIMITS`), чтобы
+ * склейка планов групп его не превысила.
+ */
+const chapterListRules = (maxSections: number): string =>
+  '\n- chapters: every reader chapter: number, title as in the text (empty if none), 1-2 ' +
+  'line summary.' +
+  '\n- summaryPlan: sections of the retelling. A section is a complete piece of the plot a ' +
+  'reader looks for separately: one chapter, a part of the book, or 2-3 short chapters of ' +
+  'one line; no break inside a section that deserves its own page. Very short chapters ' +
+  '(under ~1500 words) of one scene may join a neighbour - say so in "why". Title in the ' +
+  'language of the text: "<Chapter> 5. <title>" if the chapter has a title, "<Chapter> 5" ' +
+  'if not, "<Chapters> 5-6", "<Part One>". Patterns by language - ' +
+  SECTION_TITLE_PATTERNS +
+  '; for another language use its own words. Never the words "summary" or "retelling" or ' +
+  `the book title. At most ${maxSections} sections; number them from 1.`;
+
 /** Начало системного сообщения сводки: по нему заглушка OpenRouter в e2e узнаёт вызов без `response_format`. */
 export const DOSSIER_SUMMARY_PROMPT_START =
   'You merge partial dossiers into one dossier of the part of the book they cover:';
@@ -62,7 +88,19 @@ export function dossierSummaryMessages(input: {
   chapters: Array<{ number: number; title: string }>;
   /** Частичные досье кусков или результаты групп прошлого уровня (`F05-Rb`). */
   parts: object[];
+  /**
+   * Сводка выше уровня 0 или итог по группам (`F05-12`): `chapters` и `summaryPlan` склеивает код,
+   * модель их не пишет.
+   */
+  merge?: boolean;
+  /** Потолки списков от `maxTokens` этапа (`dossierListLimits`, `F05-12`). */
+  limits: DossierListLimits;
+  /** Потолок разделов плана этого вызова; без него - весь потолок пересказа. */
+  maxSections?: number;
 }): LlmChatMessage[] {
+  const listRules = input.merge
+    ? '\n- chapters and summaryPlan are assembled separately from the groups: do not write them.'
+    : chapterListRules(input.maxSections ?? SUMMARY_SECTION_LIMITS.sectionsPerVersion);
   return [
     {
       role: 'system',
@@ -72,24 +110,17 @@ export function dossierSummaryMessages(input: {
         FACTS_ONLY +
         '\n- characters: one entry per person (merge variants of the name), stable key in ' +
         'lower-case latin (e.g. "elizabeth-bennet"), firstChapter, fate at the end in one line, ' +
-        'role main/secondary/episodic. Main first.' +
-        '\n- entities: one per place/object/organization/term with key and firstChapter.' +
+        `role main/secondary/episodic. Main first. At most ${input.limits.characters} ` +
+        'characters: when there are more, keep the main and secondary ones and drop episodic ' +
+        'ones first.' +
+        '\n- entities: one per place/object/organization/term with key and firstChapter; at most ' +
+        `${input.limits.entities}, the ones that recur first.` +
         '\n- narration: who narrates, person, form (letters, diaries, framed stories) and notes.' +
         '\n- setting: place and time of action.' +
         '\n- structure: parts of the book with their chapters, as the author divides it.' +
         '\n- chronology: key events in story order with chapter; orderNote where the telling ' +
-        'order differs from the order of events.' +
-        '\n- chapters: every reader chapter: number, title as in the text (empty if none), 1-2 ' +
-        'line summary.' +
-        '\n- summaryPlan: sections of the retelling. A section is a complete piece of the plot a ' +
-        'reader looks for separately: one chapter, a part of the book, or 2-3 short chapters of ' +
-        'one line; no break inside a section that deserves its own page. Very short chapters ' +
-        '(under ~1500 words) of one scene may join a neighbour - say so in "why". Title in the ' +
-        'language of the text: "<Chapter> 5. <title>" if the chapter has a title, "<Chapter> 5" ' +
-        'if not, "<Chapters> 5-6", "<Part One>". Patterns by language - ' +
-        SECTION_TITLE_PATTERNS +
-        '; for another language use its own words. Never the words "summary" or "retelling" or ' +
-        'the book title. At most 200 sections; number them from 1.' +
+        `order differs from the order of events; at most ${input.limits.chronology} events.` +
+        listRules +
         '\n- voice: pace, sentence length, lexicon, irony; devices with how they show, an example ' +
         'quoted from the text and its chapter.' +
         '\n- motifs: recurring images with the chapters where they appear.',
@@ -182,7 +213,12 @@ export const dossierPartRequest = (part: DossierPartPlan) =>
 
 /** Схема сводки - только в тексте: Claude не компилирует её грамматику (Р1 `F05 | F05-R`). */
 export const dossierSummaryRequest = (input: Parameters<typeof dossierSummaryMessages>[0]) =>
-  shapedRequest('dossier', DOSSIER_SHAPE, dossierSummaryMessages(input), { textOnly: true });
+  shapedRequest(
+    'dossier',
+    input.merge ? DOSSIER_MERGE_SHAPE : DOSSIER_SHAPE,
+    dossierSummaryMessages(input),
+    { textOnly: true },
+  );
 
 export const glossaryRequest = (input: Parameters<typeof glossaryMessages>[0]) =>
   shapedRequest('glossary', GLOSSARY_SHAPE, glossaryMessages(input));
