@@ -133,6 +133,21 @@ describe('checkMetadata', () => {
     });
   });
 
+  it('a source without an author has nothing to check against the glossary: null, not false', () => {
+    for (const author of ['  ', '<b> </b>']) {
+      const checked = checkMetadata(source({ ...FIELDS, author }), answer({ author: '' }));
+      expect(checked.ok && checked.result).toMatchObject({ author: '', authorFromGlossary: null });
+    }
+  });
+
+  it('a name the model gave to a source without an author is marked as not from the glossary', () => {
+    const checked = checkMetadata(source({ ...FIELDS, author: '' }), answer({ author: 'Esopo' }));
+    expect(checked.ok && checked.result).toMatchObject({
+      author: 'Esopo',
+      authorFromGlossary: false,
+    });
+  });
+
   it('an empty chapter title for a titled source chapter fails; an untitled one stays empty', () => {
     const titles = [
       { number: 1, title: ' ' },

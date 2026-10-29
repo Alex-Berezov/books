@@ -18,8 +18,12 @@ import { MetadataAnswer } from './metadata.prompts';
 export interface MetadataResult {
   title: string;
   author: string;
-  /** Имя автора - форма записи глоссария; `false` - модель дала свою (решение арбитра `F05 | F05-6`). */
-  authorFromGlossary: boolean;
+  /**
+   * Имя автора - форма записи глоссария; `false` - модель дала свою (решение арбитра `F05 | F05-6`);
+   * `null` - автора нет ни у исходника, ни в ответе, сверять нечего (решение арбитра `F05 | F05-17`);
+   * имя, которое модель дала исходнику без автора, - `false`: его надо проверить.
+   */
+  authorFromGlossary: boolean | null;
   description: string;
   chapterTitles: Array<{ number: number; title: string }>;
 }
@@ -126,10 +130,11 @@ export function checkMetadata(
   }
 
   const author = line(answer.author);
+  const sourceAuthor = line(source.author);
   const entry = authorEntry(source);
   if (author.length > VERSION_AUTHOR_MAX_LENGTH) {
     remarks.push(`The author name must be at most ${VERSION_AUTHOR_MAX_LENGTH} characters long.`);
-  } else if (line(source.author) !== '' && author === '') {
+  } else if (sourceAuthor !== '' && author === '') {
     remarks.push('The author name came back empty.');
   } else if (entry && normalized(author) !== normalized(entry.target.trim())) {
     remarks.push(`The author name must be exactly the glossary form: ${entry.target}.`);
@@ -192,7 +197,7 @@ export function checkMetadata(
     result: {
       title,
       author,
-      authorFromGlossary: entry !== undefined,
+      authorFromGlossary: sourceAuthor === '' && author === '' ? null : entry !== undefined,
       description,
       chapterTitles,
     },

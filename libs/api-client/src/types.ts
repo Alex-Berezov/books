@@ -13904,7 +13904,7 @@ export interface components {
       reservedUsd: string;
     };
     TranslationReportLanguageDto: {
-      /** @description The author name is the glossary spelling; null - the metadata stage gave no answer */
+      /** @description The author name is the glossary spelling; null - the metadata stage gave no answer, or neither the source nor the answer has an author */
       authorFromGlossary: boolean | null;
       chapters: components['schemas']['TranslationReportChapterDto'][];
       chunks: components['schemas']['TranslationReportChunksDto'];

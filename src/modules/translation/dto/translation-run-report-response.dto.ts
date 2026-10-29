@@ -182,7 +182,7 @@ export class TranslationReportLanguageDto {
     type: Boolean,
     nullable: true,
     description:
-      'The author name is the glossary spelling; null - the metadata stage gave no answer',
+      'The author name is the glossary spelling; null - the metadata stage gave no answer, or neither the source nor the answer has an author',
   })
   authorFromGlossary!: boolean | null;
 
