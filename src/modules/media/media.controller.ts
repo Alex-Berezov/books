@@ -7,6 +7,7 @@ import {
   Post,
   Query,
   UseGuards,
+  ParseEnumPipe,
   Req,
   UploadedFile,
   UseInterceptors,
@@ -33,15 +34,16 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { Roles, Role } from '../../common/decorators/roles.decorator';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Request } from 'express';
-import { FileInterceptor } from '@nestjs/platform-express';
-import { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
-import { memoryStorage } from 'multer';
+import { FormFileInterceptor } from '../../common/interceptors/form-file.interceptor';
 import { UploadsService } from '../uploads/uploads.service';
 import { PresignRequestDto, UploadType } from '../uploads/dto/presign.dto';
 
 type UploadedFileType = { buffer?: Buffer; mimetype?: string; size?: number; path?: string };
+
+// Текстовое поле формы `POST /media/upload` одно — `type` (LEGACY-475).
+const MEDIA_UPLOAD_FIELDS = 1;
 
 @ApiTags('media')
 @ApiExtraModels(MediaAssetResponseDto, PaginationInfoDto)
@@ -98,19 +100,16 @@ export class MediaController {
     },
   })
   @UseInterceptors(
-    FileInterceptor(
+    FormFileInterceptor(
       'file',
-      ((): MulterOptions => ({
-        storage: memoryStorage(),
-        limits: {
-          fileSize: Number(process.env.UPLOADS_MAX_AUDIO_MB || 200) * 1024 * 1024 + 5 * 1024 * 1024,
-        },
-      }))(),
+      Number(process.env.UPLOADS_MAX_AUDIO_MB || 200) * 1024 * 1024 + 5 * 1024 * 1024,
+      MEDIA_UPLOAD_FIELDS,
     ),
   )
   async uploadOne(
     @UploadedFile() file: UploadedFileType,
-    @Body('type') type: UploadType = UploadType.cover,
+    @Body('type', new ParseEnumPipe(UploadType, { optional: true }))
+    type: UploadType = UploadType.cover,
     @Req() req: Request,
   ) {
     const typed = req as Request & { user?: { userId: string } };
