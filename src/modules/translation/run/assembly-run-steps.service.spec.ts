@@ -117,6 +117,27 @@ describe('AssemblyRunStepsService: стыки моделью', () => {
     expect(findingsMock).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['not_independent', {}, { code: SEAM_FINDING_CODES.SEAM_NOT_INDEPENDENT, seam: 1 }],
+    ['unavailable', {}, { code: SEAM_FINDING_CODES.SEAM_CHECK_UNAVAILABLE, seam: 1 }],
+    ['too_long', {}, { code: SEAM_FINDING_CODES.SEAM_CHECK_INPUT_TOO_LONG, seam: 1 }],
+    [
+      'invalid',
+      { costUsd: new Prisma.Decimal('0.01') },
+      { code: SEAM_FINDING_CODES.SEAM_CHECK_INVALID_RESPONSE, seam: 1, costUsd: '0.01' },
+    ],
+  ])('исход %s - своя находка стыка после продления аренды', async (kind, extra, finding) => {
+    const { steps, tx, lease, ctx } = setup(null, null, pendingRow);
+    callMock.mockResolvedValue({ kind, ...extra });
+    await expect(steps.assemblyStep(lang, ctx)).resolves.toEqual({ kind: 'continue' });
+    expect(lease.renewLease).toHaveBeenCalledTimes(1);
+    expect(findingsMock).toHaveBeenCalledTimes(1);
+    expect(findingsMock).toHaveBeenCalledWith(tx, 'l1', pendingRow, [finding], {
+      where: { status: 'pending' },
+      flagFrom: [],
+    });
+  });
+
   it('ответ стыка - находка главы с моделью и ценой после продления аренды', async () => {
     const { steps, tx, lease, ctx } = setup(null, null, pendingRow);
     callMock.mockResolvedValue({

@@ -8,7 +8,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { LLM_BUDGET_ID } from '../src/modules/llm/llm-budget.service';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
 import { llmTaskConflict } from '../src/modules/llm-worker/llm-worker.errors';
-import { DossierService } from '../src/modules/translation/dossier/dossier.service';
+import { DossierDemandService } from '../src/modules/translation/dossier/dossier-demand.service';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { llmCallName } from './helpers/llm-call-name';
@@ -709,7 +709,7 @@ describe('Translation compare (e2e)', () => {
 
   it('a dossier changed concurrently (DOSSIER_BUSY) makes the step wait, not pause', async () => {
     const { ids } = await englishBook();
-    const dossiers = app.get(DossierService);
+    const dossiers = app.get(DossierDemandService);
     const spy = jest
       .spyOn(dossiers, 'demandDossier')
       // Один отказ, дальше - настоящий метод: spyOn его не заменяет.

@@ -17,7 +17,7 @@ import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-wor
 import { assembleChapter, ChapterLayout, splitChapter } from '../chapter-blocks';
 import { ChapterChunk, nextSplit } from '../chunking/chapter-chunks';
 import { demandContext } from '../dossier/context-demand';
-import { DossierService } from '../dossier/dossier.service';
+import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { BUDGET_PAUSE_BY_FAILURE } from '../pause-by-failure';
 import { chapterFingerprint } from '../source-fingerprint';
 import { pickBoundary } from '../translate/split.stage';
@@ -58,7 +58,7 @@ export class CompareTasksHandler implements LlmOperationKindHandler {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly tasks: LlmTaskService,
-    private readonly dossiers: DossierService,
+    private readonly dossiers: DossierDemandService,
   ) {}
 
   readonly handler: LlmTaskHandler = {
@@ -281,7 +281,7 @@ export class CompareTasksHandler implements LlmOperationKindHandler {
 
   /**
    * Досье и глоссарий языка (С2): сравнение - ждущий. `wait` - строится, шаг перепроверит;
-   * `paused`/`failed` - операция сравнения уже на паузе (её поставил `DossierService`), шаг
+   * `paused`/`failed` - операция сравнения уже на паузе (её поставил `DossierDemandService`), шаг
    * кончается, задача закрывается `cancelled`. Отказ ручки досье (409/503) - пауза `STEP_FAILED`
    * с кодом в задаче, а не безымянный `STEP_ERROR`.
    */

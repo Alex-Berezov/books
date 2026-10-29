@@ -9,7 +9,7 @@ import { LLM_BUDGET_ID } from '../src/modules/llm/llm-budget.service';
 import { LlmTaskService } from '../src/modules/llm-worker/llm-task.service';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
 import { LlmTaskLeaseLostError } from '../src/modules/llm-worker/llm-worker.errors';
-import { DossierService } from '../src/modules/translation/dossier/dossier.service';
+import { DossierDemandService } from '../src/modules/translation/dossier/dossier-demand.service';
 import {
   DOSSIER_TASK_KIND,
   GLOSSARY_TASK_KIND,
@@ -159,7 +159,7 @@ describe('Translation source and dossier (e2e)', () => {
   let prisma: PrismaService;
   let worker: LlmWorkerService;
   let tasks: LlmTaskService;
-  let dossiers: DossierService;
+  let dossiers: DossierDemandService;
   let fetchSpy: jest.SpyInstance;
   const tokens: Record<'admin' | 'cm' | 'user', string> = { admin: '', cm: '', user: '' };
   const stamp = Date.now();
@@ -312,7 +312,7 @@ describe('Translation source and dossier (e2e)', () => {
     prisma = app.get(PrismaService);
     worker = app.get(LlmWorkerService);
     tasks = app.get(LlmTaskService);
-    dossiers = app.get(DossierService);
+    dossiers = app.get(DossierDemandService);
 
     const adminEmail = `f052-admin-${stamp}@test.com`;
     const cmEmail = `f052-cm-${stamp}@test.com`;

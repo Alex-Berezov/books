@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { StageCallEstimator } from '../../llm/llm.service';
 import { ANSWER_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
 import { SUMMARY_ITEM_WRAPPER_CHARS } from './dossier-groups';
-import { summaryUsd } from './dossier.service';
+import { summaryUsd } from './dossier-demand.service';
 
 /**
  * Оценка сводки досье (`F05-12`): вызов стоит 1 цент плюс по центу за тысячу символов «ответов

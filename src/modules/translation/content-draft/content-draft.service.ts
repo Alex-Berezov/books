@@ -23,7 +23,8 @@ import {
   StoredBookAnalysis,
 } from '../../book-analysis/book-analysis-data';
 import { chapterPages } from '../chapter-pages';
-import { ContextEstimate, DossierService } from '../dossier/dossier.service';
+import { ContextEstimate, DossierDemandService } from '../dossier/dossier-demand.service';
+import { DossierService } from '../dossier/dossier.service';
 import { DossierMotifDto, DossierSummarySectionDto } from '../dto/dossier-data.dto';
 import {
   ContentDraftDto,
@@ -158,6 +159,7 @@ export class ContentDraftService {
     private readonly budget: LlmBudgetService,
     private readonly tasks: LlmTaskService,
     private readonly dossiers: DossierService,
+    private readonly dossierDemand: DossierDemandService,
   ) {}
 
   async estimate(versionId: string, kind: ContentDraftKind): Promise<ContentDraftEstimateDto> {
@@ -502,7 +504,7 @@ export class ContentDraftService {
     versionId: string,
     version: { language: Language },
   ): Promise<DraftContext> {
-    const run = await this.dossiers.finishedRunContextOf(versionId);
+    const run = await this.dossierDemand.finishedRunContextOf(versionId);
     if (run) {
       if (!run.dossier || run.dossier.status !== 'ready') {
         throw llmTaskConflict(
@@ -535,10 +537,12 @@ export class ContentDraftService {
     }
     const sourceLanguage = await this.languageOf(status.sourceVersionId);
     const needsGlossary = sourceLanguage !== version.language;
-    const context = await this.dossiers.contextEstimate(versionId, version.language);
+    const context = await this.dossierDemand.contextEstimate(versionId, version.language);
     const glossaryLine = needsGlossary ? context.glossary : null;
     const dossier =
-      status.status === 'ready' ? await this.dossiers.latestDossier(status.sourceVersionId) : null;
+      status.status === 'ready'
+        ? await this.dossierDemand.latestDossier(status.sourceVersionId)
+        : null;
     let glossaryData: unknown = null;
     if (dossier && needsGlossary && glossaryLine === null) {
       const glossary = await this.prisma.bookGlossary.findUnique({

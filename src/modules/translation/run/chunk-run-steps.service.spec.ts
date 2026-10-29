@@ -2,7 +2,9 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskContext } from '../../llm-worker/llm-task.types';
+import { nextSplit } from '../chunking/chapter-chunks';
 import { chapterFingerprint } from '../source-fingerprint';
+import { pickBoundary } from '../translate/split.stage';
 import { checkChunk, ChunkStore, translateChunk } from '../translate/chunk-steps';
 import { TRANSLATE_STAGE } from '../translate/translate.constants';
 import { AssemblyRunStepsService } from './assembly-run-steps.service';
@@ -10,6 +12,14 @@ import { ChunkRunStepsService } from './chunk-run-steps.service';
 import { LanguageRow, RunStepSupportService } from './run-step-support.service';
 import { CHUNK_STATUS_UNEXPECTED } from './translation-run.constants';
 
+jest.mock('../chunking/chapter-chunks', () => ({
+  ...jest.requireActual<Record<string, unknown>>('../chunking/chapter-chunks'),
+  nextSplit: jest.fn(),
+}));
+jest.mock('../translate/split.stage', () => ({
+  ...jest.requireActual<Record<string, unknown>>('../translate/split.stage'),
+  pickBoundary: jest.fn(),
+}));
 jest.mock('../translate/chunk-steps', () => ({
   ...jest.requireActual<Record<string, unknown>>('../translate/chunk-steps'),
   translateChunk: jest.fn(),
@@ -61,6 +71,7 @@ function setup(
       findMany: jest.fn().mockResolvedValue(chunks),
       findUniqueOrThrow: jest.fn().mockResolvedValue({ id: 'c1', rawResponse: null }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+      createMany: jest.fn().mockResolvedValue({ count: 1 }),
     },
     translationRunLanguage: { update: jest.fn().mockResolvedValue({}) },
     $transaction: jest.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
@@ -95,7 +106,12 @@ function storeOf(mock: jest.Mock): ChunkStore {
   return (mock.mock.calls[0] as unknown[])[2] as ChunkStore;
 }
 
+const splitMock = nextSplit as jest.Mock;
+const pickMock = pickBoundary as jest.Mock;
+
 beforeEach(() => {
+  splitMock.mockReset();
+  pickMock.mockReset();
   translateMock.mockReset().mockResolvedValue({ kind: 'continue' });
   checkMock.mockReset().mockResolvedValue({ kind: 'continue' });
 });
@@ -233,5 +249,78 @@ describe('ChunkRunStepsService: перевод и проверка куска', 
     });
     expect(translateMock).not.toHaveBeenCalled();
     expect(checkMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('ChunkRunStepsService: нарезка главы', () => {
+  const started = { ...lang, splitPicks: { '0': 1 } } as unknown as LanguageRow;
+
+  it('спорный стык - выбор модели дописывается к прежним в язык, куски не пишутся', async () => {
+    const { steps, db } = setup({ content: CONTENT }, []);
+    const window = { candidates: [] };
+    splitMock.mockResolvedValue({ open: { key: '3', window } });
+    pickMock.mockResolvedValue(4);
+    await expect(steps.chapterStep(started, 1, ctx)).resolves.toEqual({ kind: 'continue' });
+    expect(splitMock).toHaveBeenCalledTimes(1);
+    expect(pickMock).toHaveBeenCalledTimes(1);
+    expect(pickMock).toHaveBeenCalledWith({}, 'op1', window, ctx, {});
+    expect(db.translationRunLanguage.update).toHaveBeenCalledTimes(1);
+    expect(db.translationRunLanguage.update).toHaveBeenCalledWith({
+      where: { id: 'l1' },
+      data: { splitPicks: { '0': 1, '3': 4 } },
+    });
+    expect(db.translationChunk.createMany).not.toHaveBeenCalled();
+  });
+
+  it('нарезка с одного шага - исходник сверяется один раз, куски с отпечатком главы', async () => {
+    const { steps, db, support } = setup({ content: CONTENT }, []);
+    splitMock.mockResolvedValue({ chunks: [{ firstBlock: 0, lastBlock: 0, words: 1 }] });
+    await steps.chapterStep(lang, 1, ctx);
+    expect(support.isStale).toHaveBeenCalledTimes(1);
+    expect(db.translationChunk.createMany).toHaveBeenCalledTimes(1);
+    expect(db.translationChunk.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          runLanguageId: 'l1',
+          chapterNumber: 1,
+          chunkIndex: 0,
+          firstBlock: 0,
+          lastBlock: 0,
+          words: 1,
+          chapterFingerprint: chapterFingerprint(CONTENT),
+        },
+      ],
+      skipDuplicates: true,
+    });
+  });
+
+  it('нарезка шла несколько шагов, исходник тот же - сверка перед записью, куски пишутся', async () => {
+    const { steps, db, support } = setup({ content: CONTENT }, []);
+    splitMock.mockResolvedValue({ chunks: [{ firstBlock: 0, lastBlock: 0, words: 1 }] });
+    await steps.chapterStep(started, 1, ctx);
+    expect(support.isStale).toHaveBeenCalledTimes(1);
+    expect(support.pauseStale).not.toHaveBeenCalled();
+    expect(db.translationChunk.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('нарезка шла несколько шагов и исходник правили - пауза, куски не пишутся', async () => {
+    const { steps, db, support } = setup({ content: CONTENT }, []);
+    splitMock.mockResolvedValue({ chunks: [{ firstBlock: 0, lastBlock: 0, words: 1 }] });
+    support.isStale.mockResolvedValue(true);
+    await steps.chapterStep(started, 1, ctx);
+    expect(support.pauseStale).toHaveBeenCalledTimes(1);
+    expect(support.pauseStale).toHaveBeenCalledWith(started);
+    expect(db.translationChunk.createMany).not.toHaveBeenCalled();
+  });
+
+  it('глава без блоков - один пустой кусок', async () => {
+    const { steps, db } = setup({ content: '' }, []);
+    splitMock.mockResolvedValue({ chunks: [] });
+    await steps.chapterStep(lang, 1, ctx);
+    expect(db.translationChunk.createMany).toHaveBeenCalledTimes(1);
+    expect(db.translationChunk.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ chunkIndex: 0, firstBlock: 0, lastBlock: 0, words: 0 })],
+      skipDuplicates: true,
+    });
   });
 });

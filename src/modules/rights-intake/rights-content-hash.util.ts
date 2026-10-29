@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { isRecord } from '../../shared/prisma/json-record.util';
 
 /**
  * Версия алгоритма хеша. Меняется, когда меняется **состав** входа, а не содержимое книги.
@@ -88,10 +89,6 @@ function sortedReplacer(_key: string, value: unknown): unknown {
 
 export function sha256Hex(value: string): string {
   return createHash('sha256').update(value, 'utf-8').digest('hex');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**

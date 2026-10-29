@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { REVIEWER_REMARK_MAX_CHARS, REVIEWER_REMARKS_MAX } from './check.constants';
 import { MechanicalResult } from './mechanical-check';
 import { SemanticAnswer, seedOf } from './semantic-check';
@@ -51,9 +52,6 @@ export interface ChunkVerdict {
   remarks: string[];
   attempts: CheckAttempt[];
 }
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /**
  * Вердикт из строки куска. Не той формы (кусок `F05-4` с пустым вердиктом, ручная правка) -

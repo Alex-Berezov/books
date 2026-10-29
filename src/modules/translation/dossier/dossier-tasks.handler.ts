@@ -58,7 +58,11 @@ import {
   glossaryRequest,
   ShapedRequest,
 } from './dossier.prompts';
-import { DossierService, dossierTaskInput, glossaryTaskInput } from './dossier.service';
+import {
+  DossierDemandService,
+  dossierTaskInput,
+  glossaryTaskInput,
+} from './dossier-demand.service';
 
 function payloadId(task: LlmTask, key: 'dossierId' | 'glossaryId'): string | null {
   const payload = task.payload as Record<string, unknown> | null;
@@ -82,7 +86,7 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly tasks: LlmTaskService,
-    private readonly dossiers: DossierService,
+    private readonly dossiers: DossierDemandService,
   ) {}
 
   readonly dossierHandler: LlmTaskHandler = {

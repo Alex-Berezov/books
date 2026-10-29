@@ -1,7 +1,7 @@
 import { HttpException } from '@nestjs/common';
 import { BookDossier, BookGlossary, Language, Prisma } from '@prisma/client';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
-import { Demand, DossierService } from './dossier.service';
+import { Demand, DossierDemandService } from './dossier-demand.service';
 
 /** Отказы `demandDossier`/`demandGlossary` «изменено одновременно, повторить»: ожидание, не пауза. */
 const CONTEXT_RETRY_CODES = new Set(['DOSSIER_BUSY', 'GLOSSARY_BUSY']);
@@ -17,7 +17,7 @@ function httpCode(error: HttpException): string {
  * Досье и глоссарий языка для шага ждущего (сравнение `F05-3`, запуск `F05-4`; Р20).
  * - `ready` - оба готовы;
  * - `wait` - строятся: шаг пишет `waitingFor` и ждёт;
- * - `stopped` - операция ждущего уже на паузе или в отказе (её поставил `DossierService`),
+ * - `stopped` - операция ждущего уже на паузе или в отказе (её поставил `DossierDemandService`),
  *   шаг кончается; `blockedBy` - операция досье на паузе (`DOSSIER_PAUSED`);
  * - `retry` - строку меняли одновременно, шаг ждёт и перепроверит;
  * - `failed` - отказ ручки досье (409/503): операция ждущего уже на паузе `STEP_FAILED`.
@@ -30,7 +30,7 @@ export type ContextDemand =
   | { kind: 'failed'; code: string };
 
 export async function demandContext(
-  dossiers: DossierService,
+  dossiers: DossierDemandService,
   tasks: LlmTaskService,
   input: {
     versionId: string;
@@ -75,7 +75,7 @@ export async function demandContext(
  * `F05 | F05-10`, В6) - переводить имена не с чего. Состояния - как у `demandContext`.
  */
 export async function demandDossierContext(
-  dossiers: DossierService,
+  dossiers: DossierDemandService,
   tasks: LlmTaskService,
   input: { versionId: string; operationId: string; waitingFor: string | null },
 ): Promise<

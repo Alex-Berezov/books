@@ -13,7 +13,7 @@ import { LlmService } from '../../llm/llm.service';
 import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
-import { DossierService } from '../dossier/dossier.service';
+import { DossierDemandService } from '../dossier/dossier-demand.service';
 import {
   StartTranslationCompareDto,
   TranslationCompareEstimateQueryDto,
@@ -81,7 +81,7 @@ export class TranslationCompareService {
     private readonly budget: LlmBudgetService,
     private readonly tasks: LlmTaskService,
     private readonly sources: TranslationSourceService,
-    private readonly dossiers: DossierService,
+    private readonly dossiers: DossierDemandService,
   ) {}
 
   async estimate(

@@ -139,12 +139,44 @@ describe('FinalCheckRunStepsService: проверка моделью', () => {
     await steps.finalCheckStep(lang(CODE_DONE), ctx);
     expect(support.pauseNoProvider).toHaveBeenCalledTimes(1);
     expect(support.pauseNoProvider).toHaveBeenCalledWith(
-      expect.anything(),
+      expect.objectContaining({ id: 'l1' }),
       FINAL_CHECK_STAGE,
       models,
     );
     expect(tx.translationRunLanguage.updateMany).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['not_independent', {}, { code: FINAL_FINDING_CODES.FINAL_NOT_INDEPENDENT }, '0'],
+    ['unavailable', {}, { code: FINAL_FINDING_CODES.FINAL_CHECK_UNAVAILABLE }, '0'],
+    ['too_long', {}, { code: FINAL_FINDING_CODES.FINAL_CHECK_INPUT_TOO_LONG }, '0'],
+    [
+      'invalid',
+      { costUsd: new Prisma.Decimal('0.02') },
+      { code: FINAL_FINDING_CODES.FINAL_CHECK_INVALID_RESPONSE, costUsd: '0.02' },
+      '0.02',
+    ],
+  ])(
+    'исход %s - глава с этим исходом в состоянии языка и своя находка главы',
+    async (kind, extra, finding, costUsd) => {
+      const { steps, tx, ctx } = setup(chapterRow);
+      callMock.mockResolvedValue({ kind, ...extra });
+      await expect(steps.finalCheckStep(lang(CODE_DONE), ctx)).resolves.toEqual({
+        kind: 'continue',
+      });
+      expect(tx.translationRunLanguage.updateMany).toHaveBeenCalledTimes(1);
+      const written = (tx.translationRunLanguage.updateMany.mock.calls[0] as unknown[])[0] as {
+        data: { finalCheck: { chapters: unknown[] } };
+      };
+      expect(written.data.finalCheck.chapters).toEqual([
+        { number: 1, model: '', costUsd, outcome: kind },
+      ]);
+      expect(findingsMock).toHaveBeenCalledTimes(1);
+      expect(findingsMock).toHaveBeenCalledWith(tx, 'l1', chapterRow, [finding], {
+        where: { status: 'assembled' },
+      });
+    },
+  );
 
   it('ответ модели - глава в состоянии языка с ценой и находка главы одной транзакцией', async () => {
     const { steps, tx, ctx } = setup(chapterRow);

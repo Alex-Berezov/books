@@ -25,8 +25,8 @@ import { BookVersionService } from '../src/modules/book-version/book-version.ser
 import { CreateFromRunRejectedError } from '../src/modules/book-version/create-from-run';
 import {
   ContextEstimates,
-  DossierService,
-} from '../src/modules/translation/dossier/dossier.service';
+  DossierDemandService,
+} from '../src/modules/translation/dossier/dossier-demand.service';
 import { runTaskInput } from '../src/modules/translation/run/translation-run.service';
 import { TranslationRunReportDto } from '../src/modules/translation/dto/translation-run-report-response.dto';
 import { sourceFingerprint } from '../src/modules/translation/source-fingerprint';
@@ -2605,16 +2605,21 @@ describe('Translation run (e2e)', () => {
 
   it('start of a version deleted after its estimate: 404, nothing is created', async () => {
     const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
-    const dossiers = app.get<DossierService>(DossierService);
-    const real: DossierService['contextEstimates'] = (...args) =>
-      DossierService.prototype.contextEstimates.apply(dossiers, args) as Promise<ContextEstimates>;
+    const dossiers = app.get<DossierDemandService>(DossierDemandService);
+    const real: DossierDemandService['contextEstimates'] = (...args) =>
+      DossierDemandService.prototype.contextEstimates.apply(
+        dossiers,
+        args,
+      ) as Promise<ContextEstimates>;
     jest
       .spyOn(dossiers, 'contextEstimates')
-      .mockImplementationOnce(async (...args: Parameters<DossierService['contextEstimates']>) => {
-        const estimate = await real(...args);
-        await prisma.bookVersion.delete({ where: { id: versionId } });
-        return estimate;
-      });
+      .mockImplementationOnce(
+        async (...args: Parameters<DossierDemandService['contextEstimates']>) => {
+          const estimate = await real(...args);
+          await prisma.bookVersion.delete({ where: { id: versionId } });
+          return estimate;
+        },
+      );
 
     await startRun(versionId, { languages: ['es'] }).expect(404);
 

@@ -14,6 +14,7 @@ import {
   DOSSIER_TASK_KIND,
   GLOSSARY_TASK_KIND,
 } from './dossier/dossier.constants';
+import { DossierDemandService } from './dossier/dossier-demand.service';
 import { DossierService } from './dossier/dossier.service';
 import { DossierTasksHandler } from './dossier/dossier-tasks.handler';
 import { TranslationDraftService } from './draft/translation-draft.service';
@@ -35,10 +36,13 @@ import {
   CONTENT_DRAFT_STAGE_DEFINITIONS,
   CONTENT_DRAFT_TASK_KIND,
 } from './content-draft/content-draft.constants';
+import { TranslationCompareController } from './compare/compare.controller';
 import { ContentDraftController } from './content-draft/content-draft.controller';
+import { DossierController } from './dossier/dossier.controller';
+import { TranslationChunksController } from './retry/translation-chunks.controller';
+import { TranslationRunController } from './run/translation-run.controller';
 import { ContentDraftService } from './content-draft/content-draft.service';
 import { ContentDraftTasksHandler } from './content-draft/content-draft-tasks.handler';
-import { TranslationController } from './translation.controller';
 import { TranslationSourceService } from './translation-source.service';
 import { TRANSLATE_STAGE_DEFINITIONS } from './translate/translate.constants';
 import { CHECK_STAGE_DEFINITIONS } from './check/check.constants';
@@ -55,9 +59,16 @@ import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constan
  */
 @Module({
   imports: [LlmModule, LlmWorkerModule, BookVersionModule, ChapterModule],
-  controllers: [TranslationController, ContentDraftController],
+  controllers: [
+    DossierController,
+    TranslationCompareController,
+    TranslationRunController,
+    TranslationChunksController,
+    ContentDraftController,
+  ],
   providers: [
     TranslationSourceService,
+    DossierDemandService,
     DossierService,
     DossierTasksHandler,
     TranslationCompareService,

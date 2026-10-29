@@ -23,7 +23,7 @@ import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { LlmOperationsService } from '../../llm-worker/llm-operations.service';
 import { EnqueueTaskInput, LlmTaskService, pairKeyOf } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
-import { DossierService } from '../dossier/dossier.service';
+import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { assertKnownModels, stageEstimatorFor } from '../llm-model-checks';
 import { TranslationTargetReason } from '../translation-source';
 import { TranslationSourceService } from '../translation-source.service';
@@ -125,7 +125,7 @@ export class TranslationRunService {
     private readonly operations: LlmOperationsService,
     private readonly budget: LlmBudgetService,
     private readonly sources: TranslationSourceService,
-    private readonly dossiers: DossierService,
+    private readonly dossiers: DossierDemandService,
   ) {}
 
   async estimate(

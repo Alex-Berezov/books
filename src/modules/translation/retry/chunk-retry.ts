@@ -1,5 +1,6 @@
 import { Prisma, TranslationChunkStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { lockOperationRow, stopOperationRows } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
 import { ChunkVerdict } from '../check/chunk-verdict';
@@ -44,9 +45,6 @@ export interface ChunkRetry {
   /** Модели этапа, все отказавшие по политике данных: выход - другая модель. */
   reasonModels?: string[];
 }
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Попытка из строки куска; не той формы - `null`. */
 export function retryOf(value: Prisma.JsonValue | null | undefined): ChunkRetry | null {

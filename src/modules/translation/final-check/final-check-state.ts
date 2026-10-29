@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { metadataStateOf } from '../metadata/metadata-state';
 
 /**
@@ -22,9 +23,6 @@ export interface FinalCheckState {
   chapters: FinalCheckChapter[];
   done: boolean;
 }
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Состояние из строки языка. Не той формы - `null`: проверка начинается с чистого. */
 export function finalCheckStateOf(

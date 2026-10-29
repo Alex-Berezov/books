@@ -3,7 +3,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskStepResult } from '../../llm-worker/llm-task.types';
 import { demandContext } from '../dossier/context-demand';
-import { DossierService } from '../dossier/dossier.service';
+import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { sourceFingerprint } from '../source-fingerprint';
 import { CLEAR_STOP, LanguageRow, RunStepSupportService } from './run-step-support.service';
 import { DOSSIER_LIMIT_TOO_LOW, RUN_TX_OPTIONS } from './translation-run.constants';
@@ -14,7 +14,7 @@ export class ContextRunStepsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tasks: LlmTaskService,
-    private readonly dossiers: DossierService,
+    private readonly dossiers: DossierDemandService,
     private readonly support: RunStepSupportService,
   ) {}
 
@@ -93,7 +93,7 @@ export class ContextRunStepsService {
         }
         return { kind: 'wait', reason: context.reason };
       case 'stopped':
-        // Операция запуска уже на паузе (её поставил `DossierService`): причина и операция
+        // Операция запуска уже на паузе (её поставил `DossierDemandService`): причина и операция
         // досье - у языка, для «продолжить досье» (`F05-7`).
         // `LIMIT_REACHED` до трат язык уже записал сам (`onLimit`): не затирать код и лимит.
         if (context.reason !== 'LIMIT_REACHED' || context.blockedBy !== null) {

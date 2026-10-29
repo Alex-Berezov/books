@@ -214,7 +214,7 @@ export interface paths {
       cookie?: never;
     };
     /** Translation runs of the book, newest first */
-    get: operations['TranslationController_listRuns'];
+    get: operations['TranslationRunController_listRuns'];
     put?: never;
     post?: never;
     delete?: never;
@@ -353,7 +353,7 @@ export interface paths {
       cookie?: never;
     };
     /** Glossary of the dossier for a target language */
-    get: operations['TranslationController_glossary'];
+    get: operations['DossierController_glossary'];
     put?: never;
     post?: never;
     delete?: never;
@@ -2393,7 +2393,7 @@ export interface paths {
     };
     get?: never;
     /** Edit a piece by hand: the translation of each block of the piece, inline markup only; the piece is saved, the draft chapter is rewritten unless refused (reason) */
-    put: operations['TranslationController_editChunk'];
+    put: operations['TranslationChunksController_editChunk'];
     post?: never;
     delete?: never;
     options?: never;
@@ -2411,7 +2411,7 @@ export interface paths {
     get?: never;
     put?: never;
     /** Retry a piece anew with checks under its own operation and limit, optionally with another translate model; the piece and the draft chapter are replaced when the retry ends */
-    post: operations['TranslationController_retryChunk'];
+    post: operations['TranslationChunksController_retryChunk'];
     delete?: never;
     options?: never;
     head?: never;
@@ -2426,7 +2426,7 @@ export interface paths {
       cookie?: never;
     };
     /** Model comparison: the original chapter and a column per model with its text, cost, tokens, duration and error */
-    get: operations['TranslationController_getCompare'];
+    get: operations['TranslationCompareController_getCompare'];
     put?: never;
     post?: never;
     delete?: never;
@@ -2443,7 +2443,7 @@ export interface paths {
       cookie?: never;
     };
     /** Translation run progress by language: stage, chapter N of M, pieces, flags, pause reason; spent and limit in its operation */
-    get: operations['TranslationController_getRun'];
+    get: operations['TranslationRunController_getRun'];
     put?: never;
     post?: never;
     delete?: never;
@@ -2462,7 +2462,7 @@ export interface paths {
     get?: never;
     put?: never;
     /** Cancel a translation run: unfinished languages stop and the run spends nothing more; translated pieces stay. Dossier and glossary operations started for it run on their own limit and are cancelled separately */
-    post: operations['TranslationController_cancelRun'];
+    post: operations['TranslationRunController_cancelRun'];
     delete?: never;
     options?: never;
     head?: never;
@@ -2477,7 +2477,7 @@ export interface paths {
       cookie?: never;
     };
     /** Pieces of one chapter of a run language side by side: source and translation block to block, status, flag, model, cost, retry and hand edit; the chapter rewrite refusal and its findings */
-    get: operations['TranslationController_listChunks'];
+    get: operations['TranslationChunksController_listChunks'];
     put?: never;
     post?: never;
     delete?: never;
@@ -2496,7 +2496,7 @@ export interface paths {
     get?: never;
     put?: never;
     /** Pause a running translation: the step in progress finishes, nothing more starts. Dossier and glossary operations started for it are not paused */
-    post: operations['TranslationController_pauseRun'];
+    post: operations['TranslationRunController_pauseRun'];
     delete?: never;
     options?: never;
     head?: never;
@@ -2511,7 +2511,7 @@ export interface paths {
       cookie?: never;
     };
     /** Translation run report: by language - pieces, retries, piece and chapter flags with reasons, final check, chapters not in the draft, the draft version; cost by stage and model over every operation of the run */
-    get: operations['TranslationController_getRunReport'];
+    get: operations['TranslationRunController_getRunReport'];
     put?: never;
     post?: never;
     delete?: never;
@@ -2530,7 +2530,7 @@ export interface paths {
     get?: never;
     put?: never;
     /** Resume a paused translation run on every unfinished language, optionally with a new limit and stage models */
-    post: operations['TranslationController_resumeRun'];
+    post: operations['TranslationRunController_resumeRun'];
     delete?: never;
     options?: never;
     head?: never;
@@ -2669,10 +2669,10 @@ export interface paths {
       cookie?: never;
     };
     /** Dossier of this version (its translation source, Р5): status, freshness and data */
-    get: operations['TranslationController_status'];
+    get: operations['DossierController_status'];
     put?: never;
     /** Build the dossier in the background under its own operation; a stale one is rebuilt as a new generation */
-    post: operations['TranslationController_build'];
+    post: operations['DossierController_build'];
     delete?: never;
     options?: never;
     head?: never;
@@ -2687,7 +2687,7 @@ export interface paths {
       cookie?: never;
     };
     /** Upper cost estimate of building the dossier of this version */
-    get: operations['TranslationController_estimate'];
+    get: operations['DossierController_estimate'];
     put?: never;
     post?: never;
     delete?: never;
@@ -2984,7 +2984,7 @@ export interface paths {
     get?: never;
     put?: never;
     /** Compare 2-4 models on one chapter in the background under its own operation; no version is created and the glossary is not changed */
-    post: operations['TranslationController_startCompare'];
+    post: operations['TranslationCompareController_startCompare'];
     delete?: never;
     options?: never;
     head?: never;
@@ -2999,7 +2999,7 @@ export interface paths {
       cookie?: never;
     };
     /** Upper cost estimate of comparing 2-4 models on one chapter: dossier, glossary, split and each model */
-    get: operations['TranslationController_compareEstimate'];
+    get: operations['TranslationCompareController_compareEstimate'];
     put?: never;
     post?: never;
     delete?: never;
@@ -3016,7 +3016,7 @@ export interface paths {
       cookie?: never;
     };
     /** Model comparisons of this version, newest first */
-    get: operations['TranslationController_listCompares'];
+    get: operations['TranslationCompareController_listCompares'];
     put?: never;
     post?: never;
     delete?: never;
@@ -3035,7 +3035,7 @@ export interface paths {
     get?: never;
     put?: never;
     /** Start translating the book into the given languages in the background under one run operation; a language with a version or an unfinished run is refused, the whole request with it */
-    post: operations['TranslationController_startRun'];
+    post: operations['TranslationRunController_startRun'];
     delete?: never;
     options?: never;
     head?: never;
@@ -3050,7 +3050,7 @@ export interface paths {
       cookie?: never;
     };
     /** Upper cost estimate of translating the book into the given languages: per language and total, the dossier and glossaries built first, chapters near the length limit */
-    get: operations['TranslationController_runEstimate'];
+    get: operations['TranslationRunController_runEstimate'];
     put?: never;
     post?: never;
     delete?: never;
@@ -3067,7 +3067,7 @@ export interface paths {
       cookie?: never;
     };
     /** Translation source of the book by the original language (D8): whether this version can be translated and into which languages */
-    get: operations['TranslationController_translationSource'];
+    get: operations['DossierController_translationSource'];
     put?: never;
     post?: never;
     delete?: never;
@@ -15695,7 +15695,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_listRuns: {
+  TranslationRunController_listRuns: {
     parameters: {
       query?: {
         /** @description Page number */
@@ -16028,7 +16028,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_glossary: {
+  DossierController_glossary: {
     parameters: {
       query?: never;
       header?: never;
@@ -19673,7 +19673,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_editChunk: {
+  TranslationChunksController_editChunk: {
     parameters: {
       query?: never;
       header?: never;
@@ -19719,7 +19719,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_retryChunk: {
+  TranslationChunksController_retryChunk: {
     parameters: {
       query?: never;
       header?: never;
@@ -19772,7 +19772,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_getCompare: {
+  TranslationCompareController_getCompare: {
     parameters: {
       query?: never;
       header?: never;
@@ -19800,7 +19800,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_getRun: {
+  TranslationRunController_getRun: {
     parameters: {
       query?: never;
       header?: never;
@@ -19828,7 +19828,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_cancelRun: {
+  TranslationRunController_cancelRun: {
     parameters: {
       query?: never;
       header?: never;
@@ -19863,7 +19863,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_listChunks: {
+  TranslationChunksController_listChunks: {
     parameters: {
       query: {
         lang: components['schemas']['Language'];
@@ -19895,7 +19895,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_pauseRun: {
+  TranslationRunController_pauseRun: {
     parameters: {
       query?: never;
       header?: never;
@@ -19930,7 +19930,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_getRunReport: {
+  TranslationRunController_getRunReport: {
     parameters: {
       query?: never;
       header?: never;
@@ -19958,7 +19958,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_resumeRun: {
+  TranslationRunController_resumeRun: {
     parameters: {
       query?: never;
       header?: never;
@@ -20234,7 +20234,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_status: {
+  DossierController_status: {
     parameters: {
       query?: never;
       header?: never;
@@ -20255,7 +20255,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_build: {
+  DossierController_build: {
     parameters: {
       query?: never;
       header?: never;
@@ -20294,7 +20294,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_estimate: {
+  DossierController_estimate: {
     parameters: {
       query?: never;
       header?: never;
@@ -20728,7 +20728,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_startCompare: {
+  TranslationCompareController_startCompare: {
     parameters: {
       query?: never;
       header?: never;
@@ -20781,7 +20781,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_compareEstimate: {
+  TranslationCompareController_compareEstimate: {
     parameters: {
       query: {
         /** @description Reader chapter number */
@@ -20836,7 +20836,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_listCompares: {
+  TranslationCompareController_listCompares: {
     parameters: {
       query?: {
         /** @description Page number */
@@ -20865,7 +20865,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_startRun: {
+  TranslationRunController_startRun: {
     parameters: {
       query?: never;
       header?: never;
@@ -20918,7 +20918,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_runEstimate: {
+  TranslationRunController_runEstimate: {
     parameters: {
       query: {
         /** @description Target languages, each once; in a query - repeated or comma-separated */
@@ -20972,7 +20972,7 @@ export interface operations {
       };
     };
   };
-  TranslationController_translationSource: {
+  DossierController_translationSource: {
     parameters: {
       query?: never;
       header?: never;

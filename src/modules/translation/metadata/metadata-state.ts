@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { MetadataResult } from './metadata-check';
 
 /**
@@ -42,9 +43,6 @@ export function metadataSourceHash(fields: {
     .update(JSON.stringify([fields.title, fields.description, fields.author]))
     .digest('hex');
 }
-
-const isRecord = (v: unknown): v is Record<string, unknown> =>
-  typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** Состояние из строки языка. Не той формы - `null`: этап начинается с чистого. */
 export function metadataStateOf(value: Prisma.JsonValue | null | undefined): MetadataState | null {

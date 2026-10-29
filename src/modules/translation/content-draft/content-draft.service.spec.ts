@@ -4,6 +4,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmBudgetService } from '../../llm/llm-budget.service';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
+import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { DossierService } from '../dossier/dossier.service';
 import { ContentDraftService } from './content-draft.service';
 
@@ -88,6 +89,7 @@ function setup() {
     budget as unknown as LlmBudgetService,
     tasks as unknown as LlmTaskService,
     {} as DossierService,
+    {} as DossierDemandService,
   );
   return { service, prisma, llm, budget, tasks, tx };
 }

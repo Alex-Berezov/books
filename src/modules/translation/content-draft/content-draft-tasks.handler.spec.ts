@@ -3,7 +3,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext } from '../../llm-worker/llm-task.types';
-import { DossierService } from '../dossier/dossier.service';
+import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { ContentDraftTasksHandler } from './content-draft-tasks.handler';
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
 import { ContentDraftService } from './content-draft.service';
@@ -95,7 +95,7 @@ function setup(
     prisma as unknown as PrismaService,
     llm as unknown as LlmService,
     tasks as unknown as LlmTaskService,
-    {} as DossierService,
+    {} as DossierDemandService,
     drafts as unknown as ContentDraftService,
   );
   return { handler, prisma, llm, tasks, tx, drafts };

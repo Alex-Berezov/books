@@ -8,7 +8,7 @@ import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.reg
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
 import { demandContext, demandDossierContext } from '../dossier/context-demand';
-import { DossierService } from '../dossier/dossier.service';
+import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { ContentDraftSectionDto } from '../dto/content-draft-response.dto';
 import { DossierMotifDto } from '../dto/dossier-data.dto';
 import { callShaped } from '../llm-shaped-call';
@@ -87,7 +87,7 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly tasks: LlmTaskService,
-    private readonly dossiers: DossierService,
+    private readonly dossiers: DossierDemandService,
     private readonly drafts: ContentDraftService,
   ) {}
 

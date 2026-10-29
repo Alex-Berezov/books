@@ -1,7 +1,7 @@
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { demandContext } from '../dossier/context-demand';
-import { DossierService } from '../dossier/dossier.service';
+import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { sourceFingerprint } from '../source-fingerprint';
 import { ContextRunStepsService } from './context-run-steps.service';
 import { CLEAR_STOP, LanguageRow, RunStepSupportService } from './run-step-support.service';
@@ -51,7 +51,7 @@ function setup(boundDossierId: string = 'dos1') {
   const steps = new ContextRunStepsService(
     db as unknown as PrismaService,
     {} as LlmTaskService,
-    {} as DossierService,
+    {} as DossierDemandService,
     support as unknown as RunStepSupportService,
   );
   return { steps, db, tx, support };

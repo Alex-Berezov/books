@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { waiterMinLimit } from './dossier.service';
+import { waiterMinLimit } from './dossier-demand.service';
 
 const D = (v: string) => new Prisma.Decimal(v);
 const op = (limitUsd: string, spentUsd = '0', reservedUsd = '0') => ({

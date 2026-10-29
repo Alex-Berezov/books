@@ -30924,7 +30924,7 @@
     },
     "/admin/books/{bookId}/translation-runs": {
       "get": {
-        "operationId": "TranslationController_listRuns",
+        "operationId": "TranslationRunController_listRuns",
         "parameters": [
           {
             "in": "path",
@@ -31629,7 +31629,7 @@
     },
     "/admin/dossiers/{id}/glossaries/{lang}": {
       "get": {
-        "operationId": "TranslationController_glossary",
+        "operationId": "DossierController_glossary",
         "parameters": [
           {
             "in": "path",
@@ -39189,7 +39189,7 @@
     },
     "/admin/translation-chunks/{id}": {
       "put": {
-        "operationId": "TranslationController_editChunk",
+        "operationId": "TranslationChunksController_editChunk",
         "parameters": [
           {
             "in": "path",
@@ -39245,7 +39245,7 @@
     },
     "/admin/translation-chunks/{id}/retry": {
       "post": {
-        "operationId": "TranslationController_retryChunk",
+        "operationId": "TranslationChunksController_retryChunk",
         "parameters": [
           {
             "in": "path",
@@ -39304,7 +39304,7 @@
     },
     "/admin/translation-compares/{id}": {
       "get": {
-        "operationId": "TranslationController_getCompare",
+        "operationId": "TranslationCompareController_getCompare",
         "parameters": [
           {
             "in": "path",
@@ -39344,7 +39344,7 @@
     },
     "/admin/translation-runs/{id}": {
       "get": {
-        "operationId": "TranslationController_getRun",
+        "operationId": "TranslationRunController_getRun",
         "parameters": [
           {
             "in": "path",
@@ -39384,7 +39384,7 @@
     },
     "/admin/translation-runs/{id}/cancel": {
       "post": {
-        "operationId": "TranslationController_cancelRun",
+        "operationId": "TranslationRunController_cancelRun",
         "parameters": [
           {
             "in": "path",
@@ -39427,7 +39427,7 @@
     },
     "/admin/translation-runs/{id}/chunks": {
       "get": {
-        "operationId": "TranslationController_listChunks",
+        "operationId": "TranslationChunksController_listChunks",
         "parameters": [
           {
             "in": "path",
@@ -39484,7 +39484,7 @@
     },
     "/admin/translation-runs/{id}/pause": {
       "post": {
-        "operationId": "TranslationController_pauseRun",
+        "operationId": "TranslationRunController_pauseRun",
         "parameters": [
           {
             "in": "path",
@@ -39527,7 +39527,7 @@
     },
     "/admin/translation-runs/{id}/report": {
       "get": {
-        "operationId": "TranslationController_getRunReport",
+        "operationId": "TranslationRunController_getRunReport",
         "parameters": [
           {
             "in": "path",
@@ -39567,7 +39567,7 @@
     },
     "/admin/translation-runs/{id}/resume": {
       "post": {
-        "operationId": "TranslationController_resumeRun",
+        "operationId": "TranslationRunController_resumeRun",
         "parameters": [
           {
             "in": "path",
@@ -40110,7 +40110,7 @@
     },
     "/admin/versions/{id}/dossier": {
       "get": {
-        "operationId": "TranslationController_status",
+        "operationId": "DossierController_status",
         "parameters": [
           {
             "in": "path",
@@ -40145,7 +40145,7 @@
         ]
       },
       "post": {
-        "operationId": "TranslationController_build",
+        "operationId": "DossierController_build",
         "parameters": [
           {
             "in": "path",
@@ -40198,7 +40198,7 @@
     },
     "/admin/versions/{id}/dossier/estimate": {
       "get": {
-        "operationId": "TranslationController_estimate",
+        "operationId": "DossierController_estimate",
         "parameters": [
           {
             "in": "path",
@@ -40963,7 +40963,7 @@
     },
     "/admin/versions/{id}/translation-compare": {
       "post": {
-        "operationId": "TranslationController_startCompare",
+        "operationId": "TranslationCompareController_startCompare",
         "parameters": [
           {
             "in": "path",
@@ -41022,7 +41022,7 @@
     },
     "/admin/versions/{id}/translation-compare/estimate": {
       "get": {
-        "operationId": "TranslationController_compareEstimate",
+        "operationId": "TranslationCompareController_compareEstimate",
         "parameters": [
           {
             "in": "path",
@@ -41103,7 +41103,7 @@
     },
     "/admin/versions/{id}/translation-compares": {
       "get": {
-        "operationId": "TranslationController_listCompares",
+        "operationId": "TranslationCompareController_listCompares",
         "parameters": [
           {
             "in": "path",
@@ -41178,7 +41178,7 @@
     },
     "/admin/versions/{id}/translation-runs": {
       "post": {
-        "operationId": "TranslationController_startRun",
+        "operationId": "TranslationRunController_startRun",
         "parameters": [
           {
             "in": "path",
@@ -41237,7 +41237,7 @@
     },
     "/admin/versions/{id}/translation-runs/estimate": {
       "get": {
-        "operationId": "TranslationController_runEstimate",
+        "operationId": "TranslationRunController_runEstimate",
         "parameters": [
           {
             "in": "path",
@@ -41308,7 +41308,7 @@
     },
     "/admin/versions/{id}/translation-source": {
       "get": {
-        "operationId": "TranslationController_translationSource",
+        "operationId": "DossierController_translationSource",
         "parameters": [
           {
             "in": "path",

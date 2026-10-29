@@ -11,7 +11,7 @@ import {
   planChunks,
 } from '../chunking/chapter-chunks';
 import { DOSSIER_STAGE, GLOSSARY_STAGE } from '../dossier/dossier.constants';
-import type { DossierService } from '../dossier/dossier.service';
+import type { DossierDemandService } from '../dossier/dossier-demand.service';
 import { SPLIT_STAGE, TRANSLATE_TAIL_MAX_CHARS } from './translate.constants';
 import { pieceInput } from './translate-piece';
 import { splitRequest, translateRequest } from './translate.prompts';
@@ -101,7 +101,7 @@ export async function splitEstimator(llm: LlmService): Promise<StageCallEstimato
 /** Готовые досье и глоссарий языка - их данные идут в промпт; не готовы - `null`. */
 export async function readyContext(
   prisma: PrismaService,
-  dossiers: DossierService,
+  dossiers: DossierDemandService,
   sourceVersionId: string,
   language: Language,
 ): Promise<{ dossierData: unknown; glossaryData: unknown }> {
