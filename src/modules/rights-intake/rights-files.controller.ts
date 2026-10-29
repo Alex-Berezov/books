@@ -12,8 +12,6 @@ import {
   UseGuards,
   UseInterceptors,
 } from '@nestjs/common';
-import { FileInterceptor } from '@nestjs/platform-express';
-import type { MulterOptions } from '@nestjs/platform-express/multer/interfaces/multer-options.interface';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -25,7 +23,6 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { memoryStorage } from 'multer';
 import { promises as fs } from 'node:fs';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -39,6 +36,7 @@ import { RightsFileLimitsDto } from './dto/rights-file-limits.dto';
 import { SupersedeRightsEvidenceResponseDto } from './dto/supersede-rights-evidence-response.dto';
 import type { RightsFileDownload } from './rights-files.service';
 import { PRIVATE_NO_STORE } from '../../common/interceptors/cache-control';
+import { FormFileInterceptor } from '../../common/interceptors/form-file.interceptor';
 
 type UploadedFileType = {
   buffer?: Buffer;
@@ -48,17 +46,16 @@ type UploadedFileType = {
   originalname?: string;
 };
 
+// Текстовых полей у формы нет (LEGACY-482): клиент шлёт один файл `file`.
+const RIGHTS_UPLOAD_FIELDS = 0;
+
+// Небольшой запас над прикладным лимитом: точную проверку и понятную 413 даёт
+// RightsFileStorageService, multer здесь — только защита от очевидно огромного тела.
 const uploadInterceptor = () =>
-  FileInterceptor(
+  FormFileInterceptor(
     'file',
-    ((): MulterOptions => ({
-      storage: memoryStorage(),
-      // Небольшой запас над прикладным лимитом: точную проверку и понятную 413 даёт
-      // RightsFileStorageService, multer здесь — только защита от очевидно огромного тела.
-      limits: {
-        fileSize: (Number(process.env.RIGHTS_FILES_MAX_MB || 25) + 2) * 1024 * 1024,
-      },
-    }))(),
+    (Number(process.env.RIGHTS_FILES_MAX_MB || 25) + 2) * 1024 * 1024,
+    RIGHTS_UPLOAD_FIELDS,
   );
 
 const MULTIPART_BODY = {

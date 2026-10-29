@@ -149,7 +149,7 @@ const FILTERED_BY_DESIGN: ReadonlyMap<string, string> = new Map([
  * а не декоратором параметра.
  */
 const EXTRA_INPUTS: ReadonlyMap<string, string> = new Map([
-  ['file', "FileInterceptor('file', …) в rights-files.controller.ts"],
+  ['file', "FormFileInterceptor('file', …) в rights-files.controller.ts"],
   // 🔴 `lang` сторож объявил мёртвым, и по его вердикту строка была снята
   // из белого списка — ошибочно. `LanguageResolverGuard`
   // (`common/guards/language-resolver.guard.ts:32,38`) — глобальный `APP_GUARD`

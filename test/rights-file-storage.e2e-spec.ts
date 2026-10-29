@@ -392,6 +392,28 @@ describe('Rights file storage e2e', () => {
     expect(record?.supersededById).toBeNull();
   });
 
+  // LEGACY-482: индекс массива в имени поля строил массив в 2^32-1 и держал процесс. Текстовых
+  // полей у формы нет вовсе: `x[4294967294]` отсекает потолок числа полей, а не индекса, —
+  // индекс держит `form-file.interceptor.spec.ts`.
+  it('rejects text fields on all three rights uploads with 400', async () => {
+    // Пути литералами в `.post(...)`: их сверяет с контроллерами `e2e-route-existence.spec.ts`.
+    const uploads = [
+      () => request(http()).post(`/admin/rights/review-imports/${importId}/report-pdf`),
+      () => request(http()).post(`/admin/rights/profiles/${profileId}/source-file`),
+      () => request(http()).post(`/admin/rights/evidence/${evidenceId}/archive-copy`),
+    ];
+    for (const upload of uploads) {
+      for (const field of ['x[4294967294]', 'x']) {
+        const res = await upload()
+          .set('Authorization', `Bearer ${adminAccess}`)
+          .field(field, '1')
+          .attach('file', reportPdf, { filename: 'r.pdf', contentType: 'application/pdf' })
+          .expect(400);
+        expect(res.body.message).toBe('Too many fields');
+      }
+    }
+  });
+
   it('returns exactly the uploaded evidence bytes and refuses to replace them', async () => {
     const downloaded = await withoutHeadersSentError(() =>
       request(http())

@@ -44,14 +44,31 @@ function isMulterError(error: unknown): error is MulterError {
   return error instanceof Error && error.name === 'MulterError';
 }
 
+/** LEGACY-482. Текст отказа на форму, которую не разобрал busboy или multer. */
+export const MALFORMED_FORM_MESSAGE = 'Malformed multipart form';
+
+// busboy и multer сообщают о кривой форме голым `Error` без `code` (`Unsupported content type`,
+// `Multipart: Boundary not found`, `Unexpected end of form`, `Request aborted` и т.п.) — список
+// текстов не закрыт и меняется с версией, поэтому решает форма ошибки, а не текст. Системная
+// ошибка Node несёт `code` (`ENOSPC`, `EACCES`), подклассы (`TypeError`, `RangeError`) — ошибка
+// кода: те и другие остаются 500. Хранилище здесь только `memoryStorage` (`formFileOptions`):
+// дисковое хранилище принесло бы свои голые ошибки, и это правило пришлось бы пересмотреть.
+function isFormParseFailure(error: unknown): error is Error {
+  return (
+    error instanceof Error && Object.getPrototypeOf(error) === Error.prototype && !('code' in error)
+  );
+}
+
 /**
- * `FileInterceptor` с потолками полей формы и отказом multer в 400.
+ * `FileInterceptor` с потолками полей формы и отказом разбора формы в 400.
  *
  * `transformException` из `@nestjs/platform-express` 11.2.7 не знает кодов multer 2.5
  * (`LIMIT_FIELD_ARRAY_INDEX`, `INVALID_FIELD_NAME`, `STREAM_DESTROYED`) и отдаёт `MulterError`
  * как есть — наружу это 500. Перехватчик бросает `BadRequestException`, а не пишет ответ сам:
  * отказ идёт через глобальный `SentryExceptionFilter` (`Vary: Authorization`, Sentry).
- * Текст — как у известных Nest кодов: `<сообщение> - <поле>`.
+ * Текст — как у известных Nest кодов: `<сообщение> - <поле>`. Голый `Error` busboy и multer
+ * (кривой `Content-Type`, оборванное тело) — тоже 400, с постоянным текстом
+ * `MALFORMED_FORM_MESSAGE`: сообщение busboy несёт заголовок клиента.
  * Ошибки обработчика маршрута сюда не попадают — они в потоке `next.handle()`.
  */
 export function FormFileInterceptor(
@@ -69,10 +86,13 @@ export function FormFileInterceptor(
       try {
         return await this.multer.intercept(context, next);
       } catch (error) {
-        if (!isMulterError(error)) throw error;
-        throw new BadRequestException(
-          error.field ? `${error.message} - ${error.field}` : error.message,
-        );
+        if (isMulterError(error)) {
+          throw new BadRequestException(
+            error.field ? `${error.message} - ${error.field}` : error.message,
+          );
+        }
+        if (isFormParseFailure(error)) throw new BadRequestException(MALFORMED_FORM_MESSAGE);
+        throw error;
       }
     }
   }
