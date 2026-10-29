@@ -1,7 +1,9 @@
 import { Language } from '@prisma/client';
 import { estimateInputTokens, LlmChatMessage, LlmJsonSchema } from '../../llm/openrouter.client';
 import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
-import { DossierListLimits } from './dossier-groups';
+import { FENCE_RULE, fenced } from '../fenced-data';
+import type { DossierListLimits } from './dossier-groups';
+import { SUMMARY_PARTS_FENCE } from './dossier.constants';
 import { DossierPartPlan } from './dossier-parts';
 import {
   DOSSIER_MERGE_SHAPE,
@@ -39,14 +41,15 @@ export function dossierPartMessages(part: DossierPartPlan): LlmChatMessage[] {
         '\n- voice: pace, sentence length, lexicon, irony as notes; devices with how they show and ' +
         'a short example quoted from the text.' +
         '\n- motifs: recurring images.' +
-        '\nBlocks are given as "[n] text"; inline markup is kept.',
+        '\nBlocks are given as "[n] text"; inline markup is kept. ' +
+        FENCE_RULE,
     },
     {
       role: 'user',
       content:
-        `Reader chapter ${part.chapterNumber}` +
-        (part.chapterTitle ? ` "${part.chapterTitle}"` : '') +
-        `, piece ${part.partIndex + 1}.\n\n${part.text}`,
+        `Reader chapter ${part.chapterNumber}, piece ${part.partIndex + 1}.\n\n` +
+        (part.chapterTitle ? `Chapter title:\n${fenced('TITLE', part.chapterTitle)}\n\n` : '') +
+        fenced('TEXT', part.text),
     },
   ];
 }
@@ -123,13 +126,15 @@ export function dossierSummaryMessages(input: {
         listRules +
         '\n- voice: pace, sentence length, lexicon, irony; devices with how they show, an example ' +
         'quoted from the text and its chapter.' +
-        '\n- motifs: recurring images with the chapters where they appear.',
+        '\n- motifs: recurring images with the chapters where they appear.' +
+        '\n' +
+        FENCE_RULE,
     },
     {
       role: 'user',
       content:
-        `Chapters: ${JSON.stringify(input.chapters)}\n\n` +
-        `Partial dossiers: ${JSON.stringify(input.parts)}`,
+        `Chapters:\n${fenced('CHAPTERS', JSON.stringify(input.chapters))}\n\n` +
+        `Partial dossiers:\n${fenced(SUMMARY_PARTS_FENCE, JSON.stringify(input.parts))}`,
     },
   ];
 }
@@ -149,9 +154,10 @@ export function glossaryMessages(input: {
         '(true when the name stays as written), note (why, transliteration rule). address: how ' +
         'each character addresses others in the target language (from, to, form). phrases: ' +
         'recurring phrases and forms of address with fixed translations. Established ' +
-        'translations of the names come first; do not invent meanings.',
+        'translations of the names come first; do not invent meanings. ' +
+        FENCE_RULE,
     },
-    { role: 'user', content: `Dossier: ${JSON.stringify(input.dossier)}` },
+    { role: 'user', content: `Dossier:\n${fenced('DOSSIER', JSON.stringify(input.dossier))}` },
   ];
 }
 

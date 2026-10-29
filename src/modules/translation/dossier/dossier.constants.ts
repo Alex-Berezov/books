@@ -43,3 +43,9 @@ export const DOSSIER_TOO_LONG = 'DOSSIER_TOO_LONG';
 
 /** Текст исходника поменялся посреди построения: куски уже не те, что в отпечатке. */
 export const DOSSIER_SOURCE_CHANGED = 'DOSSIER_SOURCE_CHANGED';
+
+/**
+ * Метка ограды частичных досье во входе сводки: по ней же оценка упаковки групп считает длину
+ * настоящей метки (`summaryInputChars`, `F05-14`).
+ */
+export const SUMMARY_PARTS_FENCE = 'PARTS';

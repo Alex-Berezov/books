@@ -39,6 +39,7 @@ import {
   groupSectionCap,
   levelNarrows,
   packGroups,
+  measureSummaryEntry,
   summaryInputChars,
   upperLevelBlocked,
 } from './dossier-groups';
@@ -331,9 +332,10 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
     const hasTooManyChapters = !isMerge && exceedsChapterCap(planned.length, maxTokens);
     if (!stage.fits || hasTooManyChapters) {
       // Группа меряется с названиями всех глав, как итоговая сводка: иначе группы влезли бы,
-      // а итог из их ответов - нет, и отказ пришёл бы после оплаты всех групп. Граница и длины
-      // элементов - один раз, проба - сложение (Р6 `F05 | F05-Rb`): упаковка не ходит в базу и не
-      // сериализует вход на каждой пробе и не переживает аренду.
+      // а итог из их ответов - нет, и отказ пришёл бы после оплаты всех групп. Граница и мерки
+      // элементов (длина и номера границ ограды, `F05-14`) - один раз, проба - сложение
+      // (Р6 `F05 | F05-Rb`): упаковка не ходит в базу, не сериализует вход на каждой пробе и не
+      // переживает аренду.
       const { maxInputChars } = await this.llm.stageInputCeiling(DOSSIER_STAGE, {
         charsPerToken: SUMMARY_INPUT_CHARS_PER_TOKEN,
       });
@@ -341,13 +343,13 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       const emptyChars = estimateInputTokens(
         dossierSummaryRequest({ chapters: titles, parts: [], merge: isMerge, limits }),
       );
-      const lengths = new Map(items.map((i) => [i, JSON.stringify(i.entry).length]));
+      const measured = new Map(items.map((i) => [i, measureSummaryEntry(i.entry)]));
       const spans = await packGroups(items, (group) =>
         Promise.resolve(
           (maxInputChars === null ||
             summaryInputChars(
               emptyChars,
-              group.map((i) => lengths.get(i) ?? 0),
+              group.map((i) => measured.get(i) ?? measureSummaryEntry(i.entry)),
             ) <= maxInputChars) &&
             (level > 0 || !exceedsChapterCap(distinctChapters(group), maxTokens)),
         ),

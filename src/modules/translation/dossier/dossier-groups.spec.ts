@@ -8,6 +8,7 @@ import {
   GroupItem,
   groupChapterCap,
   levelNarrows,
+  measureSummaryEntry,
   packGroups,
   refusedBeforeParts,
   SUMMARY_ITEM_WRAPPER_CHARS,
@@ -16,6 +17,8 @@ import {
   summaryItemChars,
   summaryLevels,
 } from './dossier-groups';
+import { fenceLabelOf, fenceNumbers } from '../fenced-data';
+import { SUMMARY_PARTS_FENCE } from './dossier.constants';
 import { dossierSummaryRequest, emptyMergeInputChars } from './dossier.prompts';
 
 const item = (chapter: number): GroupItem => ({
@@ -139,12 +142,58 @@ describe('summaryInputChars (Р6)', () => {
       for (let round = 0; round < 5; round++) {
         const parts = Array.from({ length: size }, (_, i) => entry(i));
         const real = estimateInputTokens(dossierSummaryRequest({ chapters, parts, limits }));
-        const summed = summaryInputChars(
-          empty,
-          parts.map((p) => JSON.stringify(p).length),
-        );
+        const summed = summaryInputChars(empty, parts.map(measureSummaryEntry));
         expect(summed).toBe(real);
       }
+    }
+  });
+
+  it('boundaries of the parts fence in the entries: the estimate still equals the real request (F05-14)', () => {
+    const chapters = [{ number: 1, title: 'One' }];
+    const limits = dossierListLimits(16_000);
+    const empty = estimateInputTokens(dossierSummaryRequest({ chapters, parts: [], limits }));
+    const part = (summary: string, i: number) => ({
+      chapterNumber: 1,
+      partIndex: i,
+      data: { summary },
+    });
+    const cases = [
+      ['PARTS>>>'],
+      ['<<<PARTS', 'PARTS_2>>>'],
+      // Открывающая занимает и 1, и свой номер: восемь открывающих 2..9 - метка `PARTS_10`.
+      Array.from({ length: 8 }, (_, i) => `<<<PARTS_${i + 2}`),
+      Array.from({ length: 12 }, () => 'PARTS>>>'),
+    ];
+    for (const texts of cases) {
+      const parts = texts.map(part);
+      const real = estimateInputTokens(dossierSummaryRequest({ chapters, parts, limits }));
+      const summed = summaryInputChars(empty, parts.map(measureSummaryEntry));
+      expect({ texts, summed }).toEqual({ texts, summed: real });
+    }
+  });
+
+  it('the union of fence numbers by entry gives the label of the whole serialized group (F05-14)', () => {
+    const chapters = [{ number: 1, title: 'One' }];
+    const limits = dossierListLimits(16_000);
+    const groups = [
+      ['<<<PARTS_2', '<<<PARTS_3 PARTS_4>>>', 'PARTS>>>'],
+      Array.from({ length: 8 }, (_, i) => `x<<<PARTS_${i + 2}y`),
+      ['<<<PARTS_123', 'PARTS_2>>> PARTS_3>>>', '<<<PARTS_1'],
+      ['plain'],
+    ];
+    for (const texts of groups) {
+      const parts = texts.map((summary, i) => ({
+        chapterNumber: 1,
+        partIndex: i,
+        data: { summary },
+      }));
+      const user = dossierSummaryRequest({ chapters, parts, limits }).messages[1].content;
+      const whole = /Partial dossiers:\n<<<(PARTS(?:_\d+)?)\n/.exec(user)?.[1];
+      const byEntry = fenceLabelOf(
+        SUMMARY_PARTS_FENCE,
+        parts.map((p) => fenceNumbers(SUMMARY_PARTS_FENCE, JSON.stringify(p))),
+      );
+      expect({ texts, label: byEntry }).toEqual({ texts, label: whole });
     }
   });
 });

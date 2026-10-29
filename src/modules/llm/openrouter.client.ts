@@ -97,6 +97,7 @@ interface OpenRouterChatBody {
     completion_tokens?: unknown;
     cost?: unknown;
     completion_tokens_details?: { reasoning_tokens?: unknown };
+    prompt_tokens_details?: { cached_tokens?: unknown };
   };
   error?: { code?: unknown; message?: unknown };
 }
@@ -492,8 +493,9 @@ export class OpenRouterClient {
 
   /**
    * Исход ответа (решение арбитра `F05 | F05-12`, второй живой отказ группы): на что ушёл выход -
-   * `finish_reason`, токены ответа, из них рассуждения, длина текста в символах. Только числа и
-   * причина, как у `warn`: ни ключа, ни текста запроса и ответа.
+   * `finish_reason`, токены ответа, из них рассуждения, длина текста в символах; токены входа, взятые
+   * поставщиком из кэша, - мерка неизменного префикса промпта (решение арбитра `F05 | F05-14`).
+   * Только числа и причина, как у `warn`: ни ключа, ни текста запроса и ответа.
    */
   private logAnswer(
     stage: string,
@@ -505,10 +507,12 @@ export class OpenRouterClient {
   ): void {
     const finish = body?.choices?.[0]?.finish_reason;
     const reasoning = toInt(body?.usage?.completion_tokens_details?.reasoning_tokens);
+    const cached = toInt(body?.usage?.prompt_tokens_details?.cached_tokens);
     this.logger.log(
       `LLM call answered: stage=${stage} model=${model} attempt=${attempt} ` +
         `finish=${typeof finish === 'string' && /^[a-z_]{1,32}$/.test(finish) ? finish : 'unknown'} ` +
         `completionTokens=${completionTokens ?? 'unknown'} reasoningTokens=${reasoning ?? 'unknown'} ` +
+        `cachedTokens=${cached ?? 'unknown'} ` +
         `contentChars=${typeof content === 'string' ? content.length : 'none'}`,
     );
   }

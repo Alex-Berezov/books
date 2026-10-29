@@ -277,6 +277,7 @@ describe('OpenRouterClient', () => {
           prompt_tokens: 100,
           completion_tokens: 16_000,
           completion_tokens_details: { reasoning_tokens: 15_200 },
+          prompt_tokens_details: { cached_tokens: 64 },
         },
       }),
     );
@@ -284,7 +285,7 @@ describe('OpenRouterClient', () => {
     const lines = log.mock.calls.map((call) => String(call[0]));
     expect(lines).toContain(
       'LLM call answered: stage=test_stage model=a/primary attempt=1 finish=length ' +
-        'completionTokens=16000 reasoningTokens=15200 contentChars=13',
+        'completionTokens=16000 reasoningTokens=15200 cachedTokens=64 contentChars=13',
     );
     expect(JSON.stringify(lines)).not.toContain('"answer":42');
     expect(JSON.stringify(lines)).not.toContain('secret book text');
@@ -295,7 +296,7 @@ describe('OpenRouterClient', () => {
     await client.chat(request());
     expect(log.mock.calls.map((call) => String(call[0]))).toContain(
       'LLM call answered: stage=test_stage model=a/primary attempt=1 finish=unknown ' +
-        'completionTokens=50 reasoningTokens=unknown contentChars=13',
+        'completionTokens=50 reasoningTokens=unknown cachedTokens=unknown contentChars=13',
     );
   });
 

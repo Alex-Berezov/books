@@ -1,5 +1,7 @@
 import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
 import { ANSWER_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
+import { fenceLabelOf, fenceNumbers } from '../fenced-data';
+import { SUMMARY_PARTS_FENCE } from './dossier.constants';
 
 /**
  * Сводка досье по группам (`F05-Rb`): вход сводки (частичные досье или результаты прошлого
@@ -274,12 +276,40 @@ export function levelNarrows(level: number, items: number, groups: number): bool
 }
 
 /**
- * Длина входа сводки (`estimateInputTokens` запроса) по длинам элементов: вход -
- * `Partial dossiers: ${JSON.stringify(parts)}`, поэтому это длина запроса с пустым массивом, плюс
- * длины элементов, плюс запятые между ними. Та же величина без сериализации на каждую пробу
- * упаковки (решение арбитра `F05 | F05-Rb`, Р6).
+ * Длина входа сводки (`estimateInputTokens` запроса) по длинам элементов: элементы стоят
+ * массивом JSON внутри ограды `PARTS`, поэтому это длина запроса с пустым массивом, плюс длины
+ * элементов, плюс запятые между ними. Та же величина без сериализации на каждую пробу упаковки
+ * (решение арбитра `F05 | F05-Rb`, Р6). Ограда `CHAPTERS` у пустого запроса та же, что у
+ * настоящего (названия глав одни), а метка ограды элементов зависит от них: метка группы и её длина -
+ * та же `fenceLabelOf`, что у `fenced`, по номерам границ каждого элемента (решение арбитра
+ * `F05 | F05-14`). Точна для упаковки групп; отказ до кусков (`upperLevelBlocked`) меряет пустой
+ * вход уровня выше и метку будущих ответов групп не знает.
  */
-export function summaryInputChars(emptyChars: number, entryLengths: readonly number[]): number {
-  const items = entryLengths.reduce((sum, n) => sum + n, 0);
-  return emptyChars + items + Math.max(0, entryLengths.length - 1);
+export function summaryInputChars(
+  emptyChars: number,
+  entries: readonly SummaryEntrySize[],
+): number {
+  const items = entries.reduce((sum, e) => sum + e.length, 0);
+  const label = fenceLabelOf(
+    SUMMARY_PARTS_FENCE,
+    entries.map((e) => e.fenceNumbers),
+  );
+  return (
+    emptyChars +
+    items +
+    Math.max(0, entries.length - 1) +
+    2 * (label.length - SUMMARY_PARTS_FENCE.length)
+  );
+}
+
+/** Мерка элемента входа сводки: длина JSON и номера границ ограды `PARTS` в нём. */
+export interface SummaryEntrySize {
+  length: number;
+  fenceNumbers: ReadonlySet<number>;
+}
+
+/** Одна сериализация элемента на мерку; строка не хранится (`F05-14`). */
+export function measureSummaryEntry(entry: unknown): SummaryEntrySize {
+  const json = JSON.stringify(entry);
+  return { length: json.length, fenceNumbers: fenceNumbers(SUMMARY_PARTS_FENCE, json) };
 }

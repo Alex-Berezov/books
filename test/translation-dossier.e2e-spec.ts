@@ -14,6 +14,16 @@ import {
   DOSSIER_TASK_KIND,
   GLOSSARY_TASK_KIND,
 } from '../src/modules/translation/dossier/dossier.constants';
+import {
+  estimateInputTokens,
+  SUMMARY_INPUT_CHARS_PER_TOKEN,
+} from '../src/modules/llm/openrouter.client';
+import { dossierSummaryRequest } from '../src/modules/translation/dossier/dossier.prompts';
+import {
+  dossierListLimits,
+  measureSummaryEntry,
+  summaryInputChars,
+} from '../src/modules/translation/dossier/dossier-groups';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { llmCallName } from './helpers/llm-call-name';
@@ -35,22 +45,25 @@ describe('Translation source and dossier (e2e)', () => {
   /** Контекст, в который сводка книги на 250 глав не влезает целиком, а группа глав - влезает (F05-Rb). */
   const SMALL = 'z/small-context';
   /**
-   * Вход сводки ~24 тыс. символов ((12 620 - 2 000) × 2,26 при `maxTokens` 2 000 у `setGroupModel`):
-   * размеры групп в тестах уровней считаются от него.
+   * Вход сводки ~24 тыс. символов ((12 760 - 2 000) × 2,26 при `maxTokens` 2 000 у `setGroupModel`):
+   * размеры групп в тестах уровней считаются от него. Контексты GROUP, NARROW, TITLES и WIDE сдвинуты
+   * на 140 токенов - на прирост пустого запроса сводки (`F05-14`): 316 символов / 2,26 с округлением
+   * вверх (`FENCE_RULE` 273, перевод строки и ограды `CHAPTERS`/`PARTS` 42); места под элементы не меньше,
+   * чем до ограды.
    */
   const GROUP = 'z/group-context';
   /**
-   * Тот же вход ~24 тыс. символов ((26 620 - 16 000) × 2,26), но при `maxTokens` 16 000: выше
+   * Тот же вход ~24 тыс. символов ((26 760 - 16 000) × 2,26), но при `maxTokens` 16 000: выше
    * уровня 0 в вызов заведомо не влезают два ответа группы (`F05-12`, пересмотр Р3).
    */
   const NARROW = 'z/narrow-context';
   /**
-   * Вход сводки ~54 тыс. символов ((27 527 - 3 500) × 2,26) при `maxTokens` 3 500 - по 4 главы
+   * Вход сводки ~54 тыс. символов ((27 667 - 3 500) × 2,26) при `maxTokens` 3 500 - по 4 главы
    * в группе уровня 0 (`F05-13b`), и выше уровня 0 влезают два ответа группы.
    */
   const TITLES = 'z/titles-context';
   /**
-   * Вход ~146 тыс. символов ((80 602 - 16 000) × 2,26) при `maxTokens` 16 000: выше уровня 0 два
+   * Вход ~146 тыс. символов ((80 742 - 16 000) × 2,26) при `maxTokens` 16 000: выше уровня 0 два
    * ответа группы (~128 тыс.) влезают с короткими названиями 19 глав и не влезают с длинными.
    */
   const WIDE = 'z/wide-context';
@@ -67,10 +80,10 @@ describe('Translation source and dossier (e2e)', () => {
           [TINY, 1000],
           [HUGE, 100_000_000],
           [SMALL, 30_000],
-          [GROUP, 12_620],
-          [NARROW, 26_620],
-          [TITLES, 27_527],
-          [WIDE, 80_602],
+          [GROUP, 12_760],
+          [NARROW, 26_760],
+          [TITLES, 27_667],
+          [WIDE, 80_742],
         ] as const
       ).map(([id, context]) => ({
         id,
@@ -171,7 +184,7 @@ describe('Translation source and dossier (e2e)', () => {
   /** Сводка отвечает главами из запроса: досье покрывает все главы исходника. */
   const dossierFor = (body?: ChatBody) => {
     const user = body?.messages[1]?.content ?? '';
-    const match = /^Chapters: (\[.*?\])\n\n/s.exec(user);
+    const match = /^Chapters:\n<<<CHAPTERS\n(\[.*?\])\nCHAPTERS>>>\n\n/s.exec(user);
     const chapters = match
       ? (JSON.parse(match[1]) as Array<{ number: number; title: string }>)
       : DOSSIER.chapters;
@@ -1824,6 +1837,59 @@ describe('Translation source and dossier (e2e)', () => {
         for (const call of above) {
           expect(call.body.messages[1].content).not.toContain('"summaryPlan"');
         }
+      });
+
+      it('boundaries of the parts fence in the part answers are counted when groups are packed (F05-14)', async () => {
+        // Три куска: в двух первых - открывающие `<<<PARTS_2..9`, вместе они дают метку
+        // `PARTS_10` (+6 знаков на двух границах). Размеры подобраны так, что без суффикса
+        // метки первые два влезли бы одной группой (на 3 знака меньше границы), а с ним - нет.
+        const limits = dossierListLimits(2_000);
+        const ceiling = Math.floor((12_760 - 2_000) * SUMMARY_INPUT_CHARS_PER_TOKEN);
+        const titles = numberedChapters(3).map((c) => ({ number: c.number, title: c.title }));
+        const empty = estimateInputTokens(
+          dossierSummaryRequest({ chapters: titles, parts: [], limits }),
+        );
+        const marks = [
+          [2, 3, 4, 5].map((n) => `<<<PARTS_${n}`).join(' '),
+          [6, 7, 8, 9].map((n) => `<<<PARTS_${n}`).join(' '),
+          '',
+        ];
+        const entry = (chapter: number, pad: number) => ({
+          chapterNumber: chapter,
+          partIndex: 0,
+          data: { ...PART, summary: `${marks[chapter - 1]} ${'x'.repeat(pad)}` },
+        });
+        const len = (chapter: number, pad: number) => JSON.stringify(entry(chapter, pad)).length;
+        // Наивная сумма двух первых - граница - 3: empty + a + b + 1 запятая.
+        const both = ceiling - 3 - empty - 1 - len(1, 0) - len(2, 0);
+        const pads = [Math.floor(both / 2), both - Math.floor(both / 2), 0];
+        answer = (name, body) => {
+          if (name !== 'dossier_part') return defaultAnswer(name, body);
+          const chapter = Number(
+            /Reader chapter (\d+)/.exec(body?.messages[1]?.content ?? '')?.[1],
+          );
+          return entry(chapter, pads[chapter - 1]).data;
+        };
+        const { ids } = await book([
+          { language: 'en', originalLanguage: 'English', chapters: numberedChapters(3) },
+        ]);
+        await setGroupModel();
+        await dossiers.demandDossier(ids.en as string);
+        await drainAll();
+
+        // Предпосылки: без суффикса пара влезла бы, с суффиксом - нет; вторая пара влезает.
+        const sized = [1, 2, 3].map((c) => measureSummaryEntry(entry(c, pads[c - 1])));
+        const naive = empty + sized[0].length + sized[1].length + 1;
+        expect(naive).toBeLessThanOrEqual(ceiling);
+        expect(summaryInputChars(empty, sized.slice(0, 2))).toBeGreaterThan(ceiling);
+        expect(summaryInputChars(empty, sized.slice(1, 3))).toBeLessThanOrEqual(ceiling);
+
+        expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({ status: 'ready' });
+        const groups = await groupsOf(ids.en as string);
+        expect(groups.filter((g) => g.level === 0).map((g) => [g.firstItem, g.itemCount])).toEqual([
+          [0, 1],
+          [1, 2],
+        ]);
       });
 
       it('a level above zero that does not halve fails DOSSIER_TOO_LONG without paying for that level (Р3)', async () => {

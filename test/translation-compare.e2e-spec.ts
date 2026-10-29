@@ -405,9 +405,10 @@ describe('Translation compare (e2e)', () => {
     // ALT: попытка и два повтора с замечанием (С11).
     expect(callsOf('translation', ALT)).toHaveLength(3);
     expect(callsOf('translation', MODEL)).toHaveLength(1);
-    // Перевод видит досье первым и запись глоссария главного персонажа.
+    // Перевод видит досье в системном сообщении (в ограде) и запись глоссария главного персонажа.
     const sent = callsOf('translation', MODEL)[0].body;
-    expect(sent.messages[0].content).toContain('Book dossier:');
+    expect(sent.messages[0].content).toContain('Book dossier:\n<<<DOSSIER\n');
+    expect(sent.messages[1].content).toMatch(/^Glossary:\n<<<GLOSSARY\n/);
     expect(sent.messages[1].content).toContain('"target":"Ana"');
 
     // Стоимость колонки - сумма её вызовов.
@@ -504,7 +505,7 @@ describe('Translation compare (e2e)', () => {
       'End of the previous translated piece',
     );
     expect(pieces[1].body.messages[1].content).toContain(
-      'End of the previous translated piece: ES Anna',
+      'End of the previous translated piece:\n<<<PREVIOUS_TAIL\nES Anna',
     );
     for (const r of res.body.results as Array<{ status: string; html: string }>) {
       expect(r.status).toBe('done');
