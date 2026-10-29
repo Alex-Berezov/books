@@ -4,7 +4,7 @@ import { ChapterLayout } from '../chapter-blocks';
 import { NameEntry, nameEntriesOf, pieceTexts } from '../check/mechanical-check';
 import { Shape } from '../dossier/dossier.format';
 import { LANGUAGE_NAMES, shapedRequest } from '../dossier/dossier.prompts';
-import { FENCE_RULE, fenced } from '../fenced-data';
+import { FENCE_RULE, fenceAll } from '../fenced-data';
 import { TranslatedBlock } from '../translate/translate.format';
 import { glossaryFor } from '../translate/translate-piece';
 import {
@@ -91,6 +91,11 @@ export function finalCheckInputOf(input: {
 export function finalCheckMessages(input: FinalCheckInput): LlmChatMessage[] {
   const from = LANGUAGE_NAMES[input.sourceLanguage];
   const to = LANGUAGE_NAMES[input.targetLanguage];
+  const blocks = fenceAll([
+    ['SOURCE', input.sourceText],
+    ['TRANSLATION', input.translatedText],
+    ['NAMES', input.names.map((n) => `${n.source} → ${n.target}`).join('\n') || '(none)'],
+  ]);
   return [
     {
       role: 'system',
@@ -106,12 +111,7 @@ export function finalCheckMessages(input: FinalCheckInput): LlmChatMessage[] {
     },
     {
       role: 'user',
-      content:
-        fenced('SOURCE', input.sourceText) +
-        '\n\n' +
-        fenced('TRANSLATION', input.translatedText) +
-        '\n\n' +
-        fenced('NAMES', input.names.map((n) => `${n.source} → ${n.target}`).join('\n') || '(none)'),
+      content: blocks.map((b) => b.block).join('\n\n'),
     },
   ];
 }

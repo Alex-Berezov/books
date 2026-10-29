@@ -2,7 +2,7 @@ import { Language } from '@prisma/client';
 import { LlmChatMessage } from '../../llm/openrouter.client';
 import { ContestedWindow } from '../chunking/chapter-chunks';
 import { LANGUAGE_NAMES, shapedRequest } from '../dossier/dossier.prompts';
-import { FENCE_RULE, fenced, remarksPart } from '../fenced-data';
+import { FENCE_RULE, fenceAll, fenced, remarksPart } from '../fenced-data';
 import { SPLIT_SHAPE, TRANSLATE_SHAPE } from './translate.format';
 
 /**
@@ -74,7 +74,18 @@ export function translateMessages(input: TranslateInput): LlmChatMessage[] {
   const dossier = JSON.stringify(input.context);
   const glossary = JSON.stringify(input.glossary);
   const blocks = input.blocks.map((b) => `[${b.n}] ${b.html}`).join('\n');
-  const others = [dossier, glossary, input.chapterSummary ?? '', input.previousTail ?? '', blocks];
+  const remarks = (input.reviewerRemarks ?? []).join('\n');
+  // Имя блока свободно во всех данных вызова, включая досье в системном сообщении.
+  const [glossaryBlock, summaryBlock, tailBlock, remarksBlock, blocksBlock] = fenceAll(
+    [
+      ['GLOSSARY', glossary],
+      ['CHAPTER_SUMMARY', input.chapterSummary ?? ''],
+      ['PREVIOUS_TAIL', input.previousTail ?? ''],
+      ['REMARKS', remarks],
+      ['BLOCKS', blocks],
+    ],
+    [dossier],
+  );
   return [
     {
       role: 'system',
@@ -87,31 +98,30 @@ export function translateMessages(input: TranslateInput): LlmChatMessage[] {
         'text outside the blocks. Return every block with its number. glossaryFindings: names, ' +
         'places and terms of this piece that are missing from the glossary, with your spelling. ' +
         FENCE_RULE +
+        // Имя ограды досье только по своему тексту: системное сообщение одинаково у всех кусков
+        // книги (кэш), остальные блоки обходят досье через `outside`; поддельная граница досье
+        // в блоках остаётся внутри своей ограды (решение арбитра `T146 | LEGACY-481`).
         `\n\nBook dossier:\n${fenced('DOSSIER', dossier)}`,
     },
     {
       role: 'user',
       content:
-        `Glossary:\n${fenced('GLOSSARY', glossary)}\n\n` +
+        `Glossary:\n${glossaryBlock.block}\n\n` +
         `Reader chapter ${input.chapterNumber}` +
-        (input.chapterSummary
-          ? `, summary:\n${fenced('CHAPTER_SUMMARY', input.chapterSummary)}`
-          : '') +
+        (input.chapterSummary ? `, summary:\n${summaryBlock.block}` : '') +
         '\n\n' +
         (input.previousTail
-          ? 'End of the previous translated piece:\n' +
-            `${fenced('PREVIOUS_TAIL', input.previousTail)}\n\n`
+          ? 'End of the previous translated piece:\n' + `${tailBlock.block}\n\n`
           : '') +
         (input.reviewerRemarks && input.reviewerRemarks.length > 0
           ? remarksPart(
               'Your previous translation of this piece failed the check. Reviewer remarks:',
               'your task is a translation of the blocks without these defects.',
-              input.reviewerRemarks,
-              others,
+              remarksBlock,
             )
           : '') +
         'Blocks to translate, as "[n] text":\n' +
-        fenced('BLOCKS', blocks),
+        blocksBlock.block,
     },
   ];
 }

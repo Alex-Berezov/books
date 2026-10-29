@@ -3,7 +3,7 @@ import { LlmChatMessage } from '../../llm/openrouter.client';
 import { ChapterLayout } from '../chapter-blocks';
 import { Shape } from '../dossier/dossier.format';
 import { LANGUAGE_NAMES, shapedRequest } from '../dossier/dossier.prompts';
-import { FENCE_RULE, fenced } from '../fenced-data';
+import { FENCE_RULE, fenceAll } from '../fenced-data';
 import { TranslatedBlock } from '../translate/translate.format';
 import { chunkBlocks } from '../translate/translate-piece';
 import { pieceTexts } from './mechanical-check';
@@ -123,6 +123,12 @@ export function seamInputOf(
 export function seamMessages(input: SeamInput): LlmChatMessage[] {
   const from = LANGUAGE_NAMES[input.sourceLanguage];
   const to = LANGUAGE_NAMES[input.targetLanguage];
+  const blocks = fenceAll([
+    ['SOURCE_BEFORE', input.sourceBefore],
+    ['SOURCE_AFTER', input.sourceAfter],
+    ['TRANSLATION_BEFORE', input.translatedBefore],
+    ['TRANSLATION_AFTER', input.translatedAfter],
+  ]);
   return [
     {
       role: 'system',
@@ -139,14 +145,7 @@ export function seamMessages(input: SeamInput): LlmChatMessage[] {
     },
     {
       role: 'user',
-      content:
-        fenced('SOURCE_BEFORE', input.sourceBefore) +
-        '\n\n' +
-        fenced('SOURCE_AFTER', input.sourceAfter) +
-        '\n\n' +
-        fenced('TRANSLATION_BEFORE', input.translatedBefore) +
-        '\n\n' +
-        fenced('TRANSLATION_AFTER', input.translatedAfter),
+      content: blocks.map((b) => b.block).join('\n\n'),
     },
   ];
 }

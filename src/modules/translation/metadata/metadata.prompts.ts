@@ -3,7 +3,7 @@ import { ChapterBlock } from '../chapter-blocks';
 import { LlmChatMessage } from '../../llm/openrouter.client';
 import { Shape } from '../dossier/dossier.format';
 import { LANGUAGE_NAMES, shapedRequest } from '../dossier/dossier.prompts';
-import { FENCE_RULE, fenced, remarksPart } from '../fenced-data';
+import { FENCE_RULE, fenceAll, remarksPart } from '../fenced-data';
 import { TranslatedBlock } from '../translate/translate.format';
 
 /**
@@ -52,6 +52,11 @@ export function metadataMessages(input: MetadataInput): LlmChatMessage[] {
     input.description.map((b) => `[${b.n}] ${b.html}`).join('\n') +
     '\n\nChapter titles, as "[number] title":\n' +
     input.chapterTitles.map((c) => `[${c.number}] ${c.title}`).join('\n');
+  const [glossaryBlock, remarksBlock, dataBlock] = fenceAll([
+    ['GLOSSARY', glossary],
+    ['REMARKS', (input.remarks ?? []).join('\n')],
+    ['DATA', data],
+  ]);
   return [
     {
       role: 'system',
@@ -70,16 +75,15 @@ export function metadataMessages(input: MetadataInput): LlmChatMessage[] {
     {
       role: 'user',
       content:
-        `Glossary:\n${fenced('GLOSSARY', glossary)}\n\n` +
+        `Glossary:\n${glossaryBlock.block}\n\n` +
         (input.remarks && input.remarks.length > 0
           ? remarksPart(
               'Your previous answer failed the check. Remarks:',
               'your task is an answer without these defects.',
-              input.remarks,
-              [glossary, data],
+              remarksBlock,
             )
           : '') +
-        fenced('DATA', data),
+        dataBlock.block,
     },
   ];
 }

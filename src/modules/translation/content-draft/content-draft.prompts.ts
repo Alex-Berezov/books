@@ -3,7 +3,7 @@ import { BOOK_ANALYSIS_LIMITS } from '../../book-analysis/dto/book-analysis-bloc
 import { LlmChatMessage } from '../../llm/openrouter.client';
 import { Shape } from '../dossier/dossier.format';
 import { LANGUAGE_NAMES, shapedRequest } from '../dossier/dossier.prompts';
-import { FENCE_RULE, fenced, fencedAs } from '../fenced-data';
+import { FENCE_RULE, fenceAll, fencedOwn } from '../fenced-data';
 import { ANALYSIS_DRAFT_SHAPE } from './content-draft.analysis';
 
 /**
@@ -41,6 +41,17 @@ function languageRule(language: Language): string {
   );
 }
 
+/**
+ * Название версии - данные, не инструкция: у черновика перевода его пишет модель этапа `metadata`.
+ * Системное сообщение называет его блок, поэтому имя ограды - только по самому названию, а
+ * остальные блоки обходят его через `outside`: системное сообщение одинаково у всех разделов
+ * версии, подделка `<<<BOOK_TITLE` в главах остаётся внутри своей ограды (решение арбитра
+ * `T146 | LEGACY-481`, круг 2).
+ */
+function bookTitleFence(title: string): { name: string; block: string } {
+  return fencedOwn('BOOK_TITLE', title);
+}
+
 export interface SectionPromptInput {
   bookTitle: string;
   language: Language;
@@ -53,12 +64,25 @@ export interface SectionPromptInput {
 
 export function summarySectionMessages(input: SectionPromptInput): LlmChatMessage[] {
   const { section } = input;
+  const dossier = JSON.stringify(input.dossier);
+  const glossary = input.glossary === null ? null : JSON.stringify(input.glossary);
+  const bookTitle = bookTitleFence(input.bookTitle);
+  const [sectionTitle, dossierBlock, glossaryBlock, chapters] = fenceAll(
+    [
+      ['SECTION_TITLE', section.title],
+      ['DOSSIER', dossier],
+      ['GLOSSARY', glossary ?? ''],
+      ['CHAPTERS', input.chaptersText],
+    ],
+    [input.bookTitle],
+  );
   return [
     {
       role: 'system',
       content:
         'You write one section of the retelling of a book for a page of the site ' +
-        `"${input.bookTitle}: <section title> - summary". A reader often comes to this page ` +
+        `"<book title>: <section title> - summary", the book title is in the ${bookTitle.name} ` +
+        'block. A reader often comes to this page ' +
         'from search and has not seen the neighbouring sections. ' +
         FACTS_ONLY +
         '\n' +
@@ -86,13 +110,12 @@ export function summarySectionMessages(input: SectionPromptInput): LlmChatMessag
       role: 'user',
       content:
         `Section ${section.number} of the plan, chapters ${section.chapters.join(', ')}, title:\n` +
-        `${fenced('SECTION_TITLE', section.title)}\n\n` +
-        fenced('DOSSIER', JSON.stringify(input.dossier)) +
+        `${sectionTitle.block}\n\n` +
+        dossierBlock.block +
         '\n\n' +
-        (input.glossary === null
-          ? ''
-          : fenced('GLOSSARY', JSON.stringify(input.glossary)) + '\n\n') +
-        fenced('CHAPTERS', input.chaptersText),
+        (glossary === null ? '' : glossaryBlock.block + '\n\n') +
+        `${bookTitle.block}\n\n` +
+        chapters.block,
     },
   ];
 }
@@ -102,12 +125,18 @@ export function summaryFullMessages(input: {
   language: Language;
   sections: ReadonlyArray<{ title: string; text: string }>;
 }): LlmChatMessage[] {
+  const bookTitle = bookTitleFence(input.bookTitle);
+  const [sections] = fenceAll(
+    [['SECTIONS', input.sections.map((s) => `${s.title}\n\n${s.text}`).join('\n\n---\n\n')]],
+    [input.bookTitle],
+  );
   return [
     {
       role: 'system',
       content:
-        `You write the full retelling of the whole book for the page "${input.bookTitle} - ` +
-        'summary". The only source is the sections given below: they are proofread and corrected ' +
+        'You write the full retelling of the whole book for the page "<book title> - summary", ' +
+        `the book title is in the ${bookTitle.name} block. ` +
+        'The only source is the sections given below: they are proofread and corrected ' +
         'by the editor. Add no fact that is not in them. ' +
         FACTS_ONLY +
         '\n' +
@@ -129,10 +158,7 @@ export function summaryFullMessages(input: {
     },
     {
       role: 'user',
-      content: fenced(
-        'SECTIONS',
-        input.sections.map((s) => `${s.title}\n\n${s.text}`).join('\n\n---\n\n'),
-      ),
+      content: `${bookTitle.block}\n\n${sections.block}`,
     },
   ];
 }
@@ -142,12 +168,15 @@ export function summaryBriefMessages(input: {
   language: Language;
   fullText: string;
 }): LlmChatMessage[] {
+  const bookTitle = bookTitleFence(input.bookTitle);
+  const [fullRetelling] = fenceAll([['FULL_RETELLING', input.fullText]], [input.bookTitle]);
   return [
     {
       role: 'system',
       content:
         'You write a very short retelling for the "In brief" block at the top of the page ' +
-        `"${input.bookTitle} - summary". The only source is the full retelling given below: it is ` +
+        `"<book title> - summary", the book title is in the ${bookTitle.name} block. ` +
+        'The only source is the full retelling given below: it is ' +
         'proofread. Add no fact. ' +
         FACTS_ONLY +
         '\n' +
@@ -165,7 +194,7 @@ export function summaryBriefMessages(input: {
         '\n' +
         FENCE_RULE,
     },
-    { role: 'user', content: fenced('FULL_RETELLING', input.fullText) },
+    { role: 'user', content: `${bookTitle.block}\n\n${fullRetelling.block}` },
   ];
 }
 
@@ -197,17 +226,23 @@ export interface AnalysisPromptInput {
 export function analysisDraftMessages(input: AnalysisPromptInput): LlmChatMessage[] {
   const dossier = JSON.stringify(input.dossier);
   const glossary = input.glossary === null ? null : JSON.stringify(input.glossary);
-  // Системное сообщение называет блок сохранённого по имени - имя по всем данным вызова (`F05-14`).
-  const saved = fencedAs('SAVED', JSON.stringify(input.stored), [
-    dossier,
-    glossary ?? '',
-    input.chaptersText,
-  ]);
+  // Системное сообщение называет блоки по имени - имя по всем данным вызова (`F05-14`).
+  const bookTitle = bookTitleFence(input.bookTitle);
+  const [dossierBlock, glossaryBlock, saved, chapters] = fenceAll(
+    [
+      ['DOSSIER', dossier],
+      ['GLOSSARY', glossary ?? ''],
+      ['SAVED', JSON.stringify(input.stored)],
+      ['CHAPTERS', input.chaptersText],
+    ],
+    [input.bookTitle],
+  );
   return [
     {
       role: 'system',
       content:
-        `You prepare a draft of the facts for the analysis page of the book "${input.bookTitle}". ` +
+        'You prepare a draft of the facts for the analysis page of the book whose title is in ' +
+        `the ${bookTitle.name} block. ` +
         'Write only what is in the text of the book: no history of writing, no criticism, no ' +
         'adaptations, no years of work, no sources, no interpretation and no evaluation ("symbolizes", ' +
         '"shows", "brilliant").\n' +
@@ -246,12 +281,13 @@ export function analysisDraftMessages(input: AnalysisPromptInput): LlmChatMessag
     {
       role: 'user',
       content:
-        fenced('DOSSIER', dossier) +
+        dossierBlock.block +
         '\n\n' +
-        (glossary === null ? '' : fenced('GLOSSARY', glossary) + '\n\n') +
+        (glossary === null ? '' : glossaryBlock.block + '\n\n') +
         saved.block +
         '\n\n' +
-        fenced('CHAPTERS', input.chaptersText),
+        `${bookTitle.block}\n\n` +
+        chapters.block,
     },
   ];
 }

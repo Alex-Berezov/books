@@ -2,7 +2,7 @@ import { Language } from '@prisma/client';
 import { LlmChatMessage } from '../../llm/openrouter.client';
 import { Shape } from '../dossier/dossier.format';
 import { LANGUAGE_NAMES, shapedRequest } from '../dossier/dossier.prompts';
-import { FENCE_RULE, fenced } from '../fenced-data';
+import { FENCE_RULE, fenceAll } from '../fenced-data';
 import { sentencesOf } from './language-detector';
 import { CHECK_FLAG_REASONS } from './check.constants';
 import { CheckFailure, NameEntry } from './mechanical-check';
@@ -99,6 +99,12 @@ export interface SemanticInput {
 export function semanticMessages(input: SemanticInput): LlmChatMessage[] {
   const from = LANGUAGE_NAMES[input.sourceLanguage];
   const to = LANGUAGE_NAMES[input.targetLanguage];
+  const blocks = fenceAll([
+    ['SOURCE', input.sourceText],
+    ['TRANSLATION', input.translatedText],
+    ['SAMPLES', input.samples.map((s, i) => `${i + 1}. ${s}`).join('\n')],
+    ['NAMES', input.names.map((n) => `${n.key}: ${n.source} → ${n.target}`).join('\n') || '(none)'],
+  ]);
   return [
     {
       role: 'system',
@@ -117,17 +123,7 @@ export function semanticMessages(input: SemanticInput): LlmChatMessage[] {
     },
     {
       role: 'user',
-      content:
-        fenced('SOURCE', input.sourceText) +
-        '\n\n' +
-        fenced('TRANSLATION', input.translatedText) +
-        '\n\n' +
-        fenced('SAMPLES', input.samples.map((s, i) => `${i + 1}. ${s}`).join('\n')) +
-        '\n\n' +
-        fenced(
-          'NAMES',
-          input.names.map((n) => `${n.key}: ${n.source} → ${n.target}`).join('\n') || '(none)',
-        ),
+      content: blocks.map((b) => b.block).join('\n\n'),
     },
   ];
 }

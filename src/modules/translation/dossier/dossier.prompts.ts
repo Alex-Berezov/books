@@ -1,9 +1,14 @@
 import { Language } from '@prisma/client';
 import { estimateInputTokens, LlmChatMessage, LlmJsonSchema } from '../../llm/openrouter.client';
 import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
-import { FENCE_RULE, fenced } from '../fenced-data';
-import type { DossierListLimits } from './dossier-groups';
-import { SUMMARY_PARTS_FENCE } from './dossier.constants';
+import { FENCE_RULE, fenceAll, fenced } from '../fenced-data';
+import {
+  DossierListLimits,
+  measureSummaryEntry,
+  SummaryEntrySize,
+  summaryInputChars,
+} from './dossier-groups';
+import { SUMMARY_CHAPTERS_FENCE, SUMMARY_PARTS_FENCE } from './dossier.constants';
 import { DossierPartPlan } from './dossier-parts';
 import {
   DOSSIER_MERGE_SHAPE,
@@ -25,6 +30,10 @@ const FACTS_ONLY =
   'no evaluation, no facts from outside the text. Write in the language of the text.';
 
 export function dossierPartMessages(part: DossierPartPlan): LlmChatMessage[] {
+  const [title, text] = fenceAll([
+    ['TITLE', part.chapterTitle ?? ''],
+    ['TEXT', part.text],
+  ]);
   return [
     {
       role: 'system',
@@ -48,8 +57,8 @@ export function dossierPartMessages(part: DossierPartPlan): LlmChatMessage[] {
       role: 'user',
       content:
         `Reader chapter ${part.chapterNumber}, piece ${part.partIndex + 1}.\n\n` +
-        (part.chapterTitle ? `Chapter title:\n${fenced('TITLE', part.chapterTitle)}\n\n` : '') +
-        fenced('TEXT', part.text),
+        (part.chapterTitle ? `Chapter title:\n${title.block}\n\n` : '') +
+        text.block,
     },
   ];
 }
@@ -104,6 +113,11 @@ export function dossierSummaryMessages(input: {
   const listRules = input.merge
     ? '\n- chapters and summaryPlan are assembled separately from the groups: do not write them.'
     : chapterListRules(input.maxSections ?? SUMMARY_SECTION_LIMITS.sectionsPerVersion);
+  // Имена обеих оград зависят от обоих текстов - так же их считает `summaryInputChars`.
+  const [chapters, parts] = fenceAll([
+    [SUMMARY_CHAPTERS_FENCE, JSON.stringify(input.chapters)],
+    [SUMMARY_PARTS_FENCE, JSON.stringify(input.parts)],
+  ]);
   return [
     {
       role: 'system',
@@ -132,9 +146,7 @@ export function dossierSummaryMessages(input: {
     },
     {
       role: 'user',
-      content:
-        `Chapters:\n${fenced('CHAPTERS', JSON.stringify(input.chapters))}\n\n` +
-        `Partial dossiers:\n${fenced(SUMMARY_PARTS_FENCE, JSON.stringify(input.parts))}`,
+      content: `Chapters:\n${chapters.block}\n\nPartial dossiers:\n${parts.block}`,
     },
   ];
 }
@@ -170,15 +182,31 @@ export const LANGUAGE_NAMES: Record<Language, string> = {
   ru: 'Russian',
 };
 
-/** Замечание к ответу не по форме: модель получает свой ответ и список ошибок (Р-повтор). */
-export function shapeRemark(answer: string, errors: string[]): LlmChatMessage[] {
+/**
+ * Замечание к ответу не по форме: модель получает свой прошлый ответ и список ошибок (Р-повтор).
+ * Прошлый ответ - текст модели, в который мог попасть текст книги, поэтому он идёт данными в
+ * ограде, а не ходом `assistant`; имя ограды свободно во всех сообщениях вызова (`context`).
+ */
+export function shapeRemark(
+  answer: string,
+  errors: string[],
+  context: readonly string[],
+): LlmChatMessage[] {
+  // Ошибки цитируют значения ответа (цитата, имя приёма) - тоже данные, в ограде.
+  const [errorsBlock, previous] = fenceAll(
+    [
+      ['FORM_ERRORS', errors.slice(0, 30).join('\n')],
+      ['PREVIOUS_ANSWER', answer],
+    ],
+    context,
+  );
   return [
-    { role: 'assistant', content: answer },
     {
       role: 'user',
       content:
-        'The answer does not match the required JSON form. Fix these places and answer with the ' +
-        `whole JSON again:\n${errors.slice(0, 30).join('\n')}`,
+        `Your previous answer is in the ${previous.name} block. It does not match the required ` +
+        `JSON form: the ${errorsBlock.name} block lists the wrong places. Fix them and answer ` +
+        `with the whole JSON again.\n${errorsBlock.block}\n\n${previous.block}`,
     },
   ];
 }
@@ -234,6 +262,19 @@ export const emptyMergeInputChars = (
   chapters: Parameters<typeof dossierSummaryMessages>[0]['chapters'],
   limits: DossierListLimits,
 ) => estimateInputTokens(dossierSummaryRequest({ chapters, parts: [], merge: true, limits }));
+
+/**
+ * Мерка входа сводки для упаковки групп: пустой запрос и мерка названий глав - из одного входа,
+ * того же, что уйдёт в `dossierSummaryRequest`; проба - сложение по меркам элементов (Р6
+ * `F05 | F05-Rb`, T146).
+ */
+export function summaryInputEstimator(
+  input: Omit<Parameters<typeof dossierSummaryMessages>[0], 'parts'>,
+): (entries: readonly SummaryEntrySize[]) => number {
+  const emptyChars = estimateInputTokens(dossierSummaryRequest({ ...input, parts: [] }));
+  const chapters = measureSummaryEntry(input.chapters);
+  return (entries) => summaryInputChars(emptyChars, entries, chapters);
+}
 
 export const glossaryRequest = (input: Parameters<typeof glossaryMessages>[0]) =>
   shapedRequest('glossary', GLOSSARY_SHAPE, glossaryMessages(input));

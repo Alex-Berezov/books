@@ -49,3 +49,6 @@ export const DOSSIER_SOURCE_CHANGED = 'DOSSIER_SOURCE_CHANGED';
  * настоящей метки (`summaryInputChars`, `F05-14`).
  */
 export const SUMMARY_PARTS_FENCE = 'PARTS';
+
+/** Метка ограды названий глав во входе сводки: её имя тоже зависит от частей (`summaryInputChars`). */
+export const SUMMARY_CHAPTERS_FENCE = 'CHAPTERS';

@@ -75,7 +75,17 @@ export async function callShaped(
     }
     // После обрыва повтор с замечанием снова оплатил бы оборванную модель (решение `F05 | F05-13d`).
     if (attempt === options.remarks || result.afterTruncation) return { ok: false, costUsd };
-    conversation = [...messages, ...shapeRemark(result.content, errors)];
+    conversation = [
+      ...messages,
+      // Имена PREVIOUS_ANSWER и FORM_ERRORS свободны во всех сообщениях вызова; граница блока
+      // исходного сообщения, повторённая в ответе, остаётся внутри ограды прошлого ответа -
+      // вложение, не побег (решение арбитра `T146 | LEGACY-481`, круг 2).
+      ...shapeRemark(
+        result.content,
+        errors,
+        messages.map((m) => m.content),
+      ),
+    ];
   }
   return { ok: false, costUsd };
 }

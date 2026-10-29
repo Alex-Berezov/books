@@ -370,14 +370,16 @@ describe('dossier prompts', () => {
     expect(request.messages[0].content).toContain(`into ${name} (language code "${language}")`);
   });
 
-  it('a remark repeats the answer and lists the wrong places', () => {
-    expect(shapeRemark('{"summary":1}', ['$.summary: expected string'])).toEqual([
-      { role: 'assistant', content: '{"summary":1}' },
+  it('a remark repeats the answer in a fence and lists the wrong places', () => {
+    expect(shapeRemark('{"summary":1}', ['$.summary: expected string'], [])).toEqual([
       {
         role: 'user',
         content:
-          'The answer does not match the required JSON form. Fix these places and answer with ' +
-          'the whole JSON again:\n$.summary: expected string',
+          'Your previous answer is in the PREVIOUS_ANSWER block. It does not match the required ' +
+          'JSON form: the FORM_ERRORS block lists the wrong places. Fix them and answer with the ' +
+          'whole JSON again.\n' +
+          '<<<FORM_ERRORS\n$.summary: expected string\nFORM_ERRORS>>>\n\n' +
+          '<<<PREVIOUS_ANSWER\n{"summary":1}\nPREVIOUS_ANSWER>>>',
       },
     ]);
   });

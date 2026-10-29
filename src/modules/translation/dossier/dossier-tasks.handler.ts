@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { BookDossier, LlmOperation, LlmTask, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmService } from '../../llm/llm.service';
-import { estimateInputTokens, SUMMARY_INPUT_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
+import { SUMMARY_INPUT_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
 import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.registry';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
@@ -40,7 +40,6 @@ import {
   levelNarrows,
   packGroups,
   measureSummaryEntry,
-  summaryInputChars,
   upperLevelBlocked,
 } from './dossier-groups';
 import {
@@ -57,6 +56,7 @@ import {
   dossierSummaryRequest,
   glossaryRequest,
   ShapedRequest,
+  summaryInputEstimator,
 } from './dossier.prompts';
 import {
   DossierDemandService,
@@ -344,17 +344,13 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
         charsPerToken: SUMMARY_INPUT_CHARS_PER_TOKEN,
       });
       const level = topLevel + 1;
-      const emptyChars = estimateInputTokens(
-        dossierSummaryRequest({ chapters: titles, parts: [], merge: isMerge, limits }),
-      );
+      const estimate = summaryInputEstimator({ chapters: titles, merge: isMerge, limits });
       const measured = new Map(items.map((i) => [i, measureSummaryEntry(i.entry)]));
       const spans = await packGroups(items, (group) =>
         Promise.resolve(
           (maxInputChars === null ||
-            summaryInputChars(
-              emptyChars,
-              group.map((i) => measured.get(i) ?? measureSummaryEntry(i.entry)),
-            ) <= maxInputChars) &&
+            estimate(group.map((i) => measured.get(i) ?? measureSummaryEntry(i.entry))) <=
+              maxInputChars) &&
             (level > 0 || !exceedsChapterCap(distinctChapters(group), maxTokens)),
         ),
       );

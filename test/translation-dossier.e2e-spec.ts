@@ -1881,8 +1881,12 @@ describe('Translation source and dossier (e2e)', () => {
         const sized = [1, 2, 3].map((c) => measureSummaryEntry(entry(c, pads[c - 1])));
         const naive = empty + sized[0].length + sized[1].length + 1;
         expect(naive).toBeLessThanOrEqual(ceiling);
-        expect(summaryInputChars(empty, sized.slice(0, 2))).toBeGreaterThan(ceiling);
-        expect(summaryInputChars(empty, sized.slice(1, 3))).toBeLessThanOrEqual(ceiling);
+        expect(
+          summaryInputChars(empty, sized.slice(0, 2), measureSummaryEntry(titles)),
+        ).toBeGreaterThan(ceiling);
+        expect(
+          summaryInputChars(empty, sized.slice(1, 3), measureSummaryEntry(titles)),
+        ).toBeLessThanOrEqual(ceiling);
 
         expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({ status: 'ready' });
         const groups = await groupsOf(ids.en as string);

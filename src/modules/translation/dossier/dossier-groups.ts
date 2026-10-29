@@ -1,7 +1,7 @@
 import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
 import { ANSWER_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
 import { fenceLabelOf, fenceNumbers } from '../fenced-data';
-import { SUMMARY_PARTS_FENCE } from './dossier.constants';
+import { SUMMARY_CHAPTERS_FENCE, SUMMARY_PARTS_FENCE } from './dossier.constants';
 
 /**
  * Сводка досье по группам (`F05-Rb`): вход сводки (частичные досье или результаты прошлого
@@ -279,37 +279,45 @@ export function levelNarrows(level: number, items: number, groups: number): bool
  * Длина входа сводки (`estimateInputTokens` запроса) по длинам элементов: элементы стоят
  * массивом JSON внутри ограды `PARTS`, поэтому это длина запроса с пустым массивом, плюс длины
  * элементов, плюс запятые между ними. Та же величина без сериализации на каждую пробу упаковки
- * (решение арбитра `F05 | F05-Rb`, Р6). Ограда `CHAPTERS` у пустого запроса та же, что у
- * настоящего (названия глав одни), а метка ограды элементов зависит от них: метка группы и её длина -
- * та же `fenceLabelOf`, что у `fenced`, по номерам границ каждого элемента (решение арбитра
- * `F05 | F05-14`). Точна для упаковки групп; отказ до кусков (`upperLevelBlocked`) меряет пустой
- * вход уровня выше и метку будущих ответов групп не знает.
+ * (решение арбитра `F05 | F05-Rb`, Р6). Имена оград `CHAPTERS` и `PARTS` свободны в обоих
+ * текстах (`fenceAll`, T146): метка и её длина - та же `fenceLabelOf` по номерам границ названий
+ * глав (`chapters` - их мерка) и каждого элемента (решения арбитра `F05 | F05-14`, `T146`).
+ * Точна для упаковки групп; отказ до кусков (`upperLevelBlocked`) меряет пустой вход уровня выше
+ * и метку будущих ответов групп не знает. Обработчик зовёт её через `summaryInputEstimator`.
  */
 export function summaryInputChars(
   emptyChars: number,
   entries: readonly SummaryEntrySize[],
+  chapters: SummaryEntrySize,
 ): number {
   const items = entries.reduce((sum, e) => sum + e.length, 0);
-  const label = fenceLabelOf(
-    SUMMARY_PARTS_FENCE,
-    entries.map((e) => e.fenceNumbers),
-  );
+  // Имена обеих оград свободны в обоих текстах (`fenceAll`, T146): пустой запрос считал их по
+  // названиям глав и `[]`, настоящий - ещё и по элементам. Разница длины меток - дважды на ограду.
+  const grow = (label: string, of: (e: SummaryEntrySize) => ReadonlySet<number>) =>
+    fenceLabelOf(label, [of(chapters), ...entries.map(of)]).length -
+    fenceLabelOf(label, [of(chapters)]).length;
   return (
     emptyChars +
     items +
     Math.max(0, entries.length - 1) +
-    2 * (label.length - SUMMARY_PARTS_FENCE.length)
+    2 * grow(SUMMARY_PARTS_FENCE, (e) => e.fenceNumbers) +
+    2 * grow(SUMMARY_CHAPTERS_FENCE, (e) => e.chaptersFenceNumbers)
   );
 }
 
-/** Мерка элемента входа сводки: длина JSON и номера границ ограды `PARTS` в нём. */
+/** Мерка элемента входа сводки (и названий глав): длина JSON и номера границ обеих оград в нём. */
 export interface SummaryEntrySize {
   length: number;
   fenceNumbers: ReadonlySet<number>;
+  chaptersFenceNumbers: ReadonlySet<number>;
 }
 
 /** Одна сериализация элемента на мерку; строка не хранится (`F05-14`). */
 export function measureSummaryEntry(entry: unknown): SummaryEntrySize {
   const json = JSON.stringify(entry);
-  return { length: json.length, fenceNumbers: fenceNumbers(SUMMARY_PARTS_FENCE, json) };
+  return {
+    length: json.length,
+    fenceNumbers: fenceNumbers(SUMMARY_PARTS_FENCE, json),
+    chaptersFenceNumbers: fenceNumbers(SUMMARY_CHAPTERS_FENCE, json),
+  };
 }

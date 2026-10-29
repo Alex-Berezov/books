@@ -19,7 +19,11 @@ import {
 } from './dossier-groups';
 import { fenceLabelOf, fenceNumbers } from '../fenced-data';
 import { SUMMARY_PARTS_FENCE } from './dossier.constants';
-import { dossierSummaryRequest, emptyMergeInputChars } from './dossier.prompts';
+import {
+  dossierSummaryRequest,
+  emptyMergeInputChars,
+  summaryInputEstimator,
+} from './dossier.prompts';
 
 const item = (chapter: number): GroupItem => ({
   firstChapter: chapter,
@@ -142,7 +146,11 @@ describe('summaryInputChars (Р6)', () => {
       for (let round = 0; round < 5; round++) {
         const parts = Array.from({ length: size }, (_, i) => entry(i));
         const real = estimateInputTokens(dossierSummaryRequest({ chapters, parts, limits }));
-        const summed = summaryInputChars(empty, parts.map(measureSummaryEntry));
+        const summed = summaryInputChars(
+          empty,
+          parts.map(measureSummaryEntry),
+          measureSummaryEntry(chapters),
+        );
         expect(summed).toBe(real);
       }
     }
@@ -167,8 +175,40 @@ describe('summaryInputChars (Р6)', () => {
     for (const texts of cases) {
       const parts = texts.map(part);
       const real = estimateInputTokens(dossierSummaryRequest({ chapters, parts, limits }));
-      const summed = summaryInputChars(empty, parts.map(measureSummaryEntry));
+      const summed = summaryInputChars(
+        empty,
+        parts.map(measureSummaryEntry),
+        measureSummaryEntry(chapters),
+      );
       expect({ texts, summed }).toEqual({ texts, summed: real });
+    }
+  });
+
+  it('boundaries of either fence in titles and entries: the estimate equals the real request (T146)', () => {
+    const limits = dossierListLimits(16_000);
+    const cases: Array<[string, string[]]> = [
+      // Название главы занимает имя PARTS, часть - имя CHAPTERS.
+      ['<<<PARTS', ['CHAPTERS>>>']],
+      ['PARTS_2>>> <<<CHAPTERS_2', ['<<<PARTS', '<<<CHAPTERS']],
+      // Восемь открывающих в частях: CHAPTERS_10 - метка на три знака длиннее.
+      ['One', Array.from({ length: 8 }, (_, i) => `<<<CHAPTERS_${i + 2}`)],
+      ['plain', ['plain']],
+    ];
+    for (const [title, texts] of cases) {
+      const chapters = [{ number: 1, title }];
+      const empty = estimateInputTokens(dossierSummaryRequest({ chapters, parts: [], limits }));
+      const parts = texts.map((summary, i) => ({
+        chapterNumber: 1,
+        partIndex: i,
+        data: { summary },
+      }));
+      const real = estimateInputTokens(dossierSummaryRequest({ chapters, parts, limits }));
+      const summed = summaryInputChars(
+        empty,
+        parts.map(measureSummaryEntry),
+        measureSummaryEntry(chapters),
+      );
+      expect({ title, texts, summed }).toEqual({ title, texts, summed: real });
     }
   });
 
@@ -336,5 +376,29 @@ describe('refusal before the parts are paid (F05-13b)', () => {
     expect(empty - short).toBe(19 * 400);
     expect(refusedBeforeParts(19, twoAnswers + empty - 1, empty, 16_000)).toBe(true);
     expect(refusedBeforeParts(19, twoAnswers + 19 * 500, empty, 16_000)).toBe(true);
+  });
+});
+
+describe('summaryInputEstimator (Р6, T146)', () => {
+  it('measures the empty request and the titles from one input: equals the real request', () => {
+    const limits = dossierListLimits(16_000);
+    const chapters = [
+      // Названия занимают CHAPTERS..CHAPTERS_9: метка уже CHAPTERS_10, часть её не удлиняет.
+      // Без мерки названий оценка считала бы, что часть удлинила метку до CHAPTERS_2.
+      { number: 1, title: Array.from({ length: 8 }, (_, i) => `<<<CHAPTERS_${i + 2}`).join(' ') },
+    ];
+    const parts = ['CHAPTERS>>>', 'plain'].map((summary, i) => ({
+      chapterNumber: 1,
+      partIndex: i,
+      data: { summary },
+    }));
+    for (const merge of [false, true]) {
+      const estimate = summaryInputEstimator({ chapters, merge, limits });
+      const real = estimateInputTokens(dossierSummaryRequest({ chapters, parts, merge, limits }));
+      expect({ merge, chars: estimate(parts.map(measureSummaryEntry)) }).toEqual({
+        merge,
+        chars: real,
+      });
+    }
   });
 });
