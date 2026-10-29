@@ -21,6 +21,12 @@ import { TRANSLATION_RETRY_KIND } from './retry/chunk-retry';
 import { ChunkRetryHandler } from './retry/chunk-retry.handler';
 import { ChunkRetryService } from './retry/chunk-retry.service';
 import { ChunkRewriteService } from './retry/chunk-rewrite.service';
+import { AssemblyRunStepsService } from './run/assembly-run-steps.service';
+import { ChunkRunStepsService } from './run/chunk-run-steps.service';
+import { ContextRunStepsService } from './run/context-run-steps.service';
+import { FinalCheckRunStepsService } from './run/final-check-run-steps.service';
+import { MetadataDraftRunStepsService } from './run/metadata-draft-run-steps.service';
+import { RunStepSupportService } from './run/run-step-support.service';
 import { TRANSLATION_RUN_TASK_KIND } from './run/translation-run.constants';
 import { TranslationRunReportService } from './run/translation-run-report.service';
 import { TranslationRunService } from './run/translation-run.service';
@@ -58,6 +64,12 @@ import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constan
     CompareTasksHandler,
     TranslationRunService,
     TranslationRunReportService,
+    RunStepSupportService,
+    ContextRunStepsService,
+    ChunkRunStepsService,
+    AssemblyRunStepsService,
+    FinalCheckRunStepsService,
+    MetadataDraftRunStepsService,
     TranslationRunTasksHandler,
     TranslationDraftService,
     ChunkRewriteService,

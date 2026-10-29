@@ -1,4 +1,4 @@
-import { TranslationChunkStatus } from '@prisma/client';
+import { LlmPauseReason, TranslationChunkStatus } from '@prisma/client';
 import { CHECK_JEV_STAGE, CHECK_SEMANTIC_STAGE } from '../check/check.constants';
 import { FINAL_CHECK_STAGE } from '../final-check/final-check.constants';
 import { METADATA_STAGE } from '../metadata/metadata.constants';
@@ -71,3 +71,6 @@ export const RUN_HISTORY_STAGES = [
   METADATA_STAGE,
   FINAL_CHECK_STAGE,
 ] as const;
+
+/** Тупиковые причины паузы запуска: выход - отмена или новый запуск (Р13). Один источник для «продолжить» и сервиса. */
+export const UNRESUMABLE_REASONS: readonly LlmPauseReason[] = ['DOSSIER_STALE'];

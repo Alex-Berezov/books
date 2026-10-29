@@ -19,7 +19,7 @@ import {
   translateChunk,
 } from '../translate/chunk-steps';
 import { TRANSLATE_STAGE } from '../translate/translate.constants';
-import { noProviderReason } from '../run/translation-run-tasks.handler';
+import { noProviderReason } from '../run/run-step-support.service';
 import { RETRY_CANCELLED, RETRY_NOT_APPLIED } from './chunk-retry.constants';
 import {
   assertRunStopped,

@@ -57,6 +57,7 @@ import {
   RUN_MAX_CHAPTERS,
   RUN_OPERATIONS_MAX,
   TRANSLATION_RUN_TASK_KIND,
+  UNRESUMABLE_REASONS,
 } from './translation-run.constants';
 import {
   ResumeTranslationRunDto,
@@ -372,7 +373,10 @@ export class TranslationRunService {
     const op = await this.operationOf(id);
     // Отказ «продолжить» - раньше проверки моделей: не на паузе или в тупике - код отказа
     // операции, а не модели, и без лишнего запроса каталога.
-    if (op.status !== 'paused' || op.pauseReason === 'DOSSIER_STALE') {
+    if (
+      op.status !== 'paused' ||
+      (op.pauseReason !== null && UNRESUMABLE_REASONS.includes(op.pauseReason))
+    ) {
       throw llmTaskConflict('LLM_OPERATION_NOT_RESUMABLE', 'LLM operation cannot be resumed');
     }
     // Только заданные этапы: `{ translate: undefined }` модели не стирает.
