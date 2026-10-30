@@ -1,6 +1,7 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { RoleName } from '@prisma/client';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
@@ -9,6 +10,7 @@ import {
 } from '../src/modules/auth/providers/social-identity.service';
 import { httpServerOf } from './http-server';
 import { createBookFixture } from './helpers/book-fixture';
+import { addRoleForEmails } from '../prisma/seed-staff-roles';
 
 /**
  * 🔴 Сторож `LEGACY-170`. Списки `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS` — не
@@ -227,5 +229,99 @@ describe('ENV role escalation e2e (LEGACY-170)', () => {
       actorUserId: null,
       payload: { role: 'admin', source: 'env_bootstrap' },
     });
+  });
+
+  it('два одновременных первых входа одной личности: оба 200, один аккаунт и одна привязка (LEGACY-468)', async () => {
+    const raceEmail = `social_race_${Date.now()}@example.com`;
+    emailsToClean.push(raceEmail);
+    // Оба запроса проходят проверку токена вместе, до поиска аккаунта: иначе второй находил бы
+    // уже созданную строку, и гонки на создании не было бы.
+    let release!: () => void;
+    // Не дольше 5 с: отказ второго запроса до `verify` (лимит, валидация) иначе вешал бы первый
+    // до тайм-аута jest, а не ронял тест внятным статусом.
+    const bothArrived = new Promise<void>((resolve) => {
+      release = resolve;
+      setTimeout(resolve, 5_000).unref();
+    });
+    let arrived = 0;
+    socialIdentities.set('race', {
+      provider: 'google',
+      providerUserId: `g-${raceEmail}`,
+      email: raceEmail,
+      emailVerified: true,
+    });
+    const verify: Pick<SocialIdentityService, 'verify'> = app.get(SocialIdentityService);
+    const plain = verify.verify;
+    verify.verify = async (provider, token) => {
+      arrived += 1;
+      if (arrived === 2) release();
+      await bothArrived;
+      return plain(provider, token);
+    };
+    try {
+      const [a, b] = await Promise.all([
+        request(httpServerOf(app)).post('/auth/social').send({ provider: 'google', token: 'race' }),
+        request(httpServerOf(app)).post('/auth/social').send({ provider: 'google', token: 'race' }),
+      ]);
+      expect([a.status, b.status]).toEqual([200, 200]);
+    } finally {
+      verify.verify = plain;
+    }
+
+    const users = await prisma.user.findMany({
+      where: { email: raceEmail },
+      select: { id: true, identities: { select: { providerUserId: true } } },
+    });
+    expect(users).toHaveLength(1);
+    expect(users[0].identities).toEqual([{ providerUserId: `g-${raceEmail}` }]);
+  });
+
+  it('сид выдаёт роль по списку только аккаунту, чью почту назвала привязка провайдера (LEGACY-443)', async () => {
+    const stamp = Date.now();
+    const byPassword = `seed_pwd_${stamp}@example.com`;
+    const bySocial = `seed_social_${stamp}@example.com`;
+    const byOtherLink = `seed_other_${stamp}@example.com`;
+    emailsToClean.push(byPassword, bySocial, byOtherLink);
+
+    await tokenFor(byPassword);
+    socialIdentities.set('seed-social', {
+      provider: 'google',
+      providerUserId: `g-${bySocial}`,
+      email: bySocial,
+      emailVerified: true,
+    });
+    await request(httpServerOf(app))
+      .post('/auth/social')
+      .send({ provider: 'google', token: 'seed-social' })
+      .expect(200);
+    // Привязка есть, но провайдер назвал другой адрес - он не доказывает адрес аккаунта.
+    await prisma.user.create({
+      data: {
+        email: byOtherLink,
+        languagePreference: 'en',
+        identities: {
+          create: {
+            provider: 'google',
+            providerUserId: `g-${byOtherLink}`,
+            email: 'x@example.com',
+          },
+        },
+      },
+    });
+
+    await addRoleForEmails(
+      prisma,
+      `${byPassword}, ${bySocial.toUpperCase()},${byOtherLink}`,
+      RoleName.admin,
+    );
+
+    const admins = await prisma.userRole.findMany({
+      where: {
+        role: { name: RoleName.admin },
+        user: { email: { in: [byPassword, bySocial, byOtherLink] } },
+      },
+      select: { user: { select: { email: true } } },
+    });
+    expect(admins.map((r) => r.user.email)).toEqual([bySocial]);
   });
 });

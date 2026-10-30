@@ -4,6 +4,7 @@ import { Pool } from 'pg';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { seedAnalysisAcceptance } from './seed-analyses';
 import { seedPageAuthors } from './seed-authors';
+import { addRoleForEmails } from './seed-staff-roles';
 import { seedSummaryAcceptance } from './seed-summaries';
 import { seedTranslationSample } from './seed-translation-sample';
 
@@ -717,32 +718,9 @@ async function main() {
       create: { name: 'lawyer' as RoleName },
     }),
   ]);
-
-  // Optionally map env emails to roles (idempotent)
-  const addRoleForEmails = async (emailsCsv: string | undefined, roleName: RoleName) => {
-    const emails = (emailsCsv || '')
-      .split(',')
-      .map((e) => e.trim().toLowerCase())
-      .filter(Boolean);
-    if (emails.length === 0) return;
-    const role = await prisma.role.findUnique({ where: { name: roleName }, select: { id: true } });
-    if (!role?.id) return;
-    for (const email of emails) {
-      const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
-      if (user?.id) {
-        const exists = await prisma.userRole.findUnique({
-          where: { userId_roleId: { userId: user.id, roleId: role.id } },
-          select: { userId: true },
-        });
-        if (!exists) {
-          await prisma.userRole.create({ data: { userId: user.id, roleId: role.id } });
-        }
-      }
-    }
-  };
-
-  await addRoleForEmails(process.env.ADMIN_EMAILS, RoleName.admin);
-  await addRoleForEmails(process.env.CONTENT_MANAGER_EMAILS, RoleName.content_manager);
+  // Роли сотрудников по спискам из окружения: только аккаунтам, чью почту назвала привязка провайдера.
+  await addRoleForEmails(prisma, process.env.ADMIN_EMAILS, RoleName.admin);
+  await addRoleForEmails(prisma, process.env.CONTENT_MANAGER_EMAILS, RoleName.content_manager);
   // Seed Categories.
   //
   // 🔴 `LEGACY-276`, релиз 2: `upsert` по слагу, а не `findFirst` + `create`. Пара

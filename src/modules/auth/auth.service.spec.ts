@@ -178,8 +178,9 @@ describe('AuthService (unit)', () => {
     await service.register({ email: user.email, password: 'p', name: 'n' });
 
     expect(prisma.user.update).toHaveBeenCalledTimes(1);
+    // Условие на только что записанный хеш (`LEGACY-468`).
     expect(prisma.user.update.mock.calls[0][0]).toEqual({
-      where: { id: user.id, isActive: true },
+      where: { id: user.id, isActive: true, passwordHash: 'hashed' },
       data: { lastLogin: now },
       select: { tokenVersion: true },
     });
@@ -187,6 +188,55 @@ describe('AuthService (unit)', () => {
     for (const [payload] of jwt.signAsync.mock.calls as [{ tv: number }][]) {
       expect(payload.tv).toBe(3);
     }
+  });
+
+  // `LEGACY-468`: адрес заняли после проверки занятости (первый вход провайдером) - 409, а не 500.
+  it('register: P2002 по email на создании — 409, токенов нет', async () => {
+    (argon2.hash as jest.Mock).mockResolvedValueOnce('hashed');
+    prisma.user.findUnique.mockResolvedValueOnce(null);
+    prisma.user.create.mockRejectedValueOnce(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+        meta: { modelName: 'User', target: ['email'] },
+      }),
+    );
+
+    await expect(service.register({ email: user.email, password: 'p', name: 'n' })).rejects.toThrow(
+      ConflictException,
+    );
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(jwt.signAsync).not.toHaveBeenCalled();
+  });
+
+  it('register: P2002 по другому полю пробрасывается как есть', async () => {
+    (argon2.hash as jest.Mock).mockResolvedValueOnce('hashed');
+    prisma.user.findUnique.mockResolvedValueOnce(null);
+    const other = new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+      code: 'P2002',
+      clientVersion: 'test',
+      meta: { modelName: 'User', target: ['nickname'] },
+    });
+    prisma.user.create.mockRejectedValueOnce(other);
+
+    await expect(service.register({ email: user.email, password: 'p', name: 'n' })).rejects.toBe(
+      other,
+    );
+  });
+
+  // `LEGACY-468`: регистрация выиграла гонку, проигравший первый вход провайдером успел
+  // привязаться и снять пароль (с подъёмом версии) до отметки входа регистрации.
+  it('register: пароль уже снят параллельной привязкой провайдера — 401, токенов нет', async () => {
+    (argon2.hash as jest.Mock).mockResolvedValueOnce('hashed');
+    prisma.user.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce({ isActive: true });
+    prisma.user.create.mockResolvedValueOnce(user);
+    prisma.userRole.findMany.mockResolvedValue([]);
+    prisma.user.update.mockRejectedValueOnce(notFound());
+
+    await expect(service.register({ email: user.email, password: 'p', name: 'n' })).rejects.toThrow(
+      UnauthorizedException,
+    );
+    expect(jwt.signAsync).not.toHaveBeenCalled();
   });
 
   it('login: заблокированный с неверным паролем получает «Invalid credentials», а не «disabled»', async () => {
@@ -284,6 +334,126 @@ describe('AuthService (unit)', () => {
       prisma.user.update.mockResolvedValue({ ...user, lastLogin: now });
       return service.socialLogin({ provider: 'google', token: 'id-token' });
     };
+
+    // `LEGACY-468`: проигравший гонку первых входов получает P2002 на создании и идёт путём
+    // привязки к найденному по почте - победителем бывает и регистрация паролем.
+    describe('гонка первых входов (LEGACY-468)', () => {
+      const emailTaken = (fields: string[] = ['email']) =>
+        new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+          code: 'P2002',
+          clientVersion: 'test',
+          meta: { modelName: 'User', target: fields },
+        });
+
+      const race = (emailVerified = true) => {
+        social.verify.mockResolvedValue({
+          provider: 'google',
+          providerUserId: 'g-new',
+          email: user.email,
+          emailVerified,
+        });
+        prisma.role.findUnique.mockResolvedValue({ id: `r-${RoleName.user}`, name: RoleName.user });
+        prisma.userRole.findMany.mockResolvedValue([{ role: { name: RoleName.user } }]);
+        return () => service.socialLogin({ provider: 'google', token: 'id-token' });
+      };
+
+      it('победитель - вход той же личности: строка перечитана, привязка к ней, журнала нет', async () => {
+        const login = race();
+        prisma.user.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(user);
+        prisma.user.create.mockRejectedValue(emailTaken());
+
+        const res = await login();
+
+        expect(res.user.email).toBe(user.email);
+        expect(prisma.user.create).toHaveBeenCalledTimes(1);
+        expect(prisma.user.findUnique).toHaveBeenCalledTimes(2);
+        expect(prisma.user.findUnique).toHaveBeenLastCalledWith({
+          where: { email: user.email },
+          select: ACCOUNT_USER_SELECT,
+        });
+        expect(prisma.userIdentity.upsert).toHaveBeenCalledTimes(1);
+        expect(prisma.userIdentity.upsert).toHaveBeenCalledWith(
+          expect.objectContaining({ create: expect.objectContaining({ userId: user.id }) }),
+        );
+        // Путь привязки по почте: снятие пароля пробуется, у победителя-провайдера снимать нечего.
+        expect(tx.user.updateMany).toHaveBeenCalledTimes(1);
+        expect(adminAudit.record).not.toHaveBeenCalled();
+      });
+
+      it('победитель - регистрация паролем: пароль снят, событие в журнале', async () => {
+        const login = race();
+        prisma.user.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(user);
+        prisma.user.create.mockRejectedValue(emailTaken());
+        prisma.user.updateMany.mockResolvedValueOnce({ count: 1 });
+
+        await login();
+
+        expect(tx.user.updateMany).toHaveBeenCalledTimes(1);
+        expect(tx.user.updateMany).toHaveBeenCalledWith({
+          where: { id: user.id, passwordHash: { not: null } },
+          data: { passwordHash: null, tokenVersion: { increment: 1 } },
+        });
+        expect(adminAudit.record).toHaveBeenCalledTimes(1);
+        expect(adminAudit.record).toHaveBeenCalledWith(tx, {
+          action: AdminAuditAction.PASSWORD_REMOVED_ON_SOCIAL_LINK,
+          targetType: AdminAuditTargetType.USER,
+          targetId: user.id,
+          actorUserId: null,
+        });
+      });
+
+      it('неподтверждённый адрес: 401, как при найденном по почте, привязки нет', async () => {
+        const login = race(false);
+        prisma.user.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(user);
+        prisma.user.create.mockRejectedValue(emailTaken());
+
+        await expect(login()).rejects.toThrow(UnauthorizedException);
+        expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
+      });
+
+      it('адрес из ADMIN_EMAILS: P2002 в транзакции создания ведёт тем же путём', async () => {
+        withEnv(user.email, '');
+        const login = race();
+        prisma.user.findUnique.mockResolvedValueOnce(null).mockResolvedValueOnce(user);
+        prisma.user.create.mockRejectedValue(emailTaken());
+
+        const res = await login();
+
+        expect(tx.user.create).toHaveBeenCalledTimes(1);
+        expect(res.user.email).toBe(user.email);
+        expect(prisma.userIdentity.upsert).toHaveBeenCalledTimes(1);
+        expect(adminAudit.record).not.toHaveBeenCalled();
+      });
+
+      it('P2002 по другому полю пробрасывается, перечитывания нет', async () => {
+        const login = race();
+        prisma.user.findUnique.mockResolvedValueOnce(null);
+        const other = emailTaken(['id']);
+        prisma.user.create.mockRejectedValue(other);
+
+        await expect(login()).rejects.toBe(other);
+        expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
+      });
+
+      it('строки победителя нет: исходный P2002 пробрасывается', async () => {
+        const login = race();
+        prisma.user.findUnique.mockResolvedValue(null);
+        const taken = emailTaken();
+        prisma.user.create.mockRejectedValue(taken);
+
+        await expect(login()).rejects.toBe(taken);
+        expect(prisma.userIdentity.upsert).not.toHaveBeenCalled();
+      });
+
+      it('иная ошибка создания не глотается', async () => {
+        const login = race();
+        prisma.user.findUnique.mockResolvedValue(null);
+        prisma.user.create.mockRejectedValue(new Error('boom'));
+
+        await expect(login()).rejects.toThrow('boom');
+        expect(prisma.user.findUnique).toHaveBeenCalledTimes(1);
+      });
+    });
 
     it('адрес из ADMIN_EMAILS: одно событие admin, актёр null, запись тем же tx', async () => {
       withEnv(` ${user.email.toUpperCase()} , other@example.com`, '');

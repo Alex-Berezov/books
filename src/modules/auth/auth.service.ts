@@ -31,6 +31,7 @@ import {
   SESSION_REVOKED_MESSAGE,
   type SessionTokenClaims,
 } from '../../shared/session/session-token';
+import { uniqueViolationFields } from '../../shared/prisma/prisma-error.util';
 import { normalizeEmail } from '../../shared/validators/normalize-email.decorator';
 
 /**
@@ -182,22 +183,37 @@ export class AuthService implements OnModuleInit {
 
     // Пользователь, его роли и запись журнала — одной транзакцией: отказ любой части
     // не оставляет аккаунта без ролей, на который повторная регистрация ответила бы 409.
-    const user = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.user.create({
-        data: {
-          email: dto.email,
-          passwordHash,
-          name: dto.name,
-          languagePreference: dto.languagePreference ?? PrismaLanguage.en,
-        },
-        select: ACCOUNT_USER_SELECT,
+    const user = await this.prisma
+      .$transaction(async (tx) => {
+        const created = await tx.user.create({
+          data: {
+            email: dto.email,
+            passwordHash,
+            name: dto.name,
+            languagePreference: dto.languagePreference ?? PrismaLanguage.en,
+          },
+          select: ACCOUNT_USER_SELECT,
+        });
+        // Регистрация паролем адрес не доказывает: повышенных ролей по спискам не выдаёт (LEGACY-443).
+        await this.grantRegistrationRoles(tx, created.id, created.email, false);
+        return created;
+      }, REGISTRATION_TX_OPTIONS)
+      .catch((error: unknown) => {
+        // Адрес занял параллельный запрос после проверки выше (первый вход провайдером, вторая
+        // регистрация) - тот же ответ, что и при занятом адресе, а не 500 (`LEGACY-468`).
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002' &&
+          uniqueViolationFields(error).includes('email')
+        ) {
+          throw new ConflictException('Email already in use');
+        }
+        throw error;
       });
-      // Регистрация паролем адрес не доказывает: повышенных ролей по спискам не выдаёт (LEGACY-443).
-      await this.grantRegistrationRoles(tx, created.id, created.email, false);
-      return created;
-    }, REGISTRATION_TX_OPTIONS);
 
-    const tokenVersion = await this.markSignIn(user.id);
+    // Условием на только что записанный хеш (`LEGACY-468`): параллельный первый вход провайдером
+    // на этот адрес мог успеть привязаться и снять пароль - тогда токенов здесь не выдаётся.
+    const tokenVersion = await this.markSignIn(user.id, this.prisma, passwordHash);
     const roles = await this.computeRoles(user);
     const tokens = await this.signTokens(user.id, user.email, roles, tokenVersion);
 
@@ -264,8 +280,14 @@ export class AuthService implements OnModuleInit {
         where: { email },
         select: ACCOUNT_USER_SELECT,
       });
+      // Адрес занял параллельный запрос (`isTaken`): его строка идёт той же веткой, что найденная
+      // по почте, - с отказом неподтверждённому адресу и снятием пароля при первой привязке.
+      // Победителем бывает и регистрация паролем, а не только второй вход той же личности.
+      const { account, isTaken } = byEmail
+        ? { account: byEmail, isTaken: true }
+        : await this.createSocialUserUnlessTaken(email, identity, languagePreference);
 
-      if (byEmail && !identity.emailVerified) {
+      if (isTaken && !identity.emailVerified) {
         // Провайдер подтвердил, что владелец токена — это он сам, но не то, что
         // адрес принадлежит ему. Привязка здесь означала бы вход в чужой аккаунт
         // по совпадению строки.
@@ -273,8 +295,8 @@ export class AuthService implements OnModuleInit {
         throw new UnauthorizedException(INVALID_CREDENTIALS_MESSAGE);
       }
 
-      isLinkByEmail = byEmail !== null;
-      user = byEmail ?? (await this.createSocialUser(email, identity, languagePreference));
+      isLinkByEmail = isTaken;
+      user = account;
     }
 
     // До привязки и правки профиля: заблокированному пользователю вход провайдером
@@ -442,6 +464,42 @@ export class AuthService implements OnModuleInit {
         actorUserId: null,
         payload: { role: role.name, source: ENV_BOOTSTRAP_AUDIT_SOURCE },
       });
+    }
+  }
+
+  /**
+   * Создание аккаунта первым входом провайдера; адрес, занятый параллельным запросом, - `isTaken`.
+   *
+   * Два одновременных первых входа (двойной клик, повтор колбэка) или вход с одновременной
+   * регистрацией паролем оба не нашли строку по почте, и проигравший получает `P2002` по `email`.
+   * Вместо 500 (`LEGACY-468`) он перечитывает строку победителя и отдаёт её как занятую: кто её
+   * завёл, здесь неизвестно, поэтому вызывающий ведёт её путём привязки к найденному по почте.
+   * `P2002` по другому полю и пропавшая строка победителя пробрасываются как есть.
+   */
+  private async createSocialUserUnlessTaken(
+    email: string,
+    identity: SocialIdentity,
+    languagePreference?: PrismaLanguage,
+  ): Promise<{ account: AccountUser; isTaken: boolean }> {
+    try {
+      return {
+        account: await this.createSocialUser(email, identity, languagePreference),
+        isTaken: false,
+      };
+    } catch (error) {
+      if (
+        !(error instanceof Prisma.PrismaClientKnownRequestError) ||
+        error.code !== 'P2002' ||
+        !uniqueViolationFields(error).includes('email')
+      ) {
+        throw error;
+      }
+      const winner = await this.prisma.user.findUnique({
+        where: { email },
+        select: ACCOUNT_USER_SELECT,
+      });
+      if (!winner) throw error;
+      return { account: winner, isTaken: true };
     }
   }
 

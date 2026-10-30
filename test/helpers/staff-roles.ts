@@ -5,8 +5,8 @@ import { PrismaService } from '../../src/prisma/prisma.service';
 import { normalizeEmail } from '../../src/shared/validators/normalize-email.decorator';
 
 /**
- * Выдаёт уже зарегистрированному пользователю роли сотрудника - записью в `UserRole`, как сид
- * (`prisma/seed.ts`, `addRoleForEmails`).
+ * Выдаёт уже зарегистрированному пользователю роли сотрудника - записью в `UserRole`. В отличие от сида
+ * (`prisma/seed-staff-roles.ts`, `addRoleForEmails`) привязки провайдера не требует: это подготовка данных.
  *
  * До `LEGACY-443` e2e получали админа так: `ADMIN_EMAILS` в окружении и регистрация паролем.
  * Регистрация паролем роль по списку больше не даёт - пароль не доказывает владение адресом
