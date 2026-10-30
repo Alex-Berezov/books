@@ -85,13 +85,13 @@ const DESCRIPTION_LANGUAGE_FAILURES: ReadonlySet<string> = new Set([
 ]);
 
 /** Текст без тегов: название, автор и названия глав - строки, а не HTML. */
-function line(text: string): string {
+export function plainLine(text: string): string {
   return richHtmlText(sanitizeRichHtml(text)).replace(/\s+/g, ' ').trim();
 }
 
 /** Запись глоссария об авторе: по написанию исходника без регистра и диакритики. */
 function authorEntry(source: MetadataSource): NameEntry | undefined {
-  const author = normalized(source.author.trim());
+  const author = normalized(plainLine(source.author));
   if (author === '') return undefined;
   return source.glossary.find((e) => normalized(e.source.trim()) === author);
 }
@@ -117,7 +117,7 @@ export function checkMetadata(
     return found !== null && found !== target ? found : null;
   };
 
-  const title = line(answer.title);
+  const title = plainLine(answer.title);
   if (title.length < VERSION_TITLE_MIN_LENGTH) {
     remarks.push(`The title must be at least ${VERSION_TITLE_MIN_LENGTH} characters long.`);
   } else {
@@ -129,8 +129,8 @@ export function checkMetadata(
     }
   }
 
-  const author = line(answer.author);
-  const sourceAuthor = line(source.author);
+  const author = plainLine(answer.author);
+  const sourceAuthor = plainLine(source.author);
   const entry = authorEntry(source);
   if (author.length > VERSION_AUTHOR_MAX_LENGTH) {
     remarks.push(`The author name must be at most ${VERSION_AUTHOR_MAX_LENGTH} characters long.`);
@@ -172,13 +172,13 @@ export function checkMetadata(
     );
   }
 
-  const byNumber = new Map(answer.chapterTitles.map((c) => [c.number, line(c.title)]));
+  const byNumber = new Map(answer.chapterTitles.map((c) => [c.number, plainLine(c.title)]));
   const chapterTitles = source.chapterTitles.map((c) => ({
     number: c.number,
     title: byNumber.get(c.number) ?? '',
   }));
   const empty = chapterTitles
-    .filter((c, i) => c.title === '' && line(source.chapterTitles[i].title) !== '')
+    .filter((c, i) => c.title === '' && plainLine(source.chapterTitles[i].title) !== '')
     .map((c) => c.number);
   if (empty.length > 0) {
     remarks.push(`Chapter titles ${empty.join(', ')} came back empty. Translate every title.`);

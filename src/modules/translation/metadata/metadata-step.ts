@@ -9,7 +9,7 @@ import { NameEntry, nameEntriesOf } from '../check/mechanical-check';
 import { callShaped } from '../llm-shaped-call';
 import { StageModels } from '../run/run-models';
 import { glossaryFor } from '../translate/translate-piece';
-import { metadataFormErrors, MetadataSource } from './metadata-check';
+import { metadataFormErrors, MetadataSource, plainLine } from './metadata-check';
 import { METADATA_REMARKS, METADATA_STAGE } from './metadata.constants';
 import { MetadataAnswer, MetadataInput, metadataRequest, METADATA_SHAPE } from './metadata.prompts';
 
@@ -66,7 +66,7 @@ export function metadataInputOf(
     .map((b) => ({ n: b.n, kind: b.kind, html: b.html }));
   const text = [
     fields.title,
-    fields.author,
+    plainLine(fields.author),
     ...description.map((b) => richHtmlText(b.html)),
     ...fields.chapterTitles.map((c) => c.title),
   ].join('\n');

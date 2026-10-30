@@ -6,6 +6,7 @@ import { addChapterFindings } from '../assemble/chapter-findings';
 import { callIndependent } from '../check/independent-call';
 import { finalCodeCheck } from '../final-check/final-check-code';
 import { FINAL_CHECK_STAGE, FINAL_FINDING_CODES } from '../final-check/final-check.constants';
+import { FINAL_CODE_TX_OPTIONS } from './translation-run.constants';
 import { FinalCheckRunStepsService } from './final-check-run-steps.service';
 import { MetadataDraftRunStepsService } from './metadata-draft-run-steps.service';
 import { LanguageRow, RunStepSupportService } from './run-step-support.service';
@@ -215,9 +216,11 @@ describe('FinalCheckRunStepsService: проверка кодом', () => {
   });
 
   it('состояние языка и находки глав - одной транзакцией под замком строки языка', async () => {
-    const { steps, tx, ctx } = setup();
+    const { steps, db, tx, ctx } = setup();
     const lease = ctx as unknown as { renewLease: jest.Mock };
     await expect(steps.finalCheckStep(lang(null), ctx)).resolves.toEqual({ kind: 'continue' });
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), FINAL_CODE_TX_OPTIONS);
     expect(codeMock).toHaveBeenCalledTimes(1);
     expect(lease.renewLease).toHaveBeenCalledTimes(1);
     expect(tx.$queryRaw).toHaveBeenCalledTimes(1);

@@ -10,7 +10,7 @@ import { TRANSLATE_STAGE } from '../translate/translate.constants';
 import { AssemblyRunStepsService } from './assembly-run-steps.service';
 import { ChunkRunStepsService } from './chunk-run-steps.service';
 import { LanguageRow, RunStepSupportService } from './run-step-support.service';
-import { CHUNK_STATUS_UNEXPECTED } from './translation-run.constants';
+import { CHUNK_STATUS_UNEXPECTED, RUN_TX_OPTIONS } from './translation-run.constants';
 
 jest.mock('../chunking/chapter-chunks', () => ({
   ...jest.requireActual<Record<string, unknown>>('../chunking/chapter-chunks'),
@@ -249,6 +249,101 @@ describe('ChunkRunStepsService: перевод и проверка куска', 
     });
     expect(translateMock).not.toHaveBeenCalled();
     expect(checkMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('ChunkRunStepsService: запись и находки куска (полные поля)', () => {
+  it('запись шага переносит ответ, блоки, модель, вызов и вердикт', async () => {
+    const { steps, db } = setup({ content: CONTENT }, [chunk('pending')]);
+    await steps.chapterStep(lang, 1, ctx);
+    await storeOf(translateMock).write('pending', {
+      rawResponse: { a: 1 },
+      blocks: [{ n: 1, text: 'x' }],
+      model: 'm/x',
+      callId: 'call1',
+      verdict: { seed: 7, failures: 1, remarks: ['r'], attempts: [] },
+    });
+    expect(db.translationChunk.updateMany).toHaveBeenCalledTimes(1);
+    expect(db.translationChunk.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', status: 'pending' },
+      data: {
+        rawResponse: { a: 1 },
+        blocks: [{ n: 1, text: 'x' }],
+        model: 'm/x',
+        callId: 'call1',
+        verdict: { seed: 7, failures: 1, remarks: ['r'], attempts: [] },
+      },
+    });
+  });
+
+  it('новая находка уходит в глоссарий языка, известное написание не дублируется', async () => {
+    const { steps, db, tx } = setup({ content: CONTENT }, [chunk('checked')]);
+    db.translationChunk.findUniqueOrThrow.mockResolvedValue({
+      id: 'c1',
+      rawResponse: {
+        glossaryFindings: [
+          { source: 'Old Mill', target: 'Viejo Molino', kind: 'place', note: '' },
+          { source: 'Known One', target: 'Conocido', kind: 'person', note: '' },
+        ],
+      },
+    });
+    tx.$queryRaw.mockResolvedValue([
+      {
+        data: {
+          entries: [{ key: 'k', source: 'known one', target: 'Conocido', kind: 'person' }],
+        },
+        history: [],
+      },
+    ]);
+    await steps.chapterStep(lang, 1, ctx);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), RUN_TX_OPTIONS);
+    expect(tx.bookGlossary.update).toHaveBeenCalledTimes(1);
+    expect(tx.bookGlossary.update.mock.calls[0][0].where).toEqual({ id: 'g1' });
+    expect(tx.translationChunk.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.translationChunk.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', status: 'checked' },
+      data: { status: 'done' },
+    });
+    const data = tx.bookGlossary.update.mock.calls[0][0].data as {
+      data: { entries: Array<{ source: string }> };
+      history: Array<{ chunkId: string }>;
+    };
+    expect(data.data.entries.map((e) => e.source)).toEqual(['known one', 'Old Mill']);
+    expect(data.history).toEqual([expect.objectContaining({ chunkId: 'c1' })]);
+  });
+
+  it('все находки уже известны - глоссарий не переписывается, кусок всё равно done', async () => {
+    const { steps, db, tx } = setup({ content: CONTENT }, [chunk('checked')]);
+    db.translationChunk.findUniqueOrThrow.mockResolvedValue({
+      id: 'c1',
+      rawResponse: {
+        glossaryFindings: [{ source: 'Known One', target: 'Otro', kind: 'person', note: '' }],
+      },
+    });
+    tx.$queryRaw.mockResolvedValue([
+      {
+        data: {
+          entries: [{ key: 'k', source: 'known one', target: 'Conocido', kind: 'person' }],
+        },
+        history: [],
+      },
+    ]);
+    await steps.chapterStep(lang, 1, ctx);
+    expect(tx.bookGlossary.update).not.toHaveBeenCalled();
+    expect(tx.translationChunk.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.translationChunk.updateMany).toHaveBeenCalledWith({
+      where: { id: 'c1', status: 'checked' },
+      data: { status: 'done' },
+    });
+  });
+
+  it('флаг куска - транзакция с опциями запуска', async () => {
+    const { steps, db } = setup({ content: CONTENT }, [chunk('translated')]);
+    await steps.chapterStep(lang, 1, ctx);
+    await storeOf(checkMock).flag('translated', 'CHECK_FAILED', {});
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), RUN_TX_OPTIONS);
   });
 });
 

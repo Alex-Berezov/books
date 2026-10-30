@@ -5,7 +5,7 @@ import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { sourceFingerprint } from '../source-fingerprint';
 import { ContextRunStepsService } from './context-run-steps.service';
 import { CLEAR_STOP, LanguageRow, RunStepSupportService } from './run-step-support.service';
-import { DOSSIER_LIMIT_TOO_LOW } from './translation-run.constants';
+import { DOSSIER_LIMIT_TOO_LOW, RUN_TX_OPTIONS } from './translation-run.constants';
 
 jest.mock('../dossier/context-demand', () => ({ demandContext: jest.fn() }));
 jest.mock('../source-fingerprint', () => ({
@@ -71,9 +71,19 @@ describe('ContextRunStepsService: готовый контекст', () => {
     expect(demandMock).toHaveBeenCalledWith(
       {},
       {},
-      expect.objectContaining({ rebuildStale: true, translationRunId: 'r1' }),
+      {
+        versionId: 'v1',
+        language: 'es',
+        operationId: 'op1',
+        waitingFor: null,
+        dossier: null,
+        translationRunId: 'r1',
+        rebuildStale: true,
+        onLimit: expect.any(Function),
+      },
     );
     expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), RUN_TX_OPTIONS);
     expect(tx.translationRun.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.translationRun.updateMany).toHaveBeenCalledWith({
       where: { id: 'r1', dossierId: null },

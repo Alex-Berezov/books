@@ -300,6 +300,31 @@ describe('OpenRouterClient', () => {
     );
   });
 
+  it('logs zero cached tokens as 0 and a non-numeric value as unknown', async () => {
+    const log = jest.spyOn(Logger.prototype, 'log').mockImplementation();
+    for (const [cached, shown] of [
+      [0, '0'],
+      ['64', 'unknown'],
+    ] as const) {
+      log.mockClear();
+      fetchSpy.mockResolvedValueOnce(
+        ok({
+          model: 'a/primary',
+          choices: [{ message: { content: '{"answer":42}' }, finish_reason: 'stop' }],
+          usage: {
+            prompt_tokens: 100,
+            completion_tokens: 10,
+            prompt_tokens_details: { cached_tokens: cached },
+          },
+        }),
+      );
+      await client.chat(request());
+      expect(log.mock.calls.map((call) => String(call[0])).join(' ')).toContain(
+        `cachedTokens=${shown} `,
+      );
+    }
+  });
+
   // Ответ, оборванный лимитом без JSON, у этапа `truncationEndsModel` не повторяется: повтор
   // с тем же входом оборвётся так же и оплатится заново (`LEGACY-480`, решение `F05 | F05-13d`).
   describe('answer cut off by the token limit (LEGACY-480)', () => {

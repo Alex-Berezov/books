@@ -125,6 +125,19 @@ describe('checkMetadata', () => {
     ]);
   });
 
+  it('an author with HTML markup still finds its glossary entry', () => {
+    const marked = source({ ...FIELDS, author: '<b>John</b>&nbsp;Smith' });
+    expect(marked.glossary).toHaveLength(1);
+    expect(remarks(answer({ author: 'Juan Smith' }), marked)).toEqual([
+      'The author name must be exactly the glossary form: Juan Herrero.',
+    ]);
+    const checked = checkMetadata(marked, answer());
+    expect(checked.ok && checked.result).toMatchObject({
+      author: 'Juan Herrero',
+      authorFromGlossary: true,
+    });
+  });
+
   it('an author missing from the glossary takes the model form and is marked as such', () => {
     const checked = checkMetadata(source(FIELDS, null), answer({ author: 'Yon Smit' }));
     expect(checked.ok && checked.result).toMatchObject({
