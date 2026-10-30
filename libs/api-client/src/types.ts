@@ -8907,6 +8907,24 @@ export interface components {
       event: string;
       orderNote: string;
     };
+    DossierContextLineDto: {
+      /**
+       * Format: decimal
+       * @description Upper estimate of the build
+       * @example 100.00000000
+       */
+      estimateUsd: string;
+      /** @description The build will be refused DOSSIER_TOO_LONG at the start, before any paid call: the book has more chapters than a group lists and two group answers do not fit the dossier stage model context */
+      refusedTooLong: boolean;
+      /**
+       * Format: decimal
+       * @description Limit of its own operation: estimate × 1.5; must fit the run limit
+       * @example 100.00000000
+       */
+      suggestedLimitUsd: string;
+      /** @description The dossier is not ready yet: an upper bound by the dossier answer size */
+      upperBound: boolean;
+    };
     DossierDataDto: {
       chapters: components['schemas']['DossierChapterDto'][];
       characters: components['schemas']['DossierCharacterDto'][];
@@ -8945,6 +8963,8 @@ export interface components {
       estimateUsd: string;
       /** @description Chapter pieces read by the first pass */
       parts: number;
+      /** @description The build will be refused DOSSIER_TOO_LONG at the start, before any paid call: the book has more chapters than a group lists and two group answers do not fit the dossier stage model context */
+      refusedTooLong: boolean;
       /** Format: uuid */
       sourceVersionId: string;
       /**
@@ -13968,7 +13988,7 @@ export interface components {
        */
       defaultLimitUsd: string;
       /** @description The dossier is built first under its own operation (also a stale one); null - fresh and ready, or building */
-      dossier: components['schemas']['CompareContextLineDto'] | null;
+      dossier: components['schemas']['DossierContextLineDto'] | null;
       languages: components['schemas']['TranslationRunLanguageEstimateDto'][];
       /**
        * Format: decimal

@@ -53,6 +53,10 @@ export class TranslationSourceDto {
   targets!: TranslationTargetDto[];
 }
 
+/** Признак отказа на старте - один текст у оценки досье и у строки досье оценки запуска (`T147`). */
+export const REFUSED_TOO_LONG_DESCRIPTION =
+  'The build will be refused DOSSIER_TOO_LONG at the start, before any paid call: the book has more chapters than a group lists and two group answers do not fit the dossier stage model context';
+
 export class DossierEstimateDto {
   @ApiProperty({ type: String, format: 'uuid' })
   sourceVersionId!: string;
@@ -68,6 +72,9 @@ export class DossierEstimateDto {
 
   @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'Default operation limit: estimate × 1.5' })
   suggestedLimitUsd!: string;
+
+  @ApiProperty({ type: Boolean, description: REFUSED_TOO_LONG_DESCRIPTION })
+  refusedTooLong!: boolean;
 }
 
 export class DossierStatusDto {

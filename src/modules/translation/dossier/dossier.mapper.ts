@@ -45,6 +45,7 @@ export function toEstimateDto(e: DossierEstimate): DossierEstimateDto {
     parts: e.parts,
     estimateUsd: moneyUsd(e.estimateUsd),
     suggestedLimitUsd: moneyUsd(e.suggestedLimitUsd),
+    refusedTooLong: e.refusedTooLong,
   };
 }
 

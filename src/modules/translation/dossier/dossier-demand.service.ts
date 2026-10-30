@@ -115,6 +115,8 @@ export interface DossierEstimate {
   parts: number;
   estimateUsd: Prisma.Decimal;
   suggestedLimitUsd: Prisma.Decimal;
+  /** Старт откажет `DOSSIER_TOO_LONG` до кусков (`findRefusingModel`); сумма остаётся оценкой (`T147`). */
+  refusedTooLong: boolean;
 }
 
 /**
@@ -280,13 +282,15 @@ export class DossierDemandService {
 
   async estimateOf(versionId: string): Promise<DossierEstimate> {
     const { sourceVersionId } = await this.dossierSourceOf(versionId);
-    const { estimateUsd, entries, parts } = await this.estimateSource(sourceVersionId);
+    const { estimateUsd, entries, parts, titles } = await this.estimateSource(sourceVersionId);
     return {
       sourceVersionId,
       chapters: entries.length,
       parts,
       estimateUsd,
       suggestedLimitUsd: estimateUsd.mul(DOSSIER_LIMIT_FACTOR),
+      // То же правило, что у старта: оценка не обещает построение, которому старт откажет.
+      refusedTooLong: (await this.findRefusingModel(titles, entries.length)) !== null,
     };
   }
 
@@ -311,7 +315,14 @@ export class DossierDemandService {
         const followed = await this.followDossierBuilder(latest, fresh(latest), options);
         // `null` - перехват ушёл другому ждущему; `failed` без ждущего (кнопка) - строка
         // закрыта, следующий круг строит новое поколение, а не отвечает «не построилось».
-        if (followed && (followed.status !== 'failed' || options.waiter)) {
+        // Отказ перехвата (`failTakeover`) отвечает и кнопке: новое поколение отказало бы тем же
+        // правилом и завело бы вторую строку `failed`.
+        if (
+          followed &&
+          (followed.status !== 'failed' ||
+            options.waiter ||
+            followed.row.failedReason === DOSSIER_TOO_LONG)
+        ) {
           return { ...followed, fresh: followed.row ? fresh(followed.row) : true };
         }
         continue;
@@ -319,10 +330,7 @@ export class DossierDemandService {
       if (
         latest?.status === 'failed' &&
         options.waiter &&
-        // Строка ждущего упала на том же тексте - его отказ. Текст правили - строят новое
-        // поколение по новому тексту, а не стоят на STEP_FAILED.
-        ((options.waiter.waitingFor === latest.id && fresh(latest)) ||
-          (await this.tooLongAgain(latest, fresh(latest))))
+        (await this.waiterRefused(latest, fresh(latest), options.waiter))
       ) {
         await this.pauseWaiter(options.waiter, 'STEP_FAILED');
         return { status: 'failed', row: latest, fresh: fresh(latest) };
@@ -521,7 +529,15 @@ export class DossierDemandService {
     });
     const saved = new Set(done.map((p) => partKey(p.chapterNumber, p.partIndex)));
     // Сводка оценивается по всем кускам: её вход - все частичные, и уже сохранённые тоже.
-    const { estimateUsd: estimate } = await this.estimateSource(row.sourceVersionId, saved);
+    const {
+      estimateUsd: estimate,
+      entries,
+      titles,
+    } = await this.estimateSource(row.sourceVersionId, saved);
+    // Модель этапа сменили на узкую после старта: перехват дооплатил бы куски, а обработчик
+    // отказал бы тем же правилом. Строка закрывается без новой операции (`LEGACY-477`, `T147`).
+    const refusing = await this.findRefusingModel(titles, entries.length);
+    if (refusing) return this.failTakeover(row, refusing, options);
     const taken = await this.takeOver(
       row,
       'bookDossier',
@@ -531,6 +547,35 @@ export class DossierDemandService {
       (r, opId) => this.dossierTask(r, opId),
     );
     return this.takeoverDemand(row, taken);
+  }
+
+  /**
+   * Строка `building`, которой перехват заведомо откажет: `failed` с `DOSSIER_TOO_LONG` и моделью
+   * этапа условием по прежнему строителю, пауза ждущего - той же транзакцией (Р20). Строитель
+   * уходит в `previousOperationId`, `operationId` - `null`: строка закрыта тем же правилом, что и
+   * на старте, и `tooLongAgain` перепроверяет её текущими настройками (решение арбитра `T147`,
+   * (ж)). Строку уже перехватил другой - `null`, вызывающий перечитывает её.
+   */
+  private async failTakeover(
+    row: BookDossier,
+    model: string,
+    options: DemandOptions,
+  ): Promise<Demand<BookDossier> | null> {
+    const data = {
+      status: 'failed' as const,
+      failedReason: DOSSIER_TOO_LONG,
+      model,
+      operationId: null,
+      previousOperationId: row.operationId,
+    };
+    const closed = await this.closeForWaiter(options, async (tx) => {
+      const taken = await tx.bookDossier.updateMany({
+        where: { id: row.id, status: 'building', operationId: row.operationId, takeovers: 0 },
+        data,
+      });
+      return taken.count;
+    });
+    return closed ? { status: 'failed', row: { ...row, ...data } } : null;
   }
 
   private dossierTask(row: BookDossier, operationId: string): EnqueueTaskInput {
@@ -655,14 +700,26 @@ export class DossierDemandService {
         // Отменён или операции нет: перехвата нет, отмена останавливает траты.
         break;
     }
-    // Строка `failed` и пауза ждущего - одной транзакцией: обрыв между ними оставил бы ждущего
-    // `active`, и его повтор завёл бы новое поколение с повторной оплатой (Р20).
     // Строку прочитали до её строителя: если она уже не `building` под ним (стала `ready`, её
     // перехватили), отказа нет - пауза откатывается, вызывающий перечитывает строку.
+    const closed = await this.closeForWaiter(options, (tx) =>
+      this.failRow(model, row.id, row.operationId, tx),
+    );
+    return closed ? { status: 'failed', row: { ...row, status: 'failed' } } : null;
+  }
+
+  /**
+   * Строка `failed` и пауза ждущего `STEP_FAILED` - одной транзакцией: обрыв между ними оставил бы
+   * ждущего `active`, и его повтор завёл бы новое поколение с повторной оплатой (Р20). Без ждущего
+   * (кнопка) - только строка. `close` закрыл ноль строк - строку уже перехватили или достроили:
+   * пауза откатывается, `false`.
+   */
+  private async closeForWaiter(
+    options: DemandOptions,
+    close: (tx: Prisma.TransactionClient) => Promise<number>,
+  ): Promise<boolean> {
     const fail = async (tx: Prisma.TransactionClient) => {
-      if ((await this.failRow(model, row.id, row.operationId, tx)) === 0) {
-        throw new TakeoverLostError();
-      }
+      if ((await close(tx)) === 0) throw new TakeoverLostError();
     };
     try {
       if (options.waiter) {
@@ -671,10 +728,10 @@ export class DossierDemandService {
         await fail(this.prisma);
       }
     } catch (error) {
-      if (error instanceof TakeoverLostError) return null;
+      if (error instanceof TakeoverLostError) return false;
       throw error;
     }
-    return { status: 'failed', row: { ...row, status: 'failed' } };
+    return true;
   }
 
   /**
@@ -729,13 +786,54 @@ export class DossierDemandService {
   }
 
   /**
+   * `failed` - отказ ждущего. Строка ждущего упала на том же тексте - его отказ; текст правили -
+   * строят новое поколение по новому тексту, а не стоят на STEP_FAILED. Строка, закрытая правилом
+   * старта, судится только этим правилом (`tooLongAgain`) - и для ждущего, который её ждал: перехват
+   * закрывает строку, которую ждал запуск, и иначе снятие отказа до него не дошло бы (`T147`, (ж)).
+   */
+  private async waiterRefused(
+    row: BookDossier,
+    fresh: boolean,
+    waiter: DossierWaiter,
+  ): Promise<boolean> {
+    const own = waiter.waitingFor === row.id && fresh;
+    if (own && !(row.failedReason === DOSSIER_TOO_LONG && (await this.closedAtStart(row)))) {
+      return true;
+    }
+    return this.tooLongAgain(row, fresh);
+  }
+
+  /**
    * Строка не влезла в контекст при том же тексте и той же модели этапа: новое поколение
-   * отказало бы так же, его заводит только явная кнопка (уточнение Р20).
+   * отказало бы так же, его заводит только явная кнопка (уточнение Р20). Строка, закрытая на
+   * старте или на перехвате тем же правилом (`closedAtStart`), перепроверяется текущими
+   * настройками этапа: это правило детерминировано, и смена одного `maxTokens` или контекста
+   * модели его снимает (`T147`).
    */
   private async tooLongAgain(row: BookDossier, fresh: boolean): Promise<boolean> {
     if (row.failedReason !== DOSSIER_TOO_LONG || !fresh) return false;
+    if (await this.closedAtStart(row)) {
+      const { titles, entries } = await this.walkSource(row.sourceVersionId, () => undefined);
+      return (await this.findRefusingModel(titles, entries.length)) !== null;
+    }
     const { model } = await this.llm.getStageSetting(DOSSIER_STAGE);
     return row.model === model;
+  }
+
+  /**
+   * Строка закрыта правилом старта: на старте (`failAtStart` - ни операции, ни кусков) или на
+   * перехвате (`failTakeover` - строитель в `previousOperationId` без перехвата, `takeovers` 0).
+   * Куски проверяются, а не одна пустая `operationId`: связь с операцией `SetNull`, и строка
+   * обработчика с удалённой операцией иначе ушла бы на перепроверку (решение арбитра `T147`, (ж)).
+   */
+  private async closedAtStart(row: BookDossier): Promise<boolean> {
+    if (row.operationId !== null) return false;
+    if (row.previousOperationId !== null && row.takeovers === 0) return true;
+    const part = await this.prisma.bookDossierPart.findFirst({
+      where: { dossierId: row.id },
+      select: { dossierId: true },
+    });
+    return part === null;
   }
 
   private takeoverDemand<Row>(row: Row, taken: Row | 'waiter-limit' | null): Demand<Row> | null {

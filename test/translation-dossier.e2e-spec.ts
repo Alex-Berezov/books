@@ -2053,6 +2053,212 @@ describe('Translation source and dossier (e2e)', () => {
         expect(callsOf('dossier_part')).toHaveLength(18);
       });
 
+      it('the estimate flags a book whose start will be refused DOSSIER_TOO_LONG; the sum stays an estimate (T147)', async () => {
+        const refused = await book([
+          { language: 'en', originalLanguage: 'English', chapters: numberedChapters(19) },
+        ]);
+        const fits = await book([
+          { language: 'en', originalLanguage: 'English', chapters: numberedChapters(18) },
+        ]);
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: NARROW, maxTokens: 16_000 })
+          .expect(200);
+        const estimate = async (versionId: string) =>
+          (await auth(http().get(`/admin/versions/${versionId}/dossier/estimate`)).expect(200))
+            .body as { refusedTooLong: boolean; estimateUsd: string };
+
+        const flagged = await estimate(refused.ids.en as string);
+        expect(flagged.refusedTooLong).toBe(true);
+        expect(new Prisma.Decimal(flagged.estimateUsd).gt(0)).toBe(true);
+        expect((await estimate(fits.ids.en as string)).refusedTooLong).toBe(false);
+        // Строка досье оценки запуска берёт признак из той же оценки досье.
+        const context = await dossiers.contextEstimates(refused.ids.en as string, ['es']);
+        expect(context.dossier?.refusedTooLong).toBe(true);
+        // Оценка и старт - одно правило: помеченная книга на старте отказывает.
+        expect((await dossiers.demandDossier(refused.ids.en as string)).status).toBe('failed');
+        expect(callsOf('dossier_part')).toHaveLength(0);
+
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: WIDE, maxTokens: 16_000 })
+          .expect(200);
+        expect((await estimate(refused.ids.en as string)).refusedTooLong).toBe(false);
+        expect(callsOf('dossier_part')).toHaveLength(0);
+      });
+
+      it('a row refused at the start no longer blocks the waiter once a maxTokens change lifts the refusal (T147)', async () => {
+        const { ids } = await book([
+          { language: 'en', originalLanguage: 'English', chapters: numberedChapters(19) },
+        ]);
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: NARROW, maxTokens: 16_000 })
+          .expect(200);
+        const waiter = await waiterOperation();
+        const refused = await dossiers.demandDossier(ids.en as string, {
+          waiter: { operationId: waiter.id },
+        });
+        expect(refused.status).toBe('failed');
+        const row = rowOf(refused);
+
+        // Та же модель, другой `maxTokens`: K = 22 при 20 000, 19 глав - не отказ на старте.
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: NARROW, maxTokens: 20_000 })
+          .expect(200);
+        const again = await dossiers.demandDossier(ids.en as string, {
+          waiter: { operationId: waiter.id },
+        });
+        expect(again.status).toBe('wait');
+        expect(rowOf(again)).toMatchObject({ status: 'building', generation: row.generation + 1 });
+        expect(rowOf(again).operationId).not.toBeNull();
+      });
+
+      it('a row refused by the handler after paid pieces still blocks the waiter on the same model, whatever maxTokens (T147)', async () => {
+        answer = (name, body) =>
+          name === 'dossier_part' ? paddedPart(12_000) : defaultAnswer(name, body);
+        const { ids } = await eightChapters();
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: NARROW, maxTokens: 16_000 })
+          .expect(200);
+        await dossiers.demandDossier(ids.en as string);
+        await drainAll();
+        const row = await dossiers.latestDossier(ids.en as string);
+        expect(row).toMatchObject({ status: 'failed', failedReason: 'DOSSIER_TOO_LONG' });
+        expect(callsOf('dossier_part')).toHaveLength(8);
+        await prisma.bookDossier.update({ where: { id: row?.id }, data: { operationId: null } });
+
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: NARROW, maxTokens: 15_000 })
+          .expect(200);
+        // Решение арбитра (ж): строка с кусками - строка обработчика, судится по модели, и когда
+        // операцию строителя удалили (`onDelete: SetNull`), и когда её однажды перехватывали
+        // (`takeovers` 1, прежний строитель в `previousOperationId`).
+        const refusedFor = async (data: Prisma.BookDossierUncheckedUpdateInput) => {
+          await prisma.bookDossier.update({ where: { id: row?.id }, data });
+          const other = await waiterOperation();
+          return dossiers.demandDossier(ids.en as string, { waiter: { operationId: other.id } });
+        };
+        expect((await refusedFor({ operationId: null })).status).toBe('failed');
+        expect(
+          (await refusedFor({ previousOperationId: (await waiterOperation()).id, takeovers: 1 }))
+            .status,
+        ).toBe('failed');
+        const waiter = await waiterOperation();
+        const again = await dossiers.demandDossier(ids.en as string, {
+          waiter: { operationId: waiter.id },
+        });
+        expect(again.status).toBe('failed');
+        expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({
+          id: row?.id,
+          generation: row?.generation,
+        });
+        expect(await prisma.llmOperation.findUnique({ where: { id: waiter.id } })).toMatchObject({
+          status: 'paused',
+          pauseReason: 'STEP_FAILED',
+        });
+        expect(callsOf('dossier_part')).toHaveLength(8);
+      });
+
+      it('a takeover after the stage model became too narrow closes the row DOSSIER_TOO_LONG without a new operation or more paid pieces; a maxTokens change lifts it (T147)', async () => {
+        const { ids } = await book([
+          { language: 'en', originalLanguage: 'English', chapters: numberedChapters(19) },
+        ]);
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: WIDE, maxTokens: 16_000 })
+          .expect(200);
+        const started = await dossiers.demandDossier(ids.en as string);
+        expect(started.status).toBe('wait');
+        const builder = rowOf(started).operationId as string;
+        // Строитель успел оплатить куски: строка перехвата отличается от строки старта.
+        for (let i = 0; i < 20; i++) {
+          if (
+            (await prisma.bookDossierPart.count({ where: { dossierId: rowOf(started).id } })) > 0
+          ) {
+            break;
+          }
+          await worker.runOnce();
+        }
+        const paid = callsOf('dossier_part').length;
+        expect(paid).toBeGreaterThan(0);
+        await tasks.failOperation(builder);
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: NARROW, maxTokens: 16_000 })
+          .expect(200);
+
+        // Ждущий запуска ждал эту строку (`waitingFor`) - как шаг досье запуска после `wait`.
+        const waiter = await waiterOperation();
+        const own = { operationId: waiter.id, waitingFor: rowOf(started).id };
+        const taken = await dossiers.demandDossier(ids.en as string, { waiter: own });
+        expect(taken.status).toBe('failed');
+        // Строитель - в `previousOperationId`: строка закрыта правилом старта (решение арбитра
+        // `T147`, (ж)).
+        expect(
+          await prisma.bookDossier.findUnique({ where: { id: rowOf(started).id } }),
+        ).toMatchObject({
+          status: 'failed',
+          failedReason: 'DOSSIER_TOO_LONG',
+          model: NARROW,
+          operationId: null,
+          previousOperationId: builder,
+          takeovers: 0,
+        });
+        expect(await prisma.llmOperation.findUnique({ where: { id: waiter.id } })).toMatchObject({
+          status: 'paused',
+          pauseReason: 'STEP_FAILED',
+        });
+        expect(
+          await prisma.llmOperation.count({ where: { kind: 'dossier', bookVersionId: ids.en } }),
+        ).toBe(1);
+        await drainAll();
+        expect(callsOf('dossier_part')).toHaveLength(paid);
+
+        // Ждущий другого запуска на тех же настройках: отказ повторяется, строится ничего.
+        const second = await waiterOperation();
+        expect(
+          (await dossiers.demandDossier(ids.en as string, { waiter: { operationId: second.id } }))
+            .status,
+        ).toBe('failed');
+        expect((await dossiers.latestDossier(ids.en as string))?.id).toBe(rowOf(started).id);
+
+        // `maxTokens` подняли - отказ снят: новое поколение, а не STEP_FAILED.
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: NARROW, maxTokens: 20_000 })
+          .expect(200);
+        // «Продолжить» того же ждущего: его строку закрыл перехват, а не отказ его строителя.
+        await prisma.llmOperation.update({ where: { id: waiter.id }, data: { status: 'active' } });
+        const rebuilt = await dossiers.demandDossier(ids.en as string, { waiter: own });
+        expect(rebuilt.status).toBe('wait');
+        expect(rowOf(rebuilt)).toMatchObject({
+          status: 'building',
+          generation: rowOf(started).generation + 1,
+        });
+      });
+
+      it('the build button over a takeover the narrow model refuses closes that one row, no second failed generation (T147)', async () => {
+        const { ids } = await book([
+          { language: 'en', originalLanguage: 'English', chapters: numberedChapters(19) },
+        ]);
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: WIDE, maxTokens: 16_000 })
+          .expect(200);
+        const started = await dossiers.demandDossier(ids.en as string);
+        await tasks.failOperation(rowOf(started).operationId as string);
+        await auth(http().put('/admin/llm/stage-settings/dossier'))
+          .send({ model: NARROW, maxTokens: 16_000 })
+          .expect(200);
+
+        const pressed = await dossiers.demandDossier(ids.en as string);
+        expect(pressed.status).toBe('failed');
+        expect(rowOf(pressed).id).toBe(rowOf(started).id);
+        expect(await prisma.bookDossier.count({ where: { sourceVersionId: ids.en } })).toBe(1);
+        expect(await dossiers.latestDossier(ids.en as string)).toMatchObject({
+          id: rowOf(started).id,
+          status: 'failed',
+          failedReason: 'DOSSIER_TOO_LONG',
+        });
+        expect(
+          await prisma.llmOperation.count({ where: { kind: 'dossier', bookVersionId: ids.en } }),
+        ).toBe(1);
+      });
+
       /** Проходы, пока все заведённые группы уровня 0 не ответят; итог ещё не позван. */
       const answerLevel0 = async (versionId: string) => {
         for (let i = 0; i < 60; i++) {

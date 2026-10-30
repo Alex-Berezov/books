@@ -580,7 +580,10 @@ export class TranslationRunService {
         translateModel,
         chapters: plans.length,
         chunks: plans.reduce((sum, p) => sum + p.chunks.length, 0),
-        dossier: context.dossier && contextLine({ ...context.dossier, upperBound: false }),
+        dossier: context.dossier && {
+          ...contextLine({ ...context.dossier, upperBound: false }),
+          refusedTooLong: context.dossier.refusedTooLong,
+        },
         languages,
         upperBound,
         translationsUsd: moneyUsd(translationsUsd),

@@ -11213,6 +11213,37 @@
         ],
         "type": "object"
       },
+      "DossierContextLineDto": {
+        "properties": {
+          "estimateUsd": {
+            "description": "Upper estimate of the build",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "refusedTooLong": {
+            "description": "The build will be refused DOSSIER_TOO_LONG at the start, before any paid call: the book has more chapters than a group lists and two group answers do not fit the dossier stage model context",
+            "type": "boolean"
+          },
+          "suggestedLimitUsd": {
+            "description": "Limit of its own operation: estimate × 1.5; must fit the run limit",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "upperBound": {
+            "description": "The dossier is not ready yet: an upper bound by the dossier answer size",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "estimateUsd",
+          "suggestedLimitUsd",
+          "upperBound",
+          "refusedTooLong"
+        ],
+        "type": "object"
+      },
       "DossierDataDto": {
         "properties": {
           "chapters": {
@@ -11351,6 +11382,10 @@
             "description": "Chapter pieces read by the first pass",
             "type": "number"
           },
+          "refusedTooLong": {
+            "description": "The build will be refused DOSSIER_TOO_LONG at the start, before any paid call: the book has more chapters than a group lists and two group answers do not fit the dossier stage model context",
+            "type": "boolean"
+          },
           "sourceVersionId": {
             "format": "uuid",
             "type": "string"
@@ -11367,7 +11402,8 @@
           "chapters",
           "parts",
           "estimateUsd",
-          "suggestedLimitUsd"
+          "suggestedLimitUsd",
+          "refusedTooLong"
         ],
         "type": "object"
       },
@@ -27201,7 +27237,7 @@
           "dossier": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/CompareContextLineDto"
+                "$ref": "#/components/schemas/DossierContextLineDto"
               }
             ],
             "description": "The dossier is built first under its own operation (also a stale one); null - fresh and ready, or building",

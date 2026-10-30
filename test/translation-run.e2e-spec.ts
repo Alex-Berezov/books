@@ -2626,6 +2626,35 @@ describe('Translation run (e2e)', () => {
     expect(await runsOf(bookId)).toBe(0);
   });
 
+  it('estimate: the dossier line carries the start refusal of the dossier estimate (T147)', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const dossiers = app.get<DossierDemandService>(DossierDemandService);
+    const real: DossierDemandService['contextEstimates'] = (...args) =>
+      DossierDemandService.prototype.contextEstimates.apply(
+        dossiers,
+        args,
+      ) as Promise<ContextEstimates>;
+    jest
+      .spyOn(dossiers, 'contextEstimates')
+      .mockImplementationOnce(
+        async (...args: Parameters<DossierDemandService['contextEstimates']>) => {
+          const estimate = await real(...args);
+          expect(estimate.dossier).not.toBeNull();
+          return {
+            ...estimate,
+            dossier: estimate.dossier && { ...estimate.dossier, refusedTooLong: true },
+          };
+        },
+      );
+
+    const res = await auth(
+      http()
+        .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+        .query({ languages: 'es' }),
+    ).expect(200);
+    expect(res.body.dossier).toMatchObject({ refusedTooLong: true, upperBound: false });
+  });
+
   it('estimate refuses a bad query with 400: an unknown language, a repeated one, an unknown model', async () => {
     const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
     const estimate = (query: Record<string, string | string[]>) =>
@@ -2863,7 +2892,7 @@ describe('Translation run (e2e)', () => {
             .query({ languages: 'es,fr' }),
         ).expect(200)
       ).body as {
-        dossier: { suggestedLimitUsd: string } | null;
+        dossier: { suggestedLimitUsd: string; refusedTooLong: boolean } | null;
         languages: Array<{
           language: string;
           glossary: { suggestedLimitUsd: string } | null;
@@ -2891,7 +2920,7 @@ describe('Translation run (e2e)', () => {
       nearLimitChapters: [],
     });
     expect(new Prisma.Decimal(before.defaultLimitUsd).toString()).toBe('10');
-    expect(before.dossier).not.toBeNull();
+    expect(before.dossier).toMatchObject({ refusedTooLong: false });
     expect(before.languages.map((l) => l.language)).toEqual(['es', 'fr']);
     expect(sum(before.languages.map((l) => l.totalUsd))).toBe(
       new Prisma.Decimal(before.translationsUsd).toString(),
