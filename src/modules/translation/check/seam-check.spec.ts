@@ -7,6 +7,7 @@ import {
   SEAM_SHAPE,
   seamAnswerOf,
   seamFailed,
+  seamFindingsOf,
   seamInputOf,
   seamMessages,
   seamProblems,
@@ -68,5 +69,21 @@ describe('seam check', () => {
   it('an unknown verdict is a form error', () => {
     expect(shapeErrors({ verdict: 'maybe', problems: [] }, SEAM_SHAPE)).not.toEqual([]);
     expect(shapeErrors({ verdict: 'pass', problems: [] }, SEAM_SHAPE)).toEqual([]);
+  });
+});
+
+describe('seamFindingsOf', () => {
+  it('keeps only object findings with a seam code and a numeric seam', () => {
+    const ok = { code: SEAM_FINDING_CODES.SEAM_CHECKED, seam: 2 };
+    const found = seamFindingsOf([
+      ok,
+      null,
+      'SEAM_CHECKED',
+      [SEAM_FINDING_CODES.SEAM_CHECKED, 3],
+      { code: 'OTHER', seam: 1 },
+      { code: SEAM_FINDING_CODES.SEAM_BROKEN, seam: '1' },
+    ]);
+    expect(found).toEqual([ok]);
+    expect(seamFindingsOf({ code: SEAM_FINDING_CODES.SEAM_CHECKED, seam: 1 })).toEqual([]);
   });
 });

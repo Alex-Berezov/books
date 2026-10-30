@@ -26,7 +26,11 @@ import {
 import { Role, Roles } from '../../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
-import { PaginatedResult, paginatedSchema } from '../../../shared/dto/paginated-response.dto';
+import {
+  PaginatedResult,
+  PaginationInfoDto,
+  paginatedSchema,
+} from '../../../shared/dto/paginated-response.dto';
 import {
   ListTranslationRunsQueryDto,
   ResumeTranslationRunDto,
@@ -52,7 +56,7 @@ interface RequestUser {
  * запуска с лимитом; модель зовёт исполнитель фоном, а не ручка.
  */
 @ApiTags('admin')
-@ApiExtraModels(TranslationRunListItemDto)
+@ApiExtraModels(TranslationRunListItemDto, PaginationInfoDto)
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin)

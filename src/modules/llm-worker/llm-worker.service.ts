@@ -18,6 +18,7 @@ import { LlmTaskService } from './llm-task.service';
 import { LlmTaskContext, LlmTaskStepResult, STEP_ERROR, TOO_MANY_ATTEMPTS } from './llm-task.types';
 import { LlmTaskLeaseLostError } from './llm-worker.errors';
 import { LlmWorkerConfig } from './llm-worker.config';
+import { isRecord } from '../../shared/prisma/json-record.util';
 
 /** Чистка зависших вызовов и счёт задач без обработчика - не чаще раза в минуту. */
 const HOUSEKEEPING_EVERY_MS = 60_000;
@@ -33,8 +34,7 @@ export function stepFailureCode(error: unknown): string {
   if (error instanceof LlmError) return error.code;
   if (error instanceof HttpException && error.getStatus() === 503) {
     const body = error.getResponse();
-    const code =
-      typeof body === 'object' && body !== null ? (body as { code?: unknown }).code : null;
+    const code = isRecord(body) ? body.code : null;
     if (typeof code === 'string' && code) return code;
   }
   return STEP_ERROR;

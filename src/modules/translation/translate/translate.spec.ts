@@ -440,10 +440,12 @@ describe('glossary findings of a translation answer (F05-4)', () => {
           { source: 3, target: 'x' },
           'junk',
           null,
+          ['Town', 'Pueblo'],
         ],
       }),
     ).toEqual([{ source: 'Town', target: 'Pueblo', kind: 'place', note: '' }]);
     expect(glossaryFindingsOf({ blocks: [] })).toEqual([]);
+    expect(glossaryFindingsOf([{ source: 'Town', target: 'Pueblo' }])).toEqual([]);
   });
 
   it('drops overlong findings and keeps at most the limit; no answer - no findings', () => {

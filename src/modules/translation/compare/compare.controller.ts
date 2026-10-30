@@ -27,7 +27,11 @@ import { Role, Roles } from '../../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { PaginationDto } from '../../../shared/dto/pagination.dto';
-import { PaginatedResult, paginatedSchema } from '../../../shared/dto/paginated-response.dto';
+import {
+  PaginatedResult,
+  PaginationInfoDto,
+  paginatedSchema,
+} from '../../../shared/dto/paginated-response.dto';
 import {
   StartTranslationCompareDto,
   TranslationCompareEstimateQueryDto,
@@ -48,7 +52,7 @@ interface RequestUser {
  * под своей операцией с лимитом, список и результат.
  */
 @ApiTags('admin')
-@ApiExtraModels(TranslationCompareListItemDto)
+@ApiExtraModels(TranslationCompareListItemDto, PaginationInfoDto)
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin)

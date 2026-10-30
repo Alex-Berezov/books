@@ -1,14 +1,13 @@
 import { BookDossier, BookGlossary, LlmOperation, Prisma } from '@prisma/client';
 import { moneyUsd } from '../../llm/dto/llm-money';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { DossierEstimateDto, DossierStatusDto, GlossaryDto } from '../dto/translation-response.dto';
 import { DossierDataDto, GlossaryDataDto, GlossaryHistoryItemDto } from '../dto/dossier-data.dto';
 import { DossierEstimate } from './dossier-demand.service';
 
 function record(value: Prisma.JsonValue | null): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : null;
+  return isRecord(value) ? value : null;
 }
 
 /**

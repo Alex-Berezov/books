@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { SEAM_FINDING_CODES } from '../check/seam-check';
 import { ChapterFlagCode, DRAFT_FLAG_REASONS } from '../draft/draft.constants';
 import { FINAL_FINDING_CODES } from '../final-check/final-check.constants';
@@ -117,7 +118,7 @@ export function rebuiltFindings(
   notWritten: ChapterFlagCode | null = null,
 ): StoredFinding[] {
   const kept = (Array.isArray(previous) ? previous : [])
-    .filter((f): f is Prisma.JsonObject => typeof f === 'object' && f !== null && !Array.isArray(f))
+    .filter(isRecord)
     .map((f) => f as unknown as StoredFinding)
     .filter((f) => typeof f.code === 'string' && !ASSEMBLY_CODES.has(f.code))
     .filter((f) => f.code !== DRAFT_FLAG_REASONS.SOURCE_CHANGED)

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { isRecord } from '../prisma/json-record.util';
 
 /**
  * Редактор значений, уезжающих во внешний сервис вместе с событием Sentry
@@ -494,7 +495,7 @@ function getContainer(value: unknown): unknown[] | Record<string, unknown> | und
   // `Array.isArray` сужает `unknown` до `any[]`, а не до `unknown[]` — приведение
   // возвращает проверку типов внутрь элементов, а не отключает её.
   if (Array.isArray(value)) return value as unknown[];
-  return isPlainObject(value) ? value : undefined;
+  return isRecord(value) ? value : undefined;
 }
 
 /**
@@ -503,7 +504,7 @@ function getContainer(value: unknown): unknown[] | Record<string, unknown> | und
  * На `POST /uploads/direct` тело разбирается сырым `express.raw` с любым типом
  * содержимого (`DirectUploadBodyMiddleware`, `LEGACY-459`), то есть `req.body` там —
  * `Buffer` размером до заявленного при presign `size` +10 % (аудио — до ~220 МБ).
- * `Array.isArray(Buffer)` ложно, а `isPlainObject` истинно, поэтому редактор
+ * `Array.isArray(Buffer)` ложно, а `isRecord` истинно, поэтому редактор
  * разворачивал бы его в объект «ключ на байт» — сотни миллионов ключей, собираемых
  * внутри обработчика исключения, и потолок `MAX_REDACT_ARRAY_ITEMS` сюда не достаёт.
  * Проверка стоит **до** `getContainer` и отдаёт только размер: содержимое файла
@@ -520,7 +521,7 @@ function describeBinary(value: unknown): string | undefined {
  * 🔴 Носитель состояния вне перечислимых собственных ключей внутрь редактора
  * не пускается — он отдаётся меткой с типом (`LEGACY-335`).
  *
- * `Date`, `Map`, `Set`, `RegExp` и `Error` проходят `isPlainObject`: они объекты,
+ * `Date`, `Map`, `Set`, `RegExp` и `Error` проходят `isRecord`: они объекты,
  * не `null` и не массивы. Данные при этом лежат во внутренних слотах, `Object.keys`
  * отдаёт пустой список, и `redactObject` клонировал их в `{}` — в событии
  * не оставалось ни следа того, что там что-то было.
@@ -538,7 +539,7 @@ function describeBinary(value: unknown): string | undefined {
  * превратится в `[Object: unknown]`, и `redactUrl` останется единственным
  * местом, где она видна. Проверено запуском, а не по памяти.
  *
- * ⚠️ Массив сюда не доходит: его отсеивает `isPlainObject`, тот же предикат,
+ * ⚠️ Массив сюда не доходит: его отсеивает `isRecord`, тот же предикат,
  * которым `getContainer` решает, заходить ли внутрь. Без этого отсева редактор
  * перестал бы заходить в массивы вовсе — прототип у них `Array.prototype`.
  *
@@ -550,7 +551,7 @@ function describeExotic(value: unknown): string | undefined {
   // признак «сюда редактор заходит» обязан быть задан в одном месте. Разъехавшись,
   // эти две ветки дали бы значению одновременно метку и попытку обхода, и обе
   // вернули бы правдоподобный результат. Найдено ревью 30.08.2026.
-  if (!isPlainObject(value)) return undefined;
+  if (!isRecord(value)) return undefined;
   const proto: unknown = Object.getPrototypeOf(value);
   if (proto === null || proto === Object.prototype) return undefined;
   return `[${describeExoticShape(value)}]`;
@@ -586,8 +587,4 @@ function describeConstructor(value: object): string {
   const ctor: unknown = (proto as { constructor?: unknown }).constructor;
   const name: unknown = typeof ctor === 'function' ? (ctor as { name?: unknown }).name : undefined;
   return typeof name === 'string' && name !== '' ? name : 'unknown';
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

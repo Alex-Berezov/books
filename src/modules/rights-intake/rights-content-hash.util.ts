@@ -75,12 +75,11 @@ export function stableStringify(value: unknown): string {
 }
 
 function sortedReplacer(_key: string, value: unknown): unknown {
-  if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-    const obj = value as Record<string, unknown>;
-    const keys = Object.keys(obj).sort();
+  if (isRecord(value)) {
+    const keys = Object.keys(value).sort();
     const result: Record<string, unknown> = {};
     for (const key of keys) {
-      result[key] = obj[key];
+      result[key] = value[key];
     }
     return result;
   }

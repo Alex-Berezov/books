@@ -1,5 +1,6 @@
 import { Language } from '@prisma/client';
 import { LlmChatMessage } from '../../llm/openrouter.client';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { ChapterLayout } from '../chapter-blocks';
 import { Shape } from '../dossier/dossier.format';
 import { LANGUAGE_NAMES, shapedRequest } from '../dossier/dossier.prompts';
@@ -157,10 +158,10 @@ export const seamRequest = (input: SeamInput) =>
 export function seamFindingsOf(findings: unknown): SeamFinding[] {
   return (Array.isArray(findings) ? findings : []).filter(
     (f): f is SeamFinding =>
-      typeof f === 'object' &&
-      f !== null &&
-      SEAM_CODES.has((f as SeamFinding).code) &&
-      typeof (f as SeamFinding).seam === 'number',
+      isRecord(f) &&
+      typeof f.code === 'string' &&
+      SEAM_CODES.has(f.code) &&
+      typeof f.seam === 'number',
   );
 }
 

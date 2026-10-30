@@ -1,6 +1,7 @@
 import { HttpException } from '@nestjs/common';
 import { BookDossier, BookGlossary, Language, Prisma } from '@prisma/client';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { DossierDemandService } from './dossier-demand.service';
 import { Demand } from './dossier-demand.types';
 
@@ -10,7 +11,7 @@ const CONTEXT_RETRY_CODES = new Set(['DOSSIER_BUSY', 'GLOSSARY_BUSY']);
 /** Код отказа ручки досье (409/503 с `code` в теле), которым шаг ставит свою операцию на паузу. */
 function httpCode(error: HttpException): string {
   const body = error.getResponse();
-  const code = typeof body === 'object' && body !== null ? (body as { code?: unknown }).code : null;
+  const code = isRecord(body) ? body.code : null;
   return typeof code === 'string' && code ? code : `HTTP_${error.getStatus()}`;
 }
 

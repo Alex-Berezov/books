@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, TranslationRunLanguageStatus } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { moneyUsd } from '../../llm/dto/llm-money';
 import {
   TranslationReportCostDto,
@@ -41,9 +42,8 @@ const FINDING_STRING_MAX = 500;
  */
 export function reportFindings(value: Prisma.JsonValue): TranslationReportFindingDto[] {
   if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    if (typeof item !== 'object' || item === null || Array.isArray(item)) return [];
-    const f = item as Record<string, unknown>;
+  return value.flatMap((f) => {
+    if (!isRecord(f)) return [];
     if (typeof f.code !== 'string') return [];
     const out: TranslationReportFindingDto = { code: f.code };
     for (const k of FINDING_STRINGS) {

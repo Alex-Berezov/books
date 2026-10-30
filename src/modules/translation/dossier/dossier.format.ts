@@ -5,6 +5,7 @@
  */
 
 import { DossierChapterDto, DossierSummarySectionDto } from '../dto/dossier-data.dto';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 
 export const DOSSIER_FORMAT_VERSION = 1;
 
@@ -129,12 +130,9 @@ export function shapeErrors(value: unknown, shape: Shape, path = '$'): string[] 
     if (!Array.isArray(value)) return [`${path}: expected array`];
     return value.flatMap((item, i) => shapeErrors(item, shape.array, `${path}[${i}]`));
   }
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return [`${path}: expected object`];
-  }
-  const record = value as Record<string, unknown>;
+  if (!isRecord(value)) return [`${path}: expected object`];
   return Object.entries(shape.object).flatMap(([key, field]) =>
-    shapeErrors(record[key], field, `${path}.${key}`),
+    shapeErrors(value[key], field, `${path}.${key}`),
   );
 }
 

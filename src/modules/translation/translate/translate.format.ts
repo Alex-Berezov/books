@@ -1,4 +1,5 @@
 import { sanitizeRichHtml } from '../../../shared/sanitize/rich-html';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
 import { ChapterBlock, INLINE_TAGS } from '../chapter-blocks';
 import { Shape } from '../dossier/dossier.format';
@@ -60,13 +61,13 @@ function findingSourceLongEnough(source: string): boolean {
  * не больше `GLOSSARY_FINDINGS_MAX`; прочие поля - строкой. Ответа нет - находок нет.
  */
 export function glossaryFindingsOf(value: unknown): GlossaryFinding[] {
-  if (typeof value !== 'object' || value === null) return [];
-  const raw = (value as { glossaryFindings?: unknown }).glossaryFindings;
+  if (!isRecord(value)) return [];
+  const raw = value.glossaryFindings;
   if (!Array.isArray(raw)) return [];
   const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
   const term = (v: string) => v !== '' && v.length <= GLOSSARY_FINDING_TERM_MAX;
   return raw
-    .filter((f): f is Record<string, unknown> => typeof f === 'object' && f !== null)
+    .filter(isRecord)
     .map((f) => ({
       source: text(f.source),
       target: text(f.target),
