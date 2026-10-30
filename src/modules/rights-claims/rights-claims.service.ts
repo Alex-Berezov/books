@@ -66,6 +66,7 @@ import {
   RightsClaimStatus,
   toStringArray,
 } from './rights-claim-interface';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 const SUPPORTED_LANGUAGE_CODES = ['en', 'es', 'fr', 'pt', 'ru'];
 const COUNTRY_CODE_PATTERN = /^[A-Z]{2}$/;
@@ -1667,7 +1668,10 @@ export class RightsClaimsService {
       where.requiresLawyerReview = query.requiresLawyerReview;
     }
     if (query.q) {
-      const contains: Prisma.StringFilter = { contains: query.q, mode: 'insensitive' };
+      const contains: Prisma.StringFilter = {
+        contains: escapeLikeWildcards(query.q),
+        mode: 'insensitive',
+      };
       where.OR = [
         { claimNumber: contains },
         { claimantName: contains },

@@ -196,6 +196,26 @@ describe('MediaService (unit)', () => {
       });
     });
 
+    it('search escapes LIKE wildcards in every contains (LEGACY-471)', async () => {
+      prisma.mediaAsset.findMany.mockResolvedValue([]);
+      prisma.mediaAsset.count.mockResolvedValue(0);
+
+      const containsValues = (node: unknown): string[] => {
+        if (Array.isArray(node)) return node.flatMap(containsValues);
+        if (node && typeof node === 'object') {
+          return Object.entries(node).flatMap(([key, value]) =>
+            key === 'contains' && typeof value === 'string' ? [value] : containsValues(value),
+          );
+        }
+        return [];
+      };
+
+      await service.list({ q: '100%_x' } as MediaListQueryDto);
+
+      const where = (prisma.mediaAsset.findMany.mock.calls[0][0] as { where: unknown }).where;
+      expect(containsValues(where)).toEqual(Array<string>(2).fill('100\\%\\_x'));
+    });
+
     it('filters "document" as not image/video/audio, not as an application/ prefix', async () => {
       prisma.mediaAsset.findMany.mockResolvedValue([]);
       prisma.mediaAsset.count.mockResolvedValue(0);

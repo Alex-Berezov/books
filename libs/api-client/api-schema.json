@@ -28788,6 +28788,7 @@
           "nickname": {
             "description": "Letters, numbers and underscores only",
             "example": "johnny",
+            "maxLength": 30,
             "minLength": 3,
             "type": "string"
           }

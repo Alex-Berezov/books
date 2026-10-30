@@ -42,6 +42,7 @@ import {
   mirrorTranslationMetaToSeo,
 } from '../../shared/seo/translation-meta-seo.util';
 import { assertChangedSlugLength, suggestedSlugCandidate } from '../../shared/validators/slug';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 /**
  * Форма ответа трёх ручек перевода тега (`listTranslations`/`createTranslation`/
@@ -79,12 +80,13 @@ export class TagsService {
   ) {
     const foldRobots = opts?.publicIndexability === true;
     const skip = (page - 1) * limit;
+    const like = search ? escapeLikeWildcards(search) : '';
     const where: Prisma.TagWhereInput = search
       ? {
           OR: [
-            { name: { contains: search, mode: 'insensitive' } },
-            { slug: { contains: search, mode: 'insensitive' } },
-            { translations: { some: { name: { contains: search, mode: 'insensitive' } } } },
+            { name: { contains: like, mode: 'insensitive' } },
+            { slug: { contains: like, mode: 'insensitive' } },
+            { translations: { some: { name: { contains: like, mode: 'insensitive' } } } },
           ],
         }
       : {};

@@ -1494,6 +1494,27 @@ describe('UsersService (unit)', () => {
     });
   });
 
+  it('search escapes LIKE wildcards in every contains (LEGACY-471)', async () => {
+    prismaMock.user.count.mockResolvedValue(0);
+    prismaMock.user.findMany.mockResolvedValue([]);
+    prismaMock.userRole.findMany.mockResolvedValue([]);
+
+    const containsValues = (node: unknown): string[] => {
+      if (Array.isArray(node)) return node.flatMap(containsValues);
+      if (node && typeof node === 'object') {
+        return Object.entries(node).flatMap(([key, value]) =>
+          key === 'contains' && typeof value === 'string' ? [value] : containsValues(value),
+        );
+      }
+      return [];
+    };
+
+    await service.list({ page: 1, limit: 10, q: '100%_x' });
+
+    const where = whereOfLastList();
+    expect(containsValues(where)).toEqual(Array<string>(2).fill('100\\%\\_x'));
+  });
+
   /**
    * 🔴 Сторож `LEGACY-170`. Раньше в фильтр подмешивались почты из
    * `ADMIN_EMAILS` / `CONTENT_MANAGER_EMAILS`, и список сотрудников расходился

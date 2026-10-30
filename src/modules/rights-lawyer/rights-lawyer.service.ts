@@ -21,6 +21,7 @@ import type { LawyerDetailDto, LawyerDto } from './dto/lawyer-response.dto';
 import type { ListLawyersDto } from './dto/list-lawyers.dto';
 import type { DeactivateLawyerDto } from './dto/reason.dto';
 import type { UpdateLawyerDto } from './dto/update-lawyer.dto';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 const COUNTRY_CODE_PATTERN = /^[A-Z]{2}$/;
 const LAWYER_ROLE_NAME = 'lawyer';
@@ -52,7 +53,7 @@ export class RightsLawyerService {
     if (query.lawyerType) where['lawyerType'] = query.lawyerType;
     if (query.isActive !== undefined) where['isActive'] = query.isActive;
     if (query.q) {
-      const contains = { contains: query.q, mode: 'insensitive' };
+      const contains = { contains: escapeLikeWildcards(query.q), mode: 'insensitive' };
       where['OR'] = [
         { fullName: contains },
         { organization: contains },

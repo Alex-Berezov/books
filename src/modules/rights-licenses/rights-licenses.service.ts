@@ -33,6 +33,7 @@ import {
   RightsLicenseTerritoryScope,
   toStringArray,
 } from './rights-license-interface';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 const SUPPORTED_LANGUAGE_CODES = ['en', 'es', 'fr', 'pt', 'ru'];
 const COUNTRY_CODE_PATTERN = /^[A-Z]{2}$/;
@@ -755,7 +756,10 @@ export class RightsLicensesService {
     if (query.licenseType) where.licenseType = query.licenseType;
     if (query.territoryScope) where.territoryScope = query.territoryScope;
     if (query.q) {
-      const contains: Prisma.StringFilter = { contains: query.q, mode: 'insensitive' };
+      const contains: Prisma.StringFilter = {
+        contains: escapeLikeWildcards(query.q),
+        mode: 'insensitive',
+      };
       where.OR = [
         { title: contains },
         { licensor: contains },

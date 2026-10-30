@@ -10,6 +10,7 @@ import {
   deriveSourceFromUrl,
   isSameLanguage,
 } from './rights-intake-source-url.util';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 /**
  * Manual (Phase 1) status transitions.
@@ -74,12 +75,13 @@ export class RightsIntakeService {
       ];
     }
     if (dto.q) {
+      const like = escapeLikeWildcards(dto.q);
       const qCondition = [
-        { candidateTitle: { contains: dto.q, mode: 'insensitive' } },
-        { candidateAuthor: { contains: dto.q, mode: 'insensitive' } },
-        { originalTitle: { contains: dto.q, mode: 'insensitive' } },
-        { sourceExternalId: { contains: dto.q, mode: 'insensitive' } },
-        { sourceUrl: { contains: dto.q, mode: 'insensitive' } },
+        { candidateTitle: { contains: like, mode: 'insensitive' } },
+        { candidateAuthor: { contains: like, mode: 'insensitive' } },
+        { originalTitle: { contains: like, mode: 'insensitive' } },
+        { sourceExternalId: { contains: like, mode: 'insensitive' } },
+        { sourceUrl: { contains: like, mode: 'insensitive' } },
       ];
       if (where['OR']) {
         where['AND'] = [{ OR: where['OR'] }, { OR: qCondition }];

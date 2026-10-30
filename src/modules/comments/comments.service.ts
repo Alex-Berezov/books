@@ -12,6 +12,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { paginated, paginatedWithNext } from '../../shared/dto/paginated-response.dto';
 import { CreateCommentDto } from './dto/create-comment.dto';
 import { UpdateCommentDto } from './dto/update-comment.dto';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 /**
  * Вложенная ветка ответов: и кого показывать, и кто их написал.
@@ -307,6 +308,7 @@ export class CommentsService {
   }) {
     const { page, limit, search, status = 'all', bookId } = params;
 
+    const like = search ? escapeLikeWildcards(search) : '';
     const where: Prisma.CommentWhereInput = {
       isDeleted: false,
       ...(status === 'visible' ? { isHidden: false } : {}),
@@ -315,10 +317,10 @@ export class CommentsService {
       ...(search
         ? {
             OR: [
-              { text: { contains: search, mode: 'insensitive' as const } },
-              { user: { name: { contains: search, mode: 'insensitive' as const } } },
-              { user: { nickname: { contains: search, mode: 'insensitive' as const } } },
-              { user: { email: { contains: search, mode: 'insensitive' as const } } },
+              { text: { contains: like, mode: 'insensitive' as const } },
+              { user: { name: { contains: like, mode: 'insensitive' as const } } },
+              { user: { nickname: { contains: like, mode: 'insensitive' as const } } },
+              { user: { email: { contains: like, mode: 'insensitive' as const } } },
             ],
           }
         : {}),

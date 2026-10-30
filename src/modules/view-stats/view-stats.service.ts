@@ -77,18 +77,23 @@ export class ViewStatsService {
     if (cached) return cached;
 
     const { from, to } = this.calcRange(q.period, q.from, q.to);
-    const parts: Prisma.Sql[] = [Prisma.sql`"bookVersionId" = ${q.versionId}`];
-    if (q.source) parts.push(Prisma.sql`AND "source" = ${q.source}`);
-    if (from) parts.push(Prisma.sql`AND "timestamp" >= ${from}`);
-    if (to) parts.push(Prisma.sql`AND "timestamp" <= ${to}`);
+    // Только опубликованные версии (`LEGACY-471`): ручка публичная, а счётчик черновика,
+    // записанный до `LEGACY-462`, отличал бы его id от несуществующего.
+    // Та же форма, что в `top`: одно правило публичности — одна запись.
+    const parts: Prisma.Sql[] = [Prisma.sql`vs."bookVersionId" = ${q.versionId}`];
+    if (q.source) parts.push(Prisma.sql`AND vs."source" = ${q.source}`);
+    if (from) parts.push(Prisma.sql`AND vs."timestamp" >= ${from}`);
+    if (to) parts.push(Prisma.sql`AND vs."timestamp" <= ${to}`);
 
     const stmt = Prisma.sql`
-      SELECT to_char(date_trunc('day', "timestamp"), 'YYYY-MM-DD') as date,
+      SELECT to_char(date_trunc('day', vs."timestamp"), 'YYYY-MM-DD') as date,
              COUNT(*)::int as count
-      FROM "ViewStat"
+      FROM "ViewStat" vs
+      JOIN "BookVersion" bv ON bv.id = vs."bookVersionId"
+        AND bv.status = 'published'::"PublicationStatus"
       WHERE ${Prisma.join(parts, ' ')}
-      GROUP BY date_trunc('day', "timestamp")
-      ORDER BY date_trunc('day', "timestamp") ASC
+      GROUP BY date_trunc('day', vs."timestamp")
+      ORDER BY date_trunc('day', vs."timestamp") ASC
     `;
     const result = await this.prisma.$queryRaw<{ date: string; count: number }[]>(stmt);
 

@@ -99,6 +99,9 @@ describe('ViewStatsService (unit)', () => {
     const agg = await service.aggregate({ versionId, period: 'week', source: ViewSource.text });
     expect(agg.total).toBe(5);
     expect(cache.set).toHaveBeenCalled();
+    // Только опубликованные версии (LEGACY-471): поведение — e2e `view-stats.e2e-spec.ts`, здесь — что условие в запросе.
+    const [stmt] = prisma.$queryRaw.mock.calls[0] as [Prisma.Sql];
+    expect(stmt.sql).toContain(`bv.status = 'published'::"PublicationStatus"`);
   });
 
   it('top: validates range ordering and caches result', async () => {

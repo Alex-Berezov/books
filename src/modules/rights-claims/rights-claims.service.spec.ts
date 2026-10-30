@@ -276,6 +276,26 @@ describe('RightsClaimsService', () => {
     );
   });
 
+  it('search escapes LIKE wildcards in every contains (LEGACY-471)', async () => {
+    prisma.rightsClaim.count.mockResolvedValue(0);
+    prisma.rightsClaim.findMany.mockResolvedValue([]);
+
+    const containsValues = (node: unknown): string[] => {
+      if (Array.isArray(node)) return node.flatMap(containsValues);
+      if (node && typeof node === 'object') {
+        return Object.entries(node).flatMap(([key, value]) =>
+          key === 'contains' && typeof value === 'string' ? [value] : containsValues(value),
+        );
+      }
+      return [];
+    };
+
+    await service.findAll({ page: 1, limit: 20, q: '100%_x' });
+
+    const where = (prisma.rightsClaim.findMany.mock.calls[0][0] as { where: unknown }).where;
+    expect(containsValues(where)).toEqual(Array<string>(7).fill('100\\%\\_x'));
+  });
+
   it('findAll combines an explicit status with openOnly via AND instead of overwriting it (LEGACY-405)', async () => {
     prisma.rightsClaim.count.mockResolvedValue(0);
     prisma.rightsClaim.findMany.mockResolvedValue([]);

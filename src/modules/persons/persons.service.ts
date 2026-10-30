@@ -13,6 +13,7 @@ import { AdminAuditAction, AdminAuditTargetType } from '@prisma/client';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import { paginated } from '../../shared/dto/paginated-response.dto';
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 /**
  * Сколько id держателей связи — легаси-авторов и претензий — называет отказ удаления
@@ -90,9 +91,10 @@ export class PersonsService {
 
     if (q?.trim()) {
       const searchTerm = q.trim();
+      const like = escapeLikeWildcards(searchTerm);
       const qFilter: Array<Record<string, unknown>> = [
-        { canonicalName: { contains: searchTerm, mode: 'insensitive' } },
-        { sortName: { contains: searchTerm, mode: 'insensitive' } },
+        { canonicalName: { contains: like, mode: 'insensitive' } },
+        { sortName: { contains: like, mode: 'insensitive' } },
         { wikidataId: { equals: searchTerm, mode: 'insensitive' } },
         { viafId: { equals: searchTerm, mode: 'insensitive' } },
         { isni: { equals: searchTerm, mode: 'insensitive' } },
@@ -100,7 +102,7 @@ export class PersonsService {
         {
           translations: {
             some: {
-              displayName: { contains: searchTerm, mode: 'insensitive' },
+              displayName: { contains: like, mode: 'insensitive' },
               ...(language ? { language } : {}),
             },
           },

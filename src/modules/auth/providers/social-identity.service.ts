@@ -2,6 +2,7 @@ import { Injectable, ServiceUnavailableException, UnauthorizedException } from '
 import { ConfigService } from '@nestjs/config';
 import { OAuth2Client } from 'google-auth-library';
 import type { TokenPayload } from 'google-auth-library';
+import { USER_NAME_MAX_LENGTH } from '../../../shared/constants/validation';
 
 export type SocialProvider = 'google';
 
@@ -92,7 +93,13 @@ export class SocialIdentityService {
       email,
       // Проверено выше: без `email_verified === true` сюда не дойти.
       emailVerified: true,
-      name: payload.name ?? undefined,
+      // Имя пишется в `User.name` как есть: потолок формы (`LEGACY-471`), провайдер его не знает.
+      // Режется по кодовым точкам, а не по единицам UTF-16: суррогатная пара на границе не распадается
+      // (составной эмодзи с ZWJ разрезаться может — это не битая строка).
+      name:
+        payload.name == null
+          ? undefined
+          : Array.from(payload.name).slice(0, USER_NAME_MAX_LENGTH).join(''),
       avatarUrl: payload.picture ?? undefined,
     };
   }

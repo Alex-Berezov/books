@@ -1,7 +1,10 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
 import { Language as PrismaLanguage } from '@prisma/client';
 import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
-import { USER_NAME_MAX_LENGTH } from '../../../shared/constants/validation';
+import {
+  USER_NAME_MAX_LENGTH,
+  USER_NICKNAME_MAX_LENGTH,
+} from '../../../shared/constants/validation';
 import { IsAbsoluteHttpUrl } from '../../../shared/validators/absolute-http-url.decorator';
 
 /**
@@ -19,6 +22,7 @@ export class UpdateMeDto {
 
   @ApiPropertyOptional({
     minLength: 3,
+    maxLength: USER_NICKNAME_MAX_LENGTH,
     example: 'johnny',
     description: 'Letters, numbers and underscores only',
   })
@@ -28,6 +32,7 @@ export class UpdateMeDto {
     message: 'Nickname must contain only letters, numbers, and underscores',
   })
   @MinLength(3)
+  @MaxLength(USER_NICKNAME_MAX_LENGTH)
   nickname?: string;
 
   @ApiPropertyOptional({ format: 'uri' })

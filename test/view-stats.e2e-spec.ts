@@ -134,6 +134,18 @@ describe('ViewStats e2e', () => {
     expect(ids).not.toContain(draftVersionId);
   });
 
+  it('GET /views/aggregate gives a draft the same empty series as a missing id (LEGACY-471)', async () => {
+    // Просмотры черновика, записанные до LEGACY-462, — прямо в таблицу.
+    await prisma.viewStat.createMany({
+      data: [{ bookVersionId: draftVersionId, source: 'text', timestamp: new Date() }],
+    });
+    const agg = await request(http())
+      .get('/views/aggregate')
+      .query({ versionId: draftVersionId, period: 'week' })
+      .expect(200);
+    expect(agg.body).toEqual({ total: 0, series: [] });
+  });
+
   it('Aggregate and Top', async () => {
     // Исторические просмотры по дням — прямо в таблицу: `POST /views` пишет только текущее время.
     const now = new Date();

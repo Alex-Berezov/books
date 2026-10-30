@@ -345,6 +345,30 @@ describe('RightsIntakeService', () => {
       );
     });
 
+    it('search escapes LIKE wildcards in every contains (LEGACY-471)', async () => {
+      prisma.rightsIntake.count.mockResolvedValue(0);
+      prisma.rightsIntake.findMany.mockResolvedValue([]);
+      mockTransactionArray();
+
+      const containsValues = (node: unknown): string[] => {
+        if (Array.isArray(node)) return node.flatMap(containsValues);
+        if (node && typeof node === 'object') {
+          return Object.entries(node).flatMap(([key, value]) =>
+            key === 'contains' && typeof value === 'string' ? [value] : containsValues(value),
+          );
+        }
+        return [];
+      };
+
+      await service.list({ q: '100%_x' });
+
+      const where = (prisma.rightsIntake.findMany.mock.calls[0][0] as { where: unknown }).where;
+      expect(containsValues(where)).toEqual(Array<string>(5).fill('100\\%\\_x'));
+      expect(
+        containsValues((prisma.rightsIntake.count.mock.calls[0][0] as { where: unknown }).where),
+      ).toEqual(Array<string>(5).fill('100\\%\\_x'));
+    });
+
     it('excludes ARCHIVED when no status filter provided', async () => {
       prisma.rightsIntake.count.mockResolvedValue(0);
       prisma.rightsIntake.findMany.mockResolvedValue([]);

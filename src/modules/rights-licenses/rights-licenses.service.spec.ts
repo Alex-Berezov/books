@@ -171,6 +171,26 @@ describe('RightsLicensesService', () => {
       );
       expect(prisma.rightsLicenseLink.findMany).not.toHaveBeenCalled();
     });
+
+    it('search escapes LIKE wildcards in every contains (LEGACY-471)', async () => {
+      prisma.rightsLicense.count.mockResolvedValue(0);
+      prisma.rightsLicense.findMany.mockResolvedValue([]);
+
+      const containsValues = (node: unknown): string[] => {
+        if (Array.isArray(node)) return node.flatMap(containsValues);
+        if (node && typeof node === 'object') {
+          return Object.entries(node).flatMap(([key, value]) =>
+            key === 'contains' && typeof value === 'string' ? [value] : containsValues(value),
+          );
+        }
+        return [];
+      };
+
+      await service.findAll({ page: 1, limit: 20, q: '100%_x' });
+
+      const where = (prisma.rightsLicense.findMany.mock.calls[0][0] as { where: unknown }).where;
+      expect(containsValues(where)).toEqual(Array<string>(6).fill('100\\%\\_x'));
+    });
   });
 
   describe('create', () => {

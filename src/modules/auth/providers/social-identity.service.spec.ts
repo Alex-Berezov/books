@@ -1,6 +1,7 @@
 import { ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
 import { SocialIdentityService } from './social-identity.service';
 import type { ConfigService } from '@nestjs/config';
+import { USER_NAME_MAX_LENGTH } from '../../../shared/constants/validation';
 
 const mockVerifyIdToken = jest.fn();
 
@@ -107,6 +108,52 @@ describe('SocialIdentityService', () => {
         name: 'Real Name',
         avatarUrl: 'https://example.com/a.png',
       });
+    });
+
+    // LEGACY-471: имя провайдера пишется в User.name без своей проверки длины.
+    it('cuts the provider name to the profile name ceiling', async () => {
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'g-6',
+          email: 'user@example.com',
+          email_verified: true,
+          name: 'n'.repeat(USER_NAME_MAX_LENGTH + 50),
+        }),
+      });
+
+      const identity = await service().verify('google', 'id-token');
+
+      expect(identity.name).toBe('n'.repeat(USER_NAME_MAX_LENGTH));
+    });
+
+    it('takes a null provider name as no name', async () => {
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'g-8',
+          email: 'user@example.com',
+          email_verified: true,
+          name: null,
+        }),
+      });
+
+      const identity = await service().verify('google', 'id-token');
+
+      expect(identity.name).toBeUndefined();
+    });
+
+    it('cuts the provider name by characters, not by UTF-16 halves', async () => {
+      mockVerifyIdToken.mockResolvedValue({
+        getPayload: () => ({
+          sub: 'g-7',
+          email: 'user@example.com',
+          email_verified: true,
+          name: 'n'.repeat(USER_NAME_MAX_LENGTH - 1) + '😀😀',
+        }),
+      });
+
+      const identity = await service().verify('google', 'id-token');
+
+      expect(identity.name).toBe('n'.repeat(USER_NAME_MAX_LENGTH - 1) + '😀');
     });
 
     it('refuses to verify at all when the client id is not configured', async () => {

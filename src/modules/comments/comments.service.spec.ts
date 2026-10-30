@@ -943,6 +943,28 @@ describe('CommentsService', () => {
     });
   });
 
+  describe('adminList()', () => {
+    it('search escapes LIKE wildcards in every contains (LEGACY-471)', async () => {
+      prisma.comment.findMany.mockResolvedValue([]);
+      prisma.comment.count.mockResolvedValue(0);
+
+      const containsValues = (node: unknown): string[] => {
+        if (Array.isArray(node)) return node.flatMap(containsValues);
+        if (node && typeof node === 'object') {
+          return Object.entries(node).flatMap(([key, value]) =>
+            key === 'contains' && typeof value === 'string' ? [value] : containsValues(value),
+          );
+        }
+        return [];
+      };
+
+      await service.adminList({ page: 1, limit: 10, search: '100%_x' });
+
+      const where = (prisma.comment.findMany.mock.calls[0][0] as { where: unknown }).where;
+      expect(containsValues(where)).toEqual(Array<string>(4).fill('100\\%\\_x'));
+    });
+  });
+
   describe('list()', () => {
     it('applies hidden filter and target mapping with pagination', async () => {
       prisma.comment.findMany.mockResolvedValueOnce([{ id: 'c1' }]);

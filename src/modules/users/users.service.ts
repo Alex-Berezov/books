@@ -32,6 +32,7 @@ import { sessionStateCache } from '../../shared/session/session-state-cache';
 import { STORAGE_SERVICE, StorageService } from '../../shared/storage/storage.interface';
 import { isStoragePublicUrl } from '../../shared/storage/storage-public-url';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 /**
  * Границы транзакций, меняющих состояние пользователя вместе с записью в журнал (L-020):
@@ -589,11 +590,12 @@ export class UsersService {
     const { page, limit, q, staff } = params;
 
     // Base search filter
+    const like = q ? escapeLikeWildcards(q) : '';
     const baseWhere: Prisma.UserWhereInput = q
       ? {
           OR: [
-            { email: { contains: q, mode: 'insensitive' as const } },
-            { name: { contains: q, mode: 'insensitive' as const } },
+            { email: { contains: like, mode: 'insensitive' as const } },
+            { name: { contains: like, mode: 'insensitive' as const } },
           ],
         }
       : {};

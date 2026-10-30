@@ -15,6 +15,9 @@ export const FAQ_ANSWER_MAX_LENGTH = 10_000;
 // имя 50) — здесь запас на клиентов мимо формы, а не второй источник правды для формы.
 export const COMMENT_TEXT_MAX_LENGTH = 5_000;
 export const USER_NAME_MAX_LENGTH = 100;
+// Ник: потолок формы фронта (`LEGACY-471`). Фронт шлёт ник только сменённым — старый длинный
+// ник не запирает сохранение имени и аватара.
+export const USER_NICKNAME_MAX_LENGTH = 30;
 // Название и автор версии книги: правила ручного создания и правки версии, их же проверяет
 // конвейер перевода, где DTO не работает (`F05-6`, этап `metadata`).
 export const VERSION_TITLE_MIN_LENGTH = 2;

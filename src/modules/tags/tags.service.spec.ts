@@ -196,6 +196,23 @@ describe('TagsService', () => {
       expect(args.include.translations.orderBy).toEqual({ language: 'asc' });
     });
 
+    it('search escapes LIKE wildcards in every contains (LEGACY-471)', async () => {
+      const containsValues = (node: unknown): string[] => {
+        if (Array.isArray(node)) return node.flatMap(containsValues);
+        if (node && typeof node === 'object') {
+          return Object.entries(node).flatMap(([key, value]) =>
+            key === 'contains' && typeof value === 'string' ? [value] : containsValues(value),
+          );
+        }
+        return [];
+      };
+
+      await service.list(1, 20, '100%_x');
+
+      const where = (prisma.tag.findMany.mock.calls[0][0] as { where: unknown }).where;
+      expect(containsValues(where)).toEqual(Array<string>(3).fill('100\\%\\_x'));
+    });
+
     it('leaves both fields undefined when lang is not passed', async () => {
       const res = await service.list(1, 20);
 

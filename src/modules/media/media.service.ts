@@ -14,6 +14,7 @@ import { MediaProbeService } from '../media-jobs/media-probe.service';
 import { deleteMediaObject } from './media-delete';
 import { paginated } from '../../shared/dto/paginated-response.dto';
 import { MEDIA_CATEGORIES, MediaCategory } from './dto/create-media.dto';
+import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 
 // `document` — не MIME-префикс, а «всё остальное» (LEGACY-415): та же категоризация,
 // что фронт применяет к ответу (`mapBackendItemToMediaFile`). Список префиксов выводится
@@ -110,11 +111,10 @@ export class MediaService {
     const page = params.page ?? 1;
     const limit = params.limit ?? 20;
     const skip = (page - 1) * limit;
+    const like = params.q ? escapeLikeWildcards(params.q) : '';
     const where = {
       isDeleted: false,
-      ...(params.q
-        ? { OR: [{ key: { contains: params.q } }, { url: { contains: params.q } }] }
-        : {}),
+      ...(params.q ? { OR: [{ key: { contains: like } }, { url: { contains: like } }] } : {}),
       ...(params.type ? contentTypeFilterFor(params.type) : {}),
     };
     const [items, total] = await Promise.all([

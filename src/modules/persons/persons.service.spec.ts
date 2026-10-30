@@ -208,6 +208,25 @@ describe('PersonsService.findAll — обёртка ответа', () => {
     expect(res.pagination.page).toBe(2);
   });
 
+  it('search escapes LIKE wildcards in contains but not in equals (LEGACY-471)', async () => {
+    const containsValues = (node: unknown): string[] => {
+      if (Array.isArray(node)) return node.flatMap(containsValues);
+      if (node && typeof node === 'object') {
+        return Object.entries(node).flatMap(([key, value]) =>
+          key === 'contains' && typeof value === 'string' ? [value] : containsValues(value),
+        );
+      }
+      return [];
+    };
+
+    await service.findAll({ limit: 20, q: '100%_x' });
+
+    const where = (db.person.findMany.mock.calls[0][0] as { where: unknown }).where;
+    expect(containsValues(where)).toEqual(Array<string>(3).fill('100\\%\\_x'));
+    // Идентификаторы сверяются на равенство: там `%` и `_` не подстановки, экранировать нечего.
+    expect(JSON.stringify(where).match(/"equals":"100%_x"/g)).toHaveLength(4);
+  });
+
   it('search отдаёт первую страницу той же обёрткой', async () => {
     const res = await service.search('Twain');
 
