@@ -1,113 +1,30 @@
-import { ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException } from '@nestjs/common';
 import {
   BookDossier,
   BookGlossary,
   Language,
-  LlmOperation,
-  LlmPauseReason,
   Prisma,
   TranslationRunLanguageStatus,
+  LlmOperation,
 } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { LlmBudgetService } from '../../llm/llm-budget.service';
-import { LlmError } from '../../llm/llm.errors';
-import { inputCeilingChars, LlmService, StageCallEstimator } from '../../llm/llm.service';
-import {
-  ANSWER_CHARS_PER_TOKEN,
-  estimateInputTokens,
-  SUMMARY_INPUT_CHARS_PER_TOKEN,
-} from '../../llm/openrouter.client';
-import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
+import { ANSWER_CHARS_PER_TOKEN } from '../../llm/openrouter.client';
+import { LlmService } from '../../llm/llm.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
-import { chapterPages } from '../chapter-pages';
 import { sourceFingerprint } from '../source-fingerprint';
 import { TranslationSourceService } from '../translation-source.service';
 import {
   DOSSIER_LIMIT_FACTOR,
-  DOSSIER_SOURCE_CHANGED,
   DOSSIER_STAGE,
-  DOSSIER_TASK_KIND,
   DOSSIER_TOO_LONG,
   GLOSSARY_STAGE,
-  GLOSSARY_TASK_KIND,
 } from './dossier.constants';
-import {
-  dossierListLimits,
-  exceedsChapterCap,
-  level0GroupsUpperBound,
-  refusedBeforeParts,
-  summaryCapacity,
-  summaryItemChars,
-  summaryLevels,
-  UPPER_LEVEL_MIN_ITEMS,
-  upperLevelFits,
-} from './dossier-groups';
-import {
-  DossierPartPlan,
-  DossierPlanEntry,
-  partKey,
-  planDossierParts,
-  planEntries,
-  planPartsCount,
-  readPlan,
-} from './dossier-parts';
-import {
-  dossierPartRequest,
-  dossierSummaryRequest,
-  emptyMergeInputChars,
-  glossaryRequest,
-  ShapedRequest,
-} from './dossier.prompts';
-
-interface ChapterTitle {
-  number: number;
-  title: string;
-}
-
-/** Заводка строителя: операция, строка и первая задача - короткими INSERT (`L-020`). */
-const BUILD_TX_OPTIONS = { timeout: 10_000, maxWait: 5_000 } as const;
-
-/**
- * Кто ждёт досье или глоссарий: шаг чужой операции (запуск `F05-4`, сравнение, заготовка).
- * `waitingFor` - строка, которую он ждал прошлым шагом: её `failed` - отказ ждущего, а не
- * повод строить заново.
- */
-export interface DossierWaiter {
-  operationId: string;
-  waitingFor?: string | null;
-  /** Запуск ждущего (`F05-4`): операция, заведённая ради него, привязывается к нему. */
-  translationRunId?: string | null;
-  /**
-   * Лимита ждущего не хватило на операцию досье или глоссария (Р20): запись ждущего с лимитом,
-   * с которым она поместится, - той же транзакцией, что пауза его операции: опрос не видит паузу
-   * без причины, а причину без паузы (решение арбитра `F05 | F05-7`, /fix В2).
-   */
-  onLimit?: (tx: Prisma.TransactionClient, minLimitUsd: Prisma.Decimal) => Promise<void>;
-}
-
-export interface DemandOptions {
-  waiter?: DossierWaiter;
-  limitUsd?: Prisma.Decimal;
-  createdById?: string | null;
-}
-
-/**
- * Итог запроса досье или глоссария. `paused` и `failed` у ждущего уже записаны: его операция
- * на паузе `DOSSIER_PAUSED` (строитель на паузе, id операции досье - здесь), `LIMIT_REACHED`
- * (в остаток его лимита не помещается операция, которую он завёл бы: новое поколение досье,
- * новый или повторный глоссарий, перехват) или `STEP_FAILED` (строка не построилась) - Р20.
- */
-export type Demand<Row> =
-  | { status: 'ready'; row: Row }
-  | { status: 'wait'; row: Row }
-  | {
-      status: 'paused';
-      /** `null` - ждущему не хватило лимита на первое поколение, строки ещё нет. */
-      row: Row | null;
-      reason: 'DOSSIER_PAUSED' | 'LIMIT_REACHED';
-      builderOperationId: string | null;
-    }
-  | { status: 'failed'; row: Row };
+import { DossierBuilderService } from './dossier-builder.service';
+import { Demand, DemandOptions, DossierWaiter } from './dossier-demand.types';
+import { DossierEstimatesService } from './dossier-estimates.service';
+import { partKey, planPartsCount, readPlan } from './dossier-parts';
+import { dossierTaskInput, glossaryTaskInput } from './dossier-task-input';
+import { glossaryRequest } from './dossier.prompts';
 
 export interface DossierEstimate {
   sourceVersionId: string;
@@ -141,19 +58,6 @@ export interface ContextEstimates {
   glossaries: Map<Language, ContextEstimate['glossary']>;
 }
 
-function isUniqueViolation(error: unknown): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002';
-}
-
-/** Причина, с которой строка досье закрыта без сводки, и модель, на которой это выяснилось. */
-export interface DossierFailure {
-  failedReason: string;
-  model?: string;
-}
-
-/** Строку перехватил другой ждущий, пока шла заводка: транзакция откатывается. */
-class TakeoverLostError extends Error {}
-
 /**
  * Досье и глоссарий (`F05-2`, шаг 7, Р5, Р20). Строитель строки один: строка `building`
  * создаётся вставкой с уникальным ключом, проигравший ждёт. Построение - задачи исполнителя
@@ -167,40 +71,15 @@ export class DossierDemandService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
-    private readonly budget: LlmBudgetService,
-    private readonly tasks: LlmTaskService,
     private readonly sources: TranslationSourceService,
+    private readonly estimates: DossierEstimatesService,
+    private readonly builder: DossierBuilderService,
   ) {}
 
   /** Версия, чьё досье берёт открытая версия (Р5), и книга. */
   async dossierSourceOf(versionId: string): Promise<{ bookId: string; sourceVersionId: string }> {
     const { bookId, dossierSourceVersionId } = await this.sources.forVersion(versionId);
     return { bookId, sourceVersionId: dossierSourceVersionId };
-  }
-
-  /**
-   * Обход исходника страницами (`F05-Rb`): куски первого прохода отдаются `visit` по одному и в
-   * памяти не копятся, остаются названия глав и сжатый план. Потолка на число глав нет.
-   */
-  private async walkSource(
-    sourceVersionId: string,
-    visit: (part: DossierPartPlan) => Promise<void> | void,
-  ): Promise<{ titles: ChapterTitle[]; entries: DossierPlanEntry[]; parts: number }> {
-    const titles: ChapterTitle[] = [];
-    const entries: DossierPlanEntry[] = [];
-    let parts = 0;
-    for await (const page of chapterPages(this.prisma, sourceVersionId, {
-      number: true,
-      title: true,
-      content: true,
-    })) {
-      for (const chapter of page) titles.push({ number: chapter.number, title: chapter.title });
-      const plans = planDossierParts(page);
-      for (const plan of plans) await visit(plan);
-      entries.push(...planEntries(plans));
-      parts += plans.length;
-    }
-    return { titles, entries, parts };
   }
 
   latestDossier(sourceVersionId: string): Promise<BookDossier | null> {
@@ -260,15 +139,15 @@ export class DossierDemandService {
           language,
           row?.status === 'ready' || row?.status === 'building'
             ? null
-            : glossaryLine(await this.estimateGlossary(latest, language), false),
+            : glossaryLine(await this.estimates.estimateGlossary(latest, language), false),
         );
       }
       return { sourceVersionId, dossier: null, glossaries };
     }
     const [dossier, call, dossierCall] = await Promise.all([
       latest?.status === 'building' ? null : this.estimateOf(versionId),
-      this.estimator(GLOSSARY_STAGE),
-      this.estimator(DOSSIER_STAGE),
+      this.estimates.estimator(GLOSSARY_STAGE),
+      this.estimates.estimator(DOSSIER_STAGE),
     ]);
     for (const language of languages) {
       const upper = call.estimate(
@@ -282,7 +161,8 @@ export class DossierDemandService {
 
   async estimateOf(versionId: string): Promise<DossierEstimate> {
     const { sourceVersionId } = await this.dossierSourceOf(versionId);
-    const { estimateUsd, entries, parts, titles } = await this.estimateSource(sourceVersionId);
+    const { estimateUsd, entries, parts, titles } =
+      await this.estimates.estimateSource(sourceVersionId);
     return {
       sourceVersionId,
       chapters: entries.length,
@@ -290,7 +170,7 @@ export class DossierDemandService {
       estimateUsd,
       suggestedLimitUsd: estimateUsd.mul(DOSSIER_LIMIT_FACTOR),
       // То же правило, что у старта: оценка не обещает построение, которому старт откажет.
-      refusedTooLong: (await this.findRefusingModel(titles, entries.length)) !== null,
+      refusedTooLong: (await this.estimates.findRefusingModel(titles, entries.length)) !== null,
     };
   }
 
@@ -332,11 +212,11 @@ export class DossierDemandService {
         options.waiter &&
         (await this.waiterRefused(latest, fresh(latest), options.waiter))
       ) {
-        await this.pauseWaiter(options.waiter, 'STEP_FAILED');
+        await this.builder.pauseWaiter(options.waiter, 'STEP_FAILED');
         return { status: 'failed', row: latest, fresh: fresh(latest) };
       }
       // Нет строки, `failed` не нашего ожидания или устаревшее по кнопке - новое поколение.
-      const started = await this.startDossier({
+      const started = await this.builder.startDossier({
         bookId,
         sourceVersionId,
         generation: (latest?.generation ?? 0) + 1,
@@ -382,133 +262,16 @@ export class DossierDemandService {
         continue;
       }
       if (row?.status === 'failed' && options.waiter?.waitingFor === row.id) {
-        await this.pauseWaiter(options.waiter, 'STEP_FAILED');
+        await this.builder.pauseWaiter(options.waiter, 'STEP_FAILED');
         return { status: 'failed', row };
       }
-      const started = await this.startGlossary(dossier, language, row, options);
+      const started = await this.builder.startGlossary(dossier, language, row, options);
       if (started === 'waiter-limit') {
         return { status: 'paused', row, reason: 'LIMIT_REACHED', builderOperationId: null };
       }
       if (started) return { status: 'wait', row: started };
     }
     throw llmTaskConflict('GLOSSARY_BUSY', 'Glossary is being changed concurrently, try again');
-  }
-
-  // -------------------------------------------------------------------------
-  // Досье
-  // -------------------------------------------------------------------------
-
-  private async startDossier(input: {
-    bookId: string;
-    sourceVersionId: string;
-    generation: number;
-    fingerprint: string;
-    options: DemandOptions;
-  }): Promise<BookDossier | 'waiter-limit' | null> {
-    // Кнопка при исчерпанном потолке отказывает, а не заводит операцию на паузе (В11).
-    // Ждущему из запуска - пауза по ходу, как по Р20.
-    this.llm.assertEnabled();
-    if (!input.options.waiter) await this.assertCeilingRoom();
-    // Текст читается один раз на старте: план хранится в строке, шаг читает свою главу.
-    // Оценка нужна и при лимите редактора: модель без цены - 409 `LLM_NO_PRICE` до операции.
-    const {
-      estimateUsd: estimate,
-      entries,
-      titles,
-    } = await this.estimateSource(input.sourceVersionId);
-    // Сводка заведомо откажет `DOSSIER_TOO_LONG`: куски не ставятся и не оплачиваются (`LEGACY-477`).
-    const refusing = await this.findRefusingModel(titles, entries.length);
-    if (refusing) return this.failAtStart(input, refusing);
-    const limitUsd = input.options.limitUsd ?? estimate.mul(DOSSIER_LIMIT_FACTOR);
-    if (!(await this.waiterFits(input.options, limitUsd))) return 'waiter-limit';
-    const opData = await this.llm.operationData({
-      kind: 'dossier',
-      bookVersionId: input.sourceVersionId,
-      limitUsd,
-      createdById: input.options.createdById ?? null,
-      translationRunId: input.options.waiter?.translationRunId ?? null,
-    });
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
-        const row = await tx.bookDossier.create({
-          data: {
-            bookId: input.bookId,
-            sourceVersionId: input.sourceVersionId,
-            generation: input.generation,
-            fingerprint: input.fingerprint,
-            plan: entries as unknown as Prisma.InputJsonValue,
-            operationId: op.id,
-          },
-        });
-        await this.tasks.enqueue(this.dossierTask(row, op.id), tx);
-        return row;
-      }, BUILD_TX_OPTIONS);
-    } catch (error) {
-      // Строку того же поколения вставил другой: транзакция откатилась вместе с операцией.
-      if (isUniqueViolation(error)) return null;
-      throw error;
-    }
-  }
-
-  /**
-   * Модель этапа, если сводка заведомо откажет `DOSSIER_TOO_LONG` (`refusedBeforeParts`), иначе
-   * `null`. Граница входа - `stageInputCeiling`, как у обработчика перед записью уровня 0: модели
-   * без цены в неё не входят, вызов на них не уйдёт.
-   */
-  private async findRefusingModel(
-    titles: ChapterTitle[],
-    chapters: number,
-  ): Promise<string | null> {
-    const { maxTokens } = await this.llm.getStageSetting(DOSSIER_STAGE);
-    // Глав не больше K - отказа на старте не бывает, границу и мерку не считаем.
-    if (!exceedsChapterCap(chapters, maxTokens)) return null;
-    const { maxInputChars, model } = await this.llm.stageInputCeiling(DOSSIER_STAGE, {
-      charsPerToken: SUMMARY_INPUT_CHARS_PER_TOKEN,
-    });
-    const emptyMerged = emptyMergeInputChars(titles, dossierListLimits(maxTokens));
-    return refusedBeforeParts(chapters, maxInputChars, emptyMerged, maxTokens) ? model : null;
-  }
-
-  /**
-   * Строка `failed` сразу, без операции и задач: ни один платный вызов не ушёл. Модель - чтобы
-   * ждущий не строил ту же строку той же моделью заново (`tooLongAgain`). Строка и пауза ждущего -
-   * одной транзакцией, как в `builderVerdict` (Р20): обрыв между ними оставил бы ждущего `active`.
-   */
-  private async failAtStart(
-    input: {
-      bookId: string;
-      sourceVersionId: string;
-      generation: number;
-      fingerprint: string;
-      options: DemandOptions;
-    },
-    model: string,
-  ): Promise<BookDossier | null> {
-    const made: { row?: BookDossier } = {};
-    const create = async (db: Prisma.TransactionClient) => {
-      made.row = await db.bookDossier.create({
-        data: {
-          bookId: input.bookId,
-          sourceVersionId: input.sourceVersionId,
-          generation: input.generation,
-          fingerprint: input.fingerprint,
-          status: 'failed',
-          failedReason: DOSSIER_TOO_LONG,
-          model,
-        },
-      });
-    };
-    const { waiter } = input.options;
-    try {
-      if (waiter) await this.tasks.pauseOperation(waiter.operationId, 'STEP_FAILED', create);
-      else await create(this.prisma);
-    } catch (error) {
-      // Строку того же поколения вставил другой: пауза откатилась вместе со вставкой.
-      if (isUniqueViolation(error)) return null;
-      throw error;
-    }
-    return made.row ?? null;
   }
 
   /** `null` - перехват ушёл другому ждущему, строку надо перечитать. */
@@ -520,7 +283,7 @@ export class DossierDemandService {
     const op = await this.operationOf(row.operationId);
     // Текст поменялся после старта: перехват достроил бы досье по старым кускам. Строка
     // закрывается, следующий, кому досье нужно, строит новое поколение.
-    const verdict = await this.builderVerdict(row, op, options, 'bookDossier', fresh);
+    const verdict = await this.builder.builderVerdict(row, op, options, 'bookDossier', fresh);
     if (verdict !== 'takeover') return verdict;
     const done = await this.prisma.bookDossierPart.findMany({
       where: { dossierId: row.id },
@@ -533,104 +296,20 @@ export class DossierDemandService {
       estimateUsd: estimate,
       entries,
       titles,
-    } = await this.estimateSource(row.sourceVersionId, saved);
+    } = await this.estimates.estimateSource(row.sourceVersionId, saved);
     // Модель этапа сменили на узкую после старта: перехват дооплатил бы куски, а обработчик
     // отказал бы тем же правилом. Строка закрывается без новой операции (`LEGACY-477`, `T147`).
-    const refusing = await this.findRefusingModel(titles, entries.length);
-    if (refusing) return this.failTakeover(row, refusing, options);
-    const taken = await this.takeOver(
+    const refusing = await this.estimates.findRefusingModel(titles, entries.length);
+    if (refusing) return this.builder.failTakeover(row, refusing, options);
+    const taken = await this.builder.takeOver(
       row,
       'bookDossier',
       estimate,
       options,
       row.sourceVersionId,
-      (r, opId) => this.dossierTask(r, opId),
+      (r, opId) => dossierTaskInput(r.id, r.sourceVersionId, opId),
     );
     return this.takeoverDemand(row, taken);
-  }
-
-  /**
-   * Строка `building`, которой перехват заведомо откажет: `failed` с `DOSSIER_TOO_LONG` и моделью
-   * этапа условием по прежнему строителю, пауза ждущего - той же транзакцией (Р20). Строитель
-   * уходит в `previousOperationId`, `operationId` - `null`: строка закрыта тем же правилом, что и
-   * на старте, и `tooLongAgain` перепроверяет её текущими настройками (решение арбитра `T147`,
-   * (ж)). Строку уже перехватил другой - `null`, вызывающий перечитывает её.
-   */
-  private async failTakeover(
-    row: BookDossier,
-    model: string,
-    options: DemandOptions,
-  ): Promise<Demand<BookDossier> | null> {
-    const data = {
-      status: 'failed' as const,
-      failedReason: DOSSIER_TOO_LONG,
-      model,
-      operationId: null,
-      previousOperationId: row.operationId,
-    };
-    const closed = await this.closeForWaiter(options, async (tx) => {
-      const taken = await tx.bookDossier.updateMany({
-        where: { id: row.id, status: 'building', operationId: row.operationId, takeovers: 0 },
-        data,
-      });
-      return taken.count;
-    });
-    return closed ? { status: 'failed', row: { ...row, ...data } } : null;
-  }
-
-  private dossierTask(row: BookDossier, operationId: string): EnqueueTaskInput {
-    return dossierTaskInput(row.id, row.sourceVersionId, operationId);
-  }
-
-  // -------------------------------------------------------------------------
-  // Глоссарий
-  // -------------------------------------------------------------------------
-
-  private async startGlossary(
-    dossier: BookDossier,
-    language: Language,
-    failed: BookGlossary | null,
-    options: DemandOptions,
-  ): Promise<BookGlossary | 'waiter-limit' | null> {
-    const estimate = await this.estimateGlossary(dossier, language);
-    const limitUsd = options.limitUsd ?? estimate.mul(DOSSIER_LIMIT_FACTOR);
-    if (!(await this.waiterFits(options, limitUsd))) return 'waiter-limit';
-    const opData = await this.llm.operationData({
-      kind: 'dossier',
-      bookVersionId: dossier.sourceVersionId,
-      limitUsd,
-      createdById: options.createdById ?? null,
-      translationRunId: options.waiter?.translationRunId ?? null,
-    });
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
-        let row: BookGlossary;
-        if (failed) {
-          // `failed -> building` условием: заново строит один (Р20), перехват снова разрешён.
-          const reopened = await tx.bookGlossary.updateMany({
-            where: { id: failed.id, status: 'failed' },
-            data: {
-              status: 'building',
-              operationId: op.id,
-              previousOperationId: null,
-              takeovers: 0,
-            },
-          });
-          if (reopened.count === 0) throw new TakeoverLostError();
-          row = await tx.bookGlossary.findUniqueOrThrow({ where: { id: failed.id } });
-        } else {
-          row = await tx.bookGlossary.create({
-            data: { dossierId: dossier.id, language, operationId: op.id },
-          });
-        }
-        await this.tasks.enqueue(this.glossaryTask(row, dossier, op.id), tx);
-        return row;
-      }, BUILD_TX_OPTIONS);
-    } catch (error) {
-      if (isUniqueViolation(error) || error instanceof TakeoverLostError) return null;
-      throw error;
-    }
   }
 
   private async followGlossaryBuilder(
@@ -639,150 +318,18 @@ export class DossierDemandService {
     options: DemandOptions,
   ): Promise<Demand<BookGlossary> | null> {
     const op = await this.operationOf(row.operationId);
-    const verdict = await this.builderVerdict(row, op, options, 'bookGlossary');
+    const verdict = await this.builder.builderVerdict(row, op, options, 'bookGlossary');
     if (verdict !== 'takeover') return verdict;
-    const estimate = await this.estimateGlossary(dossier, row.language);
-    const taken = await this.takeOver(
+    const estimate = await this.estimates.estimateGlossary(dossier, row.language);
+    const taken = await this.builder.takeOver(
       row,
       'bookGlossary',
       estimate,
       options,
       dossier.sourceVersionId,
-      (r, opId) => this.glossaryTask(r, dossier, opId),
+      (r, opId) => glossaryTaskInput(r.id, r.language, dossier.sourceVersionId, opId),
     );
     return this.takeoverDemand(row, taken);
-  }
-
-  private glossaryTask(
-    row: BookGlossary,
-    dossier: BookDossier,
-    operationId: string,
-  ): EnqueueTaskInput {
-    return glossaryTaskInput(row.id, row.language, dossier.sourceVersionId, operationId);
-  }
-
-  // -------------------------------------------------------------------------
-  // Общее для строк досье и глоссария (Р20)
-  // -------------------------------------------------------------------------
-
-  /**
-   * Что делать ждущему со строкой `building` по состоянию её строителя. `takeover` - строитель
-   * `failed`, строку ещё не перехватывали и текст исходника тот же (`fresh`): перехват
-   * устаревшей строки достроил бы досье по старым кускам. Строитель `done` при строке
-   * `building` - строку уже никто не достроит, это тот же отказ.
-   */
-  private async builderVerdict<Row extends BookDossier | BookGlossary>(
-    row: Row,
-    op: LlmOperation | null,
-    options: DemandOptions,
-    model: 'bookDossier' | 'bookGlossary',
-    fresh = true,
-  ): Promise<Demand<Row> | 'takeover' | null> {
-    switch (op?.status) {
-      case 'active':
-        return { status: 'wait', row };
-      case 'paused':
-        // Строитель на паузе (бюджет, поставщик): редактор продолжает досье, затем запуск.
-        await this.pauseWaiter(options.waiter, 'DOSSIER_PAUSED');
-        return { status: 'paused', row, reason: 'DOSSIER_PAUSED', builderOperationId: op.id };
-      case 'failed':
-        if (row.takeovers === 0 && fresh) return 'takeover';
-        // Текст правили после отказа строителя: это не отказ ждущего. Строка закрывается
-        // причиной, вызывающий перечитывает её и строит новое поколение по новому тексту.
-        if (!fresh && model === 'bookDossier') {
-          await this.failRow(model, row.id, row.operationId, this.prisma, {
-            failedReason: DOSSIER_SOURCE_CHANGED,
-          });
-          return null;
-        }
-        break;
-      default:
-        // Отменён или операции нет: перехвата нет, отмена останавливает траты.
-        break;
-    }
-    // Строку прочитали до её строителя: если она уже не `building` под ним (стала `ready`, её
-    // перехватили), отказа нет - пауза откатывается, вызывающий перечитывает строку.
-    const closed = await this.closeForWaiter(options, (tx) =>
-      this.failRow(model, row.id, row.operationId, tx),
-    );
-    return closed ? { status: 'failed', row: { ...row, status: 'failed' } } : null;
-  }
-
-  /**
-   * Строка `failed` и пауза ждущего `STEP_FAILED` - одной транзакцией: обрыв между ними оставил бы
-   * ждущего `active`, и его повтор завёл бы новое поколение с повторной оплатой (Р20). Без ждущего
-   * (кнопка) - только строка. `close` закрыл ноль строк - строку уже перехватили или достроили:
-   * пауза откатывается, `false`.
-   */
-  private async closeForWaiter(
-    options: DemandOptions,
-    close: (tx: Prisma.TransactionClient) => Promise<number>,
-  ): Promise<boolean> {
-    const fail = async (tx: Prisma.TransactionClient) => {
-      if ((await close(tx)) === 0) throw new TakeoverLostError();
-    };
-    try {
-      if (options.waiter) {
-        await this.tasks.pauseOperation(options.waiter.operationId, 'STEP_FAILED', fail);
-      } else {
-        await fail(this.prisma);
-      }
-    } catch (error) {
-      if (error instanceof TakeoverLostError) return false;
-      throw error;
-    }
-    return true;
-  }
-
-  /**
-   * Перехват строки новой операцией на остаток оценки: условный UPDATE по прежнему строителю
-   * и `takeovers = 0`. Задачи прежнего строителя уже `cancelled`: `failOperation` закрыл
-   * `pending`, а `running` закроется сам, найдя операцию не `active`. Частичные досье остаются
-   * у строки - повтор их не оплачивает.
-   */
-  private async takeOver<Row extends BookDossier | BookGlossary>(
-    row: Row,
-    model: 'bookDossier' | 'bookGlossary',
-    estimate: Prisma.Decimal,
-    options: DemandOptions,
-    bookVersionId: string,
-    taskOf: (row: Row, operationId: string) => EnqueueTaskInput,
-  ): Promise<Row | 'waiter-limit' | null> {
-    const limitUsd = options.limitUsd ?? estimate.mul(DOSSIER_LIMIT_FACTOR);
-    // Кнопка перехватывает с лимитом редактора и не при исчерпанном потолке - как новое поколение.
-    this.llm.assertEnabled();
-    if (!options.waiter) await this.assertCeilingRoom();
-    if (!(await this.waiterFits(options, limitUsd))) return 'waiter-limit';
-    const opData = await this.llm.operationData({
-      kind: 'dossier',
-      bookVersionId,
-      limitUsd,
-      createdById: options.createdById ?? null,
-      translationRunId: options.waiter?.translationRunId ?? null,
-    });
-    try {
-      return await this.prisma.$transaction(async (tx) => {
-        const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
-        const where = {
-          id: row.id,
-          status: 'building' as const,
-          operationId: row.operationId,
-          takeovers: 0,
-        };
-        const data = { operationId: op.id, previousOperationId: row.operationId, takeovers: 1 };
-        const taken =
-          model === 'bookDossier'
-            ? await tx.bookDossier.updateMany({ where, data })
-            : await tx.bookGlossary.updateMany({ where, data });
-        if (taken.count === 0) throw new TakeoverLostError();
-        const updated = { ...row, ...data };
-        await this.tasks.enqueue(taskOf(updated, op.id), tx);
-        return updated;
-      }, BUILD_TX_OPTIONS);
-    } catch (error) {
-      if (error instanceof TakeoverLostError) return null;
-      throw error;
-    }
   }
 
   /**
@@ -813,8 +360,11 @@ export class DossierDemandService {
   private async tooLongAgain(row: BookDossier, fresh: boolean): Promise<boolean> {
     if (row.failedReason !== DOSSIER_TOO_LONG || !fresh) return false;
     if (await this.closedAtStart(row)) {
-      const { titles, entries } = await this.walkSource(row.sourceVersionId, () => undefined);
-      return (await this.findRefusingModel(titles, entries.length)) !== null;
+      const { titles, entries } = await this.estimates.walkSource(
+        row.sourceVersionId,
+        () => undefined,
+      );
+      return (await this.estimates.findRefusingModel(titles, entries.length)) !== null;
     }
     const { model } = await this.llm.getStageSetting(DOSSIER_STAGE);
     return row.model === model;
@@ -836,147 +386,8 @@ export class DossierDemandService {
     return part === null;
   }
 
-  private takeoverDemand<Row>(row: Row, taken: Row | 'waiter-limit' | null): Demand<Row> | null {
-    if (taken === 'waiter-limit') {
-      return { status: 'paused', row, reason: 'LIMIT_REACHED', builderOperationId: null };
-    }
-    return taken ? { status: 'wait', row: taken } : null;
-  }
-
-  /**
-   * Ждущий заводит операцию досье (новое поколение, перехват) только в пределах своего лимита
-   * (карточка, шаг 7; Р20): иначе она обходила бы его LIMIT_REACHED. Не влезло - ждущий на паузе.
-   * Без ждущего (кнопка) лимит - у новой операции.
-   */
-  private async waiterFits(options: DemandOptions, limitUsd: Prisma.Decimal): Promise<boolean> {
-    if (!options.waiter) return true;
-    const op = await this.prisma.llmOperation.findUnique({
-      where: { id: options.waiter.operationId },
-      select: { limitUsd: true, spentUsd: true, reservedUsd: true },
-    });
-    // Операции ждущего нет - не помещается ни с каким лимитом: пауза без суммы.
-    const minLimit = op ? waiterMinLimit(op, limitUsd) : null;
-    if (op && minLimit === null) return true;
-    const { onLimit } = options.waiter;
-    await this.tasks.pauseOperation(
-      options.waiter.operationId,
-      'LIMIT_REACHED',
-      onLimit && minLimit ? (tx) => onLimit(tx, minLimit) : undefined,
-    );
-    return false;
-  }
-
-  /**
-   * `building -> failed` условием по строителю: строку уже мог перехватить другой. Причина
-   * пишется только досье: у глоссария колонки `failedReason` нет, и сигнатура её не примет.
-   */
-  async failRow(
-    model: 'bookDossier',
-    id: string,
-    operationId: string | null,
-    db?: Prisma.TransactionClient,
-    reason?: DossierFailure,
-  ): Promise<number>;
-  async failRow(
-    model: 'bookDossier' | 'bookGlossary',
-    id: string,
-    operationId: string | null,
-    db?: Prisma.TransactionClient,
-  ): Promise<number>;
-  async failRow(
-    model: 'bookDossier' | 'bookGlossary',
-    id: string,
-    operationId: string | null,
-    db: Prisma.TransactionClient = this.prisma,
-    reason?: DossierFailure,
-  ): Promise<number> {
-    const where = { id, status: 'building' as const, operationId };
-    const closed =
-      model === 'bookDossier'
-        ? await db.bookDossier.updateMany({ where, data: { status: 'failed', ...reason } })
-        : await db.bookGlossary.updateMany({ where, data: { status: 'failed' } });
-    return closed.count;
-  }
-
-  private async pauseWaiter(
-    waiter: DossierWaiter | undefined,
-    reason: LlmPauseReason,
-  ): Promise<void> {
-    if (waiter) await this.tasks.pauseOperation(waiter.operationId, reason);
-  }
-
   operationOf(id: string | null): Promise<LlmOperation | null> {
     return id ? this.prisma.llmOperation.findUnique({ where: { id } }) : Promise.resolve(null);
-  }
-
-  /**
-   * Оценка построения сверху: куски первого прохода (кроме `saved`) плюс сводка по ответам всех
-   * кусков. Сводка, которая не влезает в контекст, считается с вызовами групп по уровням.
-   */
-  private async estimateSource(
-    sourceVersionId: string,
-    saved: ReadonlySet<string> = new Set(),
-  ): Promise<{
-    estimateUsd: Prisma.Decimal;
-    entries: DossierPlanEntry[];
-    parts: number;
-    titles: ChapterTitle[];
-  }> {
-    const held: { call?: StageCallEstimator } = {};
-    let partsUsd = new Prisma.Decimal(0);
-    const { titles, entries, parts } = await this.walkSource(sourceVersionId, async (part) => {
-      const call = (held.call ??= await this.estimator(DOSSIER_STAGE));
-      if (saved.has(partKey(part.chapterNumber, part.partIndex))) return;
-      partsUsd = partsUsd.add(call.estimate(dossierPartRequest(part)));
-    });
-    const { call } = held;
-    if (!call || parts === 0) throw this.noChapters();
-    return {
-      estimateUsd: partsUsd.add(summaryUsd(call, titles, parts, entries.length)),
-      entries,
-      parts,
-      titles,
-    };
-  }
-
-  private async estimateGlossary(
-    dossier: BookDossier,
-    language: Language,
-  ): Promise<Prisma.Decimal> {
-    const call = await this.estimator(GLOSSARY_STAGE);
-    return call.estimate(glossaryRequest({ dossier: dossier.data, language }));
-  }
-
-  private async assertCeilingRoom(): Promise<void> {
-    if (await this.budget.ceilingReached()) {
-      throw llmTaskConflict('LLM_CEILING_REACHED', 'LLM spending ceiling is reached');
-    }
-  }
-
-  /**
-   * Оценщик вызова этапа для ручек: модель этапа без цены и без `maxPricePerMTok` - 409 с кодом
-   * `LLM_NO_PRICE`, а не 500 (`LlmError` в HTTP сам не переводится).
-   */
-  private async estimator(stage: string): Promise<StageCallEstimator> {
-    let call: StageCallEstimator;
-    try {
-      call = await this.llm.stageCallEstimator(stage);
-    } catch (error) {
-      if (error instanceof LlmError) throw llmTaskConflict(error.code, error.message);
-      throw error;
-    }
-    // Выключенный этап - отказ до операции, а не операция, которая откажет на первом шаге.
-    if (!call.enabled) {
-      throw llmTaskConflict('LLM_STAGE_DISABLED', `LLM stage "${stage}" is disabled`);
-    }
-    return call;
-  }
-
-  private noChapters(): ConflictException {
-    return llmTaskConflict(
-      'SOURCE_HAS_NO_CHAPTERS',
-      'The dossier source version has no chapter text',
-    );
   }
 
   /**
@@ -1025,121 +436,11 @@ export class DossierDemandService {
     }
     return run;
   }
-}
 
-/**
- * Задача досье. Ключ пары - «операция:строка»: «продолжить», пока прежний шаг ещё идёт,
- * находит его держателем и второй задачи не ставит (`LlmTaskService.resumeOperation`) - иначе
- * два шага строили бы одну строку и платили дважды.
- */
-export function dossierTaskInput(
-  dossierId: string,
-  sourceVersionId: string,
-  operationId: string,
-): EnqueueTaskInput {
-  return {
-    kind: DOSSIER_TASK_KIND,
-    operationId,
-    bookVersionId: sourceVersionId,
-    payload: { dossierId },
-    pairKey: `${operationId}:${dossierId}`,
-  };
-}
-
-/** Задача глоссария; ключ пары - как у досье. */
-export function glossaryTaskInput(
-  glossaryId: string,
-  language: Language,
-  sourceVersionId: string,
-  operationId: string,
-): EnqueueTaskInput {
-  return {
-    kind: GLOSSARY_TASK_KIND,
-    operationId,
-    bookVersionId: sourceVersionId,
-    language,
-    payload: { glossaryId },
-    pairKey: `${operationId}:${glossaryId}`,
-  };
-}
-
-/**
- * Вход сводки из `items` ответов в символах (резерв считает символ за токен): каждый ответ - до
- * `maxTokens` токенов с обёрткой элемента и запятой (`SUMMARY_ITEM_WRAPPER_CHARS`), но вызов
- * больше контекста модели не уйдёт (`stageFit`), поэтому сверху - контекст в символах. Без потолка
- * лимит длинной книги раздувался бы на порядки.
- */
-function summaryAnswersChars(items: number, call: StageCallEstimator): number {
-  const answers = items * summaryItemChars(call.maxTokens);
-  return call.contextLength === null
-    ? answers
-    : Math.min(answers, call.contextLength * ANSWER_CHARS_PER_TOKEN);
-}
-
-/**
- * Сверху: сколько стоит сводка из `parts` ответов кусков книги в `chapters` глав. Влезает в
- * контекст и глав не больше `groupChapterCap` - один вызов; иначе - группы уровня 0 (столько,
- * чтобы влез вход и в каждой было не больше `groupChapterCap` глав, `F05-12`), уровни выше по
- * `summaryLevels` и итоговая сводка без списков глав (`F05-Rb`). В группу помещается столько
- * ответов, сколько остаётся от контекста после названий глав и ответа (`summaryCapacity`): на
- * уровне 0 - от входа со списками глав, выше - от входа без них, как у проверки обработчика до
- * оплаты уровня 0; число групп уровня 0 - `level0GroupsUpperBound`, правило упаковки.
- */
-export function summaryUsd(
-  call: StageCallEstimator,
-  titles: ChapterTitle[],
-  parts: number,
-  chapters: number,
-): Prisma.Decimal {
-  const limits = dossierListLimits(call.maxTokens);
-  const base = dossierSummaryRequest({ chapters: titles, parts: [], limits });
-  // Контекст неизвестен или в него не влезает даже ответ - по входу групп нет: сводка не уйдёт
-  // вовсе (`DOSSIER_TOO_LONG` без вызова), оценка остаётся одной сводкой, как раньше.
-  const capacity = capacityOf(call, base, 1);
-  const level0 = level0GroupsUpperBound(parts, chapters, capacity, call.maxTokens);
-  if (level0 === 0) return call.estimate(base, summaryAnswersChars(parts, call));
-  // Группы делят куски: на все группы уровня 0 вместе - ответы всех кусков, на каждую - свой
-  // запрос с названиями глав и свой ответ.
-  let usd = call
-    .estimate(base)
-    .mul(level0 - 1)
-    .add(call.estimate(base, parts * summaryItemChars(call.maxTokens)));
-  const merged = dossierSummaryRequest({ chapters: titles, parts: [], merge: true, limits });
-  const upperCapacity = capacityOf(call, merged, UPPER_LEVEL_MIN_ITEMS);
-  const { groupsPerLevel, finalItems } = summaryLevels(level0, upperCapacity);
-  for (const groups of groupsPerLevel) {
-    usd = usd.add(call.estimate(merged, summaryAnswersChars(upperCapacity, call)).mul(groups));
+  private takeoverDemand<Row>(row: Row, taken: Row | 'waiter-limit' | null): Demand<Row> | null {
+    if (taken === 'waiter-limit') {
+      return { status: 'paused', row, reason: 'LIMIT_REACHED', builderOperationId: null };
+    }
+    return taken ? { status: 'wait', row: taken } : null;
   }
-  return usd.add(call.estimate(merged, summaryAnswersChars(finalItems, call)));
-}
-
-/**
- * Сколько ответов влезает во вход вызова с запросом `request` (`summaryCapacity`), не меньше
- * `min`; контекст неизвестен или в него не влезает даже запрос - без предела по входу.
- */
-function capacityOf(call: StageCallEstimator, request: ShapedRequest, min: number): number {
-  if (call.contextLength === null) return Number.POSITIVE_INFINITY;
-  const room =
-    inputCeilingChars(call.contextLength, call.maxTokens, SUMMARY_INPUT_CHARS_PER_TOKEN) -
-    estimateInputTokens(request);
-  if (room <= 0) return Number.POSITIVE_INFINITY;
-  // Выше уровня 0 ёмкость меньше двух обработчик не пустит (`upperLevelFits`) - оценка её не считает.
-  if (min === UPPER_LEVEL_MIN_ITEMS && !upperLevelFits(room, call.maxTokens)) return min;
-  return Math.max(min, summaryCapacity(room, call.maxTokens));
-}
-
-/**
- * Лимит ждущего, с которым операция досье или глоссария поместится: потрачено + в резерве + её
- * лимит, вверх до восьми знаков - деньги хранятся `Decimal(14,8)`, и округлённый вниз минимум
- * не пропустил бы «продолжить» с показанной суммой (`F05-7`). `null` - помещается и так.
- */
-export function waiterMinLimit(
-  op: { limitUsd: Prisma.Decimal; spentUsd: Prisma.Decimal; reservedUsd: Prisma.Decimal },
-  needed: Prisma.Decimal,
-): Prisma.Decimal | null {
-  const min = op.spentUsd
-    .add(op.reservedUsd)
-    .add(needed)
-    .toDecimalPlaces(8, Prisma.Decimal.ROUND_UP);
-  return op.limitUsd.gte(min) ? null : min;
 }

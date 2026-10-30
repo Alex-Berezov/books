@@ -58,11 +58,8 @@ import {
   ShapedRequest,
   summaryInputEstimator,
 } from './dossier.prompts';
-import {
-  DossierDemandService,
-  dossierTaskInput,
-  glossaryTaskInput,
-} from './dossier-demand.service';
+import { DossierBuilderService } from './dossier-builder.service';
+import { dossierTaskInput, glossaryTaskInput } from './dossier-task-input';
 
 function payloadId(task: LlmTask, key: 'dossierId' | 'glossaryId'): string | null {
   const payload = task.payload as Record<string, unknown> | null;
@@ -86,7 +83,7 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
     private readonly tasks: LlmTaskService,
-    private readonly dossiers: DossierDemandService,
+    private readonly builder: DossierBuilderService,
   ) {}
 
   readonly dossierHandler: LlmTaskHandler = {
@@ -129,7 +126,7 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
    */
   private async sourceChanged(rowId: string, operationId: string): Promise<LlmTaskStepResult> {
     await this.tasks.failOperation(operationId, async (tx) => {
-      await this.dossiers.failRow('bookDossier', rowId, operationId, tx, {
+      await this.builder.failRow('bookDossier', rowId, operationId, tx, {
         failedReason: DOSSIER_SOURCE_CHANGED,
       });
     });
@@ -463,7 +460,7 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
     model: string,
   ): Promise<LlmTaskStepResult> {
     await this.tasks.failOperation(task.operationId, async (tx) => {
-      await this.dossiers.failRow('bookDossier', row.id, task.operationId, tx, {
+      await this.builder.failRow('bookDossier', row.id, task.operationId, tx, {
         failedReason: DOSSIER_TOO_LONG,
         model,
       });
@@ -576,7 +573,7 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
     takeovers: number,
   ): Promise<void> {
     await this.tasks.failOperation(operationId, async (tx) => {
-      if (takeovers > 0) await this.dossiers.failRow(model, rowId, operationId, tx);
+      if (takeovers > 0) await this.builder.failRow(model, rowId, operationId, tx);
     });
   }
 

@@ -1,7 +1,8 @@
 import { HttpException } from '@nestjs/common';
 import { BookDossier, BookGlossary, Language, Prisma } from '@prisma/client';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
-import { Demand, DossierDemandService } from './dossier-demand.service';
+import { DossierDemandService } from './dossier-demand.service';
+import { Demand } from './dossier-demand.types';
 
 /** Отказы `demandDossier`/`demandGlossary` «изменено одновременно, повторить»: ожидание, не пауза. */
 const CONTEXT_RETRY_CODES = new Set(['DOSSIER_BUSY', 'GLOSSARY_BUSY']);

@@ -14,7 +14,9 @@ import {
   DOSSIER_TASK_KIND,
   GLOSSARY_TASK_KIND,
 } from './dossier/dossier.constants';
+import { DossierBuilderService } from './dossier/dossier-builder.service';
 import { DossierDemandService } from './dossier/dossier-demand.service';
+import { DossierEstimatesService } from './dossier/dossier-estimates.service';
 import { DossierService } from './dossier/dossier.service';
 import { DossierTasksHandler } from './dossier/dossier-tasks.handler';
 import { TranslationDraftService } from './draft/translation-draft.service';
@@ -68,6 +70,8 @@ import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constan
   ],
   providers: [
     TranslationSourceService,
+    DossierEstimatesService,
+    DossierBuilderService,
     DossierDemandService,
     DossierService,
     DossierTasksHandler,
