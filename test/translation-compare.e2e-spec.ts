@@ -8,7 +8,10 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { LLM_BUDGET_ID } from '../src/modules/llm/llm-budget.service';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
 import { llmTaskConflict } from '../src/modules/llm-worker/llm-worker.errors';
-import { DossierDemandService } from '../src/modules/translation/dossier/dossier-demand.service';
+import {
+  ContextEstimate,
+  DossierDemandService,
+} from '../src/modules/translation/dossier/dossier-demand.service';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { llmCallName } from './helpers/llm-call-name';
@@ -352,6 +355,36 @@ describe('Translation compare (e2e)', () => {
     ).toBe(0);
   });
 
+  it('estimate: the dossier line carries the start refusal of the dossier estimate (T151)', async () => {
+    const { ids } = await englishBook();
+    const dossiers = app.get<DossierDemandService>(DossierDemandService);
+    const real: DossierDemandService['contextEstimate'] = (...args) =>
+      DossierDemandService.prototype.contextEstimate.apply(
+        dossiers,
+        args,
+      ) as Promise<ContextEstimate>;
+    jest
+      .spyOn(dossiers, 'contextEstimate')
+      .mockImplementationOnce(
+        async (...args: Parameters<DossierDemandService['contextEstimate']>) => {
+          const estimate = await real(...args);
+          expect(estimate.dossier).not.toBeNull();
+          return {
+            ...estimate,
+            dossier: estimate.dossier && { ...estimate.dossier, refusedTooLong: true },
+          };
+        },
+      );
+
+    const res = await auth(
+      http().get(
+        `/admin/versions/${ids.en}/translation-compare/estimate?chapterNumber=1&targetLanguage=es&models=${MODEL},${ALT}`,
+      ),
+    ).expect(200);
+    expect(res.body.dossier).toMatchObject({ refusedTooLong: true, upperBound: false });
+    expect(res.body.glossary).not.toHaveProperty('refusedTooLong');
+  });
+
   it('estimate before the dossier: dossier and glossary lines, the glossary as an upper bound, no call', async () => {
     const { ids } = await englishBook();
     const res = await auth(
@@ -360,7 +393,7 @@ describe('Translation compare (e2e)', () => {
       ),
     ).expect(200);
     expect(res.body).toMatchObject({ chunks: 1, upperBound: true });
-    expect(res.body.dossier).toMatchObject({ upperBound: false });
+    expect(res.body.dossier).toMatchObject({ upperBound: false, refusedTooLong: false });
     expect(res.body.glossary).toMatchObject({ upperBound: true });
     expect(res.body.models.map((m: { model: string }) => m.model)).toEqual([MODEL, ALT]);
     // Лимит вмещает досье: иначе сравнение встало бы LIMIT_REACHED до первого перевода (С12).

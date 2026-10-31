@@ -7905,7 +7905,7 @@
             "type": "string"
           },
           "suggestedLimitUsd": {
-            "description": "Limit of its own operation: estimate × 1.5; must fit the compare limit",
+            "description": "Limit of its own operation: estimate × 1.5; must fit the limit of the run, compare or draft",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -8337,7 +8337,7 @@
           "dossier": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/CompareContextLineDto"
+                "$ref": "#/components/schemas/DossierContextLineDto"
               }
             ],
             "description": "The dossier is built first by its own operation; null - it is ready",
@@ -11226,7 +11226,7 @@
             "type": "boolean"
           },
           "suggestedLimitUsd": {
-            "description": "Limit of its own operation: estimate × 1.5; must fit the run limit",
+            "description": "Limit of its own operation: estimate × 1.5; must fit the limit of the run, compare or draft",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -26606,7 +26606,7 @@
           "dossier": {
             "allOf": [
               {
-                "$ref": "#/components/schemas/CompareContextLineDto"
+                "$ref": "#/components/schemas/DossierContextLineDto"
               }
             ],
             "description": "The dossier is built first under its own operation; null - ready or building",

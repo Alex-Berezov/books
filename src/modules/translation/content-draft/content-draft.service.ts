@@ -125,13 +125,14 @@ export const hasVisibleText = (html: string | null | undefined): boolean =>
   !!html && richHtmlText(html) !== '';
 
 type ContextLine = NonNullable<ContextEstimate['glossary']>;
+type DossierLine = NonNullable<ContextEstimate['dossier']>;
 
 /** Досье и глоссарий заготовки и строки оценки тех, что строятся первыми. */
 interface DraftContext {
   run: { dossierId: string; glossaryId: string | null } | null;
   dossier: BookDossier | null;
   glossaryData: unknown;
-  dossierLine: ContextLine | null;
+  dossierLine: (ContextLine & Pick<DossierLine, 'refusedTooLong'>) | null;
   glossaryLine: ContextLine | null;
 }
 
@@ -580,14 +581,12 @@ export class ContentDraftService {
     ]);
     // Повторы с замечанием платятся целиком (Р28): лимит по умолчанию закладывает и их.
     const suggested = maxOf([stage.usd.mul(1 + retries).mul(DRAFT_LIMIT_FACTOR), contextLimitUsd]);
-    const line = (l: ContextLine | null) =>
-      l
-        ? {
-            estimateUsd: moneyUsd(l.estimateUsd),
-            suggestedLimitUsd: moneyUsd(l.suggestedLimitUsd),
-            upperBound: l.upperBound,
-          }
-        : null;
+    const line = (l: ContextLine) => ({
+      estimateUsd: moneyUsd(l.estimateUsd),
+      suggestedLimitUsd: moneyUsd(l.suggestedLimitUsd),
+      upperBound: l.upperBound,
+    });
+    const { dossierLine, glossaryLine } = context;
     return {
       suggestedLimitUsd: suggested,
       contextLimitUsd,
@@ -595,8 +594,10 @@ export class ContentDraftService {
       run: context.run,
       dto: {
         kind,
-        dossier: line(context.dossierLine),
-        glossary: line(context.glossaryLine),
+        dossier: dossierLine
+          ? { ...line(dossierLine), refusedTooLong: dossierLine.refusedTooLong }
+          : null,
+        glossary: glossaryLine ? line(glossaryLine) : null,
         sections,
         stageUsd: moneyUsd(stage.usd),
         upperBound: stage.upperBound,

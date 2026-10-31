@@ -284,6 +284,7 @@ export class TranslationCompareService {
               estimateUsd: moneyUsd(context.dossier.estimateUsd),
               suggestedLimitUsd: moneyUsd(context.dossier.suggestedLimitUsd),
               upperBound: false,
+              refusedTooLong: context.dossier.refusedTooLong,
             }
           : null,
         glossary: context.glossary

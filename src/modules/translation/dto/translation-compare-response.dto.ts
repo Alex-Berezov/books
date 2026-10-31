@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Language, TranslationCompareModelStatus } from '@prisma/client';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
+import { REFUSED_TOO_LONG_DESCRIPTION } from './translation-response.dto';
 
 /** Response DTO — только Swagger, без `class-validator` (`STYLE_GUIDE.md` §7). */
 
@@ -13,7 +14,8 @@ export class CompareContextLineDto {
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
-    description: 'Limit of its own operation: estimate × 1.5; must fit the compare limit',
+    description:
+      'Limit of its own operation: estimate × 1.5; must fit the limit of the run, compare or draft',
   })
   suggestedLimitUsd!: string;
 
@@ -22,6 +24,12 @@ export class CompareContextLineDto {
     description: 'The dossier is not ready yet: an upper bound by the dossier answer size',
   })
   upperBound!: boolean;
+}
+
+/** Строка досье оценок запуска, сравнения и заготовки: строка контекста и признак отказа на старте (`LEGACY-477`, `T147`, `T151`). */
+export class DossierContextLineDto extends CompareContextLineDto {
+  @ApiProperty({ type: Boolean, description: REFUSED_TOO_LONG_DESCRIPTION })
+  refusedTooLong!: boolean;
 }
 
 export class CompareModelEstimateDto {
@@ -43,11 +51,11 @@ export class TranslationCompareEstimateDto {
   chunks!: number;
 
   @ApiProperty({
-    type: () => CompareContextLineDto,
+    type: () => DossierContextLineDto,
     nullable: true,
     description: 'The dossier is built first under its own operation; null - ready or building',
   })
-  dossier!: CompareContextLineDto | null;
+  dossier!: DossierContextLineDto | null;
 
   @ApiProperty({
     type: () => CompareContextLineDto,

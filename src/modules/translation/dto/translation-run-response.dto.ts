@@ -2,21 +2,8 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Language, TranslationRunLanguageStatus } from '@prisma/client';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
-import { CompareContextLineDto } from './translation-compare-response.dto';
-import { REFUSED_TOO_LONG_DESCRIPTION } from './translation-response.dto';
+import { CompareContextLineDto, DossierContextLineDto } from './translation-compare-response.dto';
 import { TranslationRunStageModelsDto } from './translation-run-request.dto';
-
-/** Строка досье оценки запуска: строка контекста и признак отказа на старте (`LEGACY-477`, `T147`). */
-export class DossierContextLineDto extends CompareContextLineDto {
-  @ApiProperty({
-    ...LLM_MONEY_PROPERTY,
-    description: 'Limit of its own operation: estimate × 1.5; must fit the run limit',
-  })
-  declare suggestedLimitUsd: string;
-
-  @ApiProperty({ type: Boolean, description: REFUSED_TOO_LONG_DESCRIPTION })
-  refusedTooLong!: boolean;
-}
 
 /**
  * Этап языка (`product.md` §2.3): строится досье, строится глоссарий, перевод кусков (с нарезкой

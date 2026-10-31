@@ -7425,7 +7425,7 @@ export interface components {
       estimateUsd: string;
       /**
        * Format: decimal
-       * @description Limit of its own operation: estimate × 1.5; must fit the compare limit
+       * @description Limit of its own operation: estimate × 1.5; must fit the limit of the run, compare or draft
        * @example 100.00000000
        */
       suggestedLimitUsd: string;
@@ -7578,7 +7578,7 @@ export interface components {
     };
     ContentDraftEstimateDto: {
       /** @description The dossier is built first by its own operation; null - it is ready */
-      dossier: components['schemas']['CompareContextLineDto'] | null;
+      dossier: components['schemas']['DossierContextLineDto'] | null;
       /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
       glossary: components['schemas']['CompareContextLineDto'] | null;
       /** @enum {string} */
@@ -8918,7 +8918,7 @@ export interface components {
       refusedTooLong: boolean;
       /**
        * Format: decimal
-       * @description Limit of its own operation: estimate × 1.5; must fit the run limit
+       * @description Limit of its own operation: estimate × 1.5; must fit the limit of the run, compare or draft
        * @example 100.00000000
        */
       suggestedLimitUsd: string;
@@ -13768,7 +13768,7 @@ export interface components {
       /** @description Pieces by code boundaries */
       chunks: number;
       /** @description The dossier is built first under its own operation; null - ready or building */
-      dossier: components['schemas']['CompareContextLineDto'] | null;
+      dossier: components['schemas']['DossierContextLineDto'] | null;
       /** @description The glossary is built first under its own operation; null - ready or building */
       glossary: components['schemas']['CompareContextLineDto'] | null;
       models: components['schemas']['CompareModelEstimateDto'][];

@@ -8,6 +8,10 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { LLM_BUDGET_ID } from '../src/modules/llm/llm-budget.service';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
+import {
+  ContextEstimate,
+  DossierDemandService,
+} from '../src/modules/translation/dossier/dossier-demand.service';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { llmCallName } from './helpers/llm-call-name';
@@ -379,7 +383,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
     expect(estimate.body).toEqual(
       expect.objectContaining({ kind: 'analysis', sections: null, upperBound: true }),
     );
-    expect(estimate.body.dossier).not.toBeNull();
+    expect(estimate.body.dossier).toMatchObject({ refusedTooLong: false });
     await start(versionId, 'analysis').expect(202);
     await drain();
 
@@ -520,6 +524,33 @@ describe('Summary drafts from the dossier (e2e)', () => {
     const res = await start(versionId, 'analysis').expect(409);
     expect(res.body.code).toBe('DOSSIER_STALE');
     expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(0);
+  });
+
+  it('sections estimate: the dossier line carries the start refusal of the dossier estimate (T151)', async () => {
+    const versionId = await sourceBook();
+    const dossiers = app.get<DossierDemandService>(DossierDemandService);
+    const real: DossierDemandService['contextEstimate'] = (...args) =>
+      DossierDemandService.prototype.contextEstimate.apply(
+        dossiers,
+        args,
+      ) as Promise<ContextEstimate>;
+    jest
+      .spyOn(dossiers, 'contextEstimate')
+      .mockImplementationOnce(
+        async (...args: Parameters<DossierDemandService['contextEstimate']>) => {
+          const estimate = await real(...args);
+          expect(estimate.dossier).not.toBeNull();
+          return {
+            ...estimate,
+            dossier: estimate.dossier && { ...estimate.dossier, refusedTooLong: true },
+          };
+        },
+      );
+
+    const res = await auth(
+      http().get(`/admin/versions/${versionId}/drafts/summary_sections/estimate`),
+    ).expect(200);
+    expect(res.body.dossier).toMatchObject({ refusedTooLong: true, upperBound: false });
   });
 
   it('sections on the source: the dossier is built first, no glossary in the dossier language, saved summary untouched', async () => {

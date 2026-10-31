@@ -14,7 +14,7 @@ import {
   DroppedQuoteReason,
 } from '../content-draft/content-draft.constants';
 import { DossierMotifDto } from './dossier-data.dto';
-import { CompareContextLineDto } from './translation-compare-response.dto';
+import { CompareContextLineDto, DossierContextLineDto } from './translation-compare-response.dto';
 
 /** Response DTO — только Swagger, без `class-validator` (`STYLE_GUIDE.md` §7). */
 
@@ -23,11 +23,11 @@ export class ContentDraftEstimateDto {
   kind!: ContentDraftKind;
 
   @ApiProperty({
-    type: CompareContextLineDto,
+    type: DossierContextLineDto,
     nullable: true,
     description: 'The dossier is built first by its own operation; null - it is ready',
   })
-  dossier!: CompareContextLineDto | null;
+  dossier!: DossierContextLineDto | null;
 
   @ApiProperty({
     type: CompareContextLineDto,
