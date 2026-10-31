@@ -123,7 +123,7 @@ export class PagesService {
     const [data, total] = await Promise.all([
       this.prisma.page.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
         include: { seo: true },
@@ -169,9 +169,9 @@ export class PagesService {
       by: ['translationGroupId'],
       where,
       _max: { updatedAt: true },
-      orderBy: {
-        _max: { updatedAt: 'desc' },
-      },
+      // `LEGACY-484`: ключ группы последним — группы с равным `max(updatedAt)` не повторяются
+      // и не теряются на соседних страницах.
+      orderBy: [{ _max: { updatedAt: 'desc' } }, { translationGroupId: 'asc' }],
       skip,
       take: limit,
     });
@@ -193,7 +193,8 @@ export class PagesService {
         translationGroupId: { in: groupIds },
       },
       include: { seo: true },
-      orderBy: { language: 'asc' }, // Consistent order within group
+      // `LEGACY-484`: два перевода группы на одном языке схема не запрещает — `id` последним.
+      orderBy: [{ language: 'asc' }, { id: 'asc' }],
     });
 
     // 3. Group them in memory

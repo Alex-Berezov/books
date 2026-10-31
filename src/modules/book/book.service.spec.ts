@@ -907,6 +907,43 @@ describe('BookService.getOverview', () => {
       expect(args.take).toBe(20);
     });
 
+    it('orders the nested versions by language so versions[0] is stable (LEGACY-484)', async () => {
+      prisma.book.count.mockResolvedValue(0);
+      prisma.book.findMany.mockResolvedValue([]);
+
+      await service.findAll({ page: 1, limit: 20 });
+      await service.findAll({ page: 1, limit: 20 }, { publishedOnly: true });
+
+      // Обе ветки: у публичной `where` подмешивается спредом рядом с `orderBy`.
+      expect(prisma.book.findMany).toHaveBeenCalledTimes(2);
+      const [[adminCall], [publicCall]] = prisma.book.findMany.mock.calls as Array<
+        [{ select: { versions: { orderBy: unknown; where?: unknown } } }]
+      >;
+      expect(adminCall.select.versions.orderBy).toEqual({ language: 'asc' });
+      expect(adminCall.select.versions.where).toBeUndefined();
+      expect(publicCall.select.versions.orderBy).toEqual({ language: 'asc' });
+      expect(publicCall.select.versions.where).toEqual({ status: 'published' });
+    });
+
+    it('findOne and findBySlug order the nested versions by language too (LEGACY-484)', async () => {
+      prisma.book.findUnique.mockResolvedValue(null);
+      prisma.book.findFirst.mockResolvedValue(null);
+      prisma.bookVersion.findFirst.mockResolvedValue(null);
+
+      await expect(service.findOne('b-x')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.findBySlug('slug-x')).rejects.toBeInstanceOf(NotFoundException);
+
+      expect(prisma.book.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.book.findFirst).toHaveBeenCalledTimes(1);
+      const calls = [
+        prisma.book.findUnique.mock.calls[0][0],
+        prisma.book.findFirst.mock.calls[0][0],
+      ];
+      for (const call of calls as Array<{ select: { versions: { orderBy: unknown } } }>) {
+        expect(call.select.versions.orderBy).toEqual({ language: 'asc' });
+      }
+    });
+
     it('sets hasText/hasAudio to false if no chapters or drafts only', async () => {
       prisma.book.count.mockResolvedValue(1);
       prisma.book.findMany.mockResolvedValue([

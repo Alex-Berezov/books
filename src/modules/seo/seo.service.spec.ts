@@ -145,6 +145,15 @@ describe('SeoService (unit)', () => {
   });
 
   describe('resolvePublic(book)', () => {
+    it('reads versions in a fixed order, so the versions[0] fallback is stable (LEGACY-484)', async () => {
+      await service.resolvePublic('book', 'book-slug');
+
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: { language: 'asc' } }),
+      );
+    });
+
     beforeEach(() => {
       prisma.bookVersion.findFirst.mockResolvedValue(null);
       prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-slug' });

@@ -79,7 +79,12 @@ export class RightsNotificationsService {
 
     const [total, items] = await Promise.all([
       this.delegate.count({ where }),
-      this.delegate.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: limit }),
+      this.delegate.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip,
+        take: limit,
+      }),
     ]);
 
     return paginated(

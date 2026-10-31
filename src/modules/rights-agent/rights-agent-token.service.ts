@@ -186,7 +186,12 @@ export class RightsAgentTokenService {
 
     const [total, items] = await Promise.all([
       this.tokenDelegate.count({ where }),
-      this.tokenDelegate.findMany({ where, orderBy: { createdAt: 'desc' }, skip, take: limit }),
+      this.tokenDelegate.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        skip,
+        take: limit,
+      }),
     ]);
 
     return paginated(

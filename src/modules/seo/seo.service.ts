@@ -642,6 +642,8 @@ export class SeoService {
 
     const versions = await this.prisma.bookVersion.findMany({
       where: { bookId, status: 'published' },
+      // `LEGACY-484`: ниже запасной `versions[0]` — без порядка он менялся бы между запросами.
+      orderBy: { language: 'asc' },
     });
 
     const available = versions.map((v) => v.language);

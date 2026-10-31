@@ -1029,9 +1029,11 @@ describe('CommentsService', () => {
         limit: 10,
         sortBy: 'popularity',
       });
-      expect(prisma.comment.findMany).toHaveBeenCalledWith(
+      expect(prisma.comment.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.comment.findMany).toHaveBeenNthCalledWith(
+        1,
         expect.objectContaining({
-          orderBy: { likes: { _count: 'desc' } },
+          orderBy: [{ likes: { _count: 'desc' } }, { createdAt: 'desc' }, { id: 'desc' }],
         }),
       );
 
@@ -1042,9 +1044,11 @@ describe('CommentsService', () => {
         limit: 10,
         sortBy: 'date',
       });
-      expect(prisma.comment.findMany).toHaveBeenCalledWith(
+      expect(prisma.comment.findMany).toHaveBeenCalledTimes(2);
+      expect(prisma.comment.findMany).toHaveBeenNthCalledWith(
+        2,
         expect.objectContaining({
-          orderBy: { createdAt: 'desc' },
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         }),
       );
     });

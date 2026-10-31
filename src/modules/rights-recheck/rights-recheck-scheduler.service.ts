@@ -655,7 +655,7 @@ export class RightsRecheckSchedulerService implements OnModuleInit, OnModuleDest
       database.rightsRecheckScanRun.count({ where }),
       database.rightsRecheckScanRun.findMany({
         where,
-        orderBy: { startedAt: 'desc' },
+        orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
       }),

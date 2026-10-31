@@ -110,6 +110,36 @@ describe('PagesService (unit)', () => {
       prisma.page.findMany.mockResolvedValue([]);
     });
 
+    it('pages groups with the group key last, so equal max(updatedAt) do not shift (LEGACY-484)', async () => {
+      await service.adminListGrouped(2, 20);
+
+      // Второй `groupBy` — подсчёт групп без страницы; постраничный — первый.
+      expect(prisma.page.groupBy).toHaveBeenCalledTimes(2);
+      const args = prisma.page.groupBy.mock.calls[0][0] as {
+        by: string[];
+        orderBy: unknown;
+        skip: number;
+      };
+      expect(args.by).toEqual(['translationGroupId']);
+      expect(args.orderBy).toEqual([
+        { _max: { updatedAt: 'desc' } },
+        { translationGroupId: 'asc' },
+      ]);
+      expect(args.skip).toBe(20);
+    });
+
+    it('orders pages inside a group with id last (LEGACY-484)', async () => {
+      prisma.page.groupBy.mockResolvedValueOnce([{ translationGroupId: 'g-1' }]);
+
+      await service.adminListGrouped(1, 20);
+
+      expect(prisma.page.groupBy).toHaveBeenCalledTimes(2);
+      expect(prisma.page.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.page.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ orderBy: [{ language: 'asc' }, { id: 'asc' }] }),
+      );
+    });
+
     it('filters nothing but the missing group id when neither field is given', async () => {
       await service.adminListGrouped(1, 20);
 

@@ -141,7 +141,7 @@ export class CategoryService {
       this.prisma.category.count({ where }),
       this.prisma.category.findMany({
         where,
-        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }, { id: 'asc' }],
         skip,
         take: limit,
         include: {

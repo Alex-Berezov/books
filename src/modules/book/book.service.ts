@@ -161,6 +161,8 @@ export class BookService {
           ...PUBLIC_BOOK_SELECT,
           versions: {
             ...(publishedOnly ? { where: { status: 'published' as const } } : {}),
+            // `LEGACY-484`: `(bookId, language)` уникален, админка берёт `versions[0]`.
+            orderBy: { language: 'asc' as const },
             select: {
               ...PUBLIC_BOOK_VERSION_SELECT,
               _count: {
@@ -257,6 +259,8 @@ export class BookService {
         ...PUBLIC_BOOK_SELECT,
         versions: {
           where: includeDrafts ? undefined : { status: 'published' },
+          // `LEGACY-484`: `(bookId, language)` уникален — порядок версий один от запроса к запросу.
+          orderBy: { language: 'asc' },
           select: {
             ...PUBLIC_BOOK_VERSION_SELECT,
             categories: {
@@ -306,6 +310,8 @@ export class BookService {
         ...PUBLIC_BOOK_SELECT,
         versions: {
           where: includeDrafts ? undefined : { status: 'published' },
+          // `LEGACY-484`: `(bookId, language)` уникален — порядок версий один от запроса к запросу.
+          orderBy: { language: 'asc' },
           select: {
             ...PUBLIC_BOOK_VERSION_SELECT,
             categories: {

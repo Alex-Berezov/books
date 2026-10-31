@@ -136,7 +136,7 @@ export class RightsLegalChangeService {
       database.rightsLegalChangeEvent.count({ where }),
       database.rightsLegalChangeEvent.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
       }),
@@ -267,7 +267,7 @@ export class RightsLegalChangeService {
     for (;;) {
       const page = await database.rightsProfile.findMany({
         where: { isCurrent: true, status: { in: [...LEGAL_CHANGE_TARGET_PROFILE_STATUSES] } },
-        orderBy: { createdAt: 'asc' },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         skip,
         take: batchSize,
       });

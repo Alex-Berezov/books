@@ -644,7 +644,7 @@ export class UsersService {
       this.prisma.user.count({ where }),
       this.prisma.user.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
         select: ACCOUNT_USER_SELECT,

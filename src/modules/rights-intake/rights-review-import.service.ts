@@ -209,7 +209,7 @@ export class RightsReviewImportService {
       this.ri.count({ where }),
       this.ri.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
         select: {

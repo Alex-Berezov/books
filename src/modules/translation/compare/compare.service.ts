@@ -218,7 +218,7 @@ export class TranslationCompareService {
           operation: true,
           models: { orderBy: { position: 'asc' }, select: { model: true } },
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
       }),

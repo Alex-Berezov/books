@@ -119,12 +119,19 @@ export const importsOf = (source: ts.SourceFile): ImportTable => {
  */
 export type Reference = { name: string; module: string; text: string };
 
-/** Выражение без скобок, `as`, `!`, `new` и вызова фабрики класса — одно место на все разборы. */
+/**
+ * Выражение без скобок, `as`, `satisfies`, `!`, `new` и вызова фабрики класса — одно место
+ * на все разборы.
+ */
 export const unwrap = (expression: ts.Expression): ts.Expression => {
   let current = expression;
   for (;;) {
     if (ts.isParenthesizedExpression(current)) current = current.expression;
-    else if (ts.isAsExpression(current) || ts.isNonNullExpression(current)) {
+    else if (
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isNonNullExpression(current)
+    ) {
       current = current.expression;
     } else if (ts.isNewExpression(current)) {
       current = current.expression;

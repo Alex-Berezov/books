@@ -177,7 +177,7 @@ describe('MediaService (unit)', () => {
           OR: Array<Record<string, unknown>>;
           contentType: { startsWith: string };
         };
-        orderBy: { createdAt: 'desc' };
+        orderBy: Array<Record<string, 'desc'>>;
         skip: number;
         take: number;
       };
@@ -187,7 +187,7 @@ describe('MediaService (unit)', () => {
         { url: { contains: 'covers' } },
       ]);
       expect(fmArg.where.contentType.startsWith).toBe('image/');
-      expect(fmArg.orderBy).toEqual({ createdAt: 'desc' });
+      expect(fmArg.orderBy).toEqual([{ createdAt: 'desc' }, { id: 'desc' }]);
       expect(fmArg.skip).toBe(0);
       expect(fmArg.take).toBe(20);
       expect(res).toEqual({

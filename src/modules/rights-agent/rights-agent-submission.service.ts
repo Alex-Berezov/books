@@ -289,7 +289,7 @@ export class RightsAgentSubmissionService {
       this.submissionDelegate.count({ where }),
       this.submissionDelegate.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
         include: { uploadToken: { select: { tokenPrefix: true } } },

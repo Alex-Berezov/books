@@ -192,7 +192,7 @@ export class RightsLawyerReviewService {
       database.rightsLawyerReview.count({ where }),
       database.rightsLawyerReview.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
         include: REVIEW_INCLUDE,

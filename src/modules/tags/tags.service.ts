@@ -95,7 +95,7 @@ export class TagsService {
       this.prisma.tag.count({ where }),
       this.prisma.tag.findMany({
         where,
-        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+        orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }, { id: 'asc' }],
         skip,
         take: limit,
         include: {
@@ -482,7 +482,7 @@ export class TagsService {
         ? []
         : await this.prisma.bookVersion.findMany({
             where,
-            orderBy: { createdAt: 'desc' },
+            orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
             skip,
             take: effectiveLimit,
             select: {

@@ -90,8 +90,11 @@ export class CommentsService {
       ...(target === 'audio' ? { audioChapterId: targetId } : {}),
     };
 
-    const orderBy: Prisma.CommentOrderByWithRelationInput =
-      sortBy === 'popularity' ? { likes: { _count: 'desc' } } : { createdAt: 'desc' };
+    // `LEGACY-484`: `id` последним — страницы не повторяют и не теряют комментарии с равным ключом.
+    const orderBy: Prisma.CommentOrderByWithRelationInput[] =
+      sortBy === 'popularity'
+        ? [{ likes: { _count: 'desc' } }, { createdAt: 'desc' }, { id: 'desc' }]
+        : [{ createdAt: 'desc' }, { id: 'desc' }];
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.comment.findMany({
@@ -329,7 +332,7 @@ export class CommentsService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.comment.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
         select: {

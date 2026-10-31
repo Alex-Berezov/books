@@ -126,7 +126,7 @@ export class PersonsService {
         where,
         take: limit,
         skip,
-        orderBy: { canonicalName: 'asc' },
+        orderBy: [{ canonicalName: 'asc' }, { id: 'asc' }],
         include: {
           translations: true,
         },

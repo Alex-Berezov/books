@@ -318,7 +318,7 @@ export class RightsRecheckService {
       database.rightsRecheckTask.count({ where }),
       database.rightsRecheckTask.findMany({
         where,
-        orderBy: [{ severity: 'desc' }, { dueAt: 'asc' }, { createdAt: 'desc' }],
+        orderBy: [{ severity: 'desc' }, { dueAt: 'asc' }, { createdAt: 'desc' }, { id: 'desc' }],
         skip: (page - 1) * limit,
         take: limit,
       }),

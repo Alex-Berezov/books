@@ -95,7 +95,7 @@ export class RightsIntakeService {
       this.prisma.rightsIntake.count({ where }),
       this.prisma.rightsIntake.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
         include: dto.includeSummary

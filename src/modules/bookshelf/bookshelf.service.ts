@@ -33,7 +33,7 @@ export class BookshelfService {
     const [itemsRaw, total] = await this.prisma.$transaction([
       this.prisma.bookshelf.findMany({
         where: { userId },
-        orderBy: { addedAt: 'desc' },
+        orderBy: [{ addedAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit + 1, // +1 to compute hasNext without a second query
         include: {

@@ -120,7 +120,7 @@ export class MediaService {
     const [items, total] = await Promise.all([
       this.prisma.mediaAsset.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip,
         take: limit,
       }),
