@@ -10,6 +10,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { getSupportedLanguages } from '../../shared/language/language.util';
+import { pickSlugOwner } from '../../shared/slug/book-slug-owner';
 import {
   BOOK_ANALYSIS_SELECT,
   EMPTY_BOOK_ANALYSIS,
@@ -392,8 +393,7 @@ function toClaimClosure(
   owners: SlugOwners,
 ): BookAnalysisClaimClosureDto {
   const ownerOf = (slug: string): string => {
-    const versions = owners.get(slug) ?? [];
-    const match = versions.find((v) => v.language === candidate.language) ?? versions[0];
+    const match = pickSlugOwner(owners.get(slug) ?? [], candidate.language);
     // Опубликованной версии с этим слагом нет нигде - адрес отвечает `Book.slug` этой книги.
     return match ? match.bookId : candidate.bookId;
   };

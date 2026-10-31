@@ -2490,7 +2490,7 @@
             "type": "string"
           },
           "language": {
-            "description": "Language of the closed version; null — every language of the book",
+            "description": "Language of the closed version; the server always sets it. null is kept for compatibility and means every language of the book",
             "enum": [
               "en",
               "es",
@@ -41941,7 +41941,7 @@
             "description": ""
           }
         },
-        "summary": "Where book analyses are closed by active blocks of settled rights claims (slugs, language, country, expiry only)",
+        "summary": "Where book text is closed by active blocks of settled rights claims — the analysis and the summary sections (slugs, language, country, expiry only)",
         "tags": [
           "analyses"
         ]

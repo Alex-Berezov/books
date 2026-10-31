@@ -43,6 +43,7 @@ import {
 import { deleteSeoIfUnreferenced } from '../../shared/seo/seo-orphan.util';
 import { suggestedSlugCandidate } from '../../shared/validators/slug';
 import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
+import { pickSlugOwner } from '../../shared/slug/book-slug-owner';
 import { seoDtoToData } from '../seo/utils/seo-dto-to-data.util';
 import {
   bookCardSelect,
@@ -1581,10 +1582,7 @@ export class AuthorService {
       // слагом на языке страницы, затем опубликованная на любом языке, затем `Book.slug`.
       // Черновик слаг не занимает: иначе ссылка вела бы не туда, куда открывается адрес.
       const byVersion = matches.filter((m) => m.slug === slug && m.status === 'published');
-      const hit =
-        byVersion.find((m) => m.language === language) ??
-        byVersion[0] ??
-        matches.find((m) => m.book.slug === slug);
+      const hit = pickSlugOwner(byVersion, language) ?? matches.find((m) => m.book.slug === slug);
       if (hit) bookIdBySlug.set(slug, hit.bookId);
     }
     const bookIds = Array.from(new Set(bookIdBySlug.values()));

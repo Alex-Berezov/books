@@ -37,7 +37,7 @@ export class BookAnalysisController {
   @Get('analyses/claim-closures')
   @ApiOperation({
     summary:
-      'Where book analyses are closed by active blocks of settled rights claims (slugs, language, country, expiry only)',
+      'Where book text is closed by active blocks of settled rights claims — the analysis and the summary sections (slugs, language, country, expiry only)',
   })
   @ApiOkResponse({ type: BookAnalysisClaimClosuresResponseDto })
   listClaimClosures() {

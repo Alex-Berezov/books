@@ -3171,7 +3171,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Where book analyses are closed by active blocks of settled rights claims (slugs, language, country, expiry only) */
+    /** Where book text is closed by active blocks of settled rights claims — the analysis and the summary sections (slugs, language, country, expiry only) */
     get: operations['BookAnalysisController_listClaimClosures'];
     put?: never;
     post?: never;
@@ -5758,7 +5758,7 @@ export interface components {
       /** Format: date-time */
       expiresAt: string | null;
       /**
-       * @description Language of the closed version; null — every language of the book
+       * @description Language of the closed version; the server always sets it. null is kept for compatibility and means every language of the book
        * @enum {string|null}
        */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru' | null;

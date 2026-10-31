@@ -141,7 +141,8 @@ export class BookAnalysisClaimClosureDto {
   @ApiProperty({
     enum: Language,
     nullable: true,
-    description: 'Language of the closed version; null — every language of the book',
+    description:
+      'Language of the closed version; the server always sets it. null is kept for compatibility and means every language of the book',
   })
   language!: Language | null;
 

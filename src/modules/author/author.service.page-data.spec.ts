@@ -311,6 +311,47 @@ describe('AuthorService: данные страницы автора (F02-2)', ()
       expect(result.startHere.map((s) => s.book.slug)).toEqual(['protsess']);
     });
 
+    it('слаг двух книг в разных языках — книга языка страницы, иначе первая по языку (как адрес книги, T145)', async () => {
+      const shared = [
+        ...versions,
+        // Строки в порядке `language asc`, как их отдаёт запрос.
+        version({
+          id: 'x-en',
+          bookId: 'x',
+          language: Language.en,
+          slug: 'shared',
+          title: 'X',
+          bookSlug: 'book-x',
+        }),
+        version({
+          id: 'x-fr',
+          bookId: 'x',
+          language: Language.fr,
+          slug: 'x-fr',
+          title: 'X fr',
+          bookSlug: 'book-x',
+        }),
+        version({
+          id: 'y-ru',
+          bookId: 'y',
+          language: Language.ru,
+          slug: 'shared',
+          title: 'Y',
+          bookSlug: 'book-y',
+        }),
+      ];
+      const { prisma } = createDb(translations, shared, []);
+      prisma.authorTranslation.findFirst.mockResolvedValue(
+        pageTranslation({ startHere: [{ bookSlug: 'shared', reason: 'r' }] }),
+      );
+
+      const ru = await serviceFor(prisma).getPublicBySlug('lev-tolstoy', Language.ru);
+      const fr = await serviceFor(prisma).getPublicBySlug('lev-tolstoy', Language.fr);
+
+      expect(ru.startHere.map((s) => s.book.slug)).toEqual(['shared']);
+      expect(fr.startHere.map((s) => s.book.slug)).toEqual(['x-fr']);
+    });
+
     it('«С чего начать» без опубликованной книги на языке страницы — запись отброшена', async () => {
       const { prisma } = createDb(translations, versions, []);
       prisma.authorTranslation.findFirst.mockResolvedValue(
