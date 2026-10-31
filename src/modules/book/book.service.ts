@@ -183,6 +183,9 @@ export class BookService {
             },
           },
         },
+        // `LEGACY-483`: без порядка соседние страницы могли повторить книгу и потерять другую.
+        // Уникальный `id` последним: при равных `createdAt` раскладка всё равно одна.
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         skip,
         take: limit,
       }),

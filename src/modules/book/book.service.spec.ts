@@ -888,6 +888,25 @@ describe('BookService.getOverview', () => {
       expectAnalysesCount(args.select.versions.select._count.select.analyses);
     });
 
+    it('pages in a fixed order with the unique id last (LEGACY-483)', async () => {
+      prisma.book.count.mockResolvedValue(0);
+      prisma.book.findMany.mockResolvedValue([]);
+
+      await service.findAll({ page: 3, limit: 20 });
+
+      // Без порядка соседние страницы `skip`/`take` повторяют одну книгу и теряют другую,
+      // а без `id` последним то же случается среди книг с одним `createdAt`.
+      expect(prisma.book.findMany).toHaveBeenCalledTimes(1);
+      const args = prisma.book.findMany.mock.calls[0][0] as {
+        orderBy: unknown;
+        skip: number;
+        take: number;
+      };
+      expect(args.orderBy).toEqual([{ createdAt: 'asc' }, { id: 'asc' }]);
+      expect(args.skip).toBe(40);
+      expect(args.take).toBe(20);
+    });
+
     it('sets hasText/hasAudio to false if no chapters or drafts only', async () => {
       prisma.book.count.mockResolvedValue(1);
       prisma.book.findMany.mockResolvedValue([

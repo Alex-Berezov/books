@@ -444,8 +444,8 @@ describe('Draft and rights exposure (e2e)', () => {
 
       expect(pages.length).toBeGreaterThan(1);
       // Обход покрыл каталог: каждая книга ровно один раз. Без этого черновик, выпавший между
-      // страницами, прошёл бы зелёным. Порядка у списка нет (`LEGACY-483`), поэтому до `T152`
-      // здесь возможен красный — он чинится порядком, а не повтором (решение арбитра T141).
+      // страницами, прошёл бы зелёным. Раскладку страниц держит порядок `findAll` (`LEGACY-483`,
+      // `T152`): повтор или пропуск книги здесь — возврат дефекта, а не шум.
       expect(new Set(ids).size).toBe(ids.length);
       expect(ids.length).toBe(first.pagination.total);
       expect(walked).toContain(`"slug":"${bookSlug}"`);
@@ -470,6 +470,68 @@ describe('Draft and rights exposure (e2e)', () => {
       for (let n = 2; n <= first.pagination.totalPages; n++) seen += (await pageOf(n)).items.length;
 
       expect(first.pagination.total).toBe(seen);
+    });
+  });
+
+  describe('LEGACY-483 — порядок списка книг', () => {
+    // createdAt выставлен парами и против порядка id, поэтому порядок по первичному ключу ему
+    // не равен; внутри пары createdAt совпадает, и решает только id. Строки обновляются от
+    // большего id к меньшему: порядок кучи после этого обратен id, и без `{ id: 'asc' }` пара
+    // выходит перевёрнутой. Страница — четверть своего списка (публичный короче админского на
+    // черновики): обход пересекает границы `skip`/`take`, где без порядка книга повторяется
+    // на соседней странице, а другая теряется. Обе даты возвращаются в `finally`.
+    it('список книг идёт по createdAt и id без повторов и потерь, публичный и админский', async () => {
+      const all = await prisma.book.findMany({
+        select: { id: true, createdAt: true, updatedAt: true },
+        orderBy: { id: 'asc' },
+      });
+      // Пары против порядка id отличаются от него только с трёх книг.
+      expect(all.length).toBeGreaterThan(2);
+      const base = Date.parse('2026-01-01T00:00:00Z');
+      const stamps = new Map<string, number>();
+      try {
+        for (const [i, { id }] of [...all.entries()].reverse()) {
+          const at = base + Math.floor((all.length - 1 - i) / 2) * 1000;
+          stamps.set(id, at);
+          await prisma.book.update({ where: { id }, data: { createdAt: new Date(at) } });
+        }
+        const expected = (ids: string[]) =>
+          [...ids].sort((x, y) => (stamps.get(x) ?? 0) - (stamps.get(y) ?? 0) || (x < y ? -1 : 1));
+        type Page = { items: { id: string }[]; pagination: { total: number; totalPages: number } };
+        const pageOf = async (
+          path: string,
+          headers: Record<string, string>,
+          n: number,
+          limit: number,
+        ) =>
+          (await request(http()).get(`${path}?limit=${limit}&page=${n}`).set(headers).expect(200))
+            .body as Page;
+        const walk = async (path: string, headers: Record<string, string>) => {
+          const { total } = (await pageOf(path, headers, 1, 1)).pagination;
+          const limit = Math.min(PAGINATION_MAX_LIMIT, Math.max(1, Math.ceil(total / 4)));
+          const pages = [await pageOf(path, headers, 1, limit)];
+          for (let n = 2; n <= pages[0].pagination.totalPages; n++) {
+            pages.push(await pageOf(path, headers, n, limit));
+          }
+          return { ids: pages.flatMap((page) => page.items.map((item) => item.id)), total, pages };
+        };
+        const pub = await walk('/en/books', {});
+        const admin = await walk('/books', { Authorization: `Bearer ${adminToken}` });
+
+        for (const { ids, total, pages } of [pub, admin]) {
+          expect(pages.length).toBeGreaterThan(1);
+          expect(new Set(ids).size).toBe(ids.length);
+          expect(ids.length).toBe(total);
+          expect(ids).toEqual(expected(ids));
+        }
+        // Админский список видит весь каталог: обход отдал ровно те книги, что лежат в базе.
+        expect([...admin.ids].sort()).toEqual(all.map(({ id }) => id).sort());
+      } finally {
+        // `updatedAt` задан явно: иначе `@updatedAt` сдвинул бы его и при возврате.
+        for (const { id, createdAt, updatedAt } of all) {
+          await prisma.book.update({ where: { id }, data: { createdAt, updatedAt } });
+        }
+      }
     });
   });
 
