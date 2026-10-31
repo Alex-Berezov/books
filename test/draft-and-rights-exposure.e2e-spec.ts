@@ -424,10 +424,32 @@ describe('Draft and rights exposure (e2e)', () => {
      * сервер его не соблюдал и каждый потребитель договаривался сам.
      */
     it('публичный список отдаёт книги без черновиков', async () => {
-      const res = await request(http()).get('/en/books?limit=100').expect(200);
+      // Каталог воркера e2e растёт с сидами и в одну страницу не укладывается: черновик, попавший
+      // на вторую страницу, прошёл бы проверку первой зелёным, поэтому обходятся все страницы.
+      // Размер страницы — половина каталога (не больше `PAGINATION_MAX_LIMIT`): страниц всегда
+      // не меньше двух, и обход второй исполняется на любом каталоге, а не только переросшем
+      // потолок; число запросов растёт с каталогом в сто раз медленнее, чем при шаге 1.
+      const pageOf = async (n: number, limit: number) =>
+        (await request(http()).get(`/en/books?limit=${limit}&page=${n}`).expect(200)).body as {
+          items: { id: string }[];
+          pagination: { total: number; totalPages: number };
+        };
+      const catalog = (await pageOf(1, PAGINATION_MAX_LIMIT)).pagination.total;
+      const limit = Math.min(PAGINATION_MAX_LIMIT, Math.ceil(catalog / 2));
+      const first = await pageOf(1, limit);
+      const pages = [first];
+      for (let n = 2; n <= first.pagination.totalPages; n++) pages.push(await pageOf(n, limit));
+      const ids = pages.flatMap((page) => page.items.map((item) => item.id));
+      const walked = JSON.stringify(pages);
 
-      expect(JSON.stringify(res.body)).not.toContain('DRAFT TITLE NOT FOR PUBLIC');
-      expect((res.body as { items: unknown[] }).items.length).toBeGreaterThan(0);
+      expect(pages.length).toBeGreaterThan(1);
+      // Обход покрыл каталог: каждая книга ровно один раз. Без этого черновик, выпавший между
+      // страницами, прошёл бы зелёным. Порядка у списка нет (`LEGACY-483`), поэтому до `T152`
+      // здесь возможен красный — он чинится порядком, а не повтором (решение арбитра T141).
+      expect(new Set(ids).size).toBe(ids.length);
+      expect(ids.length).toBe(first.pagination.total);
+      expect(walked).toContain(`"slug":"${bookSlug}"`);
+      expect(walked).not.toContain('DRAFT TITLE NOT FOR PUBLIC');
     });
 
     /**
