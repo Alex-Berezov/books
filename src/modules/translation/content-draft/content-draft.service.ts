@@ -23,6 +23,7 @@ import {
   StoredBookAnalysis,
 } from '../../book-analysis/book-analysis-data';
 import { chapterPages } from '../chapter-pages';
+import { DOSSIER_TOO_LONG } from '../dossier/dossier.constants';
 import { ContextEstimate, DossierDemandService } from '../dossier/dossier-demand.service';
 import { DossierService } from '../dossier/dossier.service';
 import { DossierMotifDto, DossierSummarySectionDto } from '../dto/dossier-data.dto';
@@ -175,6 +176,14 @@ export class ContentDraftService {
   ): Promise<ContentDraftDto> {
     this.llm.assertEnabled();
     const estimate = await this.estimateOf(versionId, kind);
+    // Досье заведомо откажет `DOSSIER_TOO_LONG` (то же правило, что у старта досье): операция
+    // и строка не заводятся, прежняя заготовка не теряется (`LEGACY-477`, `T153`).
+    if (estimate.dto.dossier?.refusedTooLong) {
+      throw llmTaskConflict(
+        DOSSIER_TOO_LONG,
+        'The dossier summary is too long for the stage model',
+      );
+    }
     // Потолок исчерпан - отказ без операции и без строки (В11 `F05-2`, В2 `F05-10`).
     if (await this.budget.ceilingReached()) {
       throw llmTaskConflict('LLM_CEILING_REACHED', 'LLM spending ceiling is reached');

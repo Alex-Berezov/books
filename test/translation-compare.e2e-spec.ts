@@ -385,6 +385,36 @@ describe('Translation compare (e2e)', () => {
     expect(res.body.glossary).not.toHaveProperty('refusedTooLong');
   });
 
+  it('start refused 409 DOSSIER_TOO_LONG when the dossier estimate is refused; no operation and no row (T153)', async () => {
+    const { ids } = await englishBook();
+    const dossiers = app.get<DossierDemandService>(DossierDemandService);
+    const real: DossierDemandService['contextEstimate'] = (...args) =>
+      DossierDemandService.prototype.contextEstimate.apply(
+        dossiers,
+        args,
+      ) as Promise<ContextEstimate>;
+    jest
+      .spyOn(dossiers, 'contextEstimate')
+      .mockImplementationOnce(
+        async (...args: Parameters<DossierDemandService['contextEstimate']>) => {
+          const estimate = await real(...args);
+          expect(estimate.dossier).not.toBeNull();
+          return {
+            ...estimate,
+            dossier: estimate.dossier && { ...estimate.dossier, refusedTooLong: true },
+          };
+        },
+      );
+
+    const res = await start(ids.en as string, {}).expect(409);
+    expect(res.body).toMatchObject({ code: 'DOSSIER_TOO_LONG' });
+    expect(
+      await prisma.llmOperation.count({ where: { kind: 'compare', bookVersionId: ids.en } }),
+    ).toBe(0);
+    expect(await prisma.translationCompare.count({ where: { bookVersionId: ids.en } })).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+
   it('estimate before the dossier: dossier and glossary lines, the glossary as an upper bound, no call', async () => {
     const { ids } = await englishBook();
     const res = await auth(

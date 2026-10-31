@@ -98,7 +98,7 @@ export class TranslationCompareController {
   @ApiNotFoundResponse({ description: 'Version or chapter not found' })
   @ApiConflictResponse({
     description:
-      'LLM_CEILING_REACHED: the spending ceiling is reached; the version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
+      'LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); the version is not a translation source by D8 (code = its reason, with sourceVersionId); NOT_IN_INTAKE; COMPARE_CHAPTER_EMPTY; SOURCE_HAS_NO_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED',
   })
   @ApiServiceUnavailableResponse({
     description: 'LLM_DISABLED: no OpenRouter key; LLM_MODELS_UNAVAILABLE',

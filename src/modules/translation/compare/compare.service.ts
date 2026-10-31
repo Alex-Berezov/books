@@ -13,6 +13,7 @@ import { LlmService } from '../../llm/llm.service';
 import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
+import { DOSSIER_TOO_LONG } from '../dossier/dossier.constants';
 import { DossierDemandService } from '../dossier/dossier-demand.service';
 import {
   StartTranslationCompareDto,
@@ -98,6 +99,14 @@ export class TranslationCompareService {
   ): Promise<TranslationCompareDto> {
     this.llm.assertEnabled();
     const estimate = await this.estimateOf(versionId, dto);
+    // Досье заведомо откажет `DOSSIER_TOO_LONG` (то же правило, что у старта досье): операция
+    // и строка не заводятся, прежняя заготовка не теряется (`LEGACY-477`, `T153`).
+    if (estimate.dto.dossier?.refusedTooLong) {
+      throw llmTaskConflict(
+        DOSSIER_TOO_LONG,
+        'The dossier summary is too long for the stage model',
+      );
+    }
     // Потолок исчерпан - отказ без операции, как у кнопки досье (С4, В11).
     if (await this.budget.ceilingReached()) {
       throw llmTaskConflict('LLM_CEILING_REACHED', 'LLM spending ceiling is reached');

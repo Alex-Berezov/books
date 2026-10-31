@@ -553,6 +553,54 @@ describe('Summary drafts from the dossier (e2e)', () => {
     expect(res.body.dossier).toMatchObject({ refusedTooLong: true, upperBound: false });
   });
 
+  it('start refused 409 DOSSIER_TOO_LONG when the dossier estimate is refused; nothing is created and the ready draft of the kind stays (T153)', async () => {
+    const versionId = await sourceBook();
+    await start(versionId, 'summary_sections').expect(202);
+    await drain();
+    expect((await draftOf(versionId, 'summary_sections')).status).toBe('ready');
+    const drafts = await prisma.contentDraft.count({ where: { bookVersionId: versionId } });
+    const operations = await prisma.llmOperation.count({ where: { bookVersionId: versionId } });
+    const dossiers = app.get<DossierDemandService>(DossierDemandService);
+    const real: DossierDemandService['contextEstimate'] = (...args) =>
+      DossierDemandService.prototype.contextEstimate.apply(
+        dossiers,
+        args,
+      ) as Promise<ContextEstimate>;
+    const refused = jest
+      .spyOn(dossiers, 'contextEstimate')
+      .mockImplementation(async (...args: Parameters<DossierDemandService['contextEstimate']>) => {
+        const estimate = await real(...args);
+        return {
+          ...estimate,
+          dossier: {
+            estimateUsd: new Prisma.Decimal(1),
+            suggestedLimitUsd: new Prisma.Decimal(2),
+            upperBound: false,
+            refusedTooLong: true,
+            sourceVersionId: versionId,
+            chapters: 3,
+            parts: 1,
+          },
+        };
+      });
+
+    const res = await start(versionId, 'summary_sections').expect(409);
+    expect(res.body).toMatchObject({ code: 'DOSSIER_TOO_LONG' });
+    expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(drafts);
+    expect(
+      await prisma.contentDraft.count({ where: { bookVersionId: versionId, status: 'discarded' } }),
+    ).toBe(0);
+    expect(await prisma.llmOperation.count({ where: { bookVersionId: versionId } })).toBe(
+      operations,
+    );
+    expect((await draftOf(versionId, 'summary_sections')).status).toBe('ready');
+
+    // Оценка без отказа - старт проходит: проверка не задевает остальные книги.
+    refused.mockRestore();
+    await start(versionId, 'summary_sections').expect(202);
+    await drain();
+  });
+
   it('sections on the source: the dossier is built first, no glossary in the dossier language, saved summary untouched', async () => {
     const versionId = await sourceBook();
     const estimate = await auth(
