@@ -39,7 +39,9 @@ permissions:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    # LEGACY-476: тот же образ, что у остальных job бэкенда и у deploy.yml - `ubuntu-latest`
+    # сменил образ между прогонами и уронил CI фронта (решение арбитра T137).
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

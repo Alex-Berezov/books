@@ -1810,3 +1810,227 @@ describe('LEGACY-467: откат идёт только по точке отка�
     expect(GITIGNORE).toMatch(/^\/\.deployment_state$/m);
   });
 });
+
+// 🔴 LEGACY-474 (решение арбитра T137). Обрыв ssh после подъёма нового контейнера роняет
+// job `deploy`, и откат переливал исправный прод на прошлую версию. Перед откатом прод
+// спрашивается снаружи: откат пропускается только при коде ssh 255 шага выката (обрыв канала),
+// живой выкаченной версии и readiness `up`. Отказ самого `deploy_production.sh` (любой другой
+// код) и красный дым после успешного шага выката - откат (решения арбитра T137).
+describe('LEGACY-474: откат не трогает выкат, который уже живёт', () => {
+  const PIN = '🔐 Pin Server Host Key';
+  const PROBE = '🩺 Probe Deployed Revision';
+  const ROLLBACK = '⏪ Rollback Deployment';
+  const VERSION = 'v1.0.300';
+
+  /** Строки блока `outputs:` job'а - значение должно стоять именно там, а не где-то в job. */
+  const jobOutputs = (job: string): string[] => {
+    const body = jobBody(job);
+    const at = body.findIndex((line) => /^ {4}outputs:\s*$/.test(line));
+    if (at === -1) throw new Error(`у job \`${job}\` нет блока outputs`);
+    const rest = body.slice(at + 1);
+    const end = rest.findIndex((line) => !/^ {6}\S/.test(line));
+    return (end === -1 ? rest : rest.slice(0, end)).map((line) => line.trim());
+  };
+
+  it('проба стоит между ключом хоста и откатом и получает версию и исход шага выката', () => {
+    const pin = indexOfStep('rollback', PIN);
+    expect(indexOfStep('rollback', PROBE)).toBe(pin + 1);
+    expect(indexOfStep('rollback', ROLLBACK)).toBe(pin + 2);
+    const outputs = jobOutputs('deploy');
+    expect(outputs).toContain('version: ${{ needs.build.outputs.version }}');
+    expect(outputs).toContain('deploy_ssh_rc: ${{ steps.deploy_server.outputs.ssh_rc }}');
+    expect(step('deploy', '🚀 Deploy to Server').lines.join('\n')).toMatch(
+      /^ {8}id: deploy_server$/m,
+    );
+    const probe = step('rollback', PROBE).lines.join('\n');
+    expect(probe).toContain('EXPECTED_VERSION: ${{ needs.deploy.outputs.version }}');
+    expect(probe).toContain('DEPLOY_SSH_RC: ${{ needs.deploy.outputs.deploy_ssh_rc }}');
+    expect(probe).toContain('PROBE_DOMAIN: ${{ vars.PRODUCTION_DOMAIN }}');
+  });
+
+  it('откат пропускается только по явному yes пробы, отказ пробы откат не снимает', () => {
+    expect(stepCondition(step('rollback', ROLLBACK))).toBe(
+      "${{ !cancelled() && steps.pin_host_key.outcome == 'success' && steps.live.outputs.deployed_live != 'yes' }}",
+    );
+    expect(step('rollback', PIN).lines.join('\n')).toMatch(/^ {8}id: pin_host_key$/m);
+    expect(step('rollback', PROBE).lines.join('\n')).toMatch(/^ {8}id: live$/m);
+  });
+
+  it('проба ходит снаружи по https, без ssh, и не глушит ошибки', () => {
+    const body = runBody(step('rollback', PROBE));
+    expect(body).not.toMatch(/(^|[\s(|:$])ssh\s/m);
+    expect(body).not.toMatch(/\|\| true|continue-on-error/);
+    // `run:` без `shell:` - это `bash -e` без pipefail; проба включает его сама.
+    expect(body.split('\n').some((line) => line.trim() === 'set -o pipefail')).toBe(true);
+  });
+
+  // Проба и проверки job `deploy` читают один и тот же ответ health. Разъедутся - проба
+  // вечно ответит `no`, и откат снова перельёт исправный прод (архитектурное ревью T137).
+  it('проба читает те же адреса и поля health, что Health Check и Verify Deployment', () => {
+    const probe = runBody(step('rollback', PROBE));
+    const verify = runBody(step('deploy', '📊 Verify Deployment'));
+    const health = runBody(step('deploy', '🏥 Health Check'));
+    const version = `/api/health/liveness" | jq -r '.version`;
+    const status = `/api/health/readiness" | jq -r '.status`;
+    expect([probe.includes(version), verify.includes(version)]).toEqual([true, true]);
+    expect([probe.includes(status), health.includes(status)]).toEqual([true, true]);
+  });
+
+  // Код ssh перехватывается вне heredoc: шаг уходит с ним же (красный остаётся красным),
+  // а в выход шага пишется то, что прочтёт проба.
+  it.each(['0', '1', '255'])('шаг выката выходит с кодом ssh %s и отдаёт его в выход', (rc) => {
+    const res = withTempDir('ssh-rc-', (dir) => {
+      const output = join(dir, 'out');
+      writeFileSync(output, '');
+      const shim = 'ssh() { cat > /dev/null; return "$SSH_RC"; }\n';
+      // Actions снимает отступ блока `run: |`; без этого bash не узнает терминатор heredoc.
+      const script = runBody(step('deploy', '🚀 Deploy to Server'))
+        .split('\n')
+        .map((line) => line.replace(/^ {10}/, ''))
+        .join('\n')
+        .replace(/\$\{\{[^}]*\}\}/g, 'host');
+      const run = bash(shim + script, { SSH_RC: rc, GITHUB_OUTPUT: bashPath(output) });
+      return { ...run, output: readFileSync(output, 'utf8') };
+    });
+    expect([res.code, res.output.trim()]).toEqual([Number(rc), `ssh_rc=${rc}`]);
+  });
+
+  describe('проба на живом прогоне', () => {
+    // `curl` отвечает телом из переменной или кодом 22 (как `-f` на ошибке HTTP). Ответы
+    // liveness задаются списком через `|`: n-й вызов получает n-й элемент, последний
+    // повторяется. Счётчик - в файле: `curl` зовётся в подоболочке `$(...)`.
+    // `jq` - через node: на раннере тестов его может не быть; пустой вход, как у настоящего jq, - пустой вывод и код 0.
+    const SHIMS = String.raw`
+curl() {
+  local url="${'$'}{*: -1}"
+  case "$url" in
+    "https://$PROBE_DOMAIN/api/health/liveness")
+      local n
+      n=$(( $(cat "$CALLS") + 1 ))
+      echo "$n" > "$CALLS"
+      local all
+      IFS='|' read -ra all <<< "$LIVE|"
+      (( ${'$'}{#all[@]} > 0 )) || return 22
+      local i=$(( n - 1 ))
+      if (( i >= ${'$'}{#all[@]} )); then i=$(( ${'$'}{#all[@]} - 1 )); fi
+      [[ -n "${'$'}{all[$i]}" ]] || return 22
+      printf '%s' "${'$'}{all[$i]}" ;;
+    "https://$PROBE_DOMAIN/api/health/readiness")
+      [[ -n "$READY" ]] || return 22
+      printf '%s' "$READY" ;;
+    *) echo "unexpected curl: $url" >&2; return 2 ;;
+  esac
+}
+jq() {
+  case "$1 $2" in
+    "-r .version // empty" | "-r .status // empty") ;;
+    *) echo "unexpected jq call: $*"; return 2 ;;
+  esac
+  node -e 'let d="";process.stdin.on("data",c=>d+=c).on("end",()=>{if(!d.trim())return;let v;try{v=JSON.parse(d)}catch{process.exit(5)}const k=process.argv[1].slice(1).split(" ")[0];if(v[k]!=null&&v[k]!=="")console.log(v[k])})' "$2"
+}
+sleep() { :; }
+`;
+
+    interface Probe {
+      sshRc?: string;
+      expected?: string;
+      domain?: string;
+      live: string;
+      ready: string;
+    }
+
+    const run = (p: Probe): BashRun & { output: string; summary: string; calls: number } =>
+      withTempDir('probe-', (dir) => {
+        const output = join(dir, 'out');
+        const summary = join(dir, 'summary');
+        const calls = join(dir, 'calls');
+        writeFileSync(output, '');
+        writeFileSync(summary, '');
+        writeFileSync(calls, '0');
+        const script = runBody(step('rollback', PROBE));
+        const res = bash(`${SHIMS}\n${script}`, {
+          DEPLOY_SSH_RC: p.sshRc ?? '255',
+          EXPECTED_VERSION: p.expected ?? VERSION,
+          PROBE_DOMAIN: p.domain ?? 'example.test',
+          LIVE: p.live,
+          READY: p.ready,
+          CALLS: bashPath(calls),
+          GITHUB_OUTPUT: bashPath(output),
+          GITHUB_STEP_SUMMARY: bashPath(summary),
+        });
+        return {
+          ...res,
+          output: readFileSync(output, 'utf8'),
+          summary: readFileSync(summary, 'utf8'),
+          calls: Number(readFileSync(calls, 'utf8').trim()),
+        };
+      });
+
+    const up = JSON.stringify({ status: 'up' });
+    const live = JSON.stringify({ version: VERSION });
+
+    it('обрыв ssh, выкаченная версия живёт и готова - откат пропускается', () => {
+      const res = run({ live, ready: up });
+      expect([res.code, res.output.trim()]).toEqual([0, 'deployed_live=yes']);
+      expect(res.out).toContain('rollback skipped');
+      expect(res.summary).toContain('Rollback skipped');
+      expect(res.calls).toBe(1);
+    });
+
+    it('контейнер поднялся не с первой попытки - откат пропускается', () => {
+      const res = run({ live: `|${JSON.stringify({ version: 'v1.0.299' })}|${live}`, ready: up });
+      expect([res.code, res.output.trim()]).toEqual([0, 'deployed_live=yes']);
+      expect(res.calls).toBe(3);
+    });
+
+    it.each<[string, Probe]>([
+      ['шаг выката прошёл, упал дым после него', { sshRc: '0', live, ready: up }],
+      ['скрипт выката на сервере отказал сам', { sshRc: '1', live, ready: up }],
+      ['шаг выката не дошёл до ssh, кода нет', { sshRc: '', live, ready: up }],
+      ['домен прода не задан', { domain: '', live, ready: up }],
+      ['версия прогона неизвестна', { expected: '', live, ready: up }],
+      [
+        'версия прогона unknown',
+        { expected: 'unknown', live: JSON.stringify({ version: 'unknown' }), ready: up },
+      ],
+    ])('%s - откат идёт без опроса прода', (_case, probe) => {
+      const res = run(probe);
+      expect([res.code, res.output.trim()]).toEqual([0, 'deployed_live=no']);
+      expect(res.out).toContain('rolling back');
+      expect(res.calls).toBe(0);
+      expect(res.summary).toBe('');
+    });
+
+    it.each([
+      ['чужая версия', JSON.stringify({ version: 'v1.0.299' }), up],
+      ['версия unknown', JSON.stringify({ version: 'unknown' }), up],
+      ['версии в ответе нет', JSON.stringify({}), up],
+      ['liveness не отвечает', '', up],
+      ['liveness оборван посреди JSON', '{"version": "v1.0', up],
+      ['readiness down', live, JSON.stringify({ status: 'down' })],
+      ['readiness не отвечает', live, ''],
+    ])('%s - откат идёт после всех попыток', (_case, liveBody, ready) => {
+      const res = run({ live: liveBody, ready });
+      expect([res.code, res.output.trim()]).toEqual([0, 'deployed_live=no']);
+      expect(res.out).toContain('rolling back');
+      expect(res.out).toContain('Attempt 12/12');
+      expect(res.calls).toBe(12);
+      expect(res.summary).toBe('');
+    });
+  });
+});
+
+// 🔴 LEGACY-476 (решение арбитра T137). `ubuntu-latest` сменил образ между двумя прогонами
+// и уронил CI фронта. Все job бэкенда - на одном явном образе: проверки `ci.yml` и
+// `deploy.yml` обязаны идти в одном окружении (`LEGACY-207`, `LEGACY-209`).
+describe('LEGACY-476: образ раннера закреплён одним значением', () => {
+  it('все job всех workflow бэкенда идут на ubuntu-22.04', () => {
+    const images = WORKFLOW_FILES.flatMap((file) =>
+      [...workflowCode(file).matchAll(/^\s+runs-on:\s*(\S+)\s*(?:#.*)?$/gm)].map(
+        (m) => `${file}: ${m[1]}`,
+      ),
+    );
+    expect(images.length).toBeGreaterThan(0);
+    expect(images.filter((line) => !line.endsWith(': ubuntu-22.04'))).toEqual([]);
+  });
+});

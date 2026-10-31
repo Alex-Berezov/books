@@ -718,6 +718,11 @@ jobs:
       server_stage_reached: ${{ steps.server_stage.outputs.reached }}
       # Читает job `rollback` (`LEGACY-467`): ревизия сервера до этого выката.
       previous_sha: ${{ steps.previous_revision.outputs.sha }}
+      # Читает job `rollback` (`LEGACY-474`): версия, которую выкатывал этот прогон.
+      version: ${{ needs.build.outputs.version }}
+      # Читает job `rollback` (`LEGACY-474`): код возврата ssh шага выката. Откат пропускается
+      # только при 255 (обрыв канала), а не при отказе скрипта и не при красном дыме после шага.
+      deploy_ssh_rc: ${{ steps.deploy_server.outputs.ssh_rc }}
 
     steps:
       - name: 📥 Checkout Deployment Scripts
@@ -875,7 +880,13 @@ jobs:
       # Инвариант держит `src/devops/deploy-trigger.spec.ts`: и потеря кавычек вокруг
       # делимитера, и ссылка на раннерную переменную внутри закавыченного тела.
       - name: 🚀 Deploy to Server
+        id: deploy_server
         run: |
+          # 🔴 LEGACY-474 (решение арбитра T137). Код возврата ssh перехватывается вне тела
+          # heredoc и уходит в выход шага: job `rollback` пропускает откат только при 255
+          # (обрыв канала), а не при отказе самого `deploy_production.sh`. Шаг выходит с тем же
+          # кодом - остаётся красным, ничего не глушится.
+          set +e
           # Connect to server and execute deployment
           ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
             set -euo pipefail
@@ -963,6 +974,10 @@ jobs:
 
             echo "✅ Deployment completed!"
           EOF
+          rc=$?
+          set -e
+          echo "ssh_rc=$rc" >> "$GITHUB_OUTPUT"
+          exit "$rc"
 
       - name: 🏥 Health Check
         run: |
@@ -1406,6 +1421,7 @@ jobs:
       # а не снимается молча. `\r` срезается: значение, вставленное из терминала Windows,
       # иначе не совпало бы ни с одним ключом.
       - name: 🔐 Pin Server Host Key
+        id: pin_host_key
         env:
           KNOWN_HOSTS: ${{ vars.DEPLOY_KNOWN_HOSTS }}
         run: |
@@ -1418,7 +1434,72 @@ jobs:
             echo "HOST_KEY_CHECK=no" >> "$GITHUB_ENV"
           fi
 
+      # 🔴 LEGACY-474 (решение арбитра T137). Обрыв ssh после того, как новый контейнер уже
+      # поднят, роняет job `deploy` - и откат переливал исправный прод на прошлую версию
+      # (21.10.2026, `v1.0.241`). Перед откатом прод спрашивается снаружи, по https, без ssh.
+      # Откат пропускается ТОЛЬКО если ssh шага `🚀 Deploy to Server` вышел с 255 - обрыв канала
+      # (отказ самого `deploy_production.sh` и красный дым `📊 Verify Deployment` после шага -
+      # забракованный выкат, откат идёт) И liveness отдаёт ровно выкаченную версию И readiness
+      # отвечает `up`. Принятая граница: 255 от команды на сервере неотличим от обрыва ssh.
+      # После обрыва дым `📊 Verify Deployment` не идёт - проба смотрит только версию и readiness. Нет ответа, пустая
+      # или `unknown` версия, чужая версия, readiness не `up`, версия прогона неизвестна - откат
+      # как раньше. Job `deploy` остаётся красным: прогон по-прежнему неудачный.
+      # ⚠️ Адреса и поля - те же, что у `🏥 Health Check` и `📊 Verify Deployment` job `deploy`
+      # (`/api/health/liveness` `.version`, `/api/health/readiness` `.status`); меняешь там -
+      # меняй здесь, совпадение сверяет `src/devops/deploy-trigger.spec.ts` (LEGACY-474).
+      # ⚠️ Неудачная попытка уходит в пустую строку через `if !`, а не глушится хвостом:
+      # пустое значение ниже ведёт к откату, то есть к прежнему поведению.
+      - name: 🩺 Probe Deployed Revision
+        id: live
+        env:
+          EXPECTED_VERSION: ${{ needs.deploy.outputs.version }}
+          DEPLOY_SSH_RC: ${{ needs.deploy.outputs.deploy_ssh_rc }}
+          PROBE_DOMAIN: ${{ vars.PRODUCTION_DOMAIN }}
+        run: |
+          # `run:` без `shell:` идёт как `bash -e` без pipefail: отказ `curl` иначе прятался бы за jq.
+          set -o pipefail
+          deployed_live=no
+          if [[ "$DEPLOY_SSH_RC" != "255" ]]; then
+            echo "⏪ The deploy step did not lose the SSH channel (exit code '${DEPLOY_SSH_RC}') - the deploy was rejected, rolling back"
+          elif [[ -z "$PROBE_DOMAIN" ]]; then
+            echo "⏪ PRODUCTION_DOMAIN is empty - cannot probe production, rolling back"
+          elif [[ -z "$EXPECTED_VERSION" || "$EXPECTED_VERSION" == "unknown" ]]; then
+            echo "⏪ Version of this run is unknown - rolling back"
+          else
+            # Окно 2-10 мин (12 попыток, пауза 10 с, два запроса до 20 с): контейнер после обрыва
+            # может ещё подниматься (миграции, прогрев).
+            for attempt in $(seq 1 12); do
+              if ! live_version=$(curl -sf --max-time 20 "https://$PROBE_DOMAIN/api/health/liveness" | jq -r '.version // empty'); then
+                live_version=""
+              fi
+              if ! readiness=$(curl -sf --max-time 20 "https://$PROBE_DOMAIN/api/health/readiness" | jq -r '.status // empty'); then
+                readiness=""
+              fi
+              echo "🔍 Attempt $attempt/12: live version '${live_version}', expected '${EXPECTED_VERSION}', readiness '${readiness}'"
+              if [[ "$live_version" == "$EXPECTED_VERSION" && "$readiness" == "up" ]]; then
+                deployed_live=yes
+                break
+              fi
+              if [[ "$attempt" -lt 12 ]]; then sleep 10; fi
+            done
+          fi
+          if [[ "$deployed_live" == "yes" ]]; then
+            echo "::warning::Deployed version $EXPECTED_VERSION is live and ready - rollback skipped, the deploy run stays failed (LEGACY-474)"
+            {
+              echo "### ⚠️ Rollback skipped (LEGACY-474)"
+              echo "The SSH channel of the deploy step was lost or could not be opened (exit code 255), but production already serves \`$EXPECTED_VERSION\` and readiness is \`up\`."
+              echo "Production was NOT rolled back and the smoke check did not run. The deploy run stays failed - check production by hand."
+              echo "Note: exit code 255 from a command on the server is indistinguishable from a broken SSH channel."
+            } >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "⏪ Deployed version is not confirmed live - rolling back"
+          fi
+          echo "deployed_live=$deployed_live" >> "$GITHUB_OUTPUT"
+
+      # `!cancelled()` и проверка ключа: отказ самой пробы не должен снимать откат молча -
+      # откат пропускается только по явному `yes`, а не по упавшему шагу пробы.
       - name: ⏪ Rollback Deployment
+        if: ${{ !cancelled() && steps.pin_host_key.outcome == 'success' && steps.live.outputs.deployed_live != 'yes' }}
         run: |
           ssh -o StrictHostKeyChecking=$HOST_KEY_CHECK -o ServerAliveInterval=30 -o ServerAliveCountMax=10 ${{ env.DEPLOY_USER }}@${{ vars.PRODUCTION_SERVER }} << 'EOF'
             set -euo pipefail
