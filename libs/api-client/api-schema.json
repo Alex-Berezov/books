@@ -3807,6 +3807,11 @@
           "book": {
             "$ref": "#/components/schemas/BookOverviewBookRefDto"
           },
+          "bookSlug": {
+            "description": "`Book.slug` of the book. A version without its own slug is addressed by it: canonical URL and JSON-LD `@id` of the book page use `version.slug || bookSlug` (LEGACY-472)",
+            "nullable": true,
+            "type": "string"
+          },
           "categories": {
             "items": {
               "$ref": "#/components/schemas/BookOverviewCategoryDto"
@@ -3913,6 +3918,7 @@
         "required": [
           "id",
           "slug",
+          "bookSlug",
           "title",
           "author",
           "description",

@@ -108,6 +108,8 @@ describe('SeoService (unit)', () => {
         status: 'published',
         type: 'text',
         language: 'en',
+        slug: 'v1-slug',
+        book: { slug: 'book-slug' },
       });
       prisma.seo.findUnique.mockResolvedValueOnce({
         id: 10,
@@ -116,6 +118,10 @@ describe('SeoService (unit)', () => {
 
       const bundle = (await service.resolvePublic('version', 'v1')) as unknown as SeoBundle;
       expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/versions/v1');
+      // Свой слаг версии важнее слага книги (`bookCardSlug`, `LEGACY-472`).
+      expect(JSON.stringify((bundle as { schema?: unknown }).schema)).toContain(
+        '/en/book/v1-slug#book',
+      );
       expect(bundle.meta.title).toBe('Title by Author | Read & Listen Free | Bibliaris');
       expect(bundle.openGraph.image).toEqual({
         url: 'http://img/cover.jpg',
@@ -154,6 +160,64 @@ describe('SeoService (unit)', () => {
       );
     });
 
+    it('leads canonical and JSON-LD of a version without its own slug to the book slug (LEGACY-472)', async () => {
+      prisma.bookVersion.findFirst.mockResolvedValue(null);
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-slug' });
+      prisma.bookVersion.findMany.mockResolvedValue([
+        {
+          id: 'v-en',
+          bookId: 'b1',
+          language: 'en',
+          title: 'T EN',
+          author: 'A',
+          description: 'D EN',
+          coverImageUrl: null,
+          seoId: null,
+          slug: null,
+          status: 'published',
+          type: 'text',
+          book: { slug: 'book-slug' },
+        },
+      ]);
+      const bundle = (await service.resolvePublic('book', 'v-en-other-slug', {
+        pathLang: 'en' as Language,
+      })) as unknown as SeoBundle & { schema: { '@graph': Array<{ url?: string }> } };
+      expect(bundle.meta.canonicalUrl).toBe('http://localhost:5000/static/en/book/book-slug');
+      expect(JSON.stringify(bundle.schema)).not.toContain('/en/book/v-en');
+      expect(JSON.stringify(bundle.schema)).toContain('/en/book/book-slug#book');
+      // Слаг книги приходит той же выборкой версий, а не отдельным запросом.
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ include: { book: { select: { slug: true } } } }),
+      );
+    });
+
+    it('version page JSON-LD of a version without slug uses the book slug (LEGACY-472)', async () => {
+      prisma.bookVersion.findFirst.mockResolvedValueOnce({
+        id: 'v1',
+        title: 'Title',
+        author: 'Author',
+        description: 'Desc',
+        coverImageUrl: null,
+        seoId: null,
+        status: 'published',
+        type: 'text',
+        language: 'en',
+        slug: null,
+        book: { slug: 'book-slug' },
+      });
+      const bundle = await service.resolvePublic('version', 'v1');
+      const ld = JSON.stringify((bundle as { schema: unknown }).schema);
+      expect(ld).toContain('/en/book/book-slug#book');
+      expect(ld).not.toContain('/en/book/v1');
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          select: expect.objectContaining({ book: { select: { slug: true } } }),
+        }),
+      );
+    });
+
     beforeEach(() => {
       prisma.bookVersion.findFirst.mockResolvedValue(null);
       prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-slug' });
@@ -168,6 +232,7 @@ describe('SeoService (unit)', () => {
           coverImageUrl: 'http://img/en.jpg',
           seoId: null,
           slug: 't-en',
+          book: { slug: 'book-slug' },
           status: 'published',
           type: 'text',
         },
@@ -181,6 +246,7 @@ describe('SeoService (unit)', () => {
           coverImageUrl: 'http://img/es.jpg',
           seoId: null,
           slug: 't-es',
+          book: { slug: 'book-slug' },
           status: 'published',
           type: 'text',
         },
@@ -470,6 +536,8 @@ describe('SeoService (unit)', () => {
         status: 'published',
         type: 'text',
         language: 'en',
+        slug: 'v1-slug',
+        book: { slug: 'book-slug' },
       });
     };
 
@@ -487,6 +555,7 @@ describe('SeoService (unit)', () => {
           coverImageUrl: 'http://img/en.jpg',
           seoId: null,
           slug: 't-en',
+          book: { slug: 'book-slug' },
           status: 'published',
           type: 'text',
         },
@@ -1392,6 +1461,7 @@ describe('SeoService (unit)', () => {
             coverImageUrl: null,
             seoId: null,
             slug: 't-en',
+            book: { slug: 'book-slug' },
             status: 'published',
             type: 'text',
             primaryCategoryId: null,

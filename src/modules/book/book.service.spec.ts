@@ -280,6 +280,45 @@ describe('BookService.getOverview', () => {
     expect(res.seo.summary?.metaTitle).toBe('T-text');
   });
 
+  it('отдаёт bookSlug — слаг самой книги, а не запрошенный слаг версии другого языка (LEGACY-472)', async () => {
+    // Запрос по слагу `ru`-версии на языке `es`: на `es` по слагу пусто, находится `ru`.
+    prisma.bookVersion.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ bookId: 'b1', language: Language.ru, id: 'v-ru' });
+    prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-own-slug' });
+    prisma.bookVersion.findMany.mockResolvedValue([
+      {
+        id: 'v-es',
+        language: Language.es,
+        type: BookType.text,
+        isFree: true,
+        seoId: null,
+        slug: null,
+        contributors: [],
+        _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+      },
+      {
+        id: 'v-ru',
+        language: Language.ru,
+        type: BookType.text,
+        isFree: true,
+        seoId: null,
+        slug: 'ru-slug',
+        contributors: [],
+        _count: { chapters: 1, audioChapters: 0, summaries: 0 },
+      },
+    ]);
+
+    const res = await service.getOverview('ru-slug', 'es');
+
+    expect(res.slug).toBe('ru-slug');
+    expect(res.bookSlug).toBe('book-own-slug');
+    // Книга читается по найденному `bookId`, а не по запрошенному слагу.
+    expect(prisma.book.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'b1' } }),
+    );
+  });
+
   /**
    * F01-5. Переводчики идут в том же `findMany`, что и версии (без N+1), а в ответ уходит
    * только `translators: [{ name }]`: сырые `contributors` и их поля наружу не едут.

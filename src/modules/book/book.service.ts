@@ -714,6 +714,9 @@ export class BookService {
     return {
       id: bookId,
       slug: targetVersion?.slug || slug,
+      // `LEGACY-472`: слаг самой книги — им бэкенд строит адрес и `@id` версии без своего слага
+      // (`bookCardSlug`); `slug` выше бывает слагом версии другого языка.
+      bookSlug: book?.slug ?? null,
       title: activeVersion?.title || '',
       author: activeVersion?.author || '',
       authorSlug:

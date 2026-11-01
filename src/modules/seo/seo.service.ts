@@ -30,6 +30,7 @@ import { TaxonomyPageType } from './seo.types';
 import { markDegraded } from '../../common/interceptors/degraded-response';
 import { isCategoryTermIndexable, isTagTermIndexable } from '../../shared/seo/term-indexable.util';
 import { seoDtoToData } from './utils/seo-dto-to-data.util';
+import { bookCardSlug } from '../book/book-card';
 
 const TAXONOMY_PAGES: Record<
   TaxonomyPageType,
@@ -532,6 +533,7 @@ export class SeoService {
         coverImageUrl: true,
         slug: true,
         type: true,
+        book: { select: { slug: true } },
       },
     });
     if (!v) throw new NotFoundException('BookVersion not found');
@@ -565,7 +567,8 @@ export class SeoService {
     ];
     const breadcrumbSchema = generateBreadcrumbSchema(breadcrumbItems, canonicalUrl);
     const bookSchema = generateBookSchema({
-      slug: v.slug || v.id,
+      // `LEGACY-472`: у версии без слага — слаг книги, id версии страница книги не открывает (404).
+      slug: bookCardSlug(v),
       title: v.title,
       authorName: v.author,
       language: v.language,
@@ -644,6 +647,7 @@ export class SeoService {
       where: { bookId, status: 'published' },
       // `LEGACY-484`: ниже запасной `versions[0]` — без порядка он менялся бы между запросами.
       orderBy: { language: 'asc' },
+      include: { book: { select: { slug: true } } },
     });
 
     const available = versions.map((v) => v.language);
@@ -700,7 +704,7 @@ export class SeoService {
       : null;
     const metaTitle = seo?.metaTitle || baseMeta.title;
     const metaDescription = seo?.metaDescription || baseMeta.description || undefined;
-    const canonicalUrl = getCanonicalUrl('book', chosen.slug || id, effLang);
+    const canonicalUrl = getCanonicalUrl('book', bookCardSlug(chosen), effLang);
     const robotsStatus = detectIndexability(chosen.status, canonicalUrl, seo?.robots);
 
     const { openGraph, twitter } = buildSocialCards({
@@ -856,7 +860,7 @@ export class SeoService {
     }
 
     const bookSchema = generateBookSchema({
-      slug: chosen.slug || id,
+      slug: bookCardSlug(chosen),
       title: chosen.title,
       authorName: chosen.author,
       authorSlug,

@@ -6137,6 +6137,8 @@ export interface components {
       authorSlug?: string | null;
       availableLanguages: ('en' | 'es' | 'fr' | 'pt' | 'ru')[];
       book: components['schemas']['BookOverviewBookRefDto'];
+      /** @description `Book.slug` of the book. A version without its own slug is addressed by it: canonical URL and JSON-LD `@id` of the book page use `version.slug || bookSlug` (LEGACY-472) */
+      bookSlug: string | null;
       categories: components['schemas']['BookOverviewCategoryDto'][];
       /** @description `coverImageUrl` of the resolved version, empty string when none */
       coverUrl: string;

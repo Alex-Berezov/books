@@ -212,6 +212,14 @@ export class BookOverviewResponseDto {
   @ApiProperty({ type: String, description: 'Slug of the resolved version, or the requested one' })
   slug!: string;
 
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description:
+      '`Book.slug` of the book. A version without its own slug is addressed by it: canonical URL and JSON-LD `@id` of the book page use `version.slug || bookSlug` (LEGACY-472)',
+  })
+  bookSlug!: string | null;
+
   @ApiProperty({ type: String })
   title!: string;
 
