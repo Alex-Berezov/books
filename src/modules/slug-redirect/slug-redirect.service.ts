@@ -47,7 +47,8 @@ export class SlugRedirectService {
    *    удаляются.
    * 3. **Слаг занят заново.** Если новый слаг совпал с чьим-то старым, запись
    *    `newSlug → …` устарела: адрес снова живой и должен открывать сущность, а не
-   *    уводить куда-то. Такая запись удаляется.
+   *    уводить куда-то. Такая запись удаляется — в языке смены, а у книги во всех
+   *    языках (`releaseBookSlug`).
    */
   async record(change: SlugChange, tx?: PrismaLike): Promise<void> {
     const db = tx ?? this.prisma;
@@ -56,7 +57,21 @@ export class SlugRedirectService {
     if (!oldSlug || !newSlug || oldSlug === newSlug) return;
 
     // (3) новый слаг снова живой — редирект с него больше не нужен
-    await db.slugRedirect.deleteMany({ where: { entityType, language, oldSlug: newSlug } });
+    if (entityType === 'book') {
+      await this.releaseBookSlug(newSlug, db);
+    } else {
+      await db.slugRedirect.deleteMany({ where: { entityType, language, oldSlug: newSlug } });
+    }
+
+    await this.rewriteInLanguage(change, db);
+  }
+
+  /**
+   * Шаги (1) и upsert `record` — всегда в языке смены. Отдельно от шага (3), чтобы смена
+   * базового слага книги снимала остаточные редиректы один раз, а не по разу на язык.
+   */
+  private async rewriteInLanguage(change: SlugChange, db: PrismaLike): Promise<void> {
+    const { entityType, language, oldSlug, newSlug } = change;
 
     // (1) цепочки: всё, что вело на прежний адрес, ведёт теперь на новый
     await db.slugRedirect.updateMany({
@@ -84,6 +99,29 @@ export class SlugRedirectService {
   }
 
   /**
+   * Книга (её `Book.slug` или версия) берёт слаг — снять книжные редиректы **с** него
+   * во всех языках (`LEGACY-437`).
+   *
+   * Адрес книги отвечает в любом языке: `getOverview` ищет версию в языке пути, затем
+   * версию с этим слагом в любом языке, затем `Book.slug`. Строка `L1: a→b`, оставшаяся,
+   * когда `a` взяли в L2, переживёт уход владельца `a` и уведёт `/L1/books/a` на то, что
+   * к тому времени заняло `b`. Звать на **каждом** пути, где книга получает слаг: смена,
+   * создание версии со слагом, первый слаг версии, создание книги — в той же транзакции,
+   * под тем же замком слагов (`lockBookSlugs`), что и проверка конфликта. Чужой редирект
+   * сюда не доходит: его отбивает `findRedirectToOtherBook` ещё на проверке.
+   *
+   * `language: { in }` — ради индекса `[entityType, language, oldSlug]`: без языка
+   * запрос перебирает все книжные редиректы.
+   */
+  async releaseBookSlug(slug: string, tx?: PrismaLike): Promise<void> {
+    if (!slug) return;
+    const db = tx ?? this.prisma;
+    await db.slugRedirect.deleteMany({
+      where: { entityType: 'book', language: { in: Object.values(Language) }, oldSlug: slug },
+    });
+  }
+
+  /**
    * Смена **базового** слага сущности — того, что не привязан к языку.
    *
    * Публичный URL резолвится по слагу перевода **с фолбэком на базовый**, поэтому
@@ -104,6 +142,16 @@ export class SlugRedirectService {
     tx?: PrismaLike,
   ): Promise<void> {
     if (!oldSlug || !newSlug || oldSlug === newSlug) return;
+
+    // У книги шаг (3) и так идёт во всех языках — один раз до цикла, а не по разу на язык.
+    if (entityType === 'book') {
+      const db = tx ?? this.prisma;
+      await this.releaseBookSlug(newSlug, db);
+      for (const language of Object.values(Language)) {
+        await this.rewriteInLanguage({ entityType, language, oldSlug, newSlug }, db);
+      }
+      return;
+    }
 
     for (const language of Object.values(Language)) {
       await this.record({ entityType, language, oldSlug, newSlug }, tx);

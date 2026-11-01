@@ -240,6 +240,7 @@ describe('BookVersionService', () => {
     recordBaseSlugChange: jest.Mock;
     resolve: jest.Mock;
     cleanupDeadRedirects: jest.Mock;
+    releaseBookSlug: jest.Mock;
   };
   // LEGACY-412: дашборд зовёт ту же проекцию, что и ручка профиля (`RightsProfileService.getById`),
   // а не собирает профиль сам — сырых `prisma.rightsProfile.findUnique` в дашборде больше нет.
@@ -362,6 +363,7 @@ describe('BookVersionService', () => {
       recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
       resolve: jest.fn().mockResolvedValue(null),
       cleanupDeadRedirects: jest.fn().mockResolvedValue(undefined),
+      releaseBookSlug: jest.fn().mockResolvedValue(undefined),
     };
     rightsProfileService = { getById: jest.fn().mockResolvedValue(null) };
     service = new BookVersionService(
@@ -1796,6 +1798,7 @@ describe('BookVersionService', () => {
           record: jest.fn().mockResolvedValue(undefined),
           recordBaseSlugChange: jest.fn().mockResolvedValue(undefined),
           resolve: jest.fn().mockResolvedValue(null),
+          releaseBookSlug: jest.fn().mockResolvedValue(undefined),
         } as unknown as SlugRedirectService,
         adminAudit as unknown as AdminAuditService,
         clearanceLock.service,

@@ -534,4 +534,95 @@ describe('Slug redirects (LEGACY-062) e2e', () => {
     // Тип сущности — часть ключа: у категории с тем же слагом своя история.
     expect(await redirects.resolve('category', 'es', a)).toBeNull();
   });
+  /**
+   * LEGACY-437 (ответ владельца 01.11.2026 «а», решение арбитра T157). Адрес книги отвечает
+   * в любом языке, поэтому слаг, взятый версией в одном языке, снимает остаточный книжный
+   * редирект с него во **всех** языках. Иначе `en: a→b` переживёт уход версии с `a` и уведёт
+   * `/en/book/a` на то, что займёт `b` позже. Три пути, где версия берёт слаг.
+   */
+  describe('a slug taken by a version releases leftover book redirects in every language (LEGACY-437)', () => {
+    const versionBody = (slug?: string) => ({
+      language: 'ru',
+      title: 'Версия',
+      author: 'Автор',
+      description: 'Описание',
+      coverImageUrl: 'https://example.com/cover.jpg',
+      type: 'text',
+      isFree: true,
+      ...(slug ? { slug } : {}),
+    });
+
+    const leftover = async (slug: string) => {
+      await prisma.slugRedirect.create({
+        data: { entityType: 'book', language: 'en', oldSlug: slug, newSlug: `${slug}-dead` },
+      });
+    };
+
+    const createVersion = async (bookId: string, slug?: string): Promise<string> => {
+      const res = await request(http())
+        .post(`/books/${bookId}/versions`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send(versionBody(slug))
+        .expect(201);
+      return (res.body as { id: string }).id;
+    };
+
+    it('on version creation with the slug', async () => {
+      const slug = `sr-${stamp}-x437-create`;
+      await leftover(slug);
+      const bookId = await newBook(`sr-${stamp}-x437-create-book`);
+
+      await createVersion(bookId, slug);
+
+      expect(await redirects.resolve('book', 'en', slug)).toBeNull();
+    });
+
+    it('on the first slug of a version that had none', async () => {
+      const slug = `sr-${stamp}-x437-first`;
+      await leftover(slug);
+      const bookId = await newBook(`sr-${stamp}-x437-first-book`);
+      const versionId = await createVersion(bookId);
+
+      await request(http())
+        .patch(`/versions/${versionId}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ slug })
+        .expect(200);
+
+      expect(await redirects.resolve('book', 'en', slug)).toBeNull();
+    });
+
+    it('on a slug change, while the chain of the old slug stays in the version language', async () => {
+      const slug = `sr-${stamp}-x437-change`;
+      const before = `sr-${stamp}-x437-change-old`;
+      await leftover(slug);
+      const bookId = await newBook(`sr-${stamp}-x437-change-book`);
+      const versionId = await createVersion(bookId, before);
+
+      await request(http())
+        .patch(`/versions/${versionId}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ slug })
+        .expect(200);
+
+      expect(await redirects.resolve('book', 'en', slug)).toBeNull();
+      expect(await redirects.resolve('book', 'ru', before)).toBe(slug);
+      expect(await redirects.resolve('book', 'en', before)).toBeNull();
+    });
+
+    it('leaves redirects of other slugs and of other entity types alone', async () => {
+      const slug = `sr-${stamp}-x437-other`;
+      const unrelated = `sr-${stamp}-x437-unrelated`;
+      await leftover(unrelated);
+      await prisma.slugRedirect.create({
+        data: { entityType: 'tag', language: 'en', oldSlug: slug, newSlug: `${slug}-tag` },
+      });
+      const bookId = await newBook(`sr-${stamp}-x437-other-book`);
+
+      await createVersion(bookId, slug);
+
+      expect(await redirects.resolve('book', 'en', unrelated)).toBe(`${unrelated}-dead`);
+      expect(await redirects.resolve('tag', 'en', slug)).toBe(`${slug}-tag`);
+    });
+  });
 });

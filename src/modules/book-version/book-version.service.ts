@@ -428,6 +428,8 @@ export class BookVersionService {
         const rightsGeoBlockNotesRu = null;
 
         await this.assertVersionSlugFree(tx, dto.slug, effectiveLanguage, { bookId });
+        // Слаг взят — остаточный редирект с него в других языках снимается (`LEGACY-437`).
+        if (dto.slug) await this.slugRedirects.releaseBookSlug(dto.slug, tx);
 
         const newVersion = await tx.bookVersion.create({
           data: {
@@ -1250,6 +1252,10 @@ export class BookVersionService {
             },
             tx,
           );
+        } else if (updateData.slug && !current.slug) {
+          // Первый слаг версии: старого адреса нет, но остаточный редирект с нового
+          // в других языках снимается так же, как при смене (`LEGACY-437`).
+          await this.slugRedirects.releaseBookSlug(updateData.slug, tx);
         }
 
         // Смена имени автора обязана вести за собой ключ. Иначе версия осталась бы

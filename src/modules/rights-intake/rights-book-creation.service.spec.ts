@@ -6,6 +6,7 @@ import { RightsLicenseCoverageService } from '../rights-licenses/rights-license-
 import { PrismaService } from '../../prisma/prisma.service';
 import { CreateBookFromClearanceDto } from './dto/create-book-from-clearance.dto';
 import { AuthorService } from '../author/author.service';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 import { CLEARANCE_TX_OPTIONS } from './rights-clearance-lock.service';
 import { findBookSlugConflict, lockBookSlugs } from '../../shared/slug/book-slug-conflict';
 
@@ -89,6 +90,7 @@ describe('RightsBookCreationService', () => {
   let prisma: Record<string, unknown>;
   let mockRightsContentHashService: jest.Mocked<RightsContentHashService>;
   let authorService: { resolveAuthorIdByName: jest.Mock };
+  let slugRedirects: { releaseBookSlug: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaStub();
@@ -101,6 +103,7 @@ describe('RightsBookCreationService', () => {
     // LEGACY-006: приёмка прав выводит authorId из имени тем же методом, что и форма админки.
     // Дефолт «совпадения нет» — самый частый случай и он же прежнее поведение поля.
     authorService = { resolveAuthorIdByName: jest.fn().mockResolvedValue(null) };
+    slugRedirects = { releaseBookSlug: jest.fn().mockResolvedValue(undefined) };
     service = new RightsBookCreationService(
       prisma as unknown as PrismaService,
       mockRightsContentHashService,
@@ -109,6 +112,7 @@ describe('RightsBookCreationService', () => {
         new RightsClearanceResolverService(prisma as unknown as PrismaService),
       ),
       authorService as unknown as AuthorService,
+      slugRedirects as unknown as SlugRedirectService,
     );
   });
 
@@ -479,6 +483,18 @@ describe('RightsBookCreationService', () => {
         expect(checkOrder).toBeLessThan(txStub.book.create.mock.invocationCallOrder[0]);
       });
 
+      it('releases leftover book redirects from the new slug in every language, after the check (LEGACY-437)', async () => {
+        const txStub = arrangeTx();
+        (findBookSlugConflict as jest.Mock).mockClear();
+
+        await service.createBookFromApprovedClearance('intake-1', makeDto());
+
+        expect(slugRedirects.releaseBookSlug).toHaveBeenCalledTimes(1);
+        expect(slugRedirects.releaseBookSlug).toHaveBeenCalledWith(makeDto().slug, txStub);
+        const checkOrder = (findBookSlugConflict as jest.Mock).mock.invocationCallOrder.at(-1)!;
+        expect(checkOrder).toBeLessThan(slugRedirects.releaseBookSlug.mock.invocationCallOrder[0]);
+      });
+
       it('refuses with SLUG_TAKEN and creates nothing when another book holds the slug', async () => {
         const txStub = arrangeTx();
         (findBookSlugConflict as jest.Mock).mockResolvedValueOnce({ bookId: 'book-2' });
@@ -493,6 +509,7 @@ describe('RightsBookCreationService', () => {
         );
         expect(txStub.book.create).not.toHaveBeenCalled();
         expect(txStub.bookVersion.create).not.toHaveBeenCalled();
+        expect(slugRedirects.releaseBookSlug).not.toHaveBeenCalled();
       });
 
       it('the real rule runs on the transaction client: a version of another book refuses', async () => {
@@ -1434,6 +1451,7 @@ describe('RightsBookCreationService', () => {
 
       expect(findBookSlugConflict).not.toHaveBeenCalled();
       expect(lockBookSlugs).not.toHaveBeenCalled();
+      expect(slugRedirects.releaseBookSlug).not.toHaveBeenCalled();
     });
 
     it('writes the rights snapshot onto the existing versions without touching their content', async () => {

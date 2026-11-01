@@ -17,6 +17,7 @@ import { BookType, Prisma } from '@prisma/client';
 import { AuthorService } from '../author/author.service';
 import { CLEARANCE_TX_OPTIONS } from './rights-clearance-lock.service';
 import { findBookSlugConflict, lockBookSlugs } from '../../shared/slug/book-slug-conflict';
+import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
 
 /**
  * WP-L.2: версия, на которую ложится снимок прав. В обычном режиме она создаётся из запроса, в
@@ -57,6 +58,7 @@ export class RightsBookCreationService {
     // в выдачу автора по ключу. Метод живёт в AuthorService, а не в BookVersionService:
     // внедрить последний нельзя, BookVersionModule сам импортирует RightsIntakeModule.
     private readonly authorService: AuthorService,
+    private readonly slugRedirects: SlugRedirectService,
   ) {}
 
   private get ri() {
@@ -464,6 +466,8 @@ export class RightsBookCreationService {
             ),
           );
         }
+        // Слаг взят — остаточный книжный редирект с него снимается во всех языках (`LEGACY-437`).
+        await this.slugRedirects.releaseBookSlug(dto.slug, tx);
       }
 
       // Create the book, or bind the clearance to the existing one (WP-L.2).

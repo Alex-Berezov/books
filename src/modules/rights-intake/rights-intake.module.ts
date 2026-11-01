@@ -21,6 +21,7 @@ import { ComponentTerritoryAggregationService } from './component-territory-aggr
 import { PersonsModule } from '../persons/persons.module';
 import { RightsNotificationsModule } from '../rights-agent/rights-notifications.module';
 import { RightsLicensesModule } from '../rights-licenses/rights-licenses.module';
+import { SlugRedirectModule } from '../slug-redirect/slug-redirect.module';
 import { AuthorModule } from '../author/author.module';
 
 /**
@@ -48,6 +49,9 @@ import { AuthorModule } from '../author/author.module';
     RightsContentHashModule,
     RightsFileStorageModule,
     AuthorModule,
+    // Явно, хотя модуль `@Global()` — как в `author.module.ts`: `RightsBookCreationService`
+    // снимает остаточные книжные редиректы при создании книги (`LEGACY-437`).
+    SlugRedirectModule,
   ],
   controllers: [
     RightsIntakeController,

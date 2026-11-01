@@ -51,3 +51,69 @@ describe('SlugRedirectService.cleanupDeadRedirects (LEGACY-395)', () => {
     expect(prisma.slugRedirect.deleteMany).not.toHaveBeenCalled();
   });
 });
+
+describe('SlugRedirectService: слаг снова живой (LEGACY-437)', () => {
+  const ALL_LANGUAGES = Object.values(Language);
+  const build = () => {
+    const slugRedirect = {
+      deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
+      updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+      upsert: jest.fn().mockResolvedValue({}),
+    };
+    return {
+      slugRedirect,
+      service: new SlugRedirectService({ slugRedirect } as unknown as PrismaService),
+    };
+  };
+
+  it('releaseBookSlug: removes book redirects from the slug in every language', async () => {
+    const { service, slugRedirect } = build();
+
+    await service.releaseBookSlug('b');
+
+    expect(slugRedirect.deleteMany).toHaveBeenCalledTimes(1);
+    expect(slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'book', language: { in: ALL_LANGUAGES }, oldSlug: 'b' },
+    });
+  });
+
+  it('record, book: the leftover redirect goes in every language, the chain stays in the language of the change', async () => {
+    const { service, slugRedirect } = build();
+
+    await service.record({ entityType: 'book', language: Language.ru, oldSlug: 'a', newSlug: 'b' });
+
+    expect(slugRedirect.deleteMany).toHaveBeenCalledTimes(1);
+    expect(slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'book', language: { in: ALL_LANGUAGES }, oldSlug: 'b' },
+    });
+    expect(slugRedirect.updateMany).toHaveBeenCalledTimes(1);
+    expect(slugRedirect.updateMany).toHaveBeenCalledWith({
+      where: { entityType: 'book', language: Language.ru, newSlug: 'a' },
+      data: { newSlug: 'b' },
+    });
+  });
+
+  it('record, non-book: keeps the removal inside the language of the change', async () => {
+    const { service, slugRedirect } = build();
+
+    await service.record({ entityType: 'tag', language: Language.ru, oldSlug: 'a', newSlug: 'b' });
+
+    expect(slugRedirect.deleteMany).toHaveBeenCalledTimes(1);
+    expect(slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'tag', language: Language.ru, oldSlug: 'b' },
+    });
+  });
+
+  it('recordBaseSlugChange, book: one release for all languages, the chain per language', async () => {
+    const { service, slugRedirect } = build();
+
+    await service.recordBaseSlugChange('book', 'a', 'b');
+
+    expect(slugRedirect.deleteMany).toHaveBeenCalledTimes(1);
+    expect(slugRedirect.deleteMany).toHaveBeenCalledWith({
+      where: { entityType: 'book', language: { in: ALL_LANGUAGES }, oldSlug: 'b' },
+    });
+    expect(slugRedirect.upsert).toHaveBeenCalledTimes(ALL_LANGUAGES.length);
+    expect(slugRedirect.updateMany).toHaveBeenCalledTimes(ALL_LANGUAGES.length);
+  });
+});
