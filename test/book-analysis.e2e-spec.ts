@@ -526,6 +526,9 @@ describe('BookAnalysis e2e', () => {
       .get(`/versions/${v.versionId}/analysis`)
       .set('X-Geo-Country', 'US')
       .expect(200);
+    // Без страны (запрос сервера фронта) блок по стране не закрывает — то же правило, что у счётчика
+    // `_count.analyses` (F03 D8, `T161 | LEGACY-490`).
+    await request(http()).get(`/versions/${v.versionId}/analysis`).expect(200);
   });
 
   it('счётчик анализа в обзоре и в списке книг — только с ядром', async () => {
@@ -552,10 +555,11 @@ describe('BookAnalysis e2e', () => {
 
   /**
    * F03-2, решение арбитра `F03 | F03-2`: счётчик — источник карты сайта, hreflang и кнопки.
-   * Закрытый окончённой претензией анализ (по любой стране) в нём не считается; пока спор идёт
-   * или блок снят — считается.
+   * Закрытый окончённой претензией на весь мир анализ в нём не считается; блок по одной стране
+   * счётчик не обнуляет — анализ виден везде, кроме страны блока (F03 D8, `T161 | LEGACY-490`);
+   * пока спор идёт или блок снят — считается.
    */
-  it('счётчик анализа не считает закрытый блоком окончённой претензии', async () => {
+  it('счётчик анализа не считает закрытый блоком окончённой претензии на весь мир', async () => {
     const overviewCount = async (bookSlug: string) => {
       const ov = await request(http()).get(`/en/books/${bookSlug}/overview`).expect(200);
       return ov.body.versions[0]._count.analyses as number;
@@ -563,8 +567,16 @@ describe('BookAnalysis e2e', () => {
     const cases: Array<[string, RightsClaimStatus, Parameters<typeof claimWithBlock>[2], number]> =
       [
         ['окончена, на весь мир', 'RESOLVED_VALID', {}, 0],
-        ['окончена, по стране', 'CLOSED', { countryCode: 'GB' }, 0],
+        ['окончена, по стране', 'CLOSED', { countryCode: 'GB' }, 1],
         ['окончена, на всю книгу', 'WITHDRAWN', { entireBook: true }, 0],
+        ['окончена, книга по стране', 'WITHDRAWN', { entireBook: true, countryCode: 'GB' }, 1],
+        ['окончена, книга на версии', 'CLOSED', { entireBookOnVersion: true }, 0],
+        [
+          'окончена, книга на версии по стране',
+          'CLOSED',
+          { entireBookOnVersion: true, countryCode: 'GB' },
+          1,
+        ],
         ['спор идёт', 'UNDER_REVIEW', {}, 1],
         ['окончена, блок снят', 'RESOLVED_VALID', { status: 'LIFTED' }, 1],
       ];
@@ -587,13 +599,23 @@ describe('BookAnalysis e2e', () => {
     // Список книг (источник карты сайта) — то же правило.
     const closed = await createVersion({ slugPrefix: 'book-an-claim' });
     await put(closed.versionId, { language: 'en', ...core() }).expect(200);
-    await claimWithBlock(closed, 'CLOSED', { countryCode: 'DE' });
+    await claimWithBlock(closed, 'CLOSED');
+    const byCountry = await createVersion({ slugPrefix: 'book-an-claim' });
+    await put(byCountry.versionId, { language: 'en', ...core() }).expect(200);
+    await claimWithBlock(byCountry, 'CLOSED', { countryCode: 'DE' });
+    const bookByCountry = await createVersion({ slugPrefix: 'book-an-claim' });
+    await put(bookByCountry.versionId, { language: 'en', ...core() }).expect(200);
+    await claimWithBlock(bookByCountry, 'CLOSED', { entireBook: true, countryCode: 'DE' });
     const list = await request(http()).get('/en/books').query({ page: 1, limit: 100 }).expect(200);
     const items = (list.body.items ?? list.body.data) as {
       slug: string;
       versions: { _count: { analyses: number } }[];
     }[];
-    expect(items.find((b) => b.slug === closed.bookSlug)?.versions[0]._count.analyses).toBe(0);
+    const listCount = (slug: string) =>
+      items.find((b) => b.slug === slug)?.versions[0]._count.analyses;
+    expect(listCount(closed.bookSlug)).toBe(0);
+    expect(listCount(byCountry.bookSlug)).toBe(1);
+    expect(listCount(bookByCountry.bookSlug)).toBe(1);
   });
 
   it('chapterNumbers: номера глав версии по возрастанию; без глав — пустой список', async () => {

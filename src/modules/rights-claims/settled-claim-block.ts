@@ -19,7 +19,10 @@ export function scopesCovering(requested: ClaimBlockScope): ClaimBlockScope[] {
  * Одна функция на три места (решение арбитра `F03 | F03-2`): проверка ручки
  * `GET versions/:id/analysis`, счётчик `_count.analyses` (кнопка, hreflang, карта сайта) и
  * публичный список блоков для middleware фронта. Разойдись они — карта сайта звала бы
- * поисковик на адрес, который ручка закрывает, или middleware открывал бы закрытое.
+ * поисковик на адрес, который ручка закрывает, или middleware открывал бы закрытое. Страну каждый
+ * сверяет по-своему: ручка — со страной читателя, список отдаёт её middleware, счётчик с F03 D8
+ * берёт только блок на весь мир (`countryCode: null`, `book-card.ts`, решение арбитра
+ * `T161 | LEGACY-490`) — анализ виден везде, кроме страны блока.
  */
 export function settledClaimBlockWhere(
   now: Date,

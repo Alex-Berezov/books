@@ -4,6 +4,7 @@ import {
   type BookCardRow,
   SUMMARIES_WITH_TEXT_COUNT,
   analysesWithCoreCount,
+  summarySectionsCount,
   toBookCardDto,
 } from './book-card';
 
@@ -54,27 +55,32 @@ describe('toBookCardDto', () => {
     expect(SUMMARIES_WITH_TEXT_COUNT).toEqual({ where: { hasText: true } });
   });
 
+  // Условие окончённой претензии без страны — общее для анализа и разделов пересказа.
+  const anyCountry = {
+    status: RightsClaimBlockStatus.ACTIVE,
+    scope: {
+      in: [GeoBlockScope.ENTIRE_BOOK, GeoBlockScope.LANGUAGE_EDITION, GeoBlockScope.TEXT_READER],
+    },
+    OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    rightsClaim: {
+      status: {
+        in: [
+          RightsClaimStatus.RESOLVED_VALID,
+          RightsClaimStatus.RESOLVED_INVALID,
+          RightsClaimStatus.WITHDRAWN,
+          RightsClaimStatus.CLOSED,
+        ],
+      },
+    },
+  };
+
   // F03: анализ считается только с заполненным ядром (решение арбитра А8) и без действующего блока
-  // окончённой претензии ни по какой стране — на версии или на всей книге (`F03 | F03-2`). Условие
-  // прибито литералом: без фильтра претензии адрес закрытого анализа уходит в карту сайта.
-  it('bookCardSelect и обзор считают анализ по hasCore без закрытых претензией', () => {
-    const closing = {
-      status: RightsClaimBlockStatus.ACTIVE,
-      scope: {
-        in: [GeoBlockScope.ENTIRE_BOOK, GeoBlockScope.LANGUAGE_EDITION, GeoBlockScope.TEXT_READER],
-      },
-      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-      rightsClaim: {
-        status: {
-          in: [
-            RightsClaimStatus.RESOLVED_VALID,
-            RightsClaimStatus.RESOLVED_INVALID,
-            RightsClaimStatus.WITHDRAWN,
-            RightsClaimStatus.CLOSED,
-          ],
-        },
-      },
-    };
+  // окончённой претензии на весь мир — на версии или на всей книге (`F03 | F03-2`, F03 D8,
+  // `T161 | LEGACY-490`): блок по одной стране счётчик не обнуляет. Условие прибито литералом: без
+  // фильтра претензии адрес закрытого анализа уходит в карту сайта, без `countryCode: null` блок
+  // одной страны прячет анализ везде.
+  it('bookCardSelect и обзор считают анализ по hasCore без закрытых претензией на весь мир', () => {
+    const closing = { ...anyCountry, countryCode: null };
     const expected = {
       where: {
         hasCore: true,
@@ -88,5 +94,23 @@ describe('toBookCardDto', () => {
     };
     expect(analysesWithCoreCount(now)).toEqual(expected);
     expect(bookCardSelect(now)._count.select.analyses).toEqual(expected);
+  });
+
+  // Разделы пересказа по-прежнему закрывает блок по любой стране: D8 только про анализ, перевод
+  // разделов на это правило — вопрос владельцу (`LEGACY-490`; решение арбитра `T161 | LEGACY-490`).
+  it('разделы пересказа закрывает блок окончённой претензии по любой стране', () => {
+    expect(summarySectionsCount(now)).toEqual({
+      where: {
+        bookVersion: {
+          summaries: { some: { hasText: true } },
+          rightsClaimAccessBlocks: { none: anyCountry },
+          book: {
+            rightsClaimAccessBlocks: {
+              none: { ...anyCountry, scope: GeoBlockScope.ENTIRE_BOOK },
+            },
+          },
+        },
+      },
+    });
   });
 });

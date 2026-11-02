@@ -152,7 +152,11 @@ export class BookVersionContentCountDto {
   @ApiProperty({ type: Number })
   summaries!: number;
 
-  @ApiProperty({ type: Number, description: 'Analysis with a filled core (0 or 1)' })
+  @ApiProperty({
+    type: Number,
+    description:
+      'Analysis with a filled core (0 or 1); not counted under a settled rights-claim block worldwide, a single-country block does not zero it',
+  })
   analyses!: number;
 
   @ApiPropertyOptional({
