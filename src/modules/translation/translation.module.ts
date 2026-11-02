@@ -50,7 +50,14 @@ import { TRANSLATE_STAGE_DEFINITIONS } from './translate/translate.constants';
 import { CHECK_STAGE_DEFINITIONS } from './check/check.constants';
 import { METADATA_STAGE_DEFINITIONS } from './metadata/metadata.constants';
 import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constants';
-import { registerSummaryWriteStages } from './summary-write/summary-write.constants';
+import {
+  registerSummaryWriteStages,
+  SUMMARY_WRITE_TASK_KIND,
+} from './summary-write/summary-write.constants';
+import { SummaryWriteFields } from './summary-write/summary-write.fields';
+import { SummaryWriteHandler } from './summary-write/summary-write.handler';
+import { SummaryWriteService } from './summary-write/summary-write.service';
+import { BookSummaryModule } from '../book-summary/book-summary.module';
 
 /**
  * Автоперевод книги (F05): исходник по D8, блоки главы, отпечаток текста, досье и глоссарий
@@ -61,7 +68,8 @@ import { registerSummaryWriteStages } from './summary-write/summary-write.consta
  * после этого `onModuleInit`.
  */
 @Module({
-  imports: [LlmModule, LlmWorkerModule, BookVersionModule, ChapterModule],
+  // `BookSummaryModule` - запись хода пересказа `F06-2` теми же сервисами, что ручки Summary.
+  imports: [LlmModule, LlmWorkerModule, BookVersionModule, ChapterModule, BookSummaryModule],
   controllers: [
     DossierController,
     TranslationCompareController,
@@ -93,6 +101,9 @@ import { registerSummaryWriteStages } from './summary-write/summary-write.consta
     ChunkRetryHandler,
     ContentDraftService,
     ContentDraftTasksHandler,
+    SummaryWriteFields,
+    SummaryWriteHandler,
+    SummaryWriteService,
   ],
 })
 export class TranslationModule implements OnModuleInit {
@@ -105,6 +116,7 @@ export class TranslationModule implements OnModuleInit {
     private readonly runTasks: TranslationRunTasksHandler,
     private readonly retryTasks: ChunkRetryHandler,
     private readonly draftTasks: ContentDraftTasksHandler,
+    private readonly summaryWriteTasks: SummaryWriteHandler,
   ) {}
 
   onModuleInit(): void {
@@ -126,5 +138,7 @@ export class TranslationModule implements OnModuleInit {
     this.handlers.register(CONTENT_DRAFT_TASK_KIND, this.draftTasks.handler);
     this.kinds.register('draft', this.draftTasks);
     registerSummaryWriteStages(this.stages);
+    // Ход пересказа (`F06-2`): операция вида `draft` - «Continue» и отмена идут через `draftTasks`.
+    this.handlers.register(SUMMARY_WRITE_TASK_KIND, this.summaryWriteTasks.handler);
   }
 }

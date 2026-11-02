@@ -54,6 +54,14 @@ describe('LENGTH_OUT', () => {
     expect(checkLength('brief', paragraphs(3, 100), 1_000)).toEqual([]);
     expect(codes(checkLength('brief', paragraphs(2, 150), 1_000))).toEqual(['LENGTH_OUT']);
   });
+
+  it('the very short summary counts paragraphs by the subheading rule of the structure check (F06-2, хвост F06-1)', () => {
+    // Десять абзацев, в одном строка «## » без пустой строки рядом: по `blocksOf` это три блока,
+    // и абзацев двенадцать - больше предела; `paragraphsOf` насчитал бы десять.
+    const glued = `${words(30)}\n## Part\n${words(30)}`;
+    const text = [glued, ...Array.from({ length: 9 }, () => words(70))].join('\n\n');
+    expect(codes(checkLength('brief', text, 2_400))).toEqual(['LENGTH_OUT']);
+  });
 });
 
 describe('STRUCTURE_BROKEN', () => {

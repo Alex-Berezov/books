@@ -1,6 +1,5 @@
 import { Language } from '@prisma/client';
 import { sentencesOf } from '../check/language-detector';
-import { paragraphsOf } from '../draft-quality/quote-check';
 import {
   blocksOf,
   codeRemark,
@@ -85,7 +84,7 @@ export function checkLength(target: SummaryTarget, text: string, source: number)
     const least =
       words < paragraphLimits.shortText ? paragraphLimits.shortMin : paragraphLimits.min;
     const most = paragraphLimits.max;
-    const count = paragraphsOf(text).length;
+    const count = blocksOf(text).length;
     if (count < least || count > most) {
       remarks.push(
         codeRemark(

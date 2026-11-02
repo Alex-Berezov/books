@@ -1,6 +1,15 @@
 {
   "components": {
     "schemas": {
+      "AcceptSummaryItemDto": {
+        "properties": {
+          "confirmChapterChange": {
+            "description": "The editor confirmed that the section moves to other reader chapters",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "ActivityBookVersionDto": {
         "properties": {
           "author": {
@@ -19176,6 +19185,16 @@
         ],
         "type": "object"
       },
+      "RegenerateSummaryItemDto": {
+        "properties": {
+          "remark": {
+            "description": "What the editor asks to change: it goes to the author prompt",
+            "maxLength": 2000,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "RegisterDto": {
         "properties": {
           "email": {
@@ -24725,6 +24744,392 @@
         },
         "required": [
           "languages"
+        ],
+        "type": "object"
+      },
+      "SummaryWriteDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "chapterChanges": {
+            "description": "Section numbers whose proposal changes the reader chapter: Accept all is refused (ACCEPT_ALL_CHAPTER_CHANGE)",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "failedReason": {
+            "description": "Code of the final refusal (failed)",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryWriteItemDto"
+            },
+            "type": "array"
+          },
+          "language": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/LlmOperationDto"
+          },
+          "owns": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SummaryWriteOwnsDto"
+              }
+            ],
+            "description": "Fields the run writes directly: empty at the start on an unpublished version"
+          },
+          "plannedSections": {
+            "description": "Sections in the plan; null until the dossier is ready",
+            "nullable": true,
+            "type": "number"
+          },
+          "sectionsDone": {
+            "description": "Sections of the plan the run has a text for (written, proposed or waiting); failed sections are not counted",
+            "type": "number"
+          },
+          "status": {
+            "description": "A paused operation keeps the run building: the reason is operation.pauseReason",
+            "enum": [
+              "building",
+              "ready",
+              "failed",
+              "discarded"
+            ],
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "waitingFor": {
+            "enum": [
+              "dossier",
+              "glossary"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "bookVersionId",
+          "status",
+          "language",
+          "failedReason",
+          "waitingFor",
+          "operation",
+          "plannedSections",
+          "sectionsDone",
+          "owns",
+          "items",
+          "chapterChanges",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "SummaryWriteEstimateDto": {
+        "properties": {
+          "dossier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DossierContextLineDto"
+              }
+            ],
+            "description": "The dossier is built first by its own operation; null - it is ready",
+            "nullable": true,
+            "type": "object"
+          },
+          "glossary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CompareContextLineDto"
+              }
+            ],
+            "description": "The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language)",
+            "nullable": true,
+            "type": "object"
+          },
+          "sections": {
+            "description": "Sections of the dossier plan; null - the plan is not known yet (one per chapter)",
+            "nullable": true,
+            "type": "number"
+          },
+          "stageUsd": {
+            "description": "Upper estimate of the whole pipeline: every section, the full and the very short summary, each text × 2 passes of the author and the reviewer",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "suggestedLimitUsd": {
+            "description": "Default operation limit: max(pipeline × 1.5, dossier and glossary limits)",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "upperBound": {
+            "description": "The dossier is not ready: one section per chapter, its size from the dossier and glossary stages",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dossier",
+          "glossary",
+          "sections",
+          "stageUsd",
+          "upperBound",
+          "suggestedLimitUsd"
+        ],
+        "type": "object"
+      },
+      "SummaryWriteItemDto": {
+        "properties": {
+          "attempt": {
+            "description": "2 - the text of the one redo",
+            "enum": [
+              1,
+              2
+            ],
+            "type": "number"
+          },
+          "authorModel": {
+            "nullable": true,
+            "type": "string"
+          },
+          "failedReason": {
+            "description": "Why the text is not in the field: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, DRAFT_INPUT_MISSING, DRAFT_DATA_INVALID (no text); SUMMARY_WRITE_REFUSED (the field refused it)",
+            "nullable": true,
+            "type": "string"
+          },
+          "html": {
+            "description": "Rich HTML of the text; empty when it failed",
+            "type": "string"
+          },
+          "index": {
+            "description": "Index of the text in the run: the path of accept, discard, regenerate",
+            "type": "number"
+          },
+          "number": {
+            "description": "Section number of the dossier plan (section)",
+            "nullable": true,
+            "type": "number"
+          },
+          "outcome": {
+            "description": "written - in the field; proposed - a proposal (Accept writes it); waiting - waits for the section before it to get a text; accepted, discarded - the editor decided; none - not in the field and not a proposal: no text (verdict failed) or the field refused the text (failedReason SUMMARY_WRITE_REFUSED: html kept, Regenerate or write the section by hand)",
+            "enum": [
+              "waiting",
+              "written",
+              "proposed",
+              "accepted",
+              "discarded",
+              "none"
+            ],
+            "type": "string"
+          },
+          "readerChapter": {
+            "description": "Reader chapter of the section; null - not in this version",
+            "nullable": true,
+            "type": "number"
+          },
+          "regenFailedReason": {
+            "description": "The last regeneration gave no text: the previous text stays, this is why",
+            "nullable": true,
+            "type": "string"
+          },
+          "regenOperationId": {
+            "description": "Operation of the running regeneration",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "regenerating": {
+            "description": "A regeneration of this text is running",
+            "type": "boolean"
+          },
+          "remarks": {
+            "description": "Flags of the code checks and the reviewer model",
+            "items": {
+              "$ref": "#/components/schemas/SummaryWriteRemarkDto"
+            },
+            "type": "array"
+          },
+          "review": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SummaryWriteReviewDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "target": {
+            "enum": [
+              "section",
+              "full",
+              "brief"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "description": "Section title from the chapter titles of the version (section)",
+            "nullable": true,
+            "type": "string"
+          },
+          "verdict": {
+            "description": "ok - no remarks; flags - remarks after the redo or no model check; failed - no text",
+            "enum": [
+              "ok",
+              "flags",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "target",
+          "number",
+          "title",
+          "readerChapter",
+          "html",
+          "attempt",
+          "verdict",
+          "remarks",
+          "review",
+          "outcome",
+          "failedReason",
+          "authorModel",
+          "regenFailedReason",
+          "regenerating",
+          "regenOperationId"
+        ],
+        "type": "object"
+      },
+      "SummaryWriteOwnsDto": {
+        "properties": {
+          "brief": {
+            "type": "boolean"
+          },
+          "full": {
+            "type": "boolean"
+          },
+          "sections": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "sections",
+          "full",
+          "brief"
+        ],
+        "type": "object"
+      },
+      "SummaryWriteRemarkDto": {
+        "properties": {
+          "by": {
+            "enum": [
+              "code",
+              "model"
+            ],
+            "type": "string"
+          },
+          "code": {
+            "enum": [
+              "LENGTH_OUT",
+              "STRUCTURE_BROKEN",
+              "LANGUAGE_MIXED",
+              "QUOTE_NOT_VERBATIM",
+              "NAME_MISMATCH",
+              "JUNK",
+              "DUPLICATE_TEXT",
+              "FACT_UNSUPPORTED",
+              "EVENT_MISSING",
+              "EXTERNAL_FACT",
+              "ORDER_BROKEN",
+              "STYLE_POOR"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "description": "What to fix, in English",
+            "type": "string"
+          },
+          "where": {
+            "description": "A short fragment of the text or the part name",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "where",
+          "note",
+          "by"
+        ],
+        "type": "object"
+      },
+      "SummaryWriteReviewDto": {
+        "properties": {
+          "kind": {
+            "description": "answered - the reviewer model checked the text; otherwise why the model check was not done",
+            "enum": [
+              "answered",
+              "not_independent",
+              "too_long",
+              "invalid",
+              "no_provider",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "description": "The reviewer model (answered)",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "model"
+        ],
+        "type": "object"
+      },
+      "SummaryWriteStateDto": {
+        "properties": {
+          "draft": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SummaryWriteDto"
+              }
+            ],
+            "description": "The latest summary run that is not discarded, in any status; null - none",
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "draft"
         ],
         "type": "object"
       },
@@ -31330,6 +31735,49 @@
         ]
       }
     },
+    "/admin/content-drafts/{id}/accept-all": {
+      "post": {
+        "operationId": "ContentDraftController_acceptAll",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryWriteDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Summary run not found"
+          },
+          "409": {
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Accept all proposals of the summary run one by one: sections by number, then the full and the very short summary",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
     "/admin/content-drafts/{id}/discard": {
       "post": {
         "operationId": "ContentDraftController_discard",
@@ -31364,7 +31812,232 @@
             "bearer": []
           }
         ],
-        "summary": "Discard a draft: a draft being built cancels its operation; the dossier and glossary are not cancelled",
+        "summary": "Discard a draft: a draft being built cancels its operation; the dossier and glossary are not cancelled; a summary run is discarded by discard-run",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/content-drafts/{id}/discard-run": {
+      "post": {
+        "operationId": "ContentDraftController_discardRun",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryWriteDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Summary run not found (a draft of another kind too)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Discard a summary run: one being built cancels its operation; the regenerations of its texts are cancelled; the fields are not touched",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/content-drafts/{id}/items/{index}/accept": {
+      "post": {
+        "operationId": "ContentDraftController_accept",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptSummaryItemDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryWriteDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "SUMMARY_ITEM_UNKNOWN: the run has no such text"
+          },
+          "404": {
+            "description": "Summary run not found"
+          },
+          "409": {
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Accept a proposal of the summary run into its field when the field has not changed since; a section replaces the section of the same number, numbering never changes; beyond the last section - added at the end",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/content-drafts/{id}/items/{index}/discard": {
+      "post": {
+        "operationId": "ContentDraftController_discardItem",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryWriteDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "SUMMARY_ITEM_UNKNOWN: the run has no such text"
+          },
+          "404": {
+            "description": "Summary run not found"
+          },
+          "409": {
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Discard a proposal of the summary run: the field is not touched",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/content-drafts/{id}/items/{index}/regenerate": {
+      "post": {
+        "operationId": "ContentDraftController_regenerate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RegenerateSummaryItemDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryWriteDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "SUMMARY_ITEM_UNKNOWN: the run has no such text"
+          },
+          "404": {
+            "description": "Summary run not found"
+          },
+          "409": {
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); LLM_CEILING_REACHED"
+          },
+          "503": {
+            "description": "LLM_DISABLED: no OpenRouter key"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Regenerate one text of a ready summary run under its own operation, with the editor remark in the author prompt; the first text of a section also builds the full and the very short summary",
         "tags": [
           "admin"
         ]
@@ -40274,6 +40947,143 @@
           }
         ],
         "summary": "Upper cost estimate of building the dossier of this version",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/drafts/summary_write": {
+      "get": {
+        "operationId": "ContentDraftController_writeLatest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryWriteStateDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The latest summary run that is not discarded, in any status: its texts, flags, what is written and what is proposed; null - none",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "ContentDraftController_writeStart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartContentDraftDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryWriteDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first"
+          },
+          "404": {
+            "description": "Book version not found"
+          },
+          "409": {
+            "description": "DRAFT_IN_PROGRESS: a summary run is being built; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          },
+          "503": {
+            "description": "LLM_DISABLED: no OpenRouter key"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "«Write Summary»: the sections of the dossier plan, then the full and the very short summary, in the background under its own operation; empty fields of an unpublished version are written, the rest become proposals; the previous ready or failed run is discarded",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/drafts/summary_write/estimate": {
+      "get": {
+        "operationId": "ContentDraftController_writeEstimate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SummaryWriteEstimateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Book version not found"
+          },
+          "409": {
+            "description": "DRAFT_IN_PROGRESS: a summary run is being built; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upper cost estimate of the summary run: every section of the dossier plan, the full and the very short summary, each text × 2 passes of the author and the reviewer",
         "tags": [
           "admin"
         ]

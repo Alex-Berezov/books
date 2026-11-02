@@ -274,6 +274,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/content-drafts/{id}/accept-all': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Accept all proposals of the summary run one by one: sections by number, then the full and the very short summary */
+    post: operations['ContentDraftController_acceptAll'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/content-drafts/{id}/discard': {
     parameters: {
       query?: never;
@@ -283,8 +300,76 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Discard a draft: a draft being built cancels its operation; the dossier and glossary are not cancelled */
+    /** Discard a draft: a draft being built cancels its operation; the dossier and glossary are not cancelled; a summary run is discarded by discard-run */
     post: operations['ContentDraftController_discard'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/content-drafts/{id}/discard-run': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Discard a summary run: one being built cancels its operation; the regenerations of its texts are cancelled; the fields are not touched */
+    post: operations['ContentDraftController_discardRun'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/content-drafts/{id}/items/{index}/accept': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Accept a proposal of the summary run into its field when the field has not changed since; a section replaces the section of the same number, numbering never changes; beyond the last section - added at the end */
+    post: operations['ContentDraftController_accept'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/content-drafts/{id}/items/{index}/discard': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Discard a proposal of the summary run: the field is not touched */
+    post: operations['ContentDraftController_discardItem'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/content-drafts/{id}/items/{index}/regenerate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Regenerate one text of a ready summary run under its own operation, with the editor remark in the author prompt; the first text of a section also builds the full and the very short summary */
+    post: operations['ContentDraftController_regenerate'];
     delete?: never;
     options?: never;
     head?: never;
@@ -2696,6 +2781,41 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/versions/{id}/drafts/summary_write': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The latest summary run that is not discarded, in any status: its texts, flags, what is written and what is proposed; null - none */
+    get: operations['ContentDraftController_writeLatest'];
+    put?: never;
+    /** «Write Summary»: the sections of the dossier plan, then the full and the very short summary, in the background under its own operation; empty fields of an unpublished version are written, the rest become proposals; the previous ready or failed run is discarded */
+    post: operations['ContentDraftController_writeStart'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/drafts/summary_write/estimate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Upper cost estimate of the summary run: every section of the dossier plan, the full and the very short summary, each text × 2 passes of the author and the reviewer */
+    get: operations['ContentDraftController_writeEstimate'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/versions/{id}/drafts/{kind}': {
     parameters: {
       query?: never;
@@ -5060,6 +5180,10 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
   schemas: {
+    AcceptSummaryItemDto: {
+      /** @description The editor confirmed that the section moves to other reader chapters */
+      confirmChapterChange?: boolean;
+    };
     ActivityBookVersionDto: {
       author: string;
       /** Format: uri */
@@ -11420,6 +11544,10 @@ export interface components {
       /** @description JWT refresh token issued by login or a previous refresh */
       refreshToken: string;
     };
+    RegenerateSummaryItemDto: {
+      /** @description What the editor asks to change: it goes to the author prompt */
+      remark?: string;
+    };
     RegisterDto: {
       /** @example user@example.com */
       email: string;
@@ -13152,6 +13280,143 @@ export interface components {
        * @example anthropic/claude-sonnet-5.5
        */
       translateModel?: string;
+    };
+    SummaryWriteDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      /** @description Section numbers whose proposal changes the reader chapter: Accept all is refused (ACCEPT_ALL_CHAPTER_CHANGE) */
+      chapterChanges: number[];
+      /** Format: date-time */
+      createdAt: string;
+      /** @description Code of the final refusal (failed) */
+      failedReason: string | null;
+      /** Format: uuid */
+      id: string;
+      items: components['schemas']['SummaryWriteItemDto'][];
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      operation: components['schemas']['LlmOperationDto'];
+      /** @description Fields the run writes directly: empty at the start on an unpublished version */
+      owns: components['schemas']['SummaryWriteOwnsDto'];
+      /** @description Sections in the plan; null until the dossier is ready */
+      plannedSections: number | null;
+      /** @description Sections of the plan the run has a text for (written, proposed or waiting); failed sections are not counted */
+      sectionsDone: number;
+      /**
+       * @description A paused operation keeps the run building: the reason is operation.pauseReason
+       * @enum {string}
+       */
+      status: 'building' | 'ready' | 'failed' | 'discarded';
+      /** Format: date-time */
+      updatedAt: string;
+      /** @enum {string|null} */
+      waitingFor: 'dossier' | 'glossary' | null;
+    };
+    SummaryWriteEstimateDto: {
+      /** @description The dossier is built first by its own operation; null - it is ready */
+      dossier: components['schemas']['DossierContextLineDto'] | null;
+      /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
+      glossary: components['schemas']['CompareContextLineDto'] | null;
+      /** @description Sections of the dossier plan; null - the plan is not known yet (one per chapter) */
+      sections: number | null;
+      /**
+       * Format: decimal
+       * @description Upper estimate of the whole pipeline: every section, the full and the very short summary, each text × 2 passes of the author and the reviewer
+       * @example 100.00000000
+       */
+      stageUsd: string;
+      /**
+       * Format: decimal
+       * @description Default operation limit: max(pipeline × 1.5, dossier and glossary limits)
+       * @example 100.00000000
+       */
+      suggestedLimitUsd: string;
+      /** @description The dossier is not ready: one section per chapter, its size from the dossier and glossary stages */
+      upperBound: boolean;
+    };
+    SummaryWriteItemDto: {
+      /**
+       * @description 2 - the text of the one redo
+       * @enum {number}
+       */
+      attempt: 1 | 2;
+      authorModel: string | null;
+      /** @description Why the text is not in the field: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, DRAFT_INPUT_MISSING, DRAFT_DATA_INVALID (no text); SUMMARY_WRITE_REFUSED (the field refused it) */
+      failedReason: string | null;
+      /** @description Rich HTML of the text; empty when it failed */
+      html: string;
+      /** @description Index of the text in the run: the path of accept, discard, regenerate */
+      index: number;
+      /** @description Section number of the dossier plan (section) */
+      number: number | null;
+      /**
+       * @description written - in the field; proposed - a proposal (Accept writes it); waiting - waits for the section before it to get a text; accepted, discarded - the editor decided; none - not in the field and not a proposal: no text (verdict failed) or the field refused the text (failedReason SUMMARY_WRITE_REFUSED: html kept, Regenerate or write the section by hand)
+       * @enum {string}
+       */
+      outcome: 'waiting' | 'written' | 'proposed' | 'accepted' | 'discarded' | 'none';
+      /** @description Reader chapter of the section; null - not in this version */
+      readerChapter: number | null;
+      /** @description The last regeneration gave no text: the previous text stays, this is why */
+      regenFailedReason: string | null;
+      /**
+       * Format: uuid
+       * @description Operation of the running regeneration
+       */
+      regenOperationId: string | null;
+      /** @description A regeneration of this text is running */
+      regenerating: boolean;
+      /** @description Flags of the code checks and the reviewer model */
+      remarks: components['schemas']['SummaryWriteRemarkDto'][];
+      review: components['schemas']['SummaryWriteReviewDto'] | null;
+      /** @enum {string} */
+      target: 'section' | 'full' | 'brief';
+      /** @description Section title from the chapter titles of the version (section) */
+      title: string | null;
+      /**
+       * @description ok - no remarks; flags - remarks after the redo or no model check; failed - no text
+       * @enum {string}
+       */
+      verdict: 'ok' | 'flags' | 'failed';
+    };
+    SummaryWriteOwnsDto: {
+      brief: boolean;
+      full: boolean;
+      sections: boolean;
+    };
+    SummaryWriteRemarkDto: {
+      /** @enum {string} */
+      by: 'code' | 'model';
+      /** @enum {string} */
+      code:
+        | 'LENGTH_OUT'
+        | 'STRUCTURE_BROKEN'
+        | 'LANGUAGE_MIXED'
+        | 'QUOTE_NOT_VERBATIM'
+        | 'NAME_MISMATCH'
+        | 'JUNK'
+        | 'DUPLICATE_TEXT'
+        | 'FACT_UNSUPPORTED'
+        | 'EVENT_MISSING'
+        | 'EXTERNAL_FACT'
+        | 'ORDER_BROKEN'
+        | 'STYLE_POOR';
+      /** @description What to fix, in English */
+      note: string;
+      /** @description A short fragment of the text or the part name */
+      where: string;
+    };
+    SummaryWriteReviewDto: {
+      /**
+       * @description answered - the reviewer model checked the text; otherwise why the model check was not done
+       * @enum {string}
+       */
+      kind: 'answered' | 'not_independent' | 'too_long' | 'invalid' | 'no_provider' | 'unavailable';
+      /** @description The reviewer model (answered) */
+      model: string | null;
+    };
+    SummaryWriteStateDto: {
+      /** @description The latest summary run that is not discarded, in any status; null - none */
+      draft: components['schemas']['SummaryWriteDto'] | null;
     };
     SupersedeRightsEvidenceDto: {
       /** @description Id доказательства, которое приходит на смену */
@@ -15847,6 +16112,41 @@ export interface operations {
       };
     };
   };
+  ContentDraftController_acceptAll: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SummaryWriteDto'];
+        };
+      };
+      /** @description Summary run not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   ContentDraftController_discard: {
     parameters: {
       query?: never;
@@ -15868,6 +16168,178 @@ export interface operations {
       };
       /** @description Content draft not found */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_discardRun: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SummaryWriteDto'];
+        };
+      };
+      /** @description Summary run not found (a draft of another kind too) */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_accept: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        index: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AcceptSummaryItemDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SummaryWriteDto'];
+        };
+      };
+      /** @description SUMMARY_ITEM_UNKNOWN: the run has no such text */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Summary run not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_discardItem: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        index: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SummaryWriteDto'];
+        };
+      };
+      /** @description SUMMARY_ITEM_UNKNOWN: the run has no such text */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Summary run not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_regenerate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        index: number;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['RegenerateSummaryItemDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SummaryWriteDto'];
+        };
+      };
+      /** @description SUMMARY_ITEM_UNKNOWN: the run has no such text */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Summary run not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); LLM_CEILING_REACHED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_DISABLED: no OpenRouter key */
+      503: {
         headers: {
           [name: string]: unknown;
         };
@@ -20336,6 +20808,115 @@ export interface operations {
         };
       };
       /** @description SOURCE_HAS_NO_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_writeLatest: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SummaryWriteStateDto'];
+        };
+      };
+    };
+  };
+  ContentDraftController_writeStart: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StartContentDraftDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SummaryWriteDto'];
+        };
+      };
+      /** @description DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description DRAFT_IN_PROGRESS: a summary run is being built; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_DISABLED: no OpenRouter key */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_writeEstimate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['SummaryWriteEstimateDto'];
+        };
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description DRAFT_IN_PROGRESS: a summary run is being built; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED */
       409: {
         headers: {
           [name: string]: unknown;

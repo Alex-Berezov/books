@@ -1,3 +1,4 @@
+import { REVIEW_REMARK_CODES } from '../draft-quality/quality-loop';
 import { codeRemark } from '../draft-quality/text-checks';
 import {
   briefWriteRequest,
@@ -143,8 +144,12 @@ describe('summary write prompts', () => {
     expect(review('brief')).toContain('the climax and the outcome');
     // У «Очень кратко» лимита цитат в `product.md` §2 нет - проверяющая его не ставит.
     expect(review('brief')).not.toMatch(/more than \d+ quotation/);
-    for (const code of ['NAME_MISMATCH', 'FACT_UNSUPPORTED', 'EVENT_MISSING', 'STYLE_POOR']) {
-      expect(full).toContain(code);
+    // Все коды проверяющей из одного списка (F06-2, хвост F06-1): код, выпавший из промпта, модель
+    // не поставит никогда.
+    for (const target of ['section', 'full', 'brief'] as const) {
+      for (const code of REVIEW_REMARK_CODES) {
+        expect([target, code, review(target).includes(`- ${code}:`)]).toEqual([target, code, true]);
+      }
     }
   });
 });

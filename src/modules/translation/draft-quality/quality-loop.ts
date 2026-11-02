@@ -80,6 +80,23 @@ export interface QualityLoopSpec<T> {
    * может оборваться так же.
    */
   onBeforeRedo?: (first: QualityLoopDraft<T>) => Promise<void>;
+  /**
+   * Продолжение после обрыва (решение арбитра `F06 | F06-2`, Р3): текст, сохранённый `onAuthored`
+   * или `onBeforeRedo`, второй раз не оплачивается. `attempt: 2` - переделка уже оплачена: только
+   * код и проверяющая, второй переделки нет. `attempt: 1` с `checked` (сохранён `onBeforeRedo`) -
+   * сразу переделка без повторной проверки первого текста; без `checked` - код и проверяющая
+   * первого текста, дальше как обычно. Цена - только новых вызовов.
+   */
+  resume?: QualityLoopResume<T>;
+}
+
+/** Сохранённый текст круга, с которого цикл продолжает (`QualityLoopSpec.resume`). */
+export interface QualityLoopResume<T> {
+  draft: T;
+  attempt: 1 | 2;
+  authorModel: string;
+  /** Итог проверки первого текста - есть, если сохранён перед переделкой (`onBeforeRedo`). */
+  checked?: { remarks: DraftRemark[]; review: ReviewState };
 }
 
 /** Текст автора круга до проверяющей. */
@@ -150,6 +167,10 @@ export async function runQualityLoop<T>(
     if (!answer.ok) return null;
     const draft = spec.readAuthor(answer.value);
     await spec.onAuthored?.({ draft, attempt, authorModel: answer.model, costUsd });
+    return check(draft, answer.model);
+  };
+
+  const check = async (draft: T, authorModel: string): Promise<Round<T>> => {
     const code = spec.codeCheck(draft);
     const outcome = await callIndependent(
       llm,
@@ -158,7 +179,7 @@ export async function runQualityLoop<T>(
       spec.reviewRequest(draft),
       REVIEW_SHAPE,
       reviewRemarks,
-      answer.model,
+      authorModel,
       spec.reviewModels,
       ctx,
     );
@@ -170,7 +191,7 @@ export async function runQualityLoop<T>(
         ? { kind: 'answered', model: outcome.model }
         : { kind: outcome.kind };
     const model = outcome.kind === 'answered' ? outcome.answer : [];
-    return { draft, authorModel: answer.model, remarks: [...code, ...model], review };
+    return { draft, authorModel, remarks: [...code, ...model], review };
   };
 
   const done = (r: Round<T>, attempt: 1 | 2): QualityLoopDraft<T> => ({
@@ -185,7 +206,13 @@ export async function runQualityLoop<T>(
     costUsd,
   });
 
-  const first = await round(null, 1);
+  const resume = spec.resume;
+  if (resume?.attempt === 2) return done(await check(resume.draft, resume.authorModel), 2);
+  const first: Round<T> | null = !resume
+    ? await round(null, 1)
+    : resume.checked
+      ? { draft: resume.draft, authorModel: resume.authorModel, ...resume.checked }
+      : await check(resume.draft, resume.authorModel);
   if (first === null) return { ok: false, costUsd };
   if (first.remarks.length === 0) return done(first, 1);
   await spec.onBeforeRedo?.(done(first, 1));

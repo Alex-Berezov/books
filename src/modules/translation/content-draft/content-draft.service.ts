@@ -124,7 +124,7 @@ type ContextLine = NonNullable<ContextEstimate['glossary']>;
 type DossierLine = NonNullable<ContextEstimate['dossier']>;
 
 /** Досье и глоссарий заготовки и строки оценки тех, что строятся первыми. */
-interface DraftContext {
+export interface DraftContext {
   run: { dossierId: string; glossaryId: string | null } | null;
   dossier: BookDossier | null;
   glossaryData: unknown;
@@ -140,6 +140,35 @@ interface Estimate {
   /** Досье и глоссарий запуска переведённой версии (Р18): заготовка привязывается к ним сразу. */
   run: { dossierId: string; glossaryId: string | null } | null;
   language: Language;
+}
+
+/**
+ * Лимит поверх контекста (В9, Р4 `F05-10`): max(вызовы × 1,5, лимиты досье и глоссария, которые
+ * строятся первыми), и строки досье и глоссария для ответа оценки. Одно правило на заготовки и
+ * ход пересказа `F06-2`. Повторы с замечанием (Р28) вызывающий закладывает в `stageUsd`.
+ */
+export function contextLimits(context: DraftContext, stageUsd: Prisma.Decimal) {
+  const maxOf = (values: Array<Prisma.Decimal | undefined>) =>
+    values.reduce<Prisma.Decimal>((max, v) => (v && v.gt(max) ? v : max), new Prisma.Decimal(0));
+  const contextLimitUsd = maxOf([
+    context.dossierLine?.suggestedLimitUsd,
+    context.glossaryLine?.suggestedLimitUsd,
+  ]);
+  const suggestedLimitUsd = maxOf([stageUsd.mul(DRAFT_LIMIT_FACTOR), contextLimitUsd]);
+  const line = (l: ContextLine) => ({
+    estimateUsd: moneyUsd(l.estimateUsd),
+    suggestedLimitUsd: moneyUsd(l.suggestedLimitUsd),
+    upperBound: l.upperBound,
+  });
+  const { dossierLine, glossaryLine } = context;
+  return {
+    suggestedLimitUsd,
+    contextLimitUsd,
+    dossier: dossierLine
+      ? { ...line(dossierLine), refusedTooLong: dossierLine.refusedTooLong }
+      : null,
+    glossary: glossaryLine ? line(glossaryLine) : null,
+  };
 }
 
 /**
@@ -515,10 +544,7 @@ export class ContentDraftService {
    * действующее поколение досье исходника - устаревшее даёт 409 `DOSSIER_STALE`, отсутствующее
    * строится первым строкой оценки (Р5). Глоссарий не нужен на языке досье (В6).
    */
-  private async draftContext(
-    versionId: string,
-    version: { language: Language },
-  ): Promise<DraftContext> {
+  async draftContext(versionId: string, version: { language: Language }): Promise<DraftContext> {
     const run = await this.dossierDemand.finishedRunContextOf(versionId);
     if (run) {
       if (!run.dossier || run.dossier.status !== 'ready') {
@@ -587,35 +613,20 @@ export class ContentDraftService {
     language: Language,
     retries = 0,
   ): Estimate {
-    const maxOf = (values: Array<Prisma.Decimal | undefined>) =>
-      values.reduce<Prisma.Decimal>((max, v) => (v && v.gt(max) ? v : max), new Prisma.Decimal(0));
-    const contextLimitUsd = maxOf([
-      context.dossierLine?.suggestedLimitUsd,
-      context.glossaryLine?.suggestedLimitUsd,
-    ]);
-    // Повторы с замечанием платятся целиком (Р28): лимит по умолчанию закладывает и их.
-    const suggested = maxOf([stage.usd.mul(1 + retries).mul(DRAFT_LIMIT_FACTOR), contextLimitUsd]);
-    const line = (l: ContextLine) => ({
-      estimateUsd: moneyUsd(l.estimateUsd),
-      suggestedLimitUsd: moneyUsd(l.suggestedLimitUsd),
-      upperBound: l.upperBound,
-    });
-    const { dossierLine, glossaryLine } = context;
+    const lines = contextLimits(context, stage.usd.mul(1 + retries));
     return {
-      suggestedLimitUsd: suggested,
-      contextLimitUsd,
+      suggestedLimitUsd: lines.suggestedLimitUsd,
+      contextLimitUsd: lines.contextLimitUsd,
       language,
       run: context.run,
       dto: {
         kind,
-        dossier: dossierLine
-          ? { ...line(dossierLine), refusedTooLong: dossierLine.refusedTooLong }
-          : null,
-        glossary: glossaryLine ? line(glossaryLine) : null,
+        dossier: lines.dossier,
+        glossary: lines.glossary,
         sections,
         stageUsd: moneyUsd(stage.usd),
         upperBound: stage.upperBound,
-        suggestedLimitUsd: moneyUsd(suggested),
+        suggestedLimitUsd: moneyUsd(lines.suggestedLimitUsd),
       },
     };
   }

@@ -511,4 +511,69 @@ describe('runQualityLoop', () => {
     expect(result).toMatchObject({ ok: true, draft: 'first', attempt: 1 });
     expect(result.costUsd.toString()).toBe('0.04');
   });
+
+  describe('resume after a break (F06 | F06-2, Р3)', () => {
+    const authorCalls = (calls: Call[]) => calls.filter((c) => c.stage === AUTHOR_STAGE).length;
+
+    it('a saved first text: no author call, the reviewer checks it, then one redo as usual', async () => {
+      const { llm, calls } = fakeLlm(
+        {
+          [AUTHOR_STAGE]: [{ json: { text: 'fixed' }, model: 'z-ai/glm-5.3' }],
+          [REVIEW_STAGE]: [
+            { json: styleRemark, model: 'openai/gpt-6-luna' },
+            { json: ok, model: 'openai/gpt-6-luna' },
+          ],
+        },
+        ['openai/gpt-6-luna'],
+      );
+      const redos: Array<Redo<string> | null> = [];
+      const result = await runQualityLoop(llm, 'op', ctx, {
+        ...spec(() => [], redos),
+        resume: { draft: 'saved', attempt: 1, authorModel: 'z-ai/glm-5.3' },
+      });
+      expect(result).toMatchObject({ ok: true, draft: 'fixed', attempt: 2, verdict: 'ok' });
+      // Один вызов автора - переделка; первый текст не оплачен второй раз.
+      expect(authorCalls(calls)).toBe(1);
+      expect(redos).toEqual([
+        { previous: 'saved', remarks: [expect.objectContaining({ code: 'STYLE_POOR' })] },
+      ]);
+    });
+
+    it('a saved checked first text: straight to the redo, no second review of the first text', async () => {
+      const { llm, calls } = fakeLlm(
+        {
+          [AUTHOR_STAGE]: [{ json: { text: 'fixed' }, model: 'z-ai/glm-5.3' }],
+          [REVIEW_STAGE]: [{ json: ok, model: 'openai/gpt-6-luna' }],
+        },
+        ['openai/gpt-6-luna'],
+      );
+      const remarks = [codeRemark('LENGTH_OUT', '10 words', 'longer')];
+      const result = await runQualityLoop(llm, 'op', ctx, {
+        ...spec(() => [], []),
+        resume: {
+          draft: 'saved',
+          attempt: 1,
+          authorModel: 'z-ai/glm-5.3',
+          checked: { remarks, review: { kind: 'answered', model: 'openai/gpt-6-luna' } },
+        },
+      });
+      expect(result).toMatchObject({ ok: true, draft: 'fixed', attempt: 2 });
+      expect(calls.map((c) => c.stage)).toEqual([AUTHOR_STAGE, REVIEW_STAGE]);
+    });
+
+    it('a saved redo: no author call at all, only the checks, no second redo', async () => {
+      const { llm, calls } = fakeLlm(
+        { [AUTHOR_STAGE]: [], [REVIEW_STAGE]: [{ json: styleRemark, model: 'openai/gpt-6-luna' }] },
+        ['openai/gpt-6-luna'],
+      );
+      const result = await runQualityLoop(llm, 'op', ctx, {
+        ...spec(() => [], []),
+        resume: { draft: 'redone', attempt: 2, authorModel: 'z-ai/glm-5.3' },
+      });
+      expect(result).toMatchObject({ ok: true, draft: 'redone', attempt: 2, verdict: 'flags' });
+      expect(authorCalls(calls)).toBe(0);
+      expect(calls).toHaveLength(1);
+      if (result.ok) expect(result.costUsd.toString()).toBe('0.01');
+    });
+  });
 });

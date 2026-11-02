@@ -8,7 +8,8 @@ import { splitChapter } from '../chapter-blocks';
  * сохранение существующими ручками. Текст из базы модели - абзацами без разметки.
  */
 
-function escapeHtml(text: string): string {
+/** Экранирование текста модели для rich HTML - одно на заготовки `F05-10` и ход `F06`. */
+export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 

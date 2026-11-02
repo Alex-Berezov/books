@@ -18,10 +18,21 @@ export function withSummaryLock<T>(
   fn: (tx: Prisma.TransactionClient) => Promise<T>,
 ): Promise<T> {
   return prisma.$transaction(async (tx) => {
-    await tx.$queryRaw`SELECT true AS locked
-      FROM pg_advisory_xact_lock(${BOOK_SUMMARY_LOCK_NAMESPACE}::int4, hashtext(${bookVersionId}::text))`;
+    await lockSummary(tx, bookVersionId);
     return fn(tx);
   }, BOOK_SUMMARY_TX_OPTIONS);
+}
+
+/**
+ * Тот же замок пересказа версии на чужой транзакции: старт хода `F06` считает право хода на поля
+ * под ним в своей транзакции со строкой хода (`tech.md` §4-§5). Снимается концом транзакции.
+ */
+export async function lockSummary(
+  tx: Prisma.TransactionClient,
+  bookVersionId: string,
+): Promise<void> {
+  await tx.$queryRaw`SELECT true AS locked
+    FROM pg_advisory_xact_lock(${BOOK_SUMMARY_LOCK_NAMESPACE}::int4, hashtext(${bookVersionId}::text))`;
 }
 
 /**

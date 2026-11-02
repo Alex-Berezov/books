@@ -70,23 +70,37 @@ export class BookSummaryService {
     if (!version) throw new NotFoundException('BookVersion not found');
 
     try {
-      return await withSummaryLock(this.prisma, bookVersionId, async (tx) => {
-        const existing = await tx.bookSummary.findFirst({
-          where: { bookVersionId },
-          orderBy: CURRENT_SUMMARY_ORDER,
-        });
-        // Признак текста считается тем же правилом, что валидатор: сейчас он всегда true, но
-        // счётчик пересказов опирается на колонку, а не на то, что валидатор стоит на входе.
-        const hasText = richHtmlText(dto.summary) !== '';
-        if (!existing) {
-          return tx.bookSummary.create({ data: { bookVersionId, ...dto, hasText } });
-        }
-        return tx.bookSummary.update({ where: { id: existing.id }, data: { ...dto, hasText } });
-      });
+      return await withSummaryLock(this.prisma, bookVersionId, (tx) =>
+        writeFull(tx, bookVersionId, dto),
+      );
     } catch (e: unknown) {
       if (isVersionGoneError(e)) throw new NotFoundException('BookVersion not found');
       throw e;
     }
+  }
+
+  /**
+   * Запись хода пересказа `F06` (`features/F06-summary-autofill/tech.md` §5): полный или очень
+   * краткий тем же телом, что ручки, под тем же замком и в той же транзакции, если `guard.allow`
+   * под замком разрешил. `guard.done` - учёт хода в той же транзакции после записи. Очень
+   * краткий без полного с текстом не пишется (как `upsertBrief`), ход получает `false`.
+   */
+  async writeGuarded(
+    bookVersionId: string,
+    part: 'full' | 'brief',
+    html: string,
+    guard: SummaryWriteGuard,
+  ): Promise<boolean> {
+    return writeUnderSummaryLock(this.prisma, bookVersionId, async (tx) => {
+      if (!(await guard.allow(tx))) return false;
+      if (part === 'full') {
+        await writeFull(tx, bookVersionId, { summary: html });
+      } else if ((await writeBrief(tx, bookVersionId, html)) === null) {
+        return false;
+      }
+      await guard.done(tx);
+      return true;
+    });
   }
 
   /**
@@ -103,20 +117,57 @@ export class BookSummaryService {
     });
     if (!version) throw new NotFoundException('BookVersion not found');
 
-    const briefHasText = dto.brief !== null && richHtmlText(dto.brief) !== '';
     return writeUnderSummaryLock(this.prisma, bookVersionId, async (tx) => {
-      const existing = await tx.bookSummary.findUnique({
-        where: { bookVersionId },
-        select: { id: true, hasText: true },
-      });
-      if (!existing?.hasText) {
-        throw new ConflictException('Save the full summary first');
-      }
-      return tx.bookSummary.update({
-        where: { id: existing.id },
-        data: { brief: dto.brief === '' ? null : dto.brief, briefHasText },
-        select: BOOK_SUMMARY_RESPONSE_SELECT,
-      });
+      const row = await writeBrief(tx, bookVersionId, dto.brief);
+      if (row === null) throw new ConflictException('Save the full summary first');
+      return row;
     });
   }
+}
+
+/** Разрешение и учёт записи хода `F06` под замком пересказа (`writeGuarded`). */
+export interface SummaryWriteGuard {
+  allow(tx: Prisma.TransactionClient): Promise<boolean>;
+  done(tx: Prisma.TransactionClient): Promise<void>;
+}
+
+/** Полный пересказ версии - тело `PUT summary` и записи хода; вызывается под замком. */
+async function writeFull(
+  tx: Prisma.TransactionClient,
+  bookVersionId: string,
+  dto: UpdateBookSummaryDto,
+) {
+  const existing = await tx.bookSummary.findFirst({
+    where: { bookVersionId },
+    orderBy: CURRENT_SUMMARY_ORDER,
+  });
+  // Признак текста считается тем же правилом, что валидатор: сейчас он всегда true, но
+  // счётчик пересказов опирается на колонку, а не на то, что валидатор стоит на входе.
+  const hasText = richHtmlText(dto.summary) !== '';
+  if (!existing) {
+    return tx.bookSummary.create({ data: { bookVersionId, ...dto, hasText } });
+  }
+  return tx.bookSummary.update({ where: { id: existing.id }, data: { ...dto, hasText } });
+}
+
+/**
+ * Очень краткий - тело `PUT summary/brief` и записи хода; под замком. Нет полного с текстом -
+ * `null` (ручка отвечает 409). `null` и пустая строка очищают поле.
+ */
+async function writeBrief(
+  tx: Prisma.TransactionClient,
+  bookVersionId: string,
+  brief: string | null,
+) {
+  const existing = await tx.bookSummary.findUnique({
+    where: { bookVersionId },
+    select: { id: true, hasText: true },
+  });
+  if (!existing?.hasText) return null;
+  const briefHasText = brief !== null && richHtmlText(brief) !== '';
+  return tx.bookSummary.update({
+    where: { id: existing.id },
+    data: { brief: brief === '' ? null : brief, briefHasText },
+    select: BOOK_SUMMARY_RESPONSE_SELECT,
+  });
 }

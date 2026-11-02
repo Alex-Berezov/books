@@ -7,7 +7,6 @@ import { LlmService } from '../../llm/llm.service';
 import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.registry';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
-import { demandContext, demandDossierContext } from '../dossier/context-demand';
 import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { ContentDraftSectionDto } from '../dto/content-draft-response.dto';
 import { DossierMotifDto } from '../dto/dossier-data.dto';
@@ -50,6 +49,8 @@ import {
   summaryPlanOf,
 } from './content-draft.service';
 import { answerToHtml, chaptersText, editorQuestion, htmlToParagraphs } from './content-draft.text';
+import { awaitDraftContext } from './draft-context-wait';
+import { summaryWriteTaskInput, SummaryWriteHandler } from '../summary-write/summary-write.handler';
 
 /**
  * Мотивы досье для «Вводных» (Р10): главы - только этой версии; элемент не той формы пропускается,
@@ -89,6 +90,7 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     private readonly tasks: LlmTaskService,
     private readonly dossiers: DossierDemandService,
     private readonly drafts: ContentDraftService,
+    private readonly summaryWrite: SummaryWriteHandler,
   ) {}
 
   readonly handler: LlmTaskHandler = {
@@ -96,17 +98,29 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     onFailed: (task, reason) => this.onFailed(task, reason),
   };
 
+  /**
+   * «Continue» операции `draft`: заготовка, ход пересказа (`F06-2`) - своей задачей; строки с этой
+   * операцией нет - это операция перегенерации текста хода (решение арбитра `F06 | F06-2`, Р2).
+   */
   async resumeTasks(op: LlmOperation): Promise<EnqueueTaskInput[]> {
     const row = await this.prisma.contentDraft.findUnique({ where: { operationId: op.id } });
-    return row?.status === 'building' ? [draftTaskInput(row)] : [];
+    if (!row) return this.summaryWrite.regenResume(op);
+    if (row.status !== 'building') return [];
+    return row.kind === 'summary_write'
+      ? [summaryWriteTaskInput(row, row.operationId)]
+      : [draftTaskInput(row)];
   }
 
-  /** Отмена со страницы операций (не «discard»): заготовка `failed` с причиной. */
+  /**
+   * Отмена со страницы операций (не «discard»): заготовка и ход `failed` с причиной; операция
+   * перегенерации снимает отметку у своего текста, ход остаётся `ready` (Р2).
+   */
   async onCancelled(op: LlmOperation, tx: Prisma.TransactionClient): Promise<void> {
     await tx.contentDraft.updateMany({
       where: { operationId: op.id, status: 'building' },
       data: { status: 'failed', failedReason: DRAFT_CANCELLED },
     });
+    await this.summaryWrite.onRegenCancelled(op, tx);
   }
 
   private async run(task: LlmTask, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
@@ -413,44 +427,16 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
    * Досье и глоссарий языка версии (Р5, Р20): заготовка - ждущий. На языке досье глоссарий
    * не запрашивается (В6). `paused`/`failed` - операция уже на паузе, шаг кончается.
    */
-  private async awaitContext(row: ContentDraft): Promise<LlmTaskStepResult> {
-    const { sourceVersionId } = await this.dossiers.dossierSourceOf(row.bookVersionId);
-    const sameLanguage = (await this.drafts.languageOf(sourceVersionId)) === row.language;
-    const input = {
-      versionId: row.bookVersionId,
-      operationId: row.operationId,
-      waitingFor: row.waitingFor,
-    };
-    const context = sameLanguage
-      ? await demandDossierContext(this.dossiers, this.tasks, input)
-      : await demandContext(this.dossiers, this.tasks, { ...input, language: row.language });
-    switch (context.kind) {
-      case 'ready':
-        await this.prisma.contentDraft.updateMany({
-          where: { id: row.id, status: 'building' },
-          data: {
-            dossierId: context.dossier.id,
-            glossaryId: context.glossary?.id ?? null,
-            waitingFor: null,
-          },
-        });
-        return { kind: 'continue' };
-      case 'wait':
-        if (row.waitingFor !== context.waitingFor) {
-          await this.prisma.contentDraft.updateMany({
-            where: { id: row.id, status: 'building' },
-            data: { waitingFor: context.waitingFor },
-          });
-        }
-        return { kind: 'wait', reason: context.reason };
-      case 'stopped':
-        return { kind: 'continue' };
-      // Строку меняли одновременно - «повторить позже», а не отказ.
-      case 'retry':
-        return { kind: 'wait', reason: context.code };
-      case 'failed':
-        return { kind: 'fail', reason: context.code };
-    }
+  private awaitContext(row: ContentDraft): Promise<LlmTaskStepResult> {
+    return awaitDraftContext(
+      {
+        db: this.prisma,
+        tasks: this.tasks,
+        dossiers: this.dossiers,
+        languageOf: (id) => this.drafts.languageOf(id),
+      },
+      row,
+    );
   }
 
   /** Окончательный отказ: операция `failed`, заготовка `failed` с причиной одной записью. */

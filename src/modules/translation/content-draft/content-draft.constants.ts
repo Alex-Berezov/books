@@ -115,6 +115,8 @@ export type DroppedQuoteReason = (typeof DROPPED_QUOTE_REASONS)[number];
 export const DRAFT_INVALID_RESPONSE = 'DRAFT_INVALID_RESPONSE';
 /** Вход этапа не влезает в контекст модели или ответ длиннее предела поля. */
 export const DRAFT_TOO_LONG = 'DRAFT_TOO_LONG';
+/** Элемент `ContentDraft.data` хода `F06` не той формы: на его месте заглушка «не удалось». */
+export const DRAFT_DATA_INVALID = 'DRAFT_DATA_INVALID';
 /** В досье нет плана разделов. */
 export const DRAFT_NO_PLAN = 'DRAFT_NO_PLAN';
 /** Досье запуска переведённой версии удалено вместе с исходником. */

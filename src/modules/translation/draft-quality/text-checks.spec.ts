@@ -8,6 +8,7 @@ import {
   checkQuotes,
   DraftRemark,
   isSubheading,
+  JUNK_PHRASES,
   QUOTE_MIN_WORDS,
   wordCount,
 } from './text-checks';
@@ -86,6 +87,14 @@ describe('DUPLICATE_TEXT', () => {
     expect(codes(checkDuplicate(a, [{ label: 'full', text: b }]))).toEqual(['DUPLICATE_TEXT']);
     expect(checkDuplicate(a, [{ label: 'full', text: b }], [quote])).toEqual([]);
   });
+
+  it('a hyphenated word is one word in a run, as in the word count (F06-2, хвост F06-1)', () => {
+    // Одиннадцать слов по `wordCount`: «well-known» - одно слово. Токенизатор без дефиса видел
+    // бы двенадцать и поднял бы дубль на серии короче порога.
+    const run = 'Anna walks through the well-known empty house and listens at night';
+    expect(wordCount(run)).toBe(11);
+    expect(checkDuplicate(run, [{ label: 'section 1', text: `Later ${run} again.` }])).toEqual([]);
+  });
 });
 
 describe('JUNK', () => {
@@ -125,6 +134,23 @@ describe('JUNK', () => {
     expect(isSubheading('Text ## not a heading')).toBe(false);
   });
 
+  it('isSubheading and blocksOf apply one subheading rule to every line shape (F06-2, хвост F06-1)', () => {
+    const lines = [
+      '## Part one',
+      '##\tPart one',
+      '##  Part',
+      '##Part',
+      '##',
+      '## ',
+      ' ## Part',
+      '### Part',
+    ];
+    for (const line of lines) {
+      const split = blocksOf(`Intro.\n${line}\nAnna leaves.`).includes(line);
+      expect([line, isSubheading(line)]).toEqual([line, split]);
+    }
+  });
+
   it('a single dialogue line or numbered line is prose, not a Markdown list', () => {
     expect(checkJunk('- Hola, dice Ana.\n\nY se va.', { subheadings: false })).toEqual([]);
     expect(checkJunk('1. Anna leaves first.\n\nBob stays.', { subheadings: false })).toEqual([]);
@@ -152,6 +178,14 @@ describe('JUNK', () => {
     }
   });
 
+  it('every service phrase of the list is a remark (F06-2, хвост F06-1)', () => {
+    expect(JUNK_PHRASES.length).toBeGreaterThan(0);
+    for (const phrase of JUNK_PHRASES) {
+      const text = `${phrase} Anna leaves the house.`;
+      expect([phrase, codes(checkJunk(text, { subheadings: false }))]).toEqual([phrase, ['JUNK']]);
+    }
+  });
+
   it('a text broken off mid-sentence is a remark, also on a dash or a colon', () => {
     expect(codes(checkJunk('Anna leaves the house and', { subheadings: false }))).toEqual(['JUNK']);
     expect(codes(checkJunk('Anna turns and says —', { subheadings: false }))).toEqual(['JUNK']);
@@ -176,6 +210,30 @@ describe('LANGUAGE_MIXED', () => {
 
   it('paragraphs in the language of the version are silent', () => {
     expect(checkLanguage(`${english}\n\n${english}`, 'en', [])).toEqual([]);
+  });
+
+  it('Russian, Spanish and Portuguese versions: own paragraphs are silent, an English one is a remark (F06-2, хвост F06-1)', () => {
+    const own = {
+      ru:
+        'Анна выходит из дома рано утром и идёт на вокзал вместе со своим старым братом. Они долго ' +
+        'ждут поезд и говорят о прошлом и о людях, которых знали, когда были молодыми и когда дом ' +
+        'ещё был полон жизни, шума и детских голосов во всех комнатах.',
+      es:
+        'Ana sale de la casa por la mañana y camina hacia la estación con su viejo hermano. Esperan ' +
+        'el tren durante mucho tiempo y hablan del pasado y de la gente que conocieron cuando eran ' +
+        'jóvenes y cuando la casa todavía estaba llena de vida y de voces.',
+      pt:
+        'Ana sai de casa pela manhã e caminha até a estação com o seu velho irmão. Eles esperam o ' +
+        'trem durante muito tempo e falam do passado e das pessoas que conheceram quando eram ' +
+        'jovens e quando a casa ainda estava cheia de vida e de vozes.',
+    } as const;
+    for (const [language, text] of Object.entries(own) as Array<[keyof typeof own, string]>) {
+      expect([language, checkLanguage(`${text}\n\n${text}`, language, [])]).toEqual([language, []]);
+      expect([language, codes(checkLanguage(`${text}\n\n${english}`, language, []))]).toEqual([
+        language,
+        ['LANGUAGE_MIXED'],
+      ]);
+    }
   });
 
   it('a foreign paragraph shorter than the detector window is silent', () => {

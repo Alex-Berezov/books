@@ -58,9 +58,15 @@ export const codeRemark = (code: DraftRemarkCode, where: string, note: string): 
   by: 'code',
 });
 
-/** Слова текста для счёта объёма: буквы и цифры с апострофом и дефисом внутри. */
+/**
+ * Слово - буквы и цифры с апострофом и дефисом внутри. Одно правило на объём (`wordCount`)
+ * и серии `DUPLICATE_TEXT` (`runWords`): «12 слов подряд» и «N слов» считаются одинаково.
+ */
+const WORD = /[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu;
+
+/** Слова текста для счёта объёма. */
 export function wordCount(text: string): number {
-  return text.match(/[\p{L}\p{N}]+(?:['’-][\p{L}\p{N}]+)*/gu)?.length ?? 0;
+  return text.match(WORD)?.length ?? 0;
 }
 
 /**
@@ -107,7 +113,7 @@ export function checkQuotes(
   return { remarks, verbatim };
 }
 
-const runWords = (text: string): string[] => normalized(text).match(/[\p{L}\p{N}]+/gu) ?? [];
+const runWords = (text: string): string[] => normalized(text).match(WORD) ?? [];
 
 /**
  * `DUPLICATE_TEXT` (§2.2, §2.3): `DUPLICATE_RUN_WORDS` слов подряд совпадают с одним из `others`.
@@ -147,7 +153,7 @@ export function checkDuplicate(
  * к читателю», «без предупреждений о спойлерах»). Сравнение - в форме `normalized` (нижний
  * регистр без диакритики, «й» - «и»), поэтому список приводится к ней же при сборке.
  */
-const JUNK_PHRASES: readonly string[] = [
+export const JUNK_PHRASES: readonly string[] = [
   // Начало ответа модели.
   'here is the summary',
   "here's the summary",
@@ -205,8 +211,11 @@ const TEXT_END = /[.!?…]["»”’)\]]*\s*$/u;
  */
 const SUBHEADING_LINE = /^##[ \t]+\S[^\n]*$/gmu;
 
+/** Тот же `SUBHEADING_LINE` на целый блок: без `g` (нет `lastIndex`) и без `m` (весь блок - одна строка). */
+const SUBHEADING_BLOCK = new RegExp(SUBHEADING_LINE.source, 'u');
+
 /** Блок - подзаголовок `## ` с текстом. */
-export const isSubheading = (block: string): boolean => /^##[ \t]+\S[^\n]*$/u.test(block);
+export const isSubheading = (block: string): boolean => SUBHEADING_BLOCK.test(block);
 
 /** Абзацы текста, где каждая строка подзаголовка - свой блок, даже без пустой строки рядом. */
 export function blocksOf(text: string): string[] {

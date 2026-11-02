@@ -333,9 +333,10 @@ describe('Summary drafts from the dossier (e2e)', () => {
     expect(await latest(versionId, 'analysis')).toBeNull();
   });
 
-  // Строка хода пересказа `F06` в живой базе этим ручкам не принадлежит (решение арбитра
-  // `F06 | F06-1`, В2): вид в адресе - 400, отбросить и пометить по id - 404, строка не меняется.
-  it('a summary_write row of F06 is not a draft: its kind in the path is 400, discard and the added mark are 404', async () => {
+  // Строка хода пересказа `F06` - не заготовка (решение арбитра `F06 | F06-1`, В2), но ручки
+  // `drafts/summary_write` с `F06-2` - её (`F06 | F06-2`, Р6), отбрасывает её `discard-run` (Р9);
+  // `discard`, отметка «Add section» и ответ заготовки строку хода по-прежнему не видят.
+  it('a summary_write row of F06 is a summary run, not a draft: its routes answer the run, discard-run discards it; discard and the added mark are 404, drafts do not see it', async () => {
     const versionId = await sourceBook();
     const op = await prisma.llmOperation.create({
       data: { kind: 'draft', limitUsd: new Prisma.Decimal(1), status: 'done' },
@@ -349,16 +350,31 @@ describe('Summary drafts from the dossier (e2e)', () => {
         operationId: op.id,
       },
     });
-    await auth(http().get(`/admin/versions/${versionId}/drafts/summary_write`)).expect(400);
-    await auth(http().get(`/admin/versions/${versionId}/drafts/summary_write/estimate`)).expect(
-      400,
-    );
-    await auth(http().post(`/admin/versions/${versionId}/drafts/summary_write`)).expect(400);
-    await auth(http().post(`/admin/content-drafts/${row.id}/discard`)).expect(404);
+    const state = await auth(
+      http().get(`/admin/versions/${versionId}/drafts/summary_write`),
+    ).expect(200);
+    expect(state.body.draft).toMatchObject({ id: row.id, status: 'ready', items: [] });
+    // Оценка и старт - ручки хода, а не 400 вида: в каталоге этой спеки у моделей этапов хода нет
+    // цены - отказ оценки хода; сам ход - `summary-write.e2e-spec.ts`.
+    const estimate = await auth(
+      http().get(`/admin/versions/${versionId}/drafts/summary_write/estimate`),
+    ).expect(409);
+    expect(estimate.body.code).toBe('LLM_NO_PRICE');
+    expect((await start(versionId, 'summary_write').expect(409)).body.code).toBe('LLM_NO_PRICE');
     await auth(http().post(`/admin/content-drafts/${row.id}/sections/1/added`)).expect(404);
     expect(await latest(versionId, 'summary_full')).toBeNull();
+    // `discard` заготовок строку хода не видит (В2); ход отбрасывает `discard-run` (Р9).
+    await auth(http().post(`/admin/content-drafts/${row.id}/discard`)).expect(404);
+    expect((await prisma.contentDraft.findUniqueOrThrow({ where: { id: row.id } })).status).toBe(
+      'ready',
+    );
+    const discarded = await auth(http().post(`/admin/content-drafts/${row.id}/discard-run`)).expect(
+      200,
+    );
+    expect(discarded.body).toMatchObject({ id: row.id, status: 'discarded', items: [] });
     const after = await prisma.contentDraft.findUniqueOrThrow({ where: { id: row.id } });
-    expect(after.status).toBe('ready');
+    expect(after.status).toBe('discarded');
+    // Операция кончилась до отмены - её статус не трогается.
     const opAfter = await prisma.llmOperation.findUniqueOrThrow({ where: { id: op.id } });
     expect(opAfter.status).toBe('done');
   });

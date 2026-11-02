@@ -187,6 +187,7 @@ describe('ContentDraftService (F05-10)', () => {
     const { service, prisma } = setup();
     await service.latest('v1', 'summary_full');
     // Первая защита - вид в запросе: строки хода выборка не находит.
+    expect(prisma.contentDraft.findFirst).toHaveBeenCalledTimes(1);
     expect(prisma.contentDraft.findFirst).toHaveBeenCalledWith(
       expect.objectContaining({ where: expect.objectContaining({ kind: 'summary_full' }) }),
     );

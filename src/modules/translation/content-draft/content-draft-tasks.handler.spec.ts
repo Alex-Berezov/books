@@ -7,6 +7,7 @@ import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { ContentDraftTasksHandler } from './content-draft-tasks.handler';
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
 import { ContentDraftService } from './content-draft.service';
+import { SummaryWriteHandler } from '../summary-write/summary-write.handler';
 
 /**
  * Шаги заготовки (F05-10) на подменённых базе и модели: окончательные отказы пишут `failed`
@@ -91,12 +92,17 @@ function setup(
       updatedAt: '2026-10-26T00:00:00.000Z',
     }),
   };
+  const summaryWrite = {
+    regenResume: jest.fn().mockResolvedValue([]),
+    onRegenCancelled: jest.fn().mockResolvedValue(undefined),
+  };
   const handler = new ContentDraftTasksHandler(
     prisma as unknown as PrismaService,
     llm as unknown as LlmService,
     tasks as unknown as LlmTaskService,
     {} as DossierDemandService,
     drafts as unknown as ContentDraftService,
+    summaryWrite as unknown as SummaryWriteHandler,
   );
   return { handler, prisma, llm, tasks, tx, drafts };
 }

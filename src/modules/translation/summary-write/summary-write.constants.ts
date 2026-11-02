@@ -85,3 +85,28 @@ export function registerSummaryWriteStages(stages: LlmStageRegistry): void {
     SUMMARY_WRITE_STAGE_DEFINITIONS.map((d) => d.stage),
   );
 }
+
+/**
+ * Отказы хода пересказа (`F06-2`; `features/F06-summary-autofill/tech.md` §5-§6), коды 409 и 400.
+ * `SUMMARY_FIELD_CHANGED` - «Accept» сверил содержимое поля, его поменяли после предложения;
+ * `SUMMARY_CHAPTER_CHANGE` - у раздела того же номера другие главы читалки, нужен `confirmChapterChange`;
+ * `ACCEPT_ALL_CHAPTER_CHANGE` - «Accept all» на версии с иным делением; `SUMMARY_ITEM_NOT_PROPOSED` -
+ * текст не предложение; `SUMMARY_REGEN_IN_PROGRESS` - перегенерация этого текста уже идёт;
+ * `SUMMARY_WRITE_NOT_READY` - ход ещё строится или кончился; `SUMMARY_SECTIONS_UNFINISHED` - не у всех
+ * разделов плана есть текст (полный); `SUMMARY_FULL_UNFINISHED` - нет полного с текстом («Очень кратко»);
+ * `SUMMARY_ITEM_UNKNOWN` - у хода нет текста с таким номером.
+ */
+export const SUMMARY_FIELD_CHANGED = 'SUMMARY_FIELD_CHANGED';
+export const SUMMARY_CHAPTER_CHANGE = 'SUMMARY_CHAPTER_CHANGE';
+export const ACCEPT_ALL_CHAPTER_CHANGE = 'ACCEPT_ALL_CHAPTER_CHANGE';
+export const SUMMARY_ITEM_NOT_PROPOSED = 'SUMMARY_ITEM_NOT_PROPOSED';
+export const SUMMARY_REGEN_IN_PROGRESS = 'SUMMARY_REGEN_IN_PROGRESS';
+export const SUMMARY_WRITE_NOT_READY = 'SUMMARY_WRITE_NOT_READY';
+export const SUMMARY_SECTIONS_UNFINISHED = 'SUMMARY_SECTIONS_UNFINISHED';
+export const SUMMARY_FULL_UNFINISHED = 'SUMMARY_FULL_UNFINISHED';
+export const SUMMARY_ITEM_UNKNOWN = 'SUMMARY_ITEM_UNKNOWN';
+/** Текст хода не лёг в поле: сервис пересказа отказал (номер занят, версии нет, 200 разделов). */
+export const SUMMARY_WRITE_REFUSED = 'SUMMARY_WRITE_REFUSED';
+
+/** Замечание редактора к «Regenerate», знаков (`tech.md` §6). */
+export const REGEN_REMARK_MAX = 2000;

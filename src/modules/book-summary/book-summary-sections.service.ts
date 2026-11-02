@@ -194,25 +194,7 @@ export class BookSummarySectionsService {
     if (!version) throw new NotFoundException('BookVersion not found');
 
     return this.write(bookVersionId, async (tx) => {
-      const count = await tx.bookSummarySection.count({ where: { bookVersionId } });
-      if (count >= SUMMARY_SECTION_LIMITS.sectionsPerVersion) {
-        throw new BadRequestException(
-          `A summary can have at most ${SUMMARY_SECTION_LIMITS.sectionsPerVersion} sections`,
-        );
-      }
-      const now = new Date();
-      const row = await tx.bookSummarySection.create({
-        data: {
-          bookVersionId,
-          number: count + 1,
-          title: dto.title,
-          text: dto.text,
-          readerChapter: dto.readerChapter ?? null,
-          createdAt: now,
-          updatedAt: now,
-        },
-        select: ADMIN_SELECT,
-      });
+      const row = await appendSection(tx, bookVersionId, dto);
       return {
         section: toAdmin(row),
         sections: await listSections(tx, bookVersionId),
@@ -240,20 +222,41 @@ export class BookSummarySectionsService {
       if (current.updatedAt.getTime() !== new Date(dto.expectedUpdatedAt).getTime()) {
         throw new ConflictException('The section was changed by another editor');
       }
-      const row = await tx.bookSummarySection.update({
-        where: { id: sectionId },
-        data: {
-          title: dto.title,
-          text: dto.text,
-          readerChapter: dto.readerChapter,
-          updatedAt: new Date(),
-        },
-        select: ADMIN_SELECT,
-      });
+      const row = await replaceSection(tx, { id: sectionId }, dto);
       return {
         section: toAdmin(row),
         warnings: await chapterWarnings(tx, bookVersionId, row.readerChapter),
       };
+    });
+  }
+
+  /**
+   * Запись хода пересказа `F06` (`features/F06-summary-autofill/tech.md` §5) тем же телом, что
+   * «Add section» и правка раздела, под тем же замком и в той же транзакции: `guard.decide` под
+   * замком выбирает раздел в конец, замену раздела того же номера (нумерация не меняется) или
+   * отказ; `guard.done` получает номер записанного раздела - учёт хода в той же транзакции.
+   * Раздела под заменой нет - отказ без записи.
+   */
+  async writeGuarded(
+    bookVersionId: string,
+    dto: SectionContent,
+    guard: SectionWriteGuard,
+  ): Promise<boolean> {
+    return this.write(bookVersionId, async (tx) => {
+      const mode = await guard.decide(tx);
+      if (mode === null) return false;
+      if (mode.kind === 'append') {
+        const row = await appendSection(tx, bookVersionId, dto);
+        await guard.done(tx, row.number);
+        return true;
+      }
+      const where = { bookVersionId_number: { bookVersionId, number: mode.number } };
+      if ((await tx.bookSummarySection.findUnique({ where, select: { id: true } })) === null) {
+        return false;
+      }
+      await replaceSection(tx, where, dto);
+      await guard.done(tx, mode.number);
+      return true;
     });
   }
 
@@ -438,6 +441,67 @@ export class BookSummarySectionsService {
     if (!row) throw new NotFoundException('Summary section not found');
     return row.bookVersionId;
   }
+}
+
+/** Содержимое раздела, которое пишут «Add section», правка и ход `F06`. */
+export interface SectionContent {
+  title: string;
+  text: string;
+  readerChapter: number | null;
+}
+
+/** Как пишет ход `F06`: раздел в конец или замена раздела того же номера. */
+export type SectionWriteMode = { kind: 'append' } | { kind: 'replace'; number: number };
+
+/** Выбор и учёт записи хода `F06` под замком пересказа (`writeGuarded`); `null` - не писать. */
+export interface SectionWriteGuard {
+  decide(tx: Prisma.TransactionClient): Promise<SectionWriteMode | null>;
+  done(tx: Prisma.TransactionClient, number: number): Promise<void>;
+}
+
+/** Раздел в конец: номер «число разделов + 1» (T4); 201-й - 400. Вызывается под замком. */
+async function appendSection(
+  db: Db,
+  bookVersionId: string,
+  dto: Pick<SectionContent, 'title' | 'text'> & { readerChapter?: number | null },
+): Promise<AdminRow> {
+  const count = await db.bookSummarySection.count({ where: { bookVersionId } });
+  if (count >= SUMMARY_SECTION_LIMITS.sectionsPerVersion) {
+    throw new BadRequestException(
+      `A summary can have at most ${SUMMARY_SECTION_LIMITS.sectionsPerVersion} sections`,
+    );
+  }
+  const now = new Date();
+  return db.bookSummarySection.create({
+    data: {
+      bookVersionId,
+      number: count + 1,
+      title: dto.title,
+      text: dto.text,
+      readerChapter: dto.readerChapter ?? null,
+      createdAt: now,
+      updatedAt: now,
+    },
+    select: ADMIN_SELECT,
+  });
+}
+
+/** Правка содержимого раздела (T5, T6): `updatedAt` - правка текста, номер не трогается. */
+function replaceSection(
+  db: Db,
+  where: Prisma.BookSummarySectionWhereUniqueInput,
+  dto: Pick<SectionContent, 'title' | 'text'> & { readerChapter?: number | null },
+): Promise<AdminRow> {
+  return db.bookSummarySection.update({
+    where,
+    data: {
+      title: dto.title,
+      text: dto.text,
+      readerChapter: dto.readerChapter,
+      updatedAt: new Date(),
+    },
+    select: ADMIN_SELECT,
+  });
 }
 
 function listSections(db: Db, bookVersionId: string): Promise<BookSummarySectionListItemDto[]> {
