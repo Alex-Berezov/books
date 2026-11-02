@@ -19,8 +19,8 @@ import {
   analysisRemarks,
   buildAnalysisDraft,
   draftBlocksOf,
-  indexChapters,
 } from './content-draft.analysis';
+import { indexChapters } from '../draft-quality/quote-check';
 import {
   ANALYSIS_DRAFT_REMARKS,
   ANALYSIS_DRAFT_STAGE,

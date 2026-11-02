@@ -183,7 +183,7 @@ export class LlmWorkerService implements OnApplicationBootstrap, OnModuleDestroy
     const stepAbort = new AbortController();
     const onStop = () => stepAbort.abort();
     this.abort.signal.addEventListener('abort', onStop, { once: true });
-    const renewLease = () => this.tasks.renewLease(task.id, ownerToken);
+    const renewLease = () => this.tasks.renewLease(task.id, task.kind, ownerToken);
     const ctx: LlmTaskContext = {
       signal: stepAbort.signal,
       renewLease,

@@ -88,10 +88,11 @@ export class LlmTaskService {
 
   /**
    * Аренда в два таймаута вызова: одна попытка не длиннее таймаута, продление - перед каждой.
-   * Таймаут - самый длинный среди этапов (`LEGACY-479`): задача не знает, какой этап позовёт.
+   * Таймаут - самый длинный среди этапов, которые может позвать задача этого вида (`LEGACY-479`;
+   * аренда по виду - решение арбитра `F06 | F06-1`, В3).
    */
-  leaseMs(): number {
-    return 2 * this.stages.longestCallTimeoutMs(this.llmConfig.callTimeoutMs());
+  leaseMs(taskKind: string): number {
+    return 2 * this.stages.taskCallTimeoutMs(this.llmConfig.callTimeoutMs(), taskKind);
   }
 
   /**
@@ -338,14 +339,21 @@ export class LlmTaskService {
    */
   async claim(kinds: string[], ownerToken: string): Promise<LlmTask | null> {
     const now = new Date();
-    const leaseUntil = new Date(now.getTime() + this.leaseMs());
     // Prisma.join на пустом списке даёт битый SQL: нет обработчиков - нечего захватывать.
     if (kinds.length === 0) return null;
     const kindsSql = Prisma.join(kinds);
+    // Аренда по виду задачи в том же UPDATE (решение `F06 | F06-1`, В3): захват - один оператор.
+    const leaseByKind = Prisma.join(
+      kinds.map(
+        (kind) =>
+          Prisma.sql`WHEN ${kind} THEN ${utcTimestamp(new Date(now.getTime() + this.leaseMs(kind)))}`,
+      ),
+      ' ',
+    );
     const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
       UPDATE "LlmTask" AS t
       SET "status" = 'running', "ownerToken" = ${ownerToken},
-          "leaseUntil" = ${utcTimestamp(leaseUntil)},
+          "leaseUntil" = CASE t."kind" ${leaseByKind} END,
           "attempt" = t."attempt" + 1, "updatedAt" = ${utcTimestamp(now)}
       FROM "LlmOperation" AS o
       WHERE t."id" = (
@@ -368,8 +376,8 @@ export class LlmTaskService {
   }
 
   /** Продление перед каждой попыткой вызова; 0 строк - аренда потеряна, попытки нет. */
-  async renewLease(taskId: string, ownerToken: string): Promise<void> {
-    const leaseUntil = new Date(Date.now() + this.leaseMs());
+  async renewLease(taskId: string, taskKind: string, ownerToken: string): Promise<void> {
+    const leaseUntil = new Date(Date.now() + this.leaseMs(taskKind));
     const renewed = await this.prisma.llmTask.updateMany({
       where: { id: taskId, ownerToken, status: 'running' },
       data: { leaseUntil },

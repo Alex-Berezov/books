@@ -402,12 +402,20 @@ describe('Draft and rights exposure (e2e)', () => {
     });
 
     it('редактор видит в нём черновики', async () => {
-      const res = await request(http())
-        .get('/books?limit=100')
-        .set('Authorization', `Bearer ${adminToken}`)
-        .expect(200);
+      // Админский список идёт по `createdAt` (T152): черновик этого файла создан позже книг соседних
+      // спек воркера и при каталоге больше страницы уходит с первой - обходятся все страницы.
+      const pageOf = async (n: number) =>
+        (
+          await request(http())
+            .get(`/books?limit=100&page=${n}`)
+            .set('Authorization', `Bearer ${adminToken}`)
+            .expect(200)
+        ).body as { pagination: { totalPages: number } };
+      const first = await pageOf(1);
+      const pages = [first];
+      for (let n = 2; n <= first.pagination.totalPages; n++) pages.push(await pageOf(n));
 
-      expect(JSON.stringify(res.body)).toContain('DRAFT TITLE NOT FOR PUBLIC');
+      expect(JSON.stringify(pages)).toContain('DRAFT TITLE NOT FOR PUBLIC');
     });
 
     it('обычному пользователю административный список не открывается', async () => {

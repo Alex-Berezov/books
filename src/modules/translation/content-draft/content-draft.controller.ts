@@ -23,7 +23,7 @@ import {
   ApiServiceUnavailableResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { ContentDraftKind, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { Role, Roles } from '../../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -33,7 +33,7 @@ import {
   ContentDraftStateDto,
 } from '../dto/content-draft-response.dto';
 import { StartContentDraftDto } from '../dto/content-draft-request.dto';
-import { CONTENT_DRAFT_KINDS } from './content-draft.constants';
+import { CONTENT_DRAFT_KINDS, DraftKind } from './content-draft.constants';
 import { ContentDraftService } from './content-draft.service';
 
 interface RequestUser {
@@ -42,10 +42,7 @@ interface RequestUser {
 
 /** Вид в адресе: три вида Summary и `analysis` (`F05-11`); иной - 400. */
 const KIND_PIPE = new ParseEnumPipe(
-  Object.fromEntries(CONTENT_DRAFT_KINDS.map((k) => [k, k])) as Record<
-    ContentDraftKind,
-    ContentDraftKind
-  >,
+  Object.fromEntries(CONTENT_DRAFT_KINDS.map((k) => [k, k])) as Record<DraftKind, DraftKind>,
 );
 
 const START_CONFLICTS =
@@ -73,7 +70,7 @@ export class ContentDraftController {
   @ApiConflictResponse({ description: START_CONFLICTS })
   estimate(
     @Param('id') id: string,
-    @Param('kind', KIND_PIPE) kind: ContentDraftKind,
+    @Param('kind', KIND_PIPE) kind: DraftKind,
   ): Promise<ContentDraftEstimateDto> {
     return this.drafts.estimate(id, kind);
   }
@@ -88,7 +85,7 @@ export class ContentDraftController {
   @ApiOkResponse({ type: ContentDraftStateDto })
   latest(
     @Param('id') id: string,
-    @Param('kind', KIND_PIPE) kind: ContentDraftKind,
+    @Param('kind', KIND_PIPE) kind: DraftKind,
   ): Promise<ContentDraftStateDto> {
     return this.drafts.latest(id, kind);
   }
@@ -110,7 +107,7 @@ export class ContentDraftController {
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
   start(
     @Param('id') id: string,
-    @Param('kind', KIND_PIPE) kind: ContentDraftKind,
+    @Param('kind', KIND_PIPE) kind: DraftKind,
     @Body() dto: StartContentDraftDto,
     @Req() req: { user: RequestUser },
   ): Promise<ContentDraftDto> {

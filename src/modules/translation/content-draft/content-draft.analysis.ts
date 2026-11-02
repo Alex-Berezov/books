@@ -18,7 +18,7 @@ import {
   ContentDraftAnalysisDto,
   ContentDraftDroppedQuoteDto,
 } from '../dto/content-draft-response.dto';
-import { DroppedQuoteReason } from './content-draft.constants';
+import { ChapterIndex, normalizeQuote, quoteInChapter } from '../draft-quality/quote-check';
 
 /**
  * Заготовка Analysis (`F05-11`; `product.md` §5.3, `tech.md` §2б): ответ модели сливается
@@ -93,98 +93,13 @@ interface AnalysisDraftResult {
   droppedQuotes: DroppedQuote[];
 }
 
-/**
- * Нормализация дословности (Р5): пробелы любого вида (NBSP, переводы строк) - один пробел,
- * кавычки - прямые. Регистр, диакритика, тире и многоточие не трогаются.
- */
-export function normalizeQuote(text: string): string {
-  return text
-    .replace(/[«»“”„‟"]/g, '"')
-    .replace(/[‘’‚‛']/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-/** Абзац главы: исходный текст и его нормализованный вид с картой позиций в исходный. */
-interface IndexedParagraph {
-  raw: string;
-  norm: string;
-  /** `at[i]` - позиция символа `norm[i]` в `raw`. */
-  at: number[];
-}
-
-/** Глава для сверки цитат: абзацы текста `htmlToParagraphs` (Р21 - цитата внутри одного абзаца). */
-export type ChapterIndex = ReadonlyMap<number, readonly IndexedParagraph[]>;
-
-/**
- * Нормализованный вид абзаца с картой позиций (Р20): `normalizeQuote` меняет кавычки 1:1,
- * схлопывает пробелы и обрезает края - карта ведёт каждый символ результата в исходный текст.
- */
-function indexParagraph(raw: string): IndexedParagraph {
-  let norm = '';
-  const at: number[] = [];
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i];
-    if (/\s/.test(ch)) {
-      if (norm !== '' && !norm.endsWith(' ')) {
-        norm += ' ';
-        at.push(i);
-      }
-      continue;
-    }
-    norm += normalizeQuote(ch) || ch;
-    at.push(i);
-  }
-  if (norm.endsWith(' ')) {
-    norm = norm.slice(0, -1);
-    at.pop();
-  }
-  return { raw, norm, at };
-}
-
-/** Главы версии для сверки: абзацы по пустой строке, как их пишет `htmlToParagraphs`. */
-export function indexChapters(chapters: ReadonlyMap<number, string>): ChapterIndex {
-  return new Map(
-    [...chapters].map(([number, text]) => [
-      number,
-      text
-        .split(/\n\s*\n/)
-        .filter((p) => p.trim() !== '')
-        .map(indexParagraph),
-    ]),
-  );
-}
-
-/**
- * Проверка цитаты по главе (Р5, Р6, Р21): цитата целиком внутри одного абзаца указанной главы
- * после нормализации. Нашлась - отдаётся фрагмент главы, а не текст модели (Р20): кавычки
- * и пробелы цитаты - как в читалке.
- */
+/** Проверка цитаты анализа по главе (Р5, Р6, Р21, Р25) - с пределом импорта цитаты анализа. */
 export function quoteCheck(
   text: string,
   chapter: number,
   chapters: ChapterIndex,
-): { text: string } | { reason: DroppedQuoteReason } {
-  if (chapter <= 0) return { reason: 'NO_CHAPTER' };
-  const paragraphs = chapters.get(chapter);
-  if (paragraphs === undefined) return { reason: 'CHAPTER_MISSING' };
-  const quote = normalizeQuote(text);
-  if (quote === '') return { reason: 'NOT_FOUND' };
-  for (const p of paragraphs) {
-    const start = p.norm.indexOf(quote);
-    if (start < 0) continue;
-    const end = p.at[start + quote.length - 1] + 1;
-    const fragment = p.raw.slice(p.at[start], end).trim();
-    // Длиннее предела импорта из-за пробельных серий главы - те же символы со схлопнутыми
-    // пробелами: длина как у нормализованной цитаты, кавычки как в читалке (Р25).
-    return {
-      text:
-        fragment.length > BOOK_ANALYSIS_LIMITS.quote
-          ? fragment.replace(/\s+/g, ' ').trim()
-          : fragment,
-    };
-  }
-  return { reason: 'NOT_FOUND' };
+): ReturnType<typeof quoteInChapter> {
+  return quoteInChapter(text, chapter, chapters, BOOK_ANALYSIS_LIMITS.quote);
 }
 
 const isEmpty = (value: unknown): boolean =>

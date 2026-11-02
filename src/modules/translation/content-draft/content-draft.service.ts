@@ -1,12 +1,5 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import {
-  BookDossier,
-  ContentDraft,
-  ContentDraftKind,
-  Language,
-  LlmOperation,
-  Prisma,
-} from '@prisma/client';
+import { BookDossier, ContentDraft, Language, LlmOperation, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { utcTimestamp } from '../../../shared/prisma/utc-timestamp';
 import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
@@ -36,6 +29,7 @@ import {
 import { stageEstimatorFor } from '../llm-model-checks';
 import { contextUpperChars } from '../translate/translate-estimate';
 import {
+  CONTENT_DRAFT_KINDS,
   CONTENT_DRAFT_TASK_KIND,
   DOSSIER_STALE,
   DRAFT_DOSSIER_MISSING,
@@ -52,6 +46,7 @@ import {
   ANALYSIS_DRAFT_REMARKS,
   ANALYSIS_DRAFT_STAGE,
   DRAFT_STAGE_BY_KIND,
+  DraftKind,
 } from './content-draft.constants';
 import { AnalysisDraftJson, draftBlocksOf, DroppedQuote } from './content-draft.analysis';
 import {
@@ -148,6 +143,13 @@ interface Estimate {
 }
 
 /**
+ * Строка заготовки прежних видов (`CONTENT_DRAFT_KINDS`): ход пересказа `summary_write` (`F06`)
+ * ручками заготовок не читается и не отбрасывается - 404 (решение арбитра `F06 | F06-1`, В2).
+ */
+const isDraftKind = (kind: string): kind is DraftKind =>
+  (CONTENT_DRAFT_KINDS as readonly string[]).includes(kind);
+
+/**
  * Заготовка Summary из досье (`F05-10`; `product.md` §5.1-5.2, `tech.md` §2б): разделы по плану
  * досье, полный - из сохранённых разделов, очень краткий - из сохранённого полного. Строится
  * фоном под своей операцией `draft`; в `BookSummary` и `BookSummarySection` не пишет - черновик
@@ -164,13 +166,13 @@ export class ContentDraftService {
     private readonly dossierDemand: DossierDemandService,
   ) {}
 
-  async estimate(versionId: string, kind: ContentDraftKind): Promise<ContentDraftEstimateDto> {
+  async estimate(versionId: string, kind: DraftKind): Promise<ContentDraftEstimateDto> {
     return (await this.estimateOf(versionId, kind)).dto;
   }
 
   async start(
     versionId: string,
-    kind: ContentDraftKind,
+    kind: DraftKind,
     limitUsd: Prisma.Decimal | undefined,
     createdById: string,
   ): Promise<ContentDraftDto> {
@@ -237,7 +239,7 @@ export class ContentDraftService {
   }
 
   /** Последняя неотброшенная заготовка вида в любом статусе (В3); нет - `null`. */
-  async latest(versionId: string, kind: ContentDraftKind): Promise<ContentDraftStateDto> {
+  async latest(versionId: string, kind: DraftKind): Promise<ContentDraftStateDto> {
     const row = await this.prisma.contentDraft.findFirst({
       where: { bookVersionId: versionId, kind, status: { not: 'discarded' } },
       include: { operation: true },
@@ -252,7 +254,7 @@ export class ContentDraftService {
    */
   async discard(id: string): Promise<ContentDraftDto> {
     const row = await this.prisma.contentDraft.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('Content draft not found');
+    if (!row || !isDraftKind(row.kind)) throw new NotFoundException('Content draft not found');
     if (row.status === 'building') {
       await this.tasks.cancelOperation(row.operationId, async (tx) => {
         await tx.contentDraft.updateMany({
@@ -276,7 +278,7 @@ export class ContentDraftService {
    */
   async markSectionAdded(id: string, number: number): Promise<ContentDraftDto> {
     const row = await this.prisma.contentDraft.findUnique({ where: { id } });
-    if (!row) throw new NotFoundException('Content draft not found');
+    if (!row || !isDraftKind(row.kind)) throw new NotFoundException('Content draft not found');
     if (row.status !== 'ready' || row.kind !== 'summary_sections') {
       throw llmTaskConflict(DRAFT_NOT_READY, 'Only a ready sections draft takes added marks');
     }
@@ -316,7 +318,7 @@ export class ContentDraftService {
       where: { id },
       include: { operation: true },
     });
-    if (!row) throw new NotFoundException('Content draft not found');
+    if (!row || !isDraftKind(row.kind)) throw new NotFoundException('Content draft not found');
     return this.toDto(row);
   }
 
@@ -417,6 +419,9 @@ export class ContentDraftService {
   // -------------------------------------------------------------------------
 
   private async toDto(row: ContentDraft & { operation: LlmOperation }): Promise<ContentDraftDto> {
+    // Ответ заготовки несёт только прежние виды (В2): строка хода наружу этим путём не уходит.
+    if (!isDraftKind(row.kind)) throw new NotFoundException('Content draft not found');
+    const kind = row.kind;
     const data = (row.data ?? {}) as DraftData;
     let waitingFor: ContentDraftDto['waitingFor'] = null;
     if (row.waitingFor && row.status === 'building') {
@@ -429,7 +434,7 @@ export class ContentDraftService {
     return {
       id: row.id,
       bookVersionId: row.bookVersionId,
-      kind: row.kind,
+      kind,
       status: row.status,
       language: row.language,
       failedReason: row.failedReason,
@@ -451,7 +456,7 @@ export class ContentDraftService {
     };
   }
 
-  private async estimateOf(versionId: string, kind: ContentDraftKind): Promise<Estimate> {
+  private async estimateOf(versionId: string, kind: DraftKind): Promise<Estimate> {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: versionId },
       select: { language: true, title: true },
@@ -575,7 +580,7 @@ export class ContentDraftService {
    * которые строятся первыми) (В9, Р4).
    */
   private withContext(
-    kind: ContentDraftKind,
+    kind: DraftKind,
     context: DraftContext,
     stage: { usd: Prisma.Decimal; upperBound: boolean },
     sections: number | null,

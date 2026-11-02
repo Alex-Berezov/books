@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ContentDraftKind, ContentDraftStatus, Language } from '@prisma/client';
+import { ContentDraftStatus, Language } from '@prisma/client';
 import {
   BookAnalysisCharacterDto,
   BookAnalysisFactsDto,
@@ -10,6 +10,7 @@ import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
 import {
   CONTENT_DRAFT_KINDS,
+  DraftKind,
   DROPPED_QUOTE_REASONS,
   DroppedQuoteReason,
 } from '../content-draft/content-draft.constants';
@@ -20,7 +21,7 @@ import { CompareContextLineDto, DossierContextLineDto } from './translation-comp
 
 export class ContentDraftEstimateDto {
   @ApiProperty({ enum: CONTENT_DRAFT_KINDS })
-  kind!: ContentDraftKind;
+  kind!: DraftKind;
 
   @ApiProperty({
     type: DossierContextLineDto,
@@ -142,8 +143,9 @@ export class ContentDraftDto {
   @ApiProperty({ type: String, format: 'uuid' })
   bookVersionId!: string;
 
-  @ApiProperty({ enum: ContentDraftKind })
-  kind!: ContentDraftKind;
+  /** Только прежние виды: ход `summary_write` (`F06`) отдают свои ручки (решение `F06 | F06-1`, В2). */
+  @ApiProperty({ enum: CONTENT_DRAFT_KINDS })
+  kind!: DraftKind;
 
   @ApiProperty({
     enum: ContentDraftStatus,

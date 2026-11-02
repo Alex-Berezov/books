@@ -333,6 +333,36 @@ describe('Summary drafts from the dossier (e2e)', () => {
     expect(await latest(versionId, 'analysis')).toBeNull();
   });
 
+  // Строка хода пересказа `F06` в живой базе этим ручкам не принадлежит (решение арбитра
+  // `F06 | F06-1`, В2): вид в адресе - 400, отбросить и пометить по id - 404, строка не меняется.
+  it('a summary_write row of F06 is not a draft: its kind in the path is 400, discard and the added mark are 404', async () => {
+    const versionId = await sourceBook();
+    const op = await prisma.llmOperation.create({
+      data: { kind: 'draft', limitUsd: new Prisma.Decimal(1), status: 'done' },
+    });
+    const row = await prisma.contentDraft.create({
+      data: {
+        bookVersionId: versionId,
+        kind: 'summary_write',
+        status: 'ready',
+        language: 'en',
+        operationId: op.id,
+      },
+    });
+    await auth(http().get(`/admin/versions/${versionId}/drafts/summary_write`)).expect(400);
+    await auth(http().get(`/admin/versions/${versionId}/drafts/summary_write/estimate`)).expect(
+      400,
+    );
+    await auth(http().post(`/admin/versions/${versionId}/drafts/summary_write`)).expect(400);
+    await auth(http().post(`/admin/content-drafts/${row.id}/discard`)).expect(404);
+    await auth(http().post(`/admin/content-drafts/${row.id}/sections/1/added`)).expect(404);
+    expect(await latest(versionId, 'summary_full')).toBeNull();
+    const after = await prisma.contentDraft.findUniqueOrThrow({ where: { id: row.id } });
+    expect(after.status).toBe('ready');
+    const opAfter = await prisma.llmOperation.findUniqueOrThrow({ where: { id: op.id } });
+    expect(opAfter.status).toBe('done');
+  });
+
   it('analysis on the source: built over the saved analysis, made-up quotes thrown away with a mark, the draft passes the import save, the saved analysis untouched (F05-11)', async () => {
     const versionId = await sourceBook();
     await auth(http().put(`/versions/${versionId}/analysis`))

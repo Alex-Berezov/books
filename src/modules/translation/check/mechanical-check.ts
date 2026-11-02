@@ -148,7 +148,7 @@ const SERVICE_PHRASE_GROUPS: ReadonlyArray<readonly string[]> = [
   ['as an ai', 'i hope this translation'],
 ];
 
-function hasPhrase(normalizedText: string, phrase: string): boolean {
+export function hasPhrase(normalizedText: string, phrase: string): boolean {
   const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'u').test(normalizedText);
 }
@@ -181,20 +181,26 @@ export function remarkOfLanguage(target: Language, found: Language): string {
   );
 }
 
+/**
+ * Слова, которые детектор языка не считает (решение арбитра `F05 | F05-5`): формы глоссария - имя,
+ * оставленное в оригинале, и транслитерация. Слова исходника - не исключение, иначе непереведённый
+ * кусок проходил бы проверку. Служебные слова формы («el Viejo de la Montaña») не исключаются:
+ * это главные признаки языка. Одно правило на механику перевода и код-проверку чистовика (`F06`).
+ */
+export function glossaryExclusions(glossary: readonly NameEntry[]): Set<string> {
+  return new Set(
+    glossary
+      .flatMap((e) => [...wordsOf(e.target), ...(e.keepOriginal ? wordsOf(e.source) : [])])
+      .filter((w) => !FUNCTION_WORDS.has(w)),
+  );
+}
+
 export function checkMechanical(input: MechanicalInput): MechanicalResult {
   const failures: CheckFailure[] = [];
   const { sourceText, translatedText } = pieceTexts(input.source, input.translated);
   const byNumber = new Map(input.translated.map((b) => [b.n, plain(b.text)]));
 
-  // Формы глоссария не считаются чужим языком (решение арбитра `F05 | F05-5`): имя, оставленное
-  // в оригинале, и транслитерация. Слова исходника - не исключение, иначе непереведённый кусок
-  // проходил бы проверку.
-  // Служебные слова формы («el Viejo de la Montaña») не исключаются: это главные признаки языка.
-  const exclude = new Set(
-    input.glossary
-      .flatMap((e) => [...wordsOf(e.target), ...(e.keepOriginal ? wordsOf(e.source) : [])])
-      .filter((w) => !FUNCTION_WORDS.has(w)),
-  );
+  const exclude = glossaryExclusions(input.glossary);
   const language = detectLanguage(translatedText, exclude).language;
   const share = foreignShare(translatedText, input.targetLanguage, exclude);
   // Абзац на чужом языке среди своих проходит долю (решение арбитра `F05 | F05-5`): блок от

@@ -1,4 +1,4 @@
-import { HttpException } from '@nestjs/common';
+import { HttpException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmBudgetService } from '../../llm/llm-budget.service';
@@ -170,6 +170,29 @@ describe('ContentDraftService (F05-10)', () => {
       where: { id: 'd1', status: { not: 'discarded' } },
       data: { status: 'discarded' },
     });
+  });
+
+  it('a summary_write row of F06 is not a draft: get, discard and the added mark answer 404 (F06 | F06-1, В2)', async () => {
+    const { service, prisma, tasks } = setup();
+    prisma.contentDraft.findUnique.mockResolvedValue(draft({ kind: 'summary_write' }));
+    await expect(service.get('d1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.discard('d1')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.markSectionAdded('d1', 1)).rejects.toBeInstanceOf(NotFoundException);
+    expect(tasks.cancelOperation).not.toHaveBeenCalled();
+    expect(prisma.contentDraft.updateMany).not.toHaveBeenCalled();
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('the draft answer never carries a summary_write row, whatever path read it (F06 | F06-1, В2)', async () => {
+    const { service, prisma } = setup();
+    await service.latest('v1', 'summary_full');
+    // Первая защита - вид в запросе: строки хода выборка не находит.
+    expect(prisma.contentDraft.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ kind: 'summary_full' }) }),
+    );
+    // Вторая - ответ заготовки: строка хода, пришедшая любым путём, наружу не уходит.
+    prisma.contentDraft.findFirst.mockResolvedValue(draft({ kind: 'summary_write' }));
+    await expect(service.latest('v1', 'summary_full')).rejects.toBeInstanceOf(NotFoundException);
   });
 
   it('latest: none - null; sections of a sections draft, text of a text draft', async () => {

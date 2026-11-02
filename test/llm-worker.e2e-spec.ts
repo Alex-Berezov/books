@@ -15,6 +15,7 @@ import {
 } from '../src/modules/llm-worker/llm-task.types';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
 import { utcTimestamp } from '../src/shared/prisma/utc-timestamp';
+import { SUMMARY_WRITE_TASK_KIND } from '../src/modules/translation/summary-write/summary-write.constants';
 
 /**
  * F05-1w: фоновый исполнитель на Postgres. Захват, аренда, токен владельца и переходы операции
@@ -114,6 +115,25 @@ describe('LLM worker (e2e)', () => {
   });
 
   describe('claim and lease', () => {
+    // Аренда по виду задачи одним UPDATE с `CASE` (решения арбитра `F06 | F06-1`, В3, В4): задача
+    // хода пересказа - от своих этапов (600 с у полного → 1200 с), прочие - от ничьих (420 с → 840 с).
+    it('one claim over two kinds writes the lease of each task by its kind', async () => {
+      fakeDateOnly();
+      const op = await operation();
+      const summary = await enqueue(op.id, { kind: SUMMARY_WRITE_TASK_KIND });
+      const other = await enqueue(op.id);
+      if (!summary.created || !other.created) throw new Error('expected new tasks');
+      const now = Date.now();
+      const first = await tasks.claim([KIND, SUMMARY_WRITE_TASK_KIND], 'owner-a');
+      const second = await tasks.claim([KIND, SUMMARY_WRITE_TASK_KIND], 'owner-b');
+      expect([first?.id, second?.id].sort()).toEqual([summary.task.id, other.task.id].sort());
+      const leaseOf = async (id: string) => (await taskOf(id)).leaseUntil!.getTime() - now;
+      expect(tasks.leaseMs(SUMMARY_WRITE_TASK_KIND)).toBe(1_200_000);
+      expect(tasks.leaseMs(KIND)).toBe(840_000);
+      expect(await leaseOf(summary.task.id)).toBe(1_200_000);
+      expect(await leaseOf(other.task.id)).toBe(840_000);
+    });
+
     it('two workers racing for one task: exactly one claims it', async () => {
       const op = await operation();
       const ids = await Promise.all(Array.from({ length: 5 }, () => created(op.id)));
@@ -144,12 +164,12 @@ describe('LLM worker (e2e)', () => {
       expect(first?.id).toBe(task.id);
       expect(await tasks.claim([KIND], 'second')).toBeNull();
 
-      advance(tasks.leaseMs() + 1);
+      advance(tasks.leaseMs(KIND) + 1);
       const second = await tasks.claim([KIND], 'second');
       expect(second?.id).toBe(task.id);
 
       expect(await tasks.finish(first as LlmTask, 'first', { kind: 'done' })).toBe(false);
-      await expect(tasks.renewLease(task.id, 'first')).rejects.toThrow(/lease lost/);
+      await expect(tasks.renewLease(task.id, KIND, 'first')).rejects.toThrow(/lease lost/);
       const row = await taskOf(task.id);
       expect(row).toMatchObject({ status: 'running', ownerToken: 'second', attempt: 2 });
     });
@@ -160,7 +180,7 @@ describe('LLM worker (e2e)', () => {
       const op = await operation();
       const task = await created(op.id);
       const claimed = (await tasks.claim([KIND], 'owner')) as LlmTask;
-      const timeout = tasks.leaseMs() / 2;
+      const timeout = tasks.leaseMs(KIND) / 2;
       const competitor: Array<LlmTask | null> = [];
       let n = 0;
 
@@ -195,7 +215,7 @@ describe('LLM worker (e2e)', () => {
         messages: [{ role: 'user', content: 'x' }],
         temperature: null,
         maxTokens: 10,
-        beforeAttempt: () => tasks.renewLease(task.id, 'owner'),
+        beforeAttempt: () => tasks.renewLease(task.id, KIND, 'owner'),
         taskId: task.id,
       });
 
@@ -215,7 +235,7 @@ describe('LLM worker (e2e)', () => {
 
       for (let i = 0; i < 5; i++) {
         expect((await tasks.claim([KIND], `lost-${i}`))?.id).toBe(task.id);
-        advance(tasks.leaseMs() + 1);
+        advance(tasks.leaseMs(KIND) + 1);
       }
       await worker.runOnce();
 
@@ -240,7 +260,7 @@ describe('LLM worker (e2e)', () => {
 
       for (let i = 0; i < 4; i++) {
         await tasks.claim([KIND], `lost-${i}`);
-        advance(tasks.leaseMs() + 1);
+        advance(tasks.leaseMs(KIND) + 1);
       }
       await worker.runOnce();
 
@@ -436,7 +456,7 @@ describe('LLM worker (e2e)', () => {
       const task = await created(op.id, pairKey);
       await tasks.claim([KIND], 'dead-owner');
       await tasks.pauseOperation(op.id, 'LIMIT_REACHED');
-      advance(tasks.leaseMs() + 1);
+      advance(tasks.leaseMs(KIND) + 1);
 
       const cleaning: { done?: Promise<number> } = {};
       await prisma.$transaction(
@@ -705,7 +725,7 @@ describe('LLM worker (e2e)', () => {
       const op = await operation();
       const task = await created(op.id);
       await tasks.claim([KIND], 'lost');
-      advance(tasks.leaseMs() + 1);
+      advance(tasks.leaseMs(KIND) + 1);
       const claimed = (await tasks.claim([KIND], 'owner')) as LlmTask;
       expect(claimed.attempt).toBe(2);
 
@@ -760,7 +780,7 @@ describe('LLM worker (e2e)', () => {
       await tasks.cancelOperation(op.id);
       expect(await tasks.cancelOrphanedTasks()).toBe(0); // аренда ещё жива
 
-      advance(tasks.leaseMs() + 1);
+      advance(tasks.leaseMs(KIND) + 1);
       expect(await tasks.cancelOrphanedTasks()).toBe(1);
       expect(await taskOf(task.id)).toMatchObject({ status: 'cancelled', ownerToken: null });
       // Ключ пары свободен.
@@ -828,7 +848,7 @@ describe('LLM worker (e2e)', () => {
       const op = await operation();
       const task = await created(op.id);
       step = async (_task, ctx) => {
-        advance(tasks.leaseMs() + 1);
+        advance(tasks.leaseMs(KIND) + 1);
         await tasks.claim([KIND], 'thief');
         await ctx.renewLease();
         return { kind: 'done' };

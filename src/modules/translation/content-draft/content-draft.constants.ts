@@ -1,6 +1,7 @@
 import { ContentDraftKind } from '@prisma/client';
 import { LlmStageDefinition } from '../../llm/llm-stages.registry';
 import { GPT_TERRA_MODEL } from '../translate/translate.constants';
+import { QUOTE_CHECK_REASONS } from '../draft-quality/quote-check';
 
 /** Этапы заготовок (`tech.md` §2б): у Summary имя этапа совпадает с видом, у Analysis - нет. */
 export const SUMMARY_SECTIONS_STAGE = 'summary_sections';
@@ -21,8 +22,11 @@ export const CONTENT_DRAFT_KINDS = [
   'analysis',
 ] as const satisfies readonly ContentDraftKind[];
 
+/** Вид заготовки `F05-10`/`F05-11`; ход пересказа `summary_write` (`F06`) сюда не входит. */
+export type DraftKind = (typeof CONTENT_DRAFT_KINDS)[number];
+
 /** Этап вида заготовки. */
-export const DRAFT_STAGE_BY_KIND: Record<ContentDraftKind, string> = {
+export const DRAFT_STAGE_BY_KIND: Record<DraftKind, string> = {
   summary_sections: SUMMARY_SECTIONS_STAGE,
   summary_full: SUMMARY_FULL_STAGE,
   summary_brief: SUMMARY_BRIEF_STAGE,
@@ -104,12 +108,7 @@ export const DRAFT_SECTION_UNKNOWN = 'DRAFT_SECTION_UNKNOWN';
  * Почему цитата заготовки Analysis выкинута (решения арбитра `F05 | F05-11`, Р6, Р9, Р19):
  * `OVER_LIMIT` - проверенная новая цитата сверх предела импорта вместе с сохранёнными.
  */
-export const DROPPED_QUOTE_REASONS = [
-  'NOT_FOUND',
-  'NO_CHAPTER',
-  'CHAPTER_MISSING',
-  'OVER_LIMIT',
-] as const;
+export const DROPPED_QUOTE_REASONS = [...QUOTE_CHECK_REASONS, 'OVER_LIMIT'] as const;
 export type DroppedQuoteReason = (typeof DROPPED_QUOTE_REASONS)[number];
 
 /** Окончательные отказы заготовки (`failedReason`). */

@@ -298,7 +298,7 @@ describe('LlmWorkerService', () => {
     await worker.runTask(task, 'owner');
 
     expect(tasks.renewLease).toHaveBeenCalledTimes(2);
-    expect(tasks.renewLease).toHaveBeenCalledWith('t1', 'owner');
+    expect(tasks.renewLease).toHaveBeenCalledWith('t1', 'k', 'owner');
     // Свой сигнал на каждый шаг, а не один общий на процесс.
     expect(signals[0]).not.toBe(signals[1]);
     await worker.onModuleDestroy();

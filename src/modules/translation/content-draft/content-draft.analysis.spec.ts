@@ -5,9 +5,9 @@ import {
   analysisImportErrors,
   analysisRemarks,
   buildAnalysisDraft,
-  indexChapters,
   quoteCheck,
 } from './content-draft.analysis';
+import { indexChapters } from '../draft-quality/quote-check';
 
 /**
  * Заготовка Analysis (F05-11): дословность цитат по главе (Р5-Р7, Р20, Р21), слияние с сохранённым

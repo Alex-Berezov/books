@@ -36,7 +36,7 @@ export interface FinalChapter {
   inTranslation: boolean;
 }
 
-const wordsIn = (text: string) => normalized(text).match(/\p{L}+/gu) ?? [];
+export const wordsIn = (text: string): string[] => normalized(text).match(/\p{L}+/gu) ?? [];
 
 /**
  * Записи глоссария, исходная форма которых в переводе - второе, несовместимое написание имени

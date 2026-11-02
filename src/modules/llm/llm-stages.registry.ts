@@ -17,22 +17,25 @@ export interface LlmStageDefinition {
   /**
    * Токенов ответа, которые рассуждения не съедают: потолок рассуждений вызова - действующий
    * `maxTokens` минус резерв, не ниже 1024 (`reasoningCeiling` в `llm.service.ts`), уходит
-   * провайдеру как `reasoning.max_tokens`. Только у проверяющих
-   * этапов (`LEGACY-478`, решение арбитра `F05 | F05-13`); нет - рассуждения без потолка.
+   * провайдеру как `reasoning.max_tokens`. Только у проверяющих этапов (`LEGACY-478`, решение
+   * арбитра `F05 | F05-13`) и этапов чистовика `F06` (решение `F06 | F06-1`, В1); нет - рассуждения
+   * без потолка.
    */
   reasoningAnswerReserve?: number;
   /**
    * Таймаут вызова этапа, мс; нет - общий `LLM_CALL_TIMEOUT_MS`, больший общий действует и здесь.
    * Только в коде, не на экране: запасная проверяющая `deepseek-v4-pro` отвечает на длинном куске
-   * за 310-340 с (`LEGACY-479`, решение арбитра `F05 | F05-13c`). От наибольшего из таймаутов считаются аренда задачи
-   * и чистка зависших вызовов (`longestCallTimeoutMs`).
+   * за 310-340 с (`LEGACY-479`, решение арбитра `F05 | F05-13c`); и у этапов чистовика `F06`
+   * (решение `F06 | F06-1`, В1). От таймаутов считаются аренда задачи по её виду
+   * (`taskCallTimeoutMs`) и чистка зависших вызовов (`longestCallTimeoutMs`).
    */
   callTimeoutMs?: number;
   /**
    * Ответ, оборванный лимитом (`finish=length`) без разбираемого JSON, не повторяется: вызов сразу
    * переходит к следующей модели цепочки, на последней - отказ без повтора с замечанием. Повтор
    * идёт с тем же входом и лимитом и обрывается так же, а оплачивается заново (`LEGACY-480`,
-   * решение арбитра `F05 | F05-13d`). Только у проверяющих этапов, только в коде.
+   * решение арбитра `F05 | F05-13d`). Только у проверяющих этапов и этапов чистовика `F06`
+   * (решение `F06 | F06-1`, В1), только в коде.
    */
   truncationEndsModel?: boolean;
 }
@@ -45,6 +48,8 @@ export interface LlmStageDefinition {
 @Injectable()
 export class LlmStageRegistry {
   private readonly stages = new Map<string, LlmStageDefinition>();
+  /** Вид задачи исполнителя → этапы его обработчика (аренда по виду, решение `F06 | F06-1`, В3). */
+  private readonly taskStages = new Map<string, readonly string[]>();
 
   register(definition: LlmStageDefinition): void {
     if (this.stages.has(definition.stage)) {
@@ -67,5 +72,43 @@ export class LlmStageRegistry {
    */
   longestCallTimeoutMs(defaultMs: number): number {
     return Math.max(defaultMs, ...[...this.stages.values()].map((s) => s.callTimeoutMs ?? 0));
+  }
+
+  /**
+   * Этапы, которые зовёт только обработчик задачи вида `taskKind` (решения арбитра `F06 | F06-1`,
+   * В3, В4): аренда задачи этого вида считается от них, а длинный таймаут этих этапов не растит
+   * аренду задач остальных видов. 🔴 Правило: этап, закреплённый за видом, зовёт только задача
+   * этого вида - задача другого вида получила бы аренду без его таймаута и потеряла бы её посреди
+   * вызова. Новый вид, который зовёт закреплённые этапы, регистрирует их за собой.
+   */
+  registerTaskStages(taskKind: string, stages: readonly string[]): void {
+    if (this.taskStages.has(taskKind)) {
+      throw new Error(`LLM stages of task kind "${taskKind}" are already registered`);
+    }
+    // Опечатка в имени этапа молча срезала бы аренду вида до общей: этап обязан быть в реестре
+    // и закреплён не больше чем за одним видом.
+    for (const stage of stages) {
+      if (!this.stages.has(stage)) {
+        throw new Error(`LLM stage "${stage}" of task kind "${taskKind}" is not registered`);
+      }
+      const owner = [...this.taskStages].find(([, owned]) => owned.includes(stage));
+      if (owner) {
+        throw new Error(`LLM stage "${stage}" is already owned by task kind "${owner[0]}"`);
+      }
+    }
+    this.taskStages.set(taskKind, [...stages]);
+  }
+
+  /**
+   * Самый длинный таймаут вызова для задачи вида `taskKind`: у вида со своими этапами - среди них,
+   * у прочих видов - среди этапов, не закреплённых ни за одним видом; общий таймаут - нижняя граница.
+   */
+  taskCallTimeoutMs(defaultMs: number, taskKind: string): number {
+    const own = this.taskStages.get(taskKind);
+    const owned = new Set([...this.taskStages.values()].flat());
+    const stages = [...this.stages.values()].filter((s) =>
+      own ? own.includes(s.stage) : !owned.has(s.stage),
+    );
+    return Math.max(defaultMs, ...stages.map((s) => s.callTimeoutMs ?? 0));
   }
 }

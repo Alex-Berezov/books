@@ -50,6 +50,7 @@ import { TRANSLATE_STAGE_DEFINITIONS } from './translate/translate.constants';
 import { CHECK_STAGE_DEFINITIONS } from './check/check.constants';
 import { METADATA_STAGE_DEFINITIONS } from './metadata/metadata.constants';
 import { FINAL_CHECK_STAGE_DEFINITIONS } from './final-check/final-check.constants';
+import { registerSummaryWriteStages } from './summary-write/summary-write.constants';
 
 /**
  * Автоперевод книги (F05): исходник по D8, блоки главы, отпечаток текста, досье и глоссарий
@@ -124,5 +125,6 @@ export class TranslationModule implements OnModuleInit {
     for (const definition of CONTENT_DRAFT_STAGE_DEFINITIONS) this.stages.register(definition);
     this.handlers.register(CONTENT_DRAFT_TASK_KIND, this.draftTasks.handler);
     this.kinds.register('draft', this.draftTasks);
+    registerSummaryWriteStages(this.stages);
   }
 }
