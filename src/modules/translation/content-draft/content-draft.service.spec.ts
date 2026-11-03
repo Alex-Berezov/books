@@ -1,17 +1,18 @@
 import { HttpException, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { BookDossier, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmBudgetService } from '../../llm/llm-budget.service';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { DossierDemandService } from '../dossier/dossier-demand.service';
+import { readStoredAnalysis } from '../../book-analysis/book-analysis-data';
 import { DossierService } from '../dossier/dossier.service';
 import { ContentDraftService } from './content-draft.service';
 
 /**
- * Сервис заготовки (F05-10) на подменённой базе: отказы до операции (потолок, предпосылка,
- * лимит ниже досье), вторая строящаяся - 409 по уникальному индексу, «не нужна» - отмена
- * операции у строящейся и только статус у прочих.
+ * Сервис заготовки Analysis (F05-11) на подменённой базе: отказ до операции по потолку, вторая
+ * строящаяся - 409 по уникальному индексу, «не нужна» - отмена операции у строящейся и только
+ * статус у прочих; дренаж снятых видов Summary (F06-3, А1).
  */
 
 const op = {
@@ -30,7 +31,7 @@ const op = {
 const draft = (patch: Record<string, unknown> = {}) => ({
   id: 'd1',
   bookVersionId: 'v1',
-  kind: 'summary_full',
+  kind: 'analysis',
   status: 'building',
   language: 'en',
   operationId: 'op1',
@@ -54,17 +55,13 @@ function setup() {
   const prisma = {
     $transaction: jest.fn((fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
     bookVersion: { findUnique: jest.fn().mockResolvedValue({ language: 'en', title: 'Book' }) },
-    bookSummarySection: {
-      findMany: jest.fn().mockResolvedValue([{ title: 'S', text: '<p>Saved.</p>' }]),
-    },
-    bookSummary: { findUnique: jest.fn().mockResolvedValue(null) },
     bookGlossary: { findUnique: jest.fn().mockResolvedValue(null) },
     contentDraft: {
       findUnique: jest.fn().mockResolvedValue(draft()),
       findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
       updateMany: jest.fn(),
     },
-    $executeRaw: jest.fn().mockResolvedValue(1),
   };
   const llm = {
     assertEnabled: jest.fn(),
@@ -94,6 +91,25 @@ function setup() {
   return { service, prisma, llm, budget, tasks, tx };
 }
 
+/** Заготовка с оценкой анализа без текста книги: одна глава, досье готово, анализа нет. */
+function setupDraft() {
+  const r = setup();
+  jest
+    .spyOn(r.service, 'versionChapters')
+    .mockResolvedValue([{ number: 1, title: 'C1', content: '<p>Text.</p>' }]);
+  jest.spyOn(r.service, 'draftContext').mockResolvedValue({
+    run: null,
+    dossier: { id: 'dos1', data: {} } as unknown as BookDossier,
+    glossaryData: null,
+    dossierLine: null,
+    glossaryLine: null,
+  });
+  jest
+    .spyOn(r.service, 'storedAnalysis')
+    .mockResolvedValue({ stored: readStoredAnalysis({}), updatedAt: null });
+  return r;
+}
+
 const codeOf = async (p: Promise<unknown>): Promise<unknown> => {
   try {
     await p;
@@ -104,37 +120,23 @@ const codeOf = async (p: Promise<unknown>): Promise<unknown> => {
   throw new Error('no refusal');
 };
 
-describe('ContentDraftService (F05-10)', () => {
+describe('ContentDraftService (F05-11)', () => {
   it('ceiling reached - 409 before any operation or draft', async () => {
-    const { service, budget, tx } = setup();
+    const { service, budget, tx } = setupDraft();
     budget.ceilingReached.mockResolvedValue(true);
-    await expect(codeOf(service.start('v1', 'summary_full', undefined, 'u1'))).resolves.toBe(
+    await expect(codeOf(service.start('v1', 'analysis', undefined, 'u1'))).resolves.toBe(
       'LLM_CEILING_REACHED',
     );
     expect(tx.llmOperation.create).not.toHaveBeenCalled();
     expect(tx.contentDraft.create).not.toHaveBeenCalled();
   });
 
-  it('full without a saved section with text - 409 SUMMARY_SECTIONS_MISSING; brief without the full - SUMMARY_FULL_MISSING', async () => {
-    const { service, prisma } = setup();
-    prisma.bookSummarySection.findMany.mockResolvedValue([
-      { title: 'Image only', text: '<figure><img src="a.jpg"></figure>' },
-    ]);
-    await expect(codeOf(service.estimate('v1', 'summary_full'))).resolves.toBe(
-      'SUMMARY_SECTIONS_MISSING',
-    );
-    prisma.bookSummary.findUnique.mockResolvedValue({ summary: '<p></p>' });
-    await expect(codeOf(service.estimate('v1', 'summary_brief'))).resolves.toBe(
-      'SUMMARY_FULL_MISSING',
-    );
-  });
-
   it('start: the previous ready or failed is discarded, the draft and the task in one transaction', async () => {
-    const { service, prisma, tx, tasks } = setup();
-    await service.start('v1', 'summary_full', undefined, 'u1');
+    const { service, prisma, tx, tasks } = setupDraft();
+    await service.start('v1', 'analysis', undefined, 'u1');
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(tx.contentDraft.updateMany).toHaveBeenCalledWith({
-      where: { bookVersionId: 'v1', kind: 'summary_full', status: { in: ['ready', 'failed'] } },
+      where: { bookVersionId: 'v1', kind: 'analysis', status: { in: ['ready', 'failed'] } },
       data: { status: 'discarded' },
     });
     expect(tasks.enqueue).toHaveBeenCalledWith(
@@ -144,17 +146,17 @@ describe('ContentDraftService (F05-10)', () => {
   });
 
   it('a second building draft - the unique index turns into 409 DRAFT_IN_PROGRESS', async () => {
-    const { service, prisma } = setup();
+    const { service, prisma } = setupDraft();
     prisma.$transaction.mockRejectedValue(
       new Prisma.PrismaClientKnownRequestError('unique', { code: 'P2002', clientVersion: 'x' }),
     );
-    await expect(codeOf(service.start('v1', 'summary_full', undefined, 'u1'))).resolves.toBe(
+    await expect(codeOf(service.start('v1', 'analysis', undefined, 'u1'))).resolves.toBe(
       'DRAFT_IN_PROGRESS',
     );
   });
 
   it('discard: a building draft cancels its operation; a ready one only changes status', async () => {
-    const building = setup();
+    const building = setupDraft();
     await building.service.discard('d1');
     expect(building.tasks.cancelOperation).toHaveBeenCalledTimes(1);
     expect(building.tx.contentDraft.updateMany).toHaveBeenCalledWith({
@@ -162,7 +164,7 @@ describe('ContentDraftService (F05-10)', () => {
       data: { status: 'discarded' },
     });
 
-    const ready = setup();
+    const ready = setupDraft();
     ready.prisma.contentDraft.findUnique.mockResolvedValue(draft({ status: 'ready' }));
     await ready.service.discard('d1');
     expect(ready.tasks.cancelOperation).not.toHaveBeenCalled();
@@ -172,58 +174,110 @@ describe('ContentDraftService (F05-10)', () => {
     });
   });
 
-  it('a summary_write row of F06 is not a draft: get, discard and the added mark answer 404 (F06 | F06-1, В2)', async () => {
-    const { service, prisma, tasks } = setup();
-    prisma.contentDraft.findUnique.mockResolvedValue(draft({ kind: 'summary_write' }));
-    await expect(service.get('d1')).rejects.toBeInstanceOf(NotFoundException);
-    await expect(service.discard('d1')).rejects.toBeInstanceOf(NotFoundException);
-    await expect(service.markSectionAdded('d1', 1)).rejects.toBeInstanceOf(NotFoundException);
-    expect(tasks.cancelOperation).not.toHaveBeenCalled();
-    expect(prisma.contentDraft.updateMany).not.toHaveBeenCalled();
-    expect(prisma.$executeRaw).not.toHaveBeenCalled();
-  });
+  it.each(['summary_write', 'summary_sections', 'summary_full', 'summary_brief'])(
+    'a %s row is not a draft: get and discard answer 404 (F06 | F06-1, В2; F06 | F06-3, А2)',
+    async (kind) => {
+      const { service, prisma, tasks } = setupDraft();
+      prisma.contentDraft.findUnique.mockResolvedValue(draft({ kind }));
+      await expect(service.get('d1')).rejects.toBeInstanceOf(NotFoundException);
+      await expect(service.discard('d1')).rejects.toBeInstanceOf(NotFoundException);
+      expect(tasks.cancelOperation).not.toHaveBeenCalled();
+      expect(prisma.contentDraft.updateMany).not.toHaveBeenCalled();
+    },
+  );
 
   it('the draft answer never carries a summary_write row, whatever path read it (F06 | F06-1, В2)', async () => {
-    const { service, prisma } = setup();
-    await service.latest('v1', 'summary_full');
+    const { service, prisma } = setupDraft();
+    await service.latest('v1', 'analysis');
     // Первая защита - вид в запросе: строки хода выборка не находит.
     expect(prisma.contentDraft.findFirst).toHaveBeenCalledTimes(1);
     expect(prisma.contentDraft.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ kind: 'summary_full' }) }),
+      expect.objectContaining({ where: expect.objectContaining({ kind: 'analysis' }) }),
     );
     // Вторая - ответ заготовки: строка хода, пришедшая любым путём, наружу не уходит.
     prisma.contentDraft.findFirst.mockResolvedValue(draft({ kind: 'summary_write' }));
-    await expect(service.latest('v1', 'summary_full')).rejects.toBeInstanceOf(NotFoundException);
+    await expect(service.latest('v1', 'analysis')).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('latest: none - null; sections of a sections draft, text of a text draft', async () => {
-    const { service, prisma } = setup();
-    await expect(service.latest('v1', 'summary_full')).resolves.toEqual({ draft: null });
+  it('latest: none - null; a ready draft carries its analysis', async () => {
+    const { service, prisma } = setupDraft();
+    await expect(service.latest('v1', 'analysis')).resolves.toEqual({ draft: null });
     prisma.contentDraft.findFirst.mockResolvedValue(
-      draft({ status: 'ready', data: { text: '<p>Full.</p>', question: null } }),
+      draft({ status: 'ready', data: { analysis: { language: 'en' }, droppedQuotes: [] } }),
     );
-    await expect(service.latest('v1', 'summary_full')).resolves.toMatchObject({
-      draft: { status: 'ready', text: '<p>Full.</p>', sections: null, waitingFor: null },
+    await expect(service.latest('v1', 'analysis')).resolves.toMatchObject({
+      draft: { status: 'ready', analysis: { language: 'en' }, motifs: [], waitingFor: null },
+    });
+  });
+});
+
+describe('ContentDraftService retired summary drafts (F06-3, А1)', () => {
+  const building = (id: string, operationId: string) => ({ id, operationId });
+
+  it('drains building rows of the retired kinds by their operation, the Discard draft path', async () => {
+    const { service, prisma, tasks, tx } = setupDraft();
+    prisma.contentDraft.findMany.mockResolvedValueOnce([
+      building('s1', 'op-s1'),
+      building('f1', 'op-f1'),
+    ]);
+    await expect(service.drainRetiredSummaryDrafts()).resolves.toBe(2);
+    expect(prisma.contentDraft.findMany).toHaveBeenCalledTimes(1);
+    expect(prisma.contentDraft.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          kind: { in: ['summary_sections', 'summary_full', 'summary_brief'] },
+          status: 'building',
+        },
+        take: 100,
+      }),
+    );
+    // Отмена - по операции строки, а не по виду задачи `content_draft` (он общий с analysis).
+    expect(tasks.cancelOperation.mock.calls.map((c) => c[0])).toEqual(['op-s1', 'op-f1']);
+    // По строке: одна запись в транзакции отмены и одна запасная - не больше.
+    expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(2);
+    expect(prisma.contentDraft.updateMany).toHaveBeenCalledTimes(2);
+    expect(tx.contentDraft.updateMany).toHaveBeenCalledWith({
+      where: { id: 's1', status: 'building' },
+      data: { status: 'discarded' },
+    });
+    expect(prisma.contentDraft.updateMany).toHaveBeenCalledWith({
+      where: { id: 'f1', status: { not: 'discarded' } },
+      data: { status: 'discarded' },
     });
   });
 
-  it('added mark: updatedAt is written in UTC explicitly, not by now() of the session (F05-11, Р22)', async () => {
-    const { service, prisma } = setup();
-    const ready = draft({
-      kind: 'summary_sections',
-      status: 'ready',
-      data: { sections: [{ number: 1 }] },
-    });
-    prisma.contentDraft.findUnique.mockResolvedValue(ready);
-    await service.markSectionAdded('d1', 1);
-    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
-    const [strings, ...values] = prisma.$executeRaw.mock.calls[0] as [string[], ...unknown[]];
-    expect(strings.join('?')).not.toMatch(/now\(\)/i);
-    // Вложенный `Prisma.sql` - объект с полем `sql`; голый `Date` или `now()` - нет.
-    const stamps = values
-      .map((v) => (v as { sql?: unknown } | null)?.sql)
-      .filter((v): v is string => typeof v === 'string');
-    expect(stamps).toEqual([expect.stringContaining("AT TIME ZONE 'UTC'")]);
+  it('nothing to drain - nothing changes; a repeat is a no-op', async () => {
+    const { service, prisma, tasks } = setupDraft();
+    await expect(service.drainRetiredSummaryDrafts()).resolves.toBe(0);
+    await expect(service.drainRetiredSummaryDrafts()).resolves.toBe(0);
+    expect(tasks.cancelOperation).not.toHaveBeenCalled();
+    expect(prisma.contentDraft.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('a full batch reads the next one until a short batch', async () => {
+    const { service, prisma } = setupDraft();
+    const batch = Array.from({ length: 100 }, (_, i) => building(`d${i}`, `op${i}`));
+    prisma.contentDraft.findMany
+      .mockResolvedValueOnce(batch)
+      .mockResolvedValueOnce([building('last', 'op-last')]);
+    await expect(service.drainRetiredSummaryDrafts()).resolves.toBe(101);
+    expect(prisma.contentDraft.findMany).toHaveBeenCalledTimes(2);
+  });
+
+  it('bootstrap drains the retired kinds: building rows are discarded at the start (А1)', async () => {
+    const { service, prisma, tasks } = setupDraft();
+    prisma.contentDraft.findMany.mockResolvedValueOnce([building('s1', 'op-s1')]);
+    const drain = jest.spyOn(service, 'drainRetiredSummaryDrafts');
+    await service.onApplicationBootstrap();
+    expect(drain).toHaveBeenCalledTimes(1);
+    expect(tasks.cancelOperation).toHaveBeenCalledTimes(1);
+    expect(tasks.cancelOperation).toHaveBeenCalledWith('op-s1', expect.any(Function));
+  });
+
+  it('a failed drain at bootstrap does not break the start', async () => {
+    const { service, prisma } = setupDraft();
+    prisma.contentDraft.findMany.mockRejectedValue(new Error('db down'));
+    await expect(service.onApplicationBootstrap()).resolves.toBeUndefined();
   });
 });
 

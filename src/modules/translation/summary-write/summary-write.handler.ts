@@ -16,15 +16,19 @@ import { runStageModels } from '../run/run-models';
 import {
   DRAFT_INPUT_MISSING,
   DRAFT_INVALID_RESPONSE,
-  DRAFT_NO_PLAN,
   DRAFT_TOO_LONG,
 } from '../content-draft/content-draft.constants';
-import { ContentDraftService, hasVisibleText } from '../content-draft/content-draft.service';
+import { ContentDraftService } from '../content-draft/content-draft.service';
+import { hasVisibleText, savedFull, sectionChapters } from './summary-sources';
 import { htmlToParagraphs } from '../content-draft/content-draft.text';
 import { awaitDraftContext } from '../content-draft/draft-context-wait';
 import { SummaryTarget } from './summary-checks';
 import { summaryHtml } from './summary-html';
-import { SUMMARY_REVIEW_STAGE, SUMMARY_WRITE_TASK_KIND } from './summary-write.constants';
+import {
+  DRAFT_NO_PLAN,
+  SUMMARY_REVIEW_STAGE,
+  SUMMARY_WRITE_TASK_KIND,
+} from './summary-write.constants';
 import {
   hasText,
   partKey,
@@ -274,7 +278,7 @@ export class SummaryWriteHandler {
     const sections = sectionItems(data);
     if (tried === null && sections.length < plan.length) {
       const section = plan[sections.length];
-      const chapters = await this.drafts.sectionChapters(row.bookVersionId, section);
+      const chapters = await sectionChapters(this.prisma, row.bookVersionId, section);
       const source = sectionSource(section, chapters, row.language);
       if (source.chapters.length === 0) {
         return {
@@ -325,7 +329,7 @@ export class SummaryWriteHandler {
     if (item.target === 'section') {
       const section = plan.find((p) => p.number === item.number);
       if (!section) return null;
-      const chapters = await this.drafts.sectionChapters(row.bookVersionId, section);
+      const chapters = await sectionChapters(this.prisma, row.bookVersionId, section);
       const source = sectionSource(section, chapters, row.language);
       if (source.chapters.length === 0)
         return { failed: DRAFT_INPUT_MISSING, target: 'section', source };
@@ -338,7 +342,7 @@ export class SummaryWriteHandler {
     }
     const fullItem = data.items.find((i) => i.target === 'full');
     const fullText =
-      (await this.drafts.savedFull(row.bookVersionId)) ??
+      (await savedFull(this.prisma, row.bookVersionId)) ??
       (fullItem && hasText(fullItem) ? fullItem.text : null);
     if (fullText === null) return null;
     return briefPart(context, fullText, await this.quoteIndex(row.bookVersionId), remark);

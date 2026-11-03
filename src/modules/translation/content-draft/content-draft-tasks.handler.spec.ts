@@ -10,19 +10,15 @@ import { ContentDraftService } from './content-draft.service';
 import { SummaryWriteHandler } from '../summary-write/summary-write.handler';
 
 /**
- * Шаги заготовки (F05-10) на подменённых базе и модели: окончательные отказы пишут `failed`
- * с причиной одной записью с операцией, раздел пишется условием `building`, деньги - пауза.
+ * Шаги заготовки Analysis (F05-11) на подменённых базе и модели: окончательные отказы пишут
+ * `failed` с причиной одной записью с операцией, ответ пишется условием `building`, деньги -
+ * пауза; строящаяся заготовка снятого вида Summary отбрасывается путём дренажа (F06-3, А1).
  */
-
-const PLAN = [
-  { number: 1, title: 'Chapter 1', chapters: [1], why: '' },
-  { number: 2, title: 'Chapters 2-3', chapters: [2, 3], why: '' },
-];
 
 const draftRow = (patch: Partial<ContentDraft> = {}): ContentDraft => ({
   id: 'd1',
   bookVersionId: 'v1',
-  kind: 'summary_sections',
+  kind: 'analysis',
   status: 'building',
   language: 'en',
   operationId: 'op1',
@@ -44,10 +40,7 @@ const ctx = {
   renewLease: jest.fn().mockResolvedValue(undefined),
 } as unknown as LlmTaskContext;
 
-function setup(
-  row: ContentDraft | null,
-  answer: unknown = { title: 'T', text: 'Text.', additions: 'none', question: 'none' },
-) {
+function setup(row: ContentDraft | null, answer: unknown = {}) {
   const tx = { contentDraft: { updateMany: jest.fn().mockResolvedValue({ count: 1 }) } };
   const prisma = {
     contentDraft: {
@@ -56,7 +49,7 @@ function setup(
     },
     bookVersion: { findUnique: jest.fn().mockResolvedValue({ title: 'Book' }) },
     bookDossier: {
-      findUnique: jest.fn().mockResolvedValue({ id: 'dos1', data: { summaryPlan: PLAN } }),
+      findUnique: jest.fn().mockResolvedValue({ id: 'dos1', sourceVersionId: 'src1', data: {} }),
     },
     bookGlossary: { findUnique: jest.fn().mockResolvedValue(null) },
   };
@@ -78,12 +71,8 @@ function setup(
     pauseOperation: jest.fn().mockResolvedValue(true),
   };
   const drafts = {
-    savedSections: jest.fn().mockResolvedValue([{ title: 'S', text: 'Saved.' }]),
-    savedFull: jest.fn().mockResolvedValue('Saved full.'),
     languageOf: jest.fn().mockResolvedValue('en'),
-    sectionChapters: jest
-      .fn()
-      .mockResolvedValue([{ number: 1, title: 'C1', content: '<p>Anna.</p>' }]),
+    discardRetired: jest.fn().mockResolvedValue(undefined),
     versionChapters: jest
       .fn()
       .mockResolvedValue([{ number: 1, title: 'C1', content: '<p>Anna came &amp; left.</p>' }]),
@@ -107,139 +96,40 @@ function setup(
   return { handler, prisma, llm, tasks, tx, drafts };
 }
 
-describe('ContentDraftTasksHandler (F05-10)', () => {
-  it('a section is written under the building condition and the step continues', async () => {
-    const { handler, prisma, tasks } = setup(draftRow());
-    await expect(handler.handler.run(task, ctx)).resolves.toEqual({ kind: 'continue' });
-    expect(prisma.contentDraft.updateMany).toHaveBeenCalledTimes(1);
-    const [arg] = prisma.contentDraft.updateMany.mock.calls[0] as [
-      { where: unknown; data: { data: { sections: unknown[] } } },
-    ];
-    expect(arg.where).toEqual({ id: 'd1', status: 'building' });
-    expect(arg.data.data.sections).toEqual([
-      expect.objectContaining({
-        number: 1,
-        readerChapter: 1,
-        text: '<p>Text.</p>',
-        question: null,
-      }),
-    ]);
-    expect(tasks.failOperation).not.toHaveBeenCalled();
-  });
-
-  it('a discarded draft is not written back: the step ends', async () => {
-    const { handler, prisma } = setup(draftRow());
-    prisma.contentDraft.updateMany.mockResolvedValue({ count: 0 });
-    await expect(handler.handler.run(task, ctx)).resolves.toEqual({ kind: 'done' });
-  });
-
-  it('the section title is cut to the section limit', async () => {
-    const { handler, prisma } = setup(draftRow(), {
-      title: 'x'.repeat(300),
-      text: 'Text.',
-      additions: 'none',
-      question: 'none',
-    });
-    await handler.handler.run(task, ctx);
-    const [arg] = prisma.contentDraft.updateMany.mock.calls[0] as [
-      { data: { data: { sections: Array<{ title: string }> } } },
-    ];
-    expect(arg.data.data.sections[0].title).toHaveLength(200);
-  });
-
-  it.each([
-    [
-      'empty answer',
-      { title: 'T', text: ' \n ', additions: '', question: '' },
-      'DRAFT_INVALID_RESPONSE',
-    ],
-  ])(
-    '%s - failed with the reason in the same record as the operation',
-    async (_, answer, reason) => {
-      const { handler, tasks, tx } = setup(draftRow(), answer);
+describe('ContentDraftTasksHandler (F05-11, F06-3)', () => {
+  it.each(['summary_sections', 'summary_full', 'summary_brief'] as const)(
+    'a building %s draft (retired kind) is discarded by the drain path, the model is not called',
+    async (kind) => {
+      const { handler, llm, tasks, drafts } = setup(draftRow({ kind }));
       await expect(handler.handler.run(task, ctx)).resolves.toEqual({ kind: 'done' });
-      expect(tasks.failOperation).toHaveBeenCalledTimes(1);
-      expect(tx.contentDraft.updateMany).toHaveBeenCalledWith({
-        where: { id: 'd1', status: 'building' },
-        data: { status: 'failed', failedReason: reason },
-      });
+      expect(drafts.discardRetired).toHaveBeenCalledTimes(1);
+      expect(drafts.discardRetired).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'd1', operationId: 'op1' }),
+      );
+      expect(llm.callStage).not.toHaveBeenCalled();
+      expect(tasks.failOperation).not.toHaveBeenCalled();
     },
   );
 
-  it('no plan in the dossier - DRAFT_NO_PLAN, the model is not called', async () => {
-    const { handler, prisma, llm, tx } = setup(draftRow());
-    prisma.bookDossier.findUnique.mockResolvedValue({ id: 'dos1', data: { summaryPlan: [] } });
+  it('a row of another kind under a draft task - DRAFT_INPUT_MISSING, not a model call', async () => {
+    const { handler, llm, tx, drafts } = setup(draftRow({ kind: 'summary_write' }));
     await handler.handler.run(task, ctx);
     expect(llm.callStage).not.toHaveBeenCalled();
+    expect(drafts.discardRetired).not.toHaveBeenCalled();
+    expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.contentDraft.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: 'failed', failedReason: 'DRAFT_NO_PLAN' } }),
-    );
-  });
-
-  it('the input does not fit the model - DRAFT_TOO_LONG without a call', async () => {
-    const { handler, llm, tx } = setup(draftRow());
-    llm.stageFit.mockResolvedValue({ fits: false, model: 'm' });
-    await handler.handler.run(task, ctx);
-    expect(llm.callStage).not.toHaveBeenCalled();
-    expect(tx.contentDraft.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: 'failed', failedReason: 'DRAFT_TOO_LONG' } }),
-    );
-  });
-
-  it('chapters without visible text - an empty section without a model call', async () => {
-    const { handler, prisma, llm, drafts } = setup(draftRow());
-    drafts.sectionChapters.mockResolvedValue([{ number: 1, title: 'C1', content: '<p></p>' }]);
-    await handler.handler.run(task, ctx);
-    expect(llm.callStage).not.toHaveBeenCalled();
-    const [arg] = prisma.contentDraft.updateMany.mock.calls[0] as [
-      { data: { data: { sections: Array<{ text: string }> } } },
-    ];
-    expect(arg.data.data.sections[0].text).toBe('');
-  });
-
-  it('all plan sections done - ready with the operation done', async () => {
-    const done = PLAN.map((p) => ({ number: p.number }));
-    const { handler, tasks, tx } = setup(draftRow({ data: { sections: done } }));
-    await expect(handler.handler.run(task, ctx)).resolves.toEqual({ kind: 'done' });
-    expect(tasks.completeOperation).toHaveBeenCalledTimes(1);
-    expect(tx.contentDraft.updateMany).toHaveBeenCalledWith({
-      where: { id: 'd1', status: 'building' },
-      data: { status: 'ready', waitingFor: null },
-    });
-  });
-
-  it('full: saved sections gone - DRAFT_INPUT_MISSING; ready with the text otherwise', async () => {
-    const gone = setup(draftRow({ kind: 'summary_full' }), { text: 'Full.', question: 'none' });
-    gone.drafts.savedSections.mockResolvedValue([]);
-    await gone.handler.handler.run(task, ctx);
-    expect(gone.tx.contentDraft.updateMany).toHaveBeenCalledWith(
       expect.objectContaining({ data: { status: 'failed', failedReason: 'DRAFT_INPUT_MISSING' } }),
     );
-
-    const ok = setup(draftRow({ kind: 'summary_full' }), { text: 'Full.', question: 'none' });
-    await ok.handler.handler.run(task, ctx);
-    // Ответ записан до итога шага, `ready` - вместе с концом операции.
-    expect(ok.prisma.contentDraft.updateMany).toHaveBeenCalledTimes(1);
-    expect(ok.prisma.contentDraft.updateMany).toHaveBeenCalledWith({
-      where: { id: 'd1', status: 'building' },
-      data: { data: { text: '<p>Full.</p>', question: null }, model: 'm' },
-    });
-    expect(ok.tasks.completeOperation).toHaveBeenCalledTimes(1);
-    expect(ok.tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
-    expect(ok.tx.contentDraft.updateMany).toHaveBeenCalledWith({
-      where: { id: 'd1', status: 'building' },
-      data: { status: 'ready' },
-    });
   });
 
-  it('brief: an empty answer is a refusal, not an empty draft', async () => {
-    const { handler, tx } = setup(draftRow({ kind: 'summary_brief' }), { text: '', question: '' });
-    await handler.handler.run(task, ctx);
-    expect(tx.contentDraft.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: { status: 'failed', failedReason: 'DRAFT_INVALID_RESPONSE' },
-      }),
+  it('a retired draft that is no longer building - the step ends, nothing is discarded twice', async () => {
+    const { handler, tasks, drafts } = setup(
+      draftRow({ kind: 'summary_sections', status: 'discarded' }),
     );
+    await expect(handler.handler.run(task, ctx)).resolves.toEqual({ kind: 'done' });
+    expect(drafts.discardRetired).not.toHaveBeenCalled();
+    expect(tasks.completeOperation).toHaveBeenCalledTimes(1);
+    expect(tasks.completeOperation).toHaveBeenCalledWith('op1');
   });
 
   it('a draft that is no longer building - the step ends without a call', async () => {
@@ -276,45 +166,6 @@ describe('ContentDraftTasksHandler (F05-10)', () => {
     ]);
     prisma.contentDraft.findUnique.mockResolvedValue(draftRow({ status: 'ready' }));
     await expect(handler.resumeTasks({ id: 'op1' } as never)).resolves.toEqual([]);
-  });
-
-  it('full already written before a pause - resume finishes it without a second model call', async () => {
-    const { handler, llm, tasks, tx } = setup(
-      draftRow({ kind: 'summary_full', data: { text: '<p>Full.</p>', question: null } }),
-    );
-    await expect(handler.handler.run(task, ctx)).resolves.toEqual({ kind: 'done' });
-    expect(llm.callStage).not.toHaveBeenCalled();
-    expect(tasks.completeOperation).toHaveBeenCalledTimes(1);
-    expect(tx.contentDraft.updateMany).toHaveBeenCalledWith({
-      where: { id: 'd1', status: 'building' },
-      data: { status: 'ready' },
-    });
-  });
-
-  it('a section HTML longer than the field limit - DRAFT_TOO_LONG', async () => {
-    const { handler, tx } = setup(draftRow(), {
-      title: 'T',
-      text: 'x'.repeat(100_001),
-      additions: 'none',
-      question: 'none',
-    });
-    await handler.handler.run(task, ctx);
-    expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
-    expect(tx.contentDraft.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { status: 'failed', failedReason: 'DRAFT_TOO_LONG' } }),
-    );
-  });
-
-  it('an answer not in the form twice - DRAFT_INVALID_RESPONSE after one remark', async () => {
-    const { handler, llm, tx } = setup(draftRow(), { title: 'T' });
-    await handler.handler.run(task, ctx);
-    expect(llm.callStage).toHaveBeenCalledTimes(2);
-    expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
-    expect(tx.contentDraft.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: { status: 'failed', failedReason: 'DRAFT_INVALID_RESPONSE' },
-      }),
-    );
   });
 });
 

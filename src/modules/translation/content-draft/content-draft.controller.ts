@@ -47,7 +47,10 @@ interface RequestUser {
   userId: string;
 }
 
-/** Вид в адресе: три вида Summary и `analysis` (`F05-11`); иной - 400. */
+/**
+ * Вид в адресе: `analysis` (`F05-11`); снятые виды Summary `F05-10` и иной - 400 (решение арбитра
+ * `F06 | F06-3`, А2).
+ */
 const KIND_PIPE = new ParseEnumPipe(
   Object.fromEntries(CONTENT_DRAFT_KINDS.map((k) => [k, k])) as Record<DraftKind, DraftKind>,
 );
@@ -59,12 +62,12 @@ const ITEM_CONFLICTS =
   'SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated';
 
 const START_CONFLICTS =
-  'DRAFT_IN_PROGRESS: a draft of this kind is being built; SUMMARY_SECTIONS_MISSING: no saved section with text (summary_full); SUMMARY_FULL_MISSING: no saved full summary with text (summary_brief); DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model (analysis); LLM_NO_PRICE; LLM_STAGE_DISABLED';
+  'DRAFT_IN_PROGRESS: a draft of this kind is being built; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model; LLM_NO_PRICE; LLM_STAGE_DISABLED';
 
 /**
- * Заготовки Summary (`F05-10`) и Analysis (`F05-11`) из досье - только `admin` (U6): оценка,
- * старт фоном под своей операцией, последняя заготовка вида и «не нужна». В пересказ и анализ
- * версии не пишут - черновик сохраняет редактор ручками Summary и Analysis. Здесь же ручки хода
+ * Заготовка Analysis (`F05-11`) из досье - только `admin` (U6): оценка, старт фоном под своей
+ * операцией, последняя заготовка вида и «не нужна». В анализ версии не пишет - черновик сохраняет
+ * редактор ручками Analysis. Пошаговые заготовки Summary `F05-10` сняты в `F06-3`. Здесь же ручки хода
  * пересказа «Write Summary» (`F06-2`): он пишет в пустые поля пересказа и принимает предложения
  * («Accept») - литеральные маршруты `summary_write` объявлены выше `:kind`.
  */
@@ -226,7 +229,7 @@ export class ContentDraftController {
   }
 
   @Get('versions/:id/drafts/:kind/estimate')
-  @ApiOperation({ summary: 'Upper cost estimate of a summary or analysis draft from the dossier' })
+  @ApiOperation({ summary: 'Upper cost estimate of an analysis draft from the dossier' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiParam({ name: 'kind', enum: CONTENT_DRAFT_KINDS })
   @ApiOkResponse({ type: ContentDraftEstimateDto })
@@ -242,7 +245,7 @@ export class ContentDraftController {
   @Get('versions/:id/drafts/:kind')
   @ApiOperation({
     summary:
-      'The latest summary or analysis draft of this kind that is not discarded, in any status (building, ready, failed); null - none',
+      'The latest analysis draft that is not discarded, in any status (building, ready, failed); null - none',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiParam({ name: 'kind', enum: CONTENT_DRAFT_KINDS })
@@ -258,7 +261,7 @@ export class ContentDraftController {
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary:
-      'Build a summary or analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded',
+      'Build an analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiParam({ name: 'kind', enum: CONTENT_DRAFT_KINDS })
@@ -294,24 +297,5 @@ export class ContentDraftController {
   @ApiNotFoundResponse({ description: 'Content draft not found' })
   discard(@Param('id') id: string): Promise<ContentDraftDto> {
     return this.drafts.discard(id);
-  }
-
-  @Post('content-drafts/:id/sections/:number/added')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary:
-      'Mark a section of a ready sections draft as added by «Add section»: the card is not offered again; repeating is a no-op',
-  })
-  @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiParam({ name: 'number', type: Number })
-  @ApiOkResponse({ type: ContentDraftDto })
-  @ApiBadRequestResponse({ description: 'DRAFT_SECTION_UNKNOWN: the draft has no such section' })
-  @ApiNotFoundResponse({ description: 'Content draft not found' })
-  @ApiConflictResponse({ description: 'DRAFT_NOT_READY: not a ready sections draft' })
-  markSectionAdded(
-    @Param('id') id: string,
-    @Param('number', ParseIntPipe) number: number,
-  ): Promise<ContentDraftDto> {
-    return this.drafts.markSectionAdded(id, number);
   }
 }

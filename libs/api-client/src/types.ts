@@ -376,23 +376,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/admin/content-drafts/{id}/sections/{number}/added': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Mark a section of a ready sections draft as added by «Add section»: the card is not offered again; repeating is a no-op */
-    post: operations['ContentDraftController_markSectionAdded'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/admin/contributors': {
     parameters: {
       query?: never;
@@ -2823,10 +2806,10 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** The latest summary or analysis draft of this kind that is not discarded, in any status (building, ready, failed); null - none */
+    /** The latest analysis draft that is not discarded, in any status (building, ready, failed); null - none */
     get: operations['ContentDraftController_latest'];
     put?: never;
-    /** Build a summary or analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded */
+    /** Build an analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded */
     post: operations['ContentDraftController_start'];
     delete?: never;
     options?: never;
@@ -2841,7 +2824,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Upper cost estimate of a summary or analysis draft from the dossier */
+    /** Upper cost estimate of an analysis draft from the dossier */
     get: operations['ContentDraftController_estimate'];
     put?: never;
     post?: never;
@@ -7649,8 +7632,6 @@ export interface components {
       text: string;
     };
     ContentDraftDto: {
-      /** @description Section numbers the editor has already added with «Add section» (summary_sections) */
-      addedSections: number[];
       /** @description Analysis import JSON (analysis): language, facts, characters, keyQuotes, style only; built over the saved analysis */
       analysis: components['schemas']['ContentDraftAnalysisDto'] | null;
       /**
@@ -7667,33 +7648,25 @@ export interface components {
        * @enum {string|null}
        */
       dossierLanguage: 'en' | 'es' | 'fr' | 'pt' | 'ru' | null;
-      /** @description Quotes thrown away by the word-for-word check (analysis) */
-      droppedQuotes: components['schemas']['ContentDraftDroppedQuoteDto'][] | null;
+      /** @description Quotes thrown away by the word-for-word check */
+      droppedQuotes: components['schemas']['ContentDraftDroppedQuoteDto'][];
       /** @description Code of the final refusal (failed) */
       failedReason: string | null;
       /** Format: uuid */
       id: string;
       /** @enum {string} */
-      kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
+      kind: 'analysis';
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       model: string | null;
-      /** @description Recurring motifs of the dossier for the prompt inputs (analysis): chapters of this version only */
-      motifs: components['schemas']['DossierMotifDto'][] | null;
+      /** @description Recurring motifs of the dossier for the prompt inputs: chapters of this version only */
+      motifs: components['schemas']['DossierMotifDto'][];
       operation: components['schemas']['LlmOperationDto'];
-      /** @description Sections in the plan (summary_sections); null until the dossier is ready */
-      plannedSections: number | null;
-      /** @description Question to the editor */
-      question: string | null;
-      /** @description Section drafts so far (summary_sections) */
-      sections: components['schemas']['ContentDraftSectionDto'][] | null;
       /**
        * @description A paused operation keeps the draft building: the reason is operation.pauseReason
        * @enum {string}
        */
       status: 'building' | 'ready' | 'failed' | 'discarded';
-      /** @description Rich HTML draft (summary_full, summary_brief) */
-      text: string | null;
       /** Format: date-time */
       updatedAt: string;
       /**
@@ -7708,9 +7681,7 @@ export interface components {
       /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
       glossary: components['schemas']['CompareContextLineDto'] | null;
       /** @enum {string} */
-      kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
-      /** @description Sections of the dossier plan; null - the plan is not known yet or not a sections draft */
-      sections: number | null;
+      kind: 'analysis';
       /**
        * Format: decimal
        * @description Upper estimate of the draft stage calls
@@ -7723,23 +7694,8 @@ export interface components {
        * @example 100.00000000
        */
       suggestedLimitUsd: string;
-      /** @description The dossier is not ready: its size is assumed from the dossier and glossary stages (sections: one per chapter) */
+      /** @description The dossier is not ready: its size is assumed from the dossier and glossary stages */
       upperBound: boolean;
-    };
-    ContentDraftSectionDto: {
-      /** @description Names not in the dossier */
-      additions: string | null;
-      /** @description Section number of the dossier plan */
-      number: number;
-      /** @description Question to the editor */
-      question: string | null;
-      /** @description First chapter of the section in the plan; null - no such chapter in this version */
-      readerChapter: number | null;
-      /** @description The plan chapter is not among the chapters of this version */
-      readerChapterMissing: boolean;
-      /** @description Rich HTML; empty when the chapters have no text */
-      text: string;
-      title: string;
     };
     ContentDraftStateDto: {
       /** @description The latest draft of this kind that is not discarded, in any status; null - none */
@@ -16347,49 +16303,6 @@ export interface operations {
       };
     };
   };
-  ContentDraftController_markSectionAdded: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-        number: number;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ContentDraftDto'];
-        };
-      };
-      /** @description DRAFT_SECTION_UNKNOWN: the draft has no such section */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Content draft not found */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description DRAFT_NOT_READY: not a ready sections draft */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
   ContributorsController_findAll: {
     parameters: {
       query?: {
@@ -20931,7 +20844,7 @@ export interface operations {
       header?: never;
       path: {
         id: string;
-        kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
+        kind: 'analysis';
       };
       cookie?: never;
     };
@@ -20953,7 +20866,7 @@ export interface operations {
       header?: never;
       path: {
         id: string;
-        kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
+        kind: 'analysis';
       };
       cookie?: never;
     };
@@ -20985,7 +20898,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description DRAFT_IN_PROGRESS: a draft of this kind is being built; SUMMARY_SECTIONS_MISSING: no saved section with text (summary_full); SUMMARY_FULL_MISSING: no saved full summary with text (summary_brief); DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model (analysis); LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      /** @description DRAFT_IN_PROGRESS: a draft of this kind is being built; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model; LLM_NO_PRICE; LLM_STAGE_DISABLED */
       409: {
         headers: {
           [name: string]: unknown;
@@ -21007,7 +20920,7 @@ export interface operations {
       header?: never;
       path: {
         id: string;
-        kind: 'summary_sections' | 'summary_full' | 'summary_brief' | 'analysis';
+        kind: 'analysis';
       };
       cookie?: never;
     };
@@ -21028,7 +20941,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description DRAFT_IN_PROGRESS: a draft of this kind is being built; SUMMARY_SECTIONS_MISSING: no saved section with text (summary_full); SUMMARY_FULL_MISSING: no saved full summary with text (summary_brief); DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model (analysis); LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      /** @description DRAFT_IN_PROGRESS: a draft of this kind is being built; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model; LLM_NO_PRICE; LLM_STAGE_DISABLED */
       409: {
         headers: {
           [name: string]: unknown;

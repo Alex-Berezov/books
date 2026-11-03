@@ -13,6 +13,9 @@ export const SUMMARY_FULL_WRITE_STAGE = 'summary_full_write';
 export const SUMMARY_BRIEF_WRITE_STAGE = 'summary_brief_write';
 export const SUMMARY_REVIEW_STAGE = 'summary_review';
 
+/** В досье нет плана разделов: ходу не из чего строить разделы. */
+export const DRAFT_NO_PLAN = 'DRAFT_NO_PLAN';
+
 /** Вид задачи исполнителя хода раздела (`ContentDraft` вида `summary_write`); обработчик - `F06-2`. */
 export const SUMMARY_WRITE_TASK_KIND = 'summary_write';
 

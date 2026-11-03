@@ -89,6 +89,21 @@ describe('Summary run «Write Summary» (e2e)', () => {
     motifs: [],
   };
   const OK_REVIEW = { verdict: 'ok', remarks: [] };
+  /** Глоссарий `fr` запуска перевода: имя героини по глоссарию - Annette. */
+  const GLOSSARY = {
+    entries: [
+      {
+        key: 'anna',
+        source: 'Anna',
+        target: 'Annette',
+        kind: 'character',
+        keepOriginal: false,
+        note: '',
+      },
+    ],
+    address: [],
+    phrases: [],
+  };
 
   let app: INestApplication;
   let prisma: PrismaService;
@@ -178,6 +193,76 @@ describe('Summary run «Write Summary» (e2e)', () => {
     }
     calls.length = 0;
     return version.id;
+  };
+
+  /**
+   * Исходник `en` с готовым досье и переведённая версия `fr`, сделанная запуском перевода
+   * со статусом языка `languageStatus` (Р18); досье и глоссарий запуска - готовые.
+   */
+  const translatedBook = async (
+    languageStatus: 'done' | 'running',
+    operationStatus: 'done' | 'active',
+  ) => {
+    const slug = `f062-${stamp}-${slugs.length}`;
+    slugs.push(slug);
+    const { book } = await createBookWithRights(prisma, slug);
+    const versionOf = (language: Language) =>
+      prisma.bookVersion.create({
+        data: {
+          bookId: book.id,
+          language,
+          title: `Book ${language}`,
+          author: 'Author',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/c.jpg',
+          type: 'text',
+          isFree: true,
+          status: 'draft',
+          originalLanguage: 'English',
+          chapters: { create: CHAPTERS },
+        },
+      });
+    const source = (await versionOf(Language.en)).id;
+    const translated = (await versionOf(Language.fr)).id;
+    const dossier = await buildDossier(source);
+    const glossary = await prisma.bookGlossary.create({
+      data: { dossierId: dossier.id, language: 'fr', status: 'ready', data: GLOSSARY },
+    });
+    const op = await prisma.llmOperation.create({
+      data: { kind: 'translation_run', limitUsd: 1, status: operationStatus },
+    });
+    const run = await prisma.translationRun.create({
+      data: {
+        operationId: op.id,
+        bookVersionId: source,
+        sourceLanguage: 'en',
+        dossierId: dossier.id,
+        languages: {
+          create: [
+            {
+              language: 'fr',
+              glossaryId: glossary.id,
+              status: languageStatus,
+              bookVersionId: translated,
+            },
+          ],
+        },
+      },
+    });
+    calls.length = 0;
+    return { source, translated, dossier, glossary, run };
+  };
+
+  /** Готовое досье исходника - через кнопку и исполнителя, как в админке. */
+  const buildDossier = async (versionId: string) => {
+    await auth(http().post(`/admin/versions/${versionId}/dossier`))
+      .send({})
+      .expect(202);
+    await drain();
+    return prisma.bookDossier.findFirstOrThrow({
+      where: { sourceVersionId: versionId, status: 'ready' },
+      orderBy: { generation: 'desc' },
+    });
   };
 
   const drain = async () => {
@@ -841,6 +926,84 @@ describe('Summary run «Write Summary» (e2e)', () => {
     expect((await start(empty).expect(409)).body.code).toBe('SOURCE_HAS_NO_CHAPTERS');
   });
 
+  it('a translated version: the dossier and glossary of its run, no freshness check, names by the run glossary (Р18, F06-3 А5)', async () => {
+    const { source, translated, dossier, glossary } = await translatedBook('done', 'done');
+    // Исходник правлен после досье запуска: переведённой версии это не мешает (нет DOSSIER_STALE).
+    await prisma.chapter.updateMany({
+      where: { bookVersionId: source, number: 1 },
+      data: { content: '<p>Edited source.</p>' },
+    });
+    // У исходника уже новое поколение досье, без глоссария `fr`: переведённая версия его не берёт.
+    const fresh = await buildDossier(source);
+    expect(fresh.id).not.toBe(dossier.id);
+    const dossiersBefore = await prisma.bookDossier.count({ where: { sourceVersionId: source } });
+    calls.length = 0;
+
+    const estimate = await auth(http().get(`${base(translated)}/estimate`)).expect(200);
+    expect(estimate.body).toMatchObject({
+      dossier: null,
+      glossary: null,
+      sections: 3,
+      upperBound: false,
+    });
+    const started = await start(translated).expect(202);
+    expect(started.body.language).toBe('fr');
+    await drain();
+
+    const row = await prisma.contentDraft.findFirstOrThrow({
+      where: { bookVersionId: translated, kind: 'summary_write' },
+    });
+    expect(row).toMatchObject({ status: 'ready', dossierId: dossier.id, glossaryId: glossary.id });
+    const first = callsOf('summary_section_write')[0].body;
+    expect(first.messages[1].content).toContain('Annette');
+    expect(first.messages[0].content).toContain('French');
+    // Ни досье, ни глоссарий ход не строил.
+    expect(callsOf('dossier')).toHaveLength(0);
+    expect(callsOf('glossary')).toHaveLength(0);
+    expect(await prisma.bookDossier.count({ where: { sourceVersionId: source } })).toBe(
+      dossiersBefore,
+    );
+    expect(await prisma.bookGlossary.count({ where: { dossierId: dossier.id } })).toBe(1);
+    expect(await prisma.bookGlossary.count({ where: { dossierId: fresh.id } })).toBe(0);
+  });
+
+  it('a translated version: its run still writing - 409 RUN_LANGUAGE_UNFINISHED; a failed run - the run dossier (Р18); the run dossier gone - 409 DRAFT_DOSSIER_MISSING; no run row on a refusal (F06-3 А5)', async () => {
+    const { translated, dossier, glossary, run } = await translatedBook('running', 'active');
+    const rows = () => prisma.contentDraft.count({ where: { bookVersionId: translated } });
+
+    const unfinished = await auth(http().get(`${base(translated)}/estimate`)).expect(409);
+    expect(unfinished.body.code).toBe('RUN_LANGUAGE_UNFINISHED');
+    expect((await start(translated).expect(409)).body.code).toBe('RUN_LANGUAGE_UNFINISHED');
+    expect(await rows()).toBe(0);
+
+    await prisma.translationRunLanguage.updateMany({
+      where: { runId: run.id },
+      data: { status: 'failed' },
+    });
+    const started = await start(translated).expect(202);
+    const row = await prisma.contentDraft.findUniqueOrThrow({
+      where: { id: started.body.id as string },
+    });
+    expect(row).toMatchObject({
+      kind: 'summary_write',
+      dossierId: dossier.id,
+      glossaryId: glossary.id,
+    });
+    await auth(http().post(`/admin/content-drafts/${row.id}/discard-run`)).expect(200);
+
+    await prisma.translationRun.update({ where: { id: run.id }, data: { dossierId: null } });
+    const gone = await auth(http().get(`${base(translated)}/estimate`)).expect(409);
+    expect(gone.body.code).toBe('DRAFT_DOSSIER_MISSING');
+    expect((await start(translated).expect(409)).body.code).toBe('DRAFT_DOSSIER_MISSING');
+    expect(await rows()).toBe(1);
+    expect(
+      await prisma.contentDraft.count({
+        where: { bookVersionId: translated, status: { not: 'discarded' } },
+      }),
+    ).toBe(0);
+    expect(callsOf('summary_section_write')).toHaveLength(0);
+  });
+
   it('repeat start while building - 409 DRAFT_IN_PROGRESS; Discard of a building run cancels its operation; Discard of a ready run cancels its regenerations', async () => {
     const versionId = await sourceWithDossier();
     const first = await start(versionId).expect(202);
@@ -931,11 +1094,11 @@ describe('Summary run «Write Summary» (e2e)', () => {
     const draft = await prisma.contentDraft.create({
       data: {
         bookVersionId: versionId,
-        kind: 'summary_full',
+        kind: 'analysis',
         status: 'ready',
         language: 'en',
         operationId: op.id,
-        data: { text: '<p>x</p>' },
+        data: { analysis: { language: 'en' } },
       },
     });
     for (const path of [

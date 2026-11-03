@@ -1,41 +1,14 @@
-import { sanitizeRichHtml } from '../../../shared/sanitize/rich-html';
 import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
 import { splitChapter } from '../chapter-blocks';
 
 /**
- * Перевод между текстом модели и rich HTML полей пересказа (`@RichHtml`): модель пишет абзацы
- * через пустую строку и подзаголовки `## `, форма вкладки получает HTML, который пройдёт
- * сохранение существующими ручками. Текст из базы модели - абзацами без разметки.
+ * Текст из базы модели - абзацами без разметки; экранирование текста модели для rich HTML.
+ * Перевод ответа модели в HTML полей пересказа - `summary-write/summary-html.ts` (`F06`).
  */
 
-/** Экранирование текста модели для rich HTML - одно на заготовки `F05-10` и ход `F06`. */
+/** Экранирование текста модели для rich HTML хода `F06` (`summary-html.ts`). */
 export function escapeHtml(text: string): string {
   return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
-
-/** Абзац - `<p>`, строки внутри абзаца склеиваются пробелом. */
-const paragraph = (text: string): string => `<p>${escapeHtml(text.replace(/\s*\n\s*/g, ' '))}</p>`;
-
-/**
- * Абзацы - `<p>`, строка `## ` - `<h2>`: заголовок - только первая строка блока, текст под ним
- * без пустой строки остаётся абзацем. Заголовок любого уровня (`#`…`######`) - `<h2>`: в полях
- * пересказа подзаголовки одного уровня; `##` без текста отбрасывается. Прочая разметка модели
- * (`**`) не переносится.
- */
-export function answerToHtml(text: string): string {
-  const html = text
-    .split(/\n\s*\n/)
-    .map((block) => block.trim())
-    .filter((block) => block !== '')
-    .map((block) => {
-      const heading = /^#{1,6}(?:[ \t]+([^\n]*))?[ \t]*(?:\n([\s\S]*))?$/.exec(block);
-      if (!heading) return paragraph(block);
-      const title = heading[1]?.trim() ?? '';
-      const rest = heading[2]?.trim() ?? '';
-      return (title ? `<h2>${escapeHtml(title)}</h2>` : '') + (rest ? paragraph(rest) : '');
-    })
-    .join('');
-  return sanitizeRichHtml(html);
 }
 
 /** Сохранённый HTML пересказа - абзацами через пустую строку, подзаголовки строкой `## `. */
@@ -64,10 +37,4 @@ export function chaptersText(
       return `${head}\n\n${htmlToParagraphs(c.content)}`;
     })
     .join('\n\n');
-}
-
-/** Вопрос редактору: «нет» в любом виде - пусто. */
-export function editorQuestion(value: string): string | null {
-  const text = value.trim();
-  return text === '' || /^(none|нет|no|non|nenhuma?|ninguna?)\.?$/i.test(text) ? null : text;
 }

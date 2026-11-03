@@ -38,21 +38,13 @@ export class ContentDraftEstimateDto {
   })
   glossary!: CompareContextLineDto | null;
 
-  @ApiProperty({
-    type: Number,
-    nullable: true,
-    description:
-      'Sections of the dossier plan; null - the plan is not known yet or not a sections draft',
-  })
-  sections!: number | null;
-
   @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'Upper estimate of the draft stage calls' })
   stageUsd!: string;
 
   @ApiProperty({
     type: Boolean,
     description:
-      'The dossier is not ready: its size is assumed from the dossier and glossary stages (sections: one per chapter)',
+      'The dossier is not ready: its size is assumed from the dossier and glossary stages',
   })
   upperBound!: boolean;
 
@@ -61,36 +53,6 @@ export class ContentDraftEstimateDto {
     description: 'Default operation limit: max(stage × 1.5, dossier and glossary limits)',
   })
   suggestedLimitUsd!: string;
-}
-
-export class ContentDraftSectionDto {
-  @ApiProperty({ type: Number, description: 'Section number of the dossier plan' })
-  number!: number;
-
-  @ApiProperty({ type: String })
-  title!: string;
-
-  @ApiProperty({ type: String, description: 'Rich HTML; empty when the chapters have no text' })
-  text!: string;
-
-  @ApiProperty({
-    type: Number,
-    nullable: true,
-    description: 'First chapter of the section in the plan; null - no such chapter in this version',
-  })
-  readerChapter!: number | null;
-
-  @ApiProperty({
-    type: Boolean,
-    description: 'The plan chapter is not among the chapters of this version',
-  })
-  readerChapterMissing!: boolean;
-
-  @ApiProperty({ type: String, nullable: true, description: 'Names not in the dossier' })
-  additions!: string | null;
-
-  @ApiProperty({ type: String, nullable: true, description: 'Question to the editor' })
-  question!: string | null;
 }
 
 /**
@@ -143,7 +105,10 @@ export class ContentDraftDto {
   @ApiProperty({ type: String, format: 'uuid' })
   bookVersionId!: string;
 
-  /** Только прежние виды: ход `summary_write` (`F06`) отдают свои ручки (решение `F06 | F06-1`, В2). */
+  /**
+   * Только `analysis`: ход `summary_write` (`F06`) отдают свои ручки (решение `F06 | F06-1`, В2),
+   * пошаговые виды Summary сняты (`F06 | F06-3`, А2).
+   */
   @ApiProperty({ enum: CONTENT_DRAFT_KINDS })
   kind!: DraftKind;
 
@@ -174,37 +139,6 @@ export class ContentDraftDto {
   model!: string | null;
 
   @ApiProperty({
-    type: Number,
-    nullable: true,
-    description: 'Sections in the plan (summary_sections); null until the dossier is ready',
-  })
-  plannedSections!: number | null;
-
-  @ApiProperty({
-    type: [ContentDraftSectionDto],
-    nullable: true,
-    description: 'Section drafts so far (summary_sections)',
-  })
-  sections!: ContentDraftSectionDto[] | null;
-
-  @ApiProperty({
-    type: [Number],
-    description:
-      'Section numbers the editor has already added with «Add section» (summary_sections)',
-  })
-  addedSections!: number[];
-
-  @ApiProperty({
-    type: String,
-    nullable: true,
-    description: 'Rich HTML draft (summary_full, summary_brief)',
-  })
-  text!: string | null;
-
-  @ApiProperty({ type: String, nullable: true, description: 'Question to the editor' })
-  question!: string | null;
-
-  @ApiProperty({
     type: ContentDraftAnalysisDto,
     nullable: true,
     description:
@@ -214,18 +148,16 @@ export class ContentDraftDto {
 
   @ApiProperty({
     type: [ContentDraftDroppedQuoteDto],
-    nullable: true,
-    description: 'Quotes thrown away by the word-for-word check (analysis)',
+    description: 'Quotes thrown away by the word-for-word check',
   })
-  droppedQuotes!: ContentDraftDroppedQuoteDto[] | null;
+  droppedQuotes!: ContentDraftDroppedQuoteDto[];
 
   @ApiProperty({
     type: [DossierMotifDto],
-    nullable: true,
     description:
-      'Recurring motifs of the dossier for the prompt inputs (analysis): chapters of this version only',
+      'Recurring motifs of the dossier for the prompt inputs: chapters of this version only',
   })
-  motifs!: DossierMotifDto[] | null;
+  motifs!: DossierMotifDto[];
 
   @ApiProperty({
     enum: Language,

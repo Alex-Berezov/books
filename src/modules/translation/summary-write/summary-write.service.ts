@@ -59,6 +59,7 @@ import {
   withItem,
   WriteItem,
 } from './summary-write.data';
+import { savedFull, sectionChapters } from './summary-sources';
 import { readyGate, SummaryWriteFields } from './summary-write.fields';
 import { summaryWriteTaskInput, SummaryWriteHandler } from './summary-write.handler';
 import {
@@ -485,7 +486,7 @@ export class SummaryWriteService {
       }
     } else {
       for (const section of plan) {
-        const chapters = await this.drafts.sectionChapters(versionId, section);
+        const chapters = await sectionChapters(this.prisma, versionId, section);
         sources.push(sectionSource(section, chapters, version.language));
       }
     }
@@ -538,7 +539,7 @@ export class SummaryWriteService {
     if (item.target === 'section') {
       const section = plan.find((p) => p.number === item.number);
       if (!section) throw llmTaskConflict(SUMMARY_WRITE_NOT_READY, 'The plan has no such section');
-      const chapters = await this.drafts.sectionChapters(row.bookVersionId, section);
+      const chapters = await sectionChapters(this.prisma, row.bookVersionId, section);
       const usd = partUsd(
         calls,
         sectionPart(context, sectionSource(section, chapters, row.language), remark),
@@ -560,7 +561,7 @@ export class SummaryWriteService {
       );
     }
     const full = data.items.find((i) => i.target === 'full');
-    const saved = await this.drafts.savedFull(row.bookVersionId);
+    const saved = await savedFull(this.prisma, row.bookVersionId);
     if (saved === null && !(full && hasText(full))) {
       throw llmTaskConflict(SUMMARY_FULL_UNFINISHED, 'There is no full summary with a text');
     }

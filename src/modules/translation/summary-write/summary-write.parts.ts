@@ -16,7 +16,7 @@ import {
 } from '../draft-quality/text-checks';
 import { StageModels } from '../run/run-models';
 import { chaptersText, htmlToParagraphs } from '../content-draft/content-draft.text';
-import { PlanSection, summaryPlanOf } from '../content-draft/content-draft.service';
+import { PlanSection, summaryPlanOf } from './summary-sources';
 import { checkLength, checkStructure, sectionTitle, SummaryTarget } from './summary-checks';
 import {
   SUMMARY_BRIEF_WRITE_STAGE,
@@ -125,7 +125,7 @@ export type RunPlanSection = PlanSection & { why: string };
 /**
  * План досье для хода: номер раздела - позиция в плане (i + 1), номер модели не используется
  * (решение арбитра `F06 | F06-2`, круг 1, В4; как `joinPlans`). Порядок не меняется, данные
- * досье и `summaryPlanOf` заготовок `F05-10` - тоже.
+ * досье и `summaryPlanOf` - тоже.
  */
 export function runPlanOf(dossierData: unknown): RunPlanSection[] {
   const raw = (dossierData as { summaryPlan?: unknown } | null)?.summaryPlan;

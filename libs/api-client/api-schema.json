@@ -8181,13 +8181,6 @@
       },
       "ContentDraftDto": {
         "properties": {
-          "addedSections": {
-            "description": "Section numbers the editor has already added with «Add section» (summary_sections)",
-            "items": {
-              "type": "number"
-            },
-            "type": "array"
-          },
           "analysis": {
             "allOf": [
               {
@@ -8225,11 +8218,10 @@
             "type": "string"
           },
           "droppedQuotes": {
-            "description": "Quotes thrown away by the word-for-word check (analysis)",
+            "description": "Quotes thrown away by the word-for-word check",
             "items": {
               "$ref": "#/components/schemas/ContentDraftDroppedQuoteDto"
             },
-            "nullable": true,
             "type": "array"
           },
           "failedReason": {
@@ -8243,9 +8235,6 @@
           },
           "kind": {
             "enum": [
-              "summary_sections",
-              "summary_full",
-              "summary_brief",
               "analysis"
             ],
             "type": "string"
@@ -8265,33 +8254,14 @@
             "type": "string"
           },
           "motifs": {
-            "description": "Recurring motifs of the dossier for the prompt inputs (analysis): chapters of this version only",
+            "description": "Recurring motifs of the dossier for the prompt inputs: chapters of this version only",
             "items": {
               "$ref": "#/components/schemas/DossierMotifDto"
             },
-            "nullable": true,
             "type": "array"
           },
           "operation": {
             "$ref": "#/components/schemas/LlmOperationDto"
-          },
-          "plannedSections": {
-            "description": "Sections in the plan (summary_sections); null until the dossier is ready",
-            "nullable": true,
-            "type": "number"
-          },
-          "question": {
-            "description": "Question to the editor",
-            "nullable": true,
-            "type": "string"
-          },
-          "sections": {
-            "description": "Section drafts so far (summary_sections)",
-            "items": {
-              "$ref": "#/components/schemas/ContentDraftSectionDto"
-            },
-            "nullable": true,
-            "type": "array"
           },
           "status": {
             "description": "A paused operation keeps the draft building: the reason is operation.pauseReason",
@@ -8301,11 +8271,6 @@
               "failed",
               "discarded"
             ],
-            "type": "string"
-          },
-          "text": {
-            "description": "Rich HTML draft (summary_full, summary_brief)",
-            "nullable": true,
             "type": "string"
           },
           "updatedAt": {
@@ -8332,11 +8297,6 @@
           "waitingFor",
           "operation",
           "model",
-          "plannedSections",
-          "sections",
-          "addedSections",
-          "text",
-          "question",
           "analysis",
           "droppedQuotes",
           "motifs",
@@ -8371,17 +8331,9 @@
           },
           "kind": {
             "enum": [
-              "summary_sections",
-              "summary_full",
-              "summary_brief",
               "analysis"
             ],
             "type": "string"
-          },
-          "sections": {
-            "description": "Sections of the dossier plan; null - the plan is not known yet or not a sections draft",
-            "nullable": true,
-            "type": "number"
           },
           "stageUsd": {
             "description": "Upper estimate of the draft stage calls",
@@ -8396,7 +8348,7 @@
             "type": "string"
           },
           "upperBound": {
-            "description": "The dossier is not ready: its size is assumed from the dossier and glossary stages (sections: one per chapter)",
+            "description": "The dossier is not ready: its size is assumed from the dossier and glossary stages",
             "type": "boolean"
           }
         },
@@ -8404,54 +8356,9 @@
           "kind",
           "dossier",
           "glossary",
-          "sections",
           "stageUsd",
           "upperBound",
           "suggestedLimitUsd"
-        ],
-        "type": "object"
-      },
-      "ContentDraftSectionDto": {
-        "properties": {
-          "additions": {
-            "description": "Names not in the dossier",
-            "nullable": true,
-            "type": "string"
-          },
-          "number": {
-            "description": "Section number of the dossier plan",
-            "type": "number"
-          },
-          "question": {
-            "description": "Question to the editor",
-            "nullable": true,
-            "type": "string"
-          },
-          "readerChapter": {
-            "description": "First chapter of the section in the plan; null - no such chapter in this version",
-            "nullable": true,
-            "type": "number"
-          },
-          "readerChapterMissing": {
-            "description": "The plan chapter is not among the chapters of this version",
-            "type": "boolean"
-          },
-          "text": {
-            "description": "Rich HTML; empty when the chapters have no text",
-            "type": "string"
-          },
-          "title": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "number",
-          "title",
-          "text",
-          "readerChapter",
-          "readerChapterMissing",
-          "additions",
-          "question"
         ],
         "type": "object"
       },
@@ -32043,60 +31950,6 @@
         ]
       }
     },
-    "/admin/content-drafts/{id}/sections/{number}/added": {
-      "post": {
-        "operationId": "ContentDraftController_markSectionAdded",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "number",
-            "required": true,
-            "schema": {
-              "type": "number"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContentDraftDto"
-                }
-              }
-            },
-            "description": ""
-          },
-          "400": {
-            "description": "DRAFT_SECTION_UNKNOWN: the draft has no such section"
-          },
-          "404": {
-            "description": "Content draft not found"
-          },
-          "409": {
-            "description": "DRAFT_NOT_READY: not a ready sections draft"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "Mark a section of a ready sections draft as added by «Add section»: the card is not offered again; repeating is a no-op",
-        "tags": [
-          "admin"
-        ]
-      }
-    },
     "/admin/contributors": {
       "get": {
         "operationId": "ContributorsController_findAll",
@@ -41108,9 +40961,6 @@
             "required": true,
             "schema": {
               "enum": [
-                "summary_sections",
-                "summary_full",
-                "summary_brief",
                 "analysis"
               ],
               "type": "string"
@@ -41134,7 +40984,7 @@
             "bearer": []
           }
         ],
-        "summary": "The latest summary or analysis draft of this kind that is not discarded, in any status (building, ready, failed); null - none",
+        "summary": "The latest analysis draft that is not discarded, in any status (building, ready, failed); null - none",
         "tags": [
           "admin"
         ]
@@ -41157,9 +41007,6 @@
             "required": true,
             "schema": {
               "enum": [
-                "summary_sections",
-                "summary_full",
-                "summary_brief",
                 "analysis"
               ],
               "type": "string"
@@ -41194,7 +41041,7 @@
             "description": "Book version not found"
           },
           "409": {
-            "description": "DRAFT_IN_PROGRESS: a draft of this kind is being built; SUMMARY_SECTIONS_MISSING: no saved section with text (summary_full); SUMMARY_FULL_MISSING: no saved full summary with text (summary_brief); DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model (analysis); LLM_NO_PRICE; LLM_STAGE_DISABLED"
+            "description": "DRAFT_IN_PROGRESS: a draft of this kind is being built; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model; LLM_NO_PRICE; LLM_STAGE_DISABLED"
           },
           "503": {
             "description": "LLM_DISABLED: no OpenRouter key"
@@ -41205,7 +41052,7 @@
             "bearer": []
           }
         ],
-        "summary": "Build a summary or analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded",
+        "summary": "Build an analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded",
         "tags": [
           "admin"
         ]
@@ -41230,9 +41077,6 @@
             "required": true,
             "schema": {
               "enum": [
-                "summary_sections",
-                "summary_full",
-                "summary_brief",
                 "analysis"
               ],
               "type": "string"
@@ -41254,7 +41098,7 @@
             "description": "Book version not found"
           },
           "409": {
-            "description": "DRAFT_IN_PROGRESS: a draft of this kind is being built; SUMMARY_SECTIONS_MISSING: no saved section with text (summary_full); SUMMARY_FULL_MISSING: no saved full summary with text (summary_brief); DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model (analysis); LLM_NO_PRICE; LLM_STAGE_DISABLED"
+            "description": "DRAFT_IN_PROGRESS: a draft of this kind is being built; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model; LLM_NO_PRICE; LLM_STAGE_DISABLED"
           }
         },
         "security": [
@@ -41262,7 +41106,7 @@
             "bearer": []
           }
         ],
-        "summary": "Upper cost estimate of a summary or analysis draft from the dossier",
+        "summary": "Upper cost estimate of an analysis draft from the dossier",
         "tags": [
           "admin"
         ]

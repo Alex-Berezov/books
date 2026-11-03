@@ -8,6 +8,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { LLM_BUDGET_ID } from '../src/modules/llm/llm-budget.service';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
+import { ContentDraftService } from '../src/modules/translation/content-draft/content-draft.service';
 import {
   ContextEstimate,
   DossierDemandService,
@@ -18,7 +19,9 @@ import { llmCallName } from './helpers/llm-call-name';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
- * F05-10: заготовка Summary из досье; F05-11 - заготовка Analysis теми же ручками. Построение идёт настоящим исполнителем на базе: его
+ * F05-11: заготовка Analysis из досье. Пошаговые заготовки Summary `F05-10` сняты в `F06-3`
+ * (решения арбитра `F06 | F06-3`, А1, А2): их ручки - 400, строки - 404, строящиеся отбрасывает
+ * дренаж. Построение идёт настоящим исполнителем на базе: его
  * таймер в e2e не заведён (ключа на старте нет, Р25), проходы зовутся руками. Внешний `fetch`
  * подменён всегда: ответ модели выбирается по имени схемы ответа.
  */
@@ -53,7 +56,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
     voice: { notes: 'calm', devices: [] },
     motifs: [],
   };
-  /** План: раздел 1 - глава 1, раздел 2 - главы 2-3 (номер читалки - первая, 2). */
+  /** План разделов досье: часть формы ответа досье, заготовка Analysis его не читает. */
   const PLAN = [
     { number: 1, title: 'Chapter 1. One', chapters: [1], why: 'opening' },
     { number: 2, title: 'Chapters 2-3', chapters: [2, 3], why: 'ending' },
@@ -97,13 +100,15 @@ describe('Summary drafts from the dossier (e2e)', () => {
     address: [],
     phrases: [],
   };
-  const SECTION = {
-    title: 'Chapter 1',
-    text: 'Anna arrives.\n\nShe stays.',
-    additions: 'none',
-    question: 'none',
+  /** Ответ анализа по умолчанию: одна цитата, которая есть в главе 3. */
+  const ANALYSIS = {
+    facts: { settingPlace: '', settingTime: '', narrator: '', structure: '' },
+    characters: [],
+    keyQuotes: [{ text: 'Anna in chapter 3.', chapter: 3, speakerKey: '' }],
+    style: [],
   };
-  const FULL = { text: 'Opening.\n\n## Part One\n\nAnna <b>arrives</b>.', question: 'none' };
+  /** Снятые в `F06-3` виды заготовок Summary (А1, А2). */
+  const RETIRED_KINDS = ['summary_sections', 'summary_full', 'summary_brief'] as const;
 
   let app: INestApplication;
   let prisma: PrismaService;
@@ -128,9 +133,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
       dossier_part: PART,
       dossier: DOSSIER,
       glossary: GLOSSARY,
-      summary_section: SECTION,
-      summary_full: FULL,
-      summary_brief: { text: 'In brief.', question: 'none' },
+      analysis_draft: ANALYSIS,
     })[name];
 
   const json = (body: unknown, status = 200) =>
@@ -208,9 +211,6 @@ describe('Summary drafts from the dossier (e2e)', () => {
     id: string;
     status: string;
     waitingFor: string | null;
-    plannedSections: number | null;
-    sections: Array<Record<string, unknown>> | null;
-    text: string | null;
     operation: { status: string; pauseReason: string | null };
   }
   const latest = async (versionId: string, kind: string): Promise<DraftBody | null> =>
@@ -314,12 +314,9 @@ describe('Summary drafts from the dossier (e2e)', () => {
     await app.close();
   });
 
-  it('access: admin only, analysis too; an unknown kind - 400', async () => {
+  it('access: admin only; an unknown kind - 400', async () => {
     const versionId = await sourceBook();
     for (const [method, path] of [
-      ['get', `/admin/versions/${versionId}/drafts/summary_sections/estimate`],
-      ['get', `/admin/versions/${versionId}/drafts/summary_sections`],
-      ['post', `/admin/versions/${versionId}/drafts/summary_sections`],
       ['get', `/admin/versions/${versionId}/drafts/analysis/estimate`],
       ['get', `/admin/versions/${versionId}/drafts/analysis`],
       ['post', `/admin/versions/${versionId}/drafts/analysis`],
@@ -329,14 +326,73 @@ describe('Summary drafts from the dossier (e2e)', () => {
       await auth(http()[method](path), 'user').expect(403);
     }
     await auth(http().get(`/admin/versions/${versionId}/drafts/symbols`)).expect(400);
-    expect(await latest(versionId, 'summary_sections')).toBeNull();
     expect(await latest(versionId, 'analysis')).toBeNull();
+  });
+
+  it('retired Summary kinds (F06-3, А2): estimate, state and start of summary_sections, summary_full and summary_brief - 400, no draft row and no operation', async () => {
+    const versionId = await sourceBook();
+    const opsBefore = await prisma.llmOperation.count();
+    for (const kind of RETIRED_KINDS) {
+      for (const [method, path] of [
+        ['get', `/admin/versions/${versionId}/drafts/${kind}/estimate`],
+        ['get', `/admin/versions/${versionId}/drafts/${kind}`],
+        ['post', `/admin/versions/${versionId}/drafts/${kind}`],
+      ] as Array<['get' | 'post', string]>) {
+        await auth(http()[method](path)).send({}).expect(400);
+      }
+    }
+    expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(0);
+    expect(await prisma.llmOperation.count()).toBe(opsBefore);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('a row of a retired Summary kind (F06-3, А2): discard by id - 404, the added mark route is gone - 404; the row untouched', async () => {
+    const versionId = await sourceBook();
+    for (const kind of RETIRED_KINDS) {
+      const op = await prisma.llmOperation.create({
+        data: { kind: 'draft', limitUsd: new Prisma.Decimal(1), status: 'done' },
+      });
+      const row = await prisma.contentDraft.create({
+        data: {
+          bookVersionId: versionId,
+          kind,
+          status: 'ready',
+          language: 'en',
+          operationId: op.id,
+          data: { text: '<p>Old.</p>' },
+        },
+      });
+      await auth(http().post(`/admin/content-drafts/${row.id}/discard`)).expect(404);
+      expect(await prisma.contentDraft.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({
+        status: 'ready',
+        data: { text: '<p>Old.</p>' },
+      });
+    }
+    expect(await latest(versionId, 'analysis')).toBeNull();
+    // Снятая ручка отметки - на строке analysis: прежний маршрут ответил бы 409 DRAFT_NOT_READY,
+    // отказ по виду - 404 `Content draft not found`; «нет маршрута» - 404 `Cannot POST`.
+    const op = await prisma.llmOperation.create({
+      data: { kind: 'draft', limitUsd: new Prisma.Decimal(1), status: 'done' },
+    });
+    const analysis = await prisma.contentDraft.create({
+      data: {
+        bookVersionId: versionId,
+        kind: 'analysis',
+        status: 'ready',
+        language: 'en',
+        operationId: op.id,
+      },
+    });
+    const added = await auth(
+      http().post(`/admin/content-drafts/${analysis.id}/sections/1/added`),
+    ).expect(404);
+    expect((added.body as { message: string }).message).toMatch(/^Cannot POST /);
   });
 
   // Строка хода пересказа `F06` - не заготовка (решение арбитра `F06 | F06-1`, В2), но ручки
   // `drafts/summary_write` с `F06-2` - её (`F06 | F06-2`, Р6), отбрасывает её `discard-run` (Р9);
-  // `discard`, отметка «Add section» и ответ заготовки строку хода по-прежнему не видят.
-  it('a summary_write row of F06 is a summary run, not a draft: its routes answer the run, discard-run discards it; discard and the added mark are 404, drafts do not see it', async () => {
+  // `discard` и ответ заготовки строку хода по-прежнему не видят.
+  it('a summary_write row of F06 is a summary run, not a draft: its routes answer the run, discard-run discards it; discard by id is 404, drafts do not see it', async () => {
     const versionId = await sourceBook();
     const op = await prisma.llmOperation.create({
       data: { kind: 'draft', limitUsd: new Prisma.Decimal(1), status: 'done' },
@@ -361,8 +417,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
     ).expect(409);
     expect(estimate.body.code).toBe('LLM_NO_PRICE');
     expect((await start(versionId, 'summary_write').expect(409)).body.code).toBe('LLM_NO_PRICE');
-    await auth(http().post(`/admin/content-drafts/${row.id}/sections/1/added`)).expect(404);
-    expect(await latest(versionId, 'summary_full')).toBeNull();
+    expect(await latest(versionId, 'analysis')).toBeNull();
     // `discard` заготовок строку хода не видит (В2); ход отбрасывает `discard-run` (Р9).
     await auth(http().post(`/admin/content-drafts/${row.id}/discard`)).expect(404);
     expect((await prisma.contentDraft.findUniqueOrThrow({ where: { id: row.id } })).status).toBe(
@@ -426,9 +481,9 @@ describe('Summary drafts from the dossier (e2e)', () => {
     const estimate = await auth(
       http().get(`/admin/versions/${versionId}/drafts/analysis/estimate`),
     ).expect(200);
-    expect(estimate.body).toEqual(
-      expect.objectContaining({ kind: 'analysis', sections: null, upperBound: true }),
-    );
+    expect(estimate.body).toEqual(expect.objectContaining({ kind: 'analysis', upperBound: true }));
+    // Поле оценки `sections` снято вместе с пошаговыми видами (`F06-3`).
+    expect(estimate.body).not.toHaveProperty('sections');
     expect(estimate.body.dossier).toMatchObject({ refusedTooLong: false });
     await start(versionId, 'analysis').expect(202);
     await drain();
@@ -560,19 +615,23 @@ describe('Summary drafts from the dossier (e2e)', () => {
     expect(await prisma.bookAnalysis.count({ where: { bookVersionId: versionId } })).toBe(0);
   });
 
-  it('analysis: source edited after the dossier - 409 DOSSIER_STALE (F05-11)', async () => {
+  it('analysis: source edited after the dossier - 409 DOSSIER_STALE on estimate and start, no draft (F05-11)', async () => {
     const versionId = await sourceBook();
     await buildDossier(versionId);
     await prisma.chapter.updateMany({
       where: { bookVersionId: versionId, number: 2 },
       data: { content: '<p>Edited.</p>' },
     });
+    const est = await auth(
+      http().get(`/admin/versions/${versionId}/drafts/analysis/estimate`),
+    ).expect(409);
+    expect(est.body.code).toBe('DOSSIER_STALE');
     const res = await start(versionId, 'analysis').expect(409);
     expect(res.body.code).toBe('DOSSIER_STALE');
     expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(0);
   });
 
-  it('sections estimate: the dossier line carries the start refusal of the dossier estimate (T151)', async () => {
+  it('analysis estimate: the dossier line carries the start refusal of the dossier estimate (T151)', async () => {
     const versionId = await sourceBook();
     const dossiers = app.get<DossierDemandService>(DossierDemandService);
     const real: DossierDemandService['contextEstimate'] = (...args) =>
@@ -594,16 +653,16 @@ describe('Summary drafts from the dossier (e2e)', () => {
       );
 
     const res = await auth(
-      http().get(`/admin/versions/${versionId}/drafts/summary_sections/estimate`),
+      http().get(`/admin/versions/${versionId}/drafts/analysis/estimate`),
     ).expect(200);
     expect(res.body.dossier).toMatchObject({ refusedTooLong: true, upperBound: false });
   });
 
-  it('start refused 409 DOSSIER_TOO_LONG when the dossier estimate is refused; nothing is created and the ready draft of the kind stays (T153)', async () => {
+  it('analysis start refused 409 DOSSIER_TOO_LONG when the dossier estimate is refused; nothing is created and the ready draft of the kind stays (T153)', async () => {
     const versionId = await sourceBook();
-    await start(versionId, 'summary_sections').expect(202);
+    await start(versionId, 'analysis').expect(202);
     await drain();
-    expect((await draftOf(versionId, 'summary_sections')).status).toBe('ready');
+    expect((await draftOf(versionId, 'analysis')).status).toBe('ready');
     const drafts = await prisma.contentDraft.count({ where: { bookVersionId: versionId } });
     const operations = await prisma.llmOperation.count({ where: { bookVersionId: versionId } });
     const dossiers = app.get<DossierDemandService>(DossierDemandService);
@@ -630,7 +689,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
         };
       });
 
-    const res = await start(versionId, 'summary_sections').expect(409);
+    const res = await start(versionId, 'analysis').expect(409);
     expect(res.body).toMatchObject({ code: 'DOSSIER_TOO_LONG' });
     expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(drafts);
     expect(
@@ -639,184 +698,56 @@ describe('Summary drafts from the dossier (e2e)', () => {
     expect(await prisma.llmOperation.count({ where: { bookVersionId: versionId } })).toBe(
       operations,
     );
-    expect((await draftOf(versionId, 'summary_sections')).status).toBe('ready');
+    expect((await draftOf(versionId, 'analysis')).status).toBe('ready');
 
     // Оценка без отказа - старт проходит: проверка не задевает остальные книги.
     refused.mockRestore();
-    await start(versionId, 'summary_sections').expect(202);
+    await start(versionId, 'analysis').expect(202);
     await drain();
   });
 
-  it('sections on the source: the dossier is built first, no glossary in the dossier language, saved summary untouched', async () => {
+  it('analysis on the source without a dossier: the dossier is built first and the draft waits for it; no glossary in the dossier language', async () => {
     const versionId = await sourceBook();
     const estimate = await auth(
-      http().get(`/admin/versions/${versionId}/drafts/summary_sections/estimate`),
+      http().get(`/admin/versions/${versionId}/drafts/analysis/estimate`),
     ).expect(200);
     expect(estimate.body.dossier).not.toBeNull();
     // Версия на языке досье: глоссария нет ни в оценке, ни в стройке (В6).
     expect(estimate.body.glossary).toBeNull();
-    expect(estimate.body.upperBound).toBe(true);
 
-    const started = await start(versionId, 'summary_sections').expect(202);
+    const started = await start(versionId, 'analysis').expect(202);
     expect(started.body.status).toBe('building');
     // Строится досье: заготовка ждёт его (Р5).
     await worker.runOnce();
-    expect((await draftOf(versionId, 'summary_sections')).waitingFor).toBe('dossier');
+    expect((await draftOf(versionId, 'analysis')).waitingFor).toBe('dossier');
     await drain();
 
-    const draft = await draftOf(versionId, 'summary_sections');
-    expect(draft.status).toBe('ready');
-    expect(draft.plannedSections).toBe(2);
-    expect(draft.sections).toEqual([
-      expect.objectContaining({
-        number: 1,
-        readerChapter: 1,
-        readerChapterMissing: false,
-        text: '<p>Anna arrives.</p><p>She stays.</p>',
-        question: null,
-      }),
-      expect.objectContaining({ number: 2, readerChapter: 2, readerChapterMissing: false }),
-    ]);
-    // Раздел 2 - текст обеих глав плана, по метке главы читалки.
-    const second = callsOf('summary_section')[1].body.messages[1].content;
-    expect(second).toContain('[READER CHAPTER 2]');
-    expect(second).toContain('[READER CHAPTER 3]');
-    expect(second).not.toContain('[READER CHAPTER 1]');
+    const draft = await draftOf(versionId, 'analysis');
+    expect(draft).toMatchObject({ status: 'ready', waitingFor: null });
+    expect(callsOf('analysis_draft')).toHaveLength(1);
     expect(callsOf('glossary')).toHaveLength(0);
     expect(
       await prisma.bookGlossary.count({ where: { dossier: { sourceVersionId: versionId } } }),
     ).toBe(0);
-    // Поля заготовки Analysis у видов Summary - null, а не пустые списки (F05-11).
-    const raw = await auth(
-      http().get(`/admin/versions/${versionId}/drafts/summary_sections`),
-    ).expect(200);
-    expect(raw.body.draft).toEqual(
-      expect.objectContaining({
-        analysis: null,
-        droppedQuotes: null,
-        motifs: null,
-        analysisUpdatedAt: null,
-      }),
-    );
-    // Заготовка не пишет в пересказ версии.
-    expect(await prisma.bookSummarySection.count({ where: { bookVersionId: versionId } })).toBe(0);
-    expect(await prisma.bookSummary.count({ where: { bookVersionId: versionId } })).toBe(0);
   });
 
-  it('source edited after the dossier: 409 DOSSIER_STALE on estimate and start', async () => {
-    const versionId = await sourceBook();
-    await buildDossier(versionId);
-    await prisma.chapter.updateMany({
-      where: { bookVersionId: versionId, number: 1 },
-      data: { content: '<p>Anna in chapter 1, edited.</p>' },
-    });
-    const est = await auth(
-      http().get(`/admin/versions/${versionId}/drafts/summary_sections/estimate`),
-    ).expect(409);
-    expect(est.body.code).toBe('DOSSIER_STALE');
-    const res = await start(versionId, 'summary_sections').expect(409);
-    expect(res.body.code).toBe('DOSSIER_STALE');
-    expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(0);
-  });
-
-  it('translated version: the dossier and glossary of its run, no freshness check, names by the run glossary (Р18)', async () => {
+  it('analysis on a manual version in another language without a glossary: the glossary is built first, the draft waits for it, names by that glossary', async () => {
     const { ids } = await book([
       { language: 'en', originalLanguage: 'English', chapters: THREE_CHAPTERS },
       { language: 'fr', originalLanguage: 'English', chapters: THREE_CHAPTERS },
     ]);
-    const source = ids.en as string;
-    const translated = ids.fr as string;
-    const dossier = await buildDossier(source);
-    const glossary = await prisma.bookGlossary.create({
-      data: { dossierId: dossier.id, language: 'fr', status: 'ready', data: GLOSSARY },
-    });
-    const op = await prisma.llmOperation.create({
-      data: { kind: 'translation_run', limitUsd: new Prisma.Decimal(1), status: 'done' },
-    });
-    await prisma.translationRun.create({
-      data: {
-        operationId: op.id,
-        bookVersionId: source,
-        sourceLanguage: 'en',
-        dossierId: dossier.id,
-        languages: {
-          create: [
-            { language: 'fr', glossaryId: glossary.id, status: 'done', bookVersionId: translated },
-          ],
-        },
-      },
-    });
-    // Исходник правлен после досье запуска: переведённой версии это не мешает.
-    await prisma.chapter.updateMany({
-      where: { bookVersionId: source, number: 1 },
-      data: { content: '<p>Edited source.</p>' },
-    });
-    // У исходника уже новое поколение досье, без глоссария `fr`: переведённая версия его не берёт.
-    const fresh = await buildDossier(source);
-    expect(fresh.id).not.toBe(dossier.id);
-    const dossiersBefore = await prisma.bookDossier.count({ where: { sourceVersionId: source } });
-
-    const estimate = await auth(
-      http().get(`/admin/versions/${translated}/drafts/summary_sections/estimate`),
-    ).expect(200);
-    expect(estimate.body).toMatchObject({
-      dossier: null,
-      glossary: null,
-      sections: 2,
-      upperBound: false,
-    });
-    const started = await start(translated, 'summary_sections').expect(202);
-    expect(started.body.language).toBe('fr');
-    await drain();
-
-    const row = await prisma.contentDraft.findFirstOrThrow({
-      where: { bookVersionId: translated },
-    });
-    expect(row).toMatchObject({ status: 'ready', dossierId: dossier.id, glossaryId: glossary.id });
-    const prompt = callsOf('summary_section')[0].body.messages[1].content;
-    expect(prompt).toContain('Annette');
-    expect(callsOf('summary_section')[0].body.messages[0].content).toContain('French');
-    expect(await prisma.bookDossier.count({ where: { sourceVersionId: source } })).toBe(
-      dossiersBefore,
-    );
-    expect(await prisma.bookGlossary.count({ where: { dossierId: dossier.id } })).toBe(1);
-    expect(await prisma.bookGlossary.count({ where: { dossierId: fresh.id } })).toBe(0);
-  });
-
-  it('manual version in another language without a glossary: the glossary is built first; a plan chapter missing in the version - null with a mark', async () => {
-    const { ids } = await book([
-      { language: 'en', originalLanguage: 'English', chapters: THREE_CHAPTERS },
-      // Ручная версия без главы 2: номер читалки раздела 2 не подтягивается к главе 3 (В5).
-      {
-        language: 'fr',
-        originalLanguage: 'English',
-        chapters: THREE_CHAPTERS.filter((c) => c.number !== 2),
-      },
-    ]);
     const manual = ids.fr as string;
     await buildDossier(ids.en as string);
-    const estimate = await auth(
-      http().get(`/admin/versions/${manual}/drafts/summary_sections/estimate`),
-    ).expect(200);
-    expect(estimate.body.dossier).toBeNull();
-    expect(estimate.body.glossary).not.toBeNull();
-
-    await start(manual, 'summary_sections').expect(202);
+    await start(manual, 'analysis').expect(202);
     await worker.runOnce();
-    expect((await draftOf(manual, 'summary_sections')).waitingFor).toBe('glossary');
+    expect((await draftOf(manual, 'analysis')).waitingFor).toBe('glossary');
     await drain();
     expect(callsOf('glossary')).toHaveLength(1);
-    const draft = await draftOf(manual, 'summary_sections');
-    expect(draft.status).toBe('ready');
-    expect(draft.sections?.[1]).toMatchObject({
-      number: 2,
-      readerChapter: null,
-      readerChapterMissing: true,
-    });
-    expect(callsOf('summary_section')[0].body.messages[1].content).toContain('Annette');
+    expect((await draftOf(manual, 'analysis')).status).toBe('ready');
+    expect(callsOf('analysis_draft')[0].body.messages[1].content).toContain('Annette');
   });
 
-  it('ceiling: reached at entry - 409 without a draft or operation; reached on the way - paused, the draft stays building', async () => {
+  it('analysis ceiling: reached at entry - 409 without a draft or operation; reached on the way - paused, the draft stays building', async () => {
     const versionId = await sourceBook();
     await buildDossier(versionId);
     const opsBefore = await prisma.llmOperation.count({
@@ -826,7 +757,7 @@ describe('Summary drafts from the dossier (e2e)', () => {
       where: { id: LLM_BUDGET_ID },
       data: { ceilingUsd: 1, spentUsd: 1 },
     });
-    const refused = await start(versionId, 'summary_sections').expect(409);
+    const refused = await start(versionId, 'analysis').expect(409);
     expect(refused.body.code).toBe('LLM_CEILING_REACHED');
     expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(0);
     expect(
@@ -834,236 +765,130 @@ describe('Summary drafts from the dossier (e2e)', () => {
     ).toBe(opsBefore);
 
     await resetBudget();
-    await start(versionId, 'summary_sections').expect(202);
+    await start(versionId, 'analysis').expect(202);
     // Потолок кончился после старта: первый же вызов не резервируется.
     await prisma.llmBudget.update({ where: { id: LLM_BUDGET_ID }, data: { ceilingUsd: 0.00001 } });
     await drain();
-    const draft = await draftOf(versionId, 'summary_sections');
+    const draft = await draftOf(versionId, 'analysis');
     expect(draft.status).toBe('building');
     expect(draft.operation).toMatchObject({ status: 'paused', pauseReason: 'CEILING_REACHED' });
-    expect(callsOf('summary_section')).toHaveLength(0);
+    expect(callsOf('analysis_draft')).toHaveLength(0);
   });
 
-  it('full and brief: 409 without saved input, built only from what the editor saved', async () => {
-    const versionId = await sourceBook();
-    expect((await start(versionId, 'summary_full').expect(409)).body.code).toBe(
-      'SUMMARY_SECTIONS_MISSING',
-    );
-    // Пустой редактор (`<p></p>`) сохранённым разделом не считается (В4).
-    await prisma.bookSummarySection.create({
-      data: { bookVersionId: versionId, number: 1, title: 'Empty', text: '<p></p>' },
-    });
-    expect((await start(versionId, 'summary_full').expect(409)).body.code).toBe(
-      'SUMMARY_SECTIONS_MISSING',
-    );
-    await prisma.bookSummarySection.create({
-      data: {
-        bookVersionId: versionId,
-        number: 2,
-        title: 'Saved',
-        text: '<p>Edited by the editor.</p>',
-      },
-    });
-    await start(versionId, 'summary_full').expect(202);
-    await drain();
-    const full = await draftOf(versionId, 'summary_full');
-    expect(full.status).toBe('ready');
-    // Разметка модели не переносится: `<b>` - текстом, подзаголовок `## ` - `h2`.
-    expect(full.text).toBe(
-      '<p>Opening.</p><h2>Part One</h2><p>Anna &lt;b&gt;arrives&lt;/b&gt;.</p>',
-    );
-    expect(callsOf('summary_full')[0].body.messages[1].content).toContain('Edited by the editor.');
-    expect(callsOf('summary_full')[0].body.messages[1].content).not.toContain('Empty');
-    // Полный не сохранён - очень краткому не из чего.
-    expect((await start(versionId, 'summary_brief').expect(409)).body.code).toBe(
-      'SUMMARY_FULL_MISSING',
-    );
-    expect(await prisma.bookSummary.count({ where: { bookVersionId: versionId } })).toBe(0);
-    await prisma.bookSummary.create({
-      data: { bookVersionId: versionId, summary: '<p>Saved full.</p>' },
-    });
-    await start(versionId, 'summary_brief').expect(202);
-    await drain();
-    expect((await draftOf(versionId, 'summary_brief')).text).toBe('<p>In brief.</p>');
-    expect(callsOf('summary_brief')[0].body.messages[1].content).toContain('Saved full.');
-    expect(
-      (await prisma.bookSummary.findUniqueOrThrow({ where: { bookVersionId: versionId } })).brief,
-    ).toBeNull();
-  });
-
-  it('repeat: a second start while building - 409 DRAFT_IN_PROGRESS; a start after ready discards the previous', async () => {
+  it('analysis repeat: a second start while building - 409 DRAFT_IN_PROGRESS; a start after ready discards the previous', async () => {
     const versionId = await sourceBook();
     await buildDossier(versionId);
-    const first = await start(versionId, 'summary_sections').expect(202);
-    expect((await start(versionId, 'summary_sections').expect(409)).body.code).toBe(
-      'DRAFT_IN_PROGRESS',
-    );
+    const first = await start(versionId, 'analysis').expect(202);
+    expect((await start(versionId, 'analysis').expect(409)).body.code).toBe('DRAFT_IN_PROGRESS');
     await drain();
-    const second = await start(versionId, 'summary_sections').expect(202);
+    const second = await start(versionId, 'analysis').expect(202);
     const rows = await prisma.contentDraft.findMany({ where: { bookVersionId: versionId } });
     expect(rows.find((r) => r.id === first.body.id)?.status).toBe('discarded');
     expect(rows.find((r) => r.id === second.body.id)?.status).toBe('building');
   });
 
-  it('discard while building cancels the operation; an answer after the discard does not bring the draft back', async () => {
+  it('analysis discard while building cancels the operation; an answer after the discard does not bring the draft back', async () => {
     const versionId = await sourceBook();
     await buildDossier(versionId);
-    const started = await start(versionId, 'summary_sections').expect(202);
+    const started = await start(versionId, 'analysis').expect(202);
     const id = started.body.id as string;
     // Ответ модели приходит уже после «discard»: запись итога идёт условием `building`.
     answer = async (name) => {
-      if (name === 'summary_section') {
+      if (name === 'analysis_draft') {
         await prisma.contentDraft.update({ where: { id }, data: { status: 'discarded' } });
       }
       return defaultAnswer(name);
     };
     await drain();
+    expect(callsOf('analysis_draft')).toHaveLength(1);
     const late = await prisma.contentDraft.findUniqueOrThrow({ where: { id } });
     expect(late.status).toBe('discarded');
     expect(late.data).toBeNull();
 
     answer = (name) => defaultAnswer(name);
-    const other = await start(versionId, 'summary_sections').expect(202);
+    const other = await start(versionId, 'analysis').expect(202);
     const discarded = await auth(
       http().post(`/admin/content-drafts/${other.body.id as string}/discard`),
     ).expect(200);
     expect(discarded.body.status).toBe('discarded');
     expect(discarded.body.operation.status).toBe('cancelled');
-    expect(await latest(versionId, 'summary_sections')).toBeNull();
-  });
-  it('limit below the dossier built first - 400 DRAFT_LIMIT_TOO_LOW without a draft', async () => {
-    const versionId = await sourceBook();
-    const res = await start(versionId, 'summary_sections', { limitUsd: '0.00000001' }).expect(400);
-    expect(res.body.code).toBe('DRAFT_LIMIT_TOO_LOW');
-    expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(0);
+    expect(await latest(versionId, 'analysis')).toBeNull();
   });
 
-  it('final refusals: no plan, empty answer, saved input gone - failed with the reason, the operation failed, a new start is open', async () => {
+  it('analysis final refusals: an answer off the form twice, the dossier gone before the step - failed with the reason, the operation failed, a new start is open', async () => {
     const versionId = await sourceBook();
-    const dossier = await buildDossier(versionId);
-    const failedOf = async (kind: string) => {
+    await buildDossier(versionId);
+    const failedOf = async () => {
       const row = await prisma.contentDraft.findFirstOrThrow({
-        where: { bookVersionId: versionId, kind: kind as 'summary_sections' },
+        where: { bookVersionId: versionId, kind: 'analysis' },
         include: { operation: true },
         orderBy: { createdAt: 'desc' },
       });
       return { status: row.status, failedReason: row.failedReason, op: row.operation.status };
     };
 
-    // В досье нет плана разделов.
-    await prisma.bookDossier.update({
-      where: { id: dossier.id },
-      data: { data: { ...DOSSIER, summaryPlan: [] } },
-    });
-    await start(versionId, 'summary_sections').expect(202);
+    // Ответ не по форме дважды (с замечанием) - окончательный отказ.
+    answer = (name) => (name === 'analysis_draft' ? { wrong: true } : defaultAnswer(name));
+    await start(versionId, 'analysis').expect(202);
     await drain();
-    expect(await failedOf('summary_sections')).toEqual({
-      status: 'failed',
-      failedReason: 'DRAFT_NO_PLAN',
-      op: 'failed',
-    });
-    expect(callsOf('summary_section')).toHaveLength(0);
-
-    // Ответ по форме, но без текста: не раздел (пустая карточка «без текста» ушла бы в форму).
-    await prisma.bookDossier.update({ where: { id: dossier.id }, data: { data: DOSSIER } });
-    answer = (name) =>
-      name === 'summary_section'
-        ? { title: 'T', text: ' \n\n ', additions: 'none', question: 'none' }
-        : defaultAnswer(name);
-    await start(versionId, 'summary_sections').expect(202);
-    await drain();
-    expect(await failedOf('summary_sections')).toEqual({
+    expect(callsOf('analysis_draft')).toHaveLength(2);
+    expect(await failedOf()).toEqual({
       status: 'failed',
       failedReason: 'DRAFT_INVALID_RESPONSE',
       op: 'failed',
     });
 
-    // Ответ не по форме дважды (с замечанием) - тот же отказ.
-    answer = (name) => (name === 'summary_full' ? { question: 'none' } : defaultAnswer(name));
-    await prisma.bookSummarySection.create({
-      data: { bookVersionId: versionId, number: 1, title: 'Saved', text: '<p>Saved text.</p>' },
-    });
-    await start(versionId, 'summary_full').expect(202);
-    await drain();
-    expect(callsOf('summary_full')).toHaveLength(2);
-    expect(await failedOf('summary_full')).toMatchObject({
-      failedReason: 'DRAFT_INVALID_RESPONSE',
-    });
-
-    // Сохранённые разделы удалили между стартом и шагом.
+    // Досье заготовки пропало между стартом и шагом.
     answer = (name) => defaultAnswer(name);
-    await start(versionId, 'summary_full').expect(202);
-    await prisma.bookSummarySection.deleteMany({ where: { bookVersionId: versionId } });
+    calls.length = 0;
+    const started = await start(versionId, 'analysis').expect(202);
+    await prisma.contentDraft.update({
+      where: { id: started.body.id as string },
+      data: { dossierId: randomUUID() },
+    });
     await drain();
-    expect(await failedOf('summary_full')).toMatchObject({
+    expect(await failedOf()).toEqual({
       status: 'failed',
       failedReason: 'DRAFT_INPUT_MISSING',
+      op: 'failed',
     });
+    expect(callsOf('analysis_draft')).toHaveLength(0);
     // Упавшая заготовка нового старта не держит: индекс - только на `building`.
-    expect(await latest(versionId, 'summary_sections')).toMatchObject({ status: 'failed' });
-    await start(versionId, 'summary_sections').expect(202);
+    expect(await latest(versionId, 'analysis')).toMatchObject({ status: 'failed' });
+    await start(versionId, 'analysis').expect(202);
   });
 
-  it('chapters of a section without visible text - the model is not called, the card is empty', async () => {
-    const { ids } = await book([
-      {
-        language: 'en',
-        originalLanguage: 'English',
-        chapters: [
-          THREE_CHAPTERS[0],
-          { number: 2, title: 'C2', content: '<p></p><p>&nbsp;</p>' },
-          {
-            number: 3,
-            title: 'C3',
-            content: '<figure><img src="https://example.com/a.jpg"></figure>',
-          },
-        ],
-      },
-    ]);
-    const versionId = ids.en as string;
-    await buildDossier(versionId);
-    await start(versionId, 'summary_sections').expect(202);
-    await drain();
-    const draft = await draftOf(versionId, 'summary_sections');
-    expect(draft.status).toBe('ready');
-    expect(callsOf('summary_section')).toHaveLength(1);
-    expect(draft.sections?.[1]).toMatchObject({ number: 2, text: '' });
-  });
-
-  it('a step restarted after a crash does not pay for a saved section again', async () => {
+  it('analysis step restarted after a crash: the answer written before the crash is not paid for again', async () => {
     const versionId = await sourceBook();
-    await buildDossier(versionId);
-    const started = await start(versionId, 'summary_sections').expect(202);
-    // Раздел 1 сохранён до обрыва шага (запись идёт до итога шага).
+    const started = await start(versionId, 'analysis').expect(202);
+    // Ответ записан до обрыва шага (запись идёт до итога шага).
     const saved = {
-      number: 1,
-      title: 'Saved before the crash',
-      text: '<p>Saved.</p>',
-      readerChapter: 1,
-      readerChapterMissing: false,
-      additions: null,
-      question: null,
+      analysis: { language: 'en', keyQuotes: [{ text: 'Anna in chapter 1.', chapter: 1 }] },
+      droppedQuotes: [],
+      motifs: [],
+      dossierLanguage: 'en',
+      analysisUpdatedAt: null,
     };
     await prisma.contentDraft.update({
       where: { id: started.body.id as string },
-      data: { data: { plannedSections: 2, sections: [saved] } },
+      data: { data: saved },
     });
     await drain();
-    expect(callsOf('summary_section')).toHaveLength(1);
-    expect(callsOf('summary_section')[0].body.messages[1].content).toContain('Section 2');
-    const draft = await draftOf(versionId, 'summary_sections');
-    expect(draft.status).toBe('ready');
-    expect(draft.sections?.[0]).toEqual(saved);
+    expect(callsOf('analysis_draft')).toHaveLength(0);
+    const res = await auth(http().get(`/admin/versions/${versionId}/drafts/analysis`)).expect(200);
+    const draft = (res.body as { draft: DraftBody & Record<string, unknown> }).draft;
+    expect(draft).toMatchObject({ id: started.body.id as string, status: 'ready' });
+    expect(draft.analysis).toEqual(saved.analysis);
   });
 
-  it('cancel from the operations page - failed DRAFT_CANCELLED; resume after a pause finishes the draft', async () => {
+  it('analysis cancel from the operations page - failed DRAFT_CANCELLED; resume after a pause finishes the draft', async () => {
     const versionId = await sourceBook();
     await buildDossier(versionId);
-    const first = await start(versionId, 'summary_sections').expect(202);
+    const first = await start(versionId, 'analysis').expect(202);
     await auth(
       http().post(`/admin/llm/operations/${first.body.operation.id as string}/cancel`),
     ).expect(200);
-    expect(await draftOf(versionId, 'summary_sections')).toMatchObject({
+    expect(await draftOf(versionId, 'analysis')).toMatchObject({
       status: 'failed',
       operation: { status: 'cancelled' },
     });
@@ -1073,116 +898,116 @@ describe('Summary drafts from the dossier (e2e)', () => {
     expect(row.failedReason).toBe('DRAFT_CANCELLED');
 
     // Пауза по потолку по ходу, потолок подняли - «продолжить» доводит заготовку.
-    const second = await start(versionId, 'summary_sections').expect(202);
+    const second = await start(versionId, 'analysis').expect(202);
     await prisma.llmBudget.update({ where: { id: LLM_BUDGET_ID }, data: { ceilingUsd: 0.00001 } });
     await drain();
-    expect((await draftOf(versionId, 'summary_sections')).operation.status).toBe('paused');
+    expect((await draftOf(versionId, 'analysis')).operation.status).toBe('paused');
     await resetBudget();
     await auth(http().post(`/admin/llm/operations/${second.body.operation.id as string}/resume`))
       .send({})
       .expect(200);
     await drain();
-    expect(await draftOf(versionId, 'summary_sections')).toMatchObject({
+    expect(await draftOf(versionId, 'analysis')).toMatchObject({
       id: second.body.id as string,
       status: 'ready',
     });
-    expect(callsOf('summary_section')).toHaveLength(2);
-  });
-  it('added marks: once per section, repeat is a no-op, unknown section 400, not ready 409', async () => {
-    const versionId = await sourceBook();
-    await buildDossier(versionId);
-    const started = await start(versionId, 'summary_sections').expect(202);
-    const id = started.body.id as string;
-    // Строится - отметок нет.
-    expect(
-      (await auth(http().post(`/admin/content-drafts/${id}/sections/1/added`)).expect(409)).body
-        .code,
-    ).toBe('DRAFT_NOT_READY');
-    await drain();
-    await auth(http().post(`/admin/content-drafts/${id}/sections/2/added`)).expect(200);
-    await auth(http().post(`/admin/content-drafts/${id}/sections/2/added`)).expect(200);
-    const marked = await auth(http().post(`/admin/content-drafts/${id}/sections/1/added`)).expect(
-      200,
-    );
-    expect(marked.body.addedSections).toEqual([2, 1]);
-    expect(
-      (await auth(http().post(`/admin/content-drafts/${id}/sections/9/added`)).expect(400)).body
-        .code,
-    ).toBe('DRAFT_SECTION_UNKNOWN');
-    // Отметки живут в заготовке: после «перезагрузки» GET отдаёт их же.
-    expect(
-      ((await draftOf(versionId, 'summary_sections')) as unknown as { addedSections: number[] })
-        .addedSections,
-    ).toEqual([2, 1]);
-    await auth(http().post(`/admin/content-drafts/${id}/sections/1/added`), 'cm').expect(403);
-    await auth(http().post(`/admin/content-drafts/${id}/sections/1/added`), 'user').expect(403);
+    expect(callsOf('analysis_draft')).toHaveLength(1);
   });
 
-  it('translated version: its run still writing - 409 RUN_LANGUAGE_UNFINISHED; a failed run - the run dossier (Р18); the run dossier gone - DRAFT_DOSSIER_MISSING', async () => {
-    const { ids } = await book([
-      { language: 'en', originalLanguage: 'English', chapters: THREE_CHAPTERS },
-      { language: 'fr', originalLanguage: 'English', chapters: THREE_CHAPTERS },
-    ]);
-    const source = ids.en as string;
-    const translated = ids.fr as string;
-    const dossier = await buildDossier(source);
-    const glossary = await prisma.bookGlossary.create({
-      data: { dossierId: dossier.id, language: 'fr', status: 'ready', data: GLOSSARY },
-    });
+  /** Строящаяся строка вида с операцией `draft` и `pending`-задачей `content_draft`, как от старта. */
+  const buildingRow = async (
+    versionId: string,
+    kind: 'analysis' | (typeof RETIRED_KINDS)[number],
+    opStatus: 'active' | 'paused',
+  ) => {
     const op = await prisma.llmOperation.create({
-      data: { kind: 'translation_run', limitUsd: new Prisma.Decimal(1), status: 'active' },
-    });
-    const run = await prisma.translationRun.create({
       data: {
-        operationId: op.id,
-        bookVersionId: source,
-        sourceLanguage: 'en',
-        dossierId: dossier.id,
-        languages: {
-          create: [
-            {
-              language: 'fr',
-              glossaryId: glossary.id,
-              status: 'running',
-              bookVersionId: translated,
-            },
-          ],
-        },
+        kind: 'draft',
+        bookVersionId: versionId,
+        limitUsd: new Prisma.Decimal(1),
+        status: opStatus,
+        pauseReason: opStatus === 'paused' ? 'CEILING_REACHED' : null,
       },
     });
-    const estimate = await auth(
-      http().get(`/admin/versions/${translated}/drafts/summary_sections/estimate`),
-    ).expect(409);
-    expect(estimate.body.code).toBe('RUN_LANGUAGE_UNFINISHED');
-    expect((await start(translated, 'summary_sections').expect(409)).body.code).toBe(
-      'RUN_LANGUAGE_UNFINISHED',
-    );
-    await prisma.translationRunLanguage.updateMany({
-      where: { runId: run.id },
-      data: { status: 'failed' },
+    const row = await prisma.contentDraft.create({
+      data: {
+        bookVersionId: versionId,
+        kind,
+        status: 'building',
+        language: 'en',
+        operationId: op.id,
+      },
     });
-    await start(translated, 'summary_sections').expect(202);
-    const row = await prisma.contentDraft.findFirstOrThrow({
-      where: { bookVersionId: translated },
+    const task = await prisma.llmTask.create({
+      data: {
+        kind: 'content_draft',
+        operationId: op.id,
+        bookVersionId: versionId,
+        language: 'en',
+        payload: { draftId: row.id },
+        pairKey: `${op.id}:${row.id}`,
+      },
     });
-    expect(row).toMatchObject({ dossierId: dossier.id, glossaryId: glossary.id });
-    await prisma.contentDraft.updateMany({
-      where: { bookVersionId: translated },
-      data: { status: 'discarded' },
+    return { rowId: row.id, opId: op.id, taskId: task.id };
+  };
+  const stateOf = async (ids: { rowId: string; opId: string; taskId: string }) => ({
+    row: (await prisma.contentDraft.findUniqueOrThrow({ where: { id: ids.rowId } })).status,
+    op: (await prisma.llmOperation.findUniqueOrThrow({ where: { id: ids.opId } })).status,
+    task: (await prisma.llmTask.findUniqueOrThrow({ where: { id: ids.taskId } })).status,
+  });
+
+  it('drain at start (F06-3, А1): building rows of retired kinds - discarded, their active and paused operations and pending tasks cancelled; analysis of the same version untouched; a repeat changes nothing', async () => {
+    const versionId = await sourceBook();
+    const sections = await buildingRow(versionId, 'summary_sections', 'active');
+    const full = await buildingRow(versionId, 'summary_full', 'paused');
+    const analysis = await buildingRow(versionId, 'analysis', 'active');
+    const drafts = app.get(ContentDraftService);
+
+    expect(await drafts.drainRetiredSummaryDrafts()).toBe(2);
+    for (const retired of [sections, full]) {
+      expect(await stateOf(retired)).toEqual({
+        row: 'discarded',
+        op: 'cancelled',
+        task: 'cancelled',
+      });
+    }
+    expect(await stateOf(analysis)).toEqual({ row: 'building', op: 'active', task: 'pending' });
+
+    // Повтор: строк снятых видов в `building` нет - ничего не меняется.
+    const snapshot = await prisma.contentDraft.findMany({
+      where: { bookVersionId: versionId },
+      include: { operation: { include: { tasks: true } } },
+      orderBy: { createdAt: 'asc' },
     });
-    await prisma.translationRun.update({ where: { id: run.id }, data: { dossierId: null } });
-    const gone = await auth(
-      http().get(`/admin/versions/${translated}/drafts/summary_sections/estimate`),
-    ).expect(409);
-    expect(gone.body.code).toBe('DRAFT_DOSSIER_MISSING');
+    expect(await drafts.drainRetiredSummaryDrafts()).toBe(0);
+    expect(
+      await prisma.contentDraft.findMany({
+        where: { bookVersionId: versionId },
+        include: { operation: { include: { tasks: true } } },
+        orderBy: { createdAt: 'asc' },
+      }),
+    ).toEqual(snapshot);
+    expect(calls).toHaveLength(0);
+
+    // Строящийся анализ без настоящего старта не остаётся висеть на следующие наборы.
+    await auth(http().post(`/admin/content-drafts/${analysis.rowId}/discard`)).expect(200);
+  });
+
+  it('a task of a retired-kind row taken by the worker (F06-3, А1): the row discarded, its operation cancelled, the model not called, the row not failed', async () => {
+    const versionId = await sourceBook();
+    const retired = await buildingRow(versionId, 'summary_brief', 'active');
+    await drain();
+    expect(calls).toHaveLength(0);
+    // Задачу взял обработчик (шаг завершён `done`), а не отменил дренаж.
+    expect(await stateOf(retired)).toEqual({ row: 'discarded', op: 'cancelled', task: 'done' });
+    const row = await prisma.contentDraft.findUniqueOrThrow({ where: { id: retired.rowId } });
+    expect(row.failedReason).toBeNull();
   });
 
   it('no token - 401; an unknown version - 404', async () => {
-    await http().get(`/admin/versions/${randomUUID()}/drafts/summary_full`).expect(401);
-    await auth(http().get(`/admin/versions/${randomUUID()}/drafts/summary_full/estimate`)).expect(
-      404,
-    );
-    await auth(http().post(`/admin/versions/${randomUUID()}/drafts/summary_full`))
+    await http().get(`/admin/versions/${randomUUID()}/drafts/analysis`).expect(401);
+    await auth(http().get(`/admin/versions/${randomUUID()}/drafts/analysis/estimate`)).expect(404);
+    await auth(http().post(`/admin/versions/${randomUUID()}/drafts/analysis`))
       .send({})
       .expect(404);
   });

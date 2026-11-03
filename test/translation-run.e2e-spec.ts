@@ -32,12 +32,13 @@ import { TranslationRunReportDto } from '../src/modules/translation/dto/translat
 import { sourceFingerprint } from '../src/modules/translation/source-fingerprint';
 import { corpusChunks, parallelChapters } from '../src/common/testing/language-corpus';
 import { sentencesOf } from '../src/modules/translation/check/language-detector';
+import { ANALYSIS_DRAFT_STAGE } from '../src/modules/translation/content-draft/content-draft.constants';
 import {
-  ANALYSIS_DRAFT_STAGE,
-  SUMMARY_BRIEF_STAGE,
-  SUMMARY_FULL_STAGE,
-  SUMMARY_SECTIONS_STAGE,
-} from '../src/modules/translation/content-draft/content-draft.constants';
+  SUMMARY_BRIEF_WRITE_STAGE,
+  SUMMARY_FULL_WRITE_STAGE,
+  SUMMARY_REVIEW_STAGE,
+  SUMMARY_SECTION_WRITE_STAGE,
+} from '../src/modules/translation/summary-write/summary-write.constants';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { llmCallName } from './helpers/llm-call-name';
@@ -662,7 +663,8 @@ describe('Translation run (e2e)', () => {
     expect(own).toHaveLength(3);
     expect(body.operations.map((o) => o.id)).toEqual(own.map((o) => o.id));
     expect(body.operations.map((o) => o.id)).not.toContain(body.operation.id);
-    // Заготовки Summary и Analysis - отдельные кнопки (D2): запуск перевода их не строит.
+    // Ход пересказа и заготовка Analysis - отдельные кнопки (D2): запуск перевода их не строит
+    // (автозапуск хода из перевода - `F06-5`).
     expect(await prisma.contentDraft.count({ where: { bookVersion: { bookId } } })).toBe(0);
     // Операции и вызовы заготовок по версиям этой книги - ни одной (счёт по книге, а не по базе
     // воркера: база общая с `content-draft.e2e-spec.ts`).
@@ -674,9 +676,10 @@ describe('Translation run (e2e)', () => {
           operation: ofBook,
           stage: {
             in: [
-              SUMMARY_SECTIONS_STAGE,
-              SUMMARY_FULL_STAGE,
-              SUMMARY_BRIEF_STAGE,
+              SUMMARY_SECTION_WRITE_STAGE,
+              SUMMARY_FULL_WRITE_STAGE,
+              SUMMARY_BRIEF_WRITE_STAGE,
+              SUMMARY_REVIEW_STAGE,
               ANALYSIS_DRAFT_STAGE,
             ],
           },

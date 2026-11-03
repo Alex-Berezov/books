@@ -94,15 +94,7 @@ describe('stage defaults on Claude (Р7 F05-R)', () => {
       ...CONTENT_DRAFT_STAGE_DEFINITIONS,
     ];
     expect(stages.map((d) => d.stage).sort()).toEqual(
-      [
-        'analysis_draft',
-        'dossier',
-        'glossary',
-        'metadata',
-        'summary_brief',
-        'summary_full',
-        'summary_sections',
-      ].sort(),
+      ['analysis_draft', 'dossier', 'glossary', 'metadata'].sort(),
     );
     for (const d of stages) {
       expect(d).toMatchObject({
