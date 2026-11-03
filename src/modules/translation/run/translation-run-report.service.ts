@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, TranslationRunLanguageStatus } from '@prisma/client';
+import { runSummaries } from './run-summary';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 import { moneyUsd } from '../../llm/dto/llm-money';
@@ -82,7 +83,8 @@ function finalCheckStatus(
  * Отчёт запуска перевода (`F05-6`, шаг 8). Стоимость - по этапам и моделям на весь запуск: вызовы
  * всех операций с `translationRunId` запуска (сам запуск, досье, глоссарии), итог - сумма `spentUsd`
  * тех же операций; вызовы без итоговой стоимости - отдельной строкой «в полёте» вне итога (решение
- * арбитра `F05 | F05-6`, 6c В8). Денег по языкам нет: у вызова LLM языка нет.
+ * арбитра `F05 | F05-6`, 6c В8). Денег перевода по языкам нет: у вызова LLM языка нет; траты раздела
+ * «Write Summary» (`F06-5`) - `summary.spentUsd` языка по операциям его хода, в `costs` не входят.
  */
 @Injectable()
 export class TranslationRunReportService {
@@ -94,7 +96,9 @@ export class TranslationRunReportService {
       select: { id: true, bookVersionId: true },
     });
     if (!run) throw new NotFoundException('Translation run not found');
-    const ofRun = { operation: { translationRunId: id } };
+    // Перевод - без операций раздела (`F06-5`, решение арбитра `F06 | F06-5`, Р5): их траты - строка
+    // «Summary» языка; итог `totalUsd` - все операции запуска, каждая один раз.
+    const ofRun = { operation: { translationRunId: id, kind: { not: 'draft' as const } } };
     const [languages, chunks, chapters, calls, inFlight, spent] = await Promise.all([
       this.prisma.translationRunLanguage.findMany({
         where: { runId: id },
@@ -146,7 +150,7 @@ export class TranslationRunReportService {
         _count: { _all: true },
       }),
       this.prisma.llmCall.aggregate({
-        where: { ...ofRun, costUsd: null },
+        where: { operation: { translationRunId: id }, costUsd: null },
         _sum: { reservedUsd: true },
         _count: { _all: true },
       }),
@@ -155,6 +159,10 @@ export class TranslationRunReportService {
         _sum: { spentUsd: true },
       }),
     ]);
+    const summaries = await runSummaries(
+      this.prisma,
+      languages.map((l) => ({ id: l.id, runId: id, bookVersionId: l.bookVersionId })),
+    );
     const zero = new Prisma.Decimal(0);
     const costs: TranslationReportCostDto[] = calls
       .map((c) => ({
@@ -219,6 +227,7 @@ export class TranslationRunReportService {
             missingChapters: final?.code?.missing ?? [],
             chaptersChecked: final?.chapters.filter((c) => c.model !== '').length ?? 0,
           },
+          summary: summaries.get(l.id) ?? null,
         };
       }),
       costs,

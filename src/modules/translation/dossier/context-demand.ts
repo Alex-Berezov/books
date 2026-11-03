@@ -1,19 +1,12 @@
 import { HttpException } from '@nestjs/common';
 import { BookDossier, BookGlossary, Language, Prisma } from '@prisma/client';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
-import { isRecord } from '../../../shared/prisma/json-record.util';
+import { httpCode } from '../../llm-worker/llm-worker.errors';
 import { DossierDemandService } from './dossier-demand.service';
 import { Demand } from './dossier-demand.types';
 
 /** Отказы `demandDossier`/`demandGlossary` «изменено одновременно, повторить»: ожидание, не пауза. */
 const CONTEXT_RETRY_CODES = new Set(['DOSSIER_BUSY', 'GLOSSARY_BUSY']);
-
-/** Код отказа ручки досье (409/503 с `code` в теле), которым шаг ставит свою операцию на паузу. */
-function httpCode(error: HttpException): string {
-  const body = error.getResponse();
-  const code = isRecord(body) ? body.code : null;
-  return typeof code === 'string' && code ? code : `HTTP_${error.getStatus()}`;
-}
 
 /**
  * Досье и глоссарий языка для шага ждущего (сравнение `F05-3`, запуск `F05-4`; Р20).

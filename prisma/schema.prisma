@@ -4095,6 +4095,9 @@ model LlmOperation {
   spentUsd         Decimal            @default(0) @db.Decimal(14, 8)
   status           LlmOperationStatus @default(active)
   pauseReason      LlmPauseReason?
+  /// Причина, по которой операция автозапуска раздела закрыта без хода (`F06-5`,
+  /// `AUTOSTART_SKIPPED_*`); у прочих операций пусто.
+  skipReason       String?
   createdById      String?
   createdBy        User?              @relation("LlmOperationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   /// Снимок настроек этапов и цен на момент создания.
@@ -4459,6 +4462,8 @@ model TranslationRun {
   /// Снимок настроек и автор запуска - `LlmOperation.settingsSnapshot`/`createdById` его
   /// операции: шаги берут модели этапов оттуда (решение арбитра `F05 | F05-4a`, В1).
   stageModels        Json                     @default("{}")
+  /// «Write Summary» окна запуска (`F06-5`): по `done` языка ход раздела стартует сам.
+  writeSummary       Boolean                  @default(false)
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
   languages          TranslationRunLanguage[]
@@ -4520,6 +4525,8 @@ model TranslationRunLanguage {
   updatedAt            DateTime                     @updatedAt
   chunks               TranslationChunk[]
   chapters             TranslationChapter[]
+  /// Ход раздела, заведённый автозапуском по `done` языка (`F06-5`).
+  contentDrafts        ContentDraft[]
 
   @@unique([runId, language])
   @@index([glossaryId])
@@ -4649,8 +4656,13 @@ model ContentDraft {
   glossaryId    String?
   /// Строка досье или глоссария, которую шаг ждал прошлым шагом (`DossierWaiter.waitingFor`).
   waitingFor    String?
+  /// Язык запуска, по `done` которого ход заведён автозапуском (`F06-5`); у ручных ходов пусто.
+  /// Один автозапуск на язык и вид - уникальным индексом, а не чтением (`L-019`).
+  translationRunLanguageId String?
+  translationRunLanguage   TranslationRunLanguage? @relation(fields: [translationRunLanguageId], references: [id], onDelete: SetNull)
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
 
+  @@unique([translationRunLanguageId, kind])
   @@index([bookVersionId, kind, createdAt])
 }

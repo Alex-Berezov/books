@@ -59,6 +59,12 @@ describe('uniqueViolationFields', () => {
     ]);
     expect(uniqueViolationFields(byIndex('Page_seoId_key', 'Page'))).toEqual(['seoId']);
     expect(uniqueViolationFields(byIndex('"Category_key_key"', 'Category'))).toEqual(['key']);
+    // Индекс автозапуска раздела (`F06-5`): по нему P2002 - тихий выход, а не `DRAFT_IN_PROGRESS`.
+    expect(
+      uniqueViolationFields(
+        byIndex('ContentDraft_translationRunLanguageId_kind_key', 'ContentDraft'),
+      ),
+    ).toEqual(['translationRunLanguageId', 'kind']);
   });
 
   // Колонка с `@map` несёт своё подчёркивание (`systemKey @map("system_key")`, индекс из миграции

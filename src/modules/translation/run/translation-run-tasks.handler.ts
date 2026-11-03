@@ -137,7 +137,11 @@ export class TranslationRunTasksHandler implements LlmOperationKindHandler {
     const lang = id
       ? await this.prisma.translationRunLanguage.findUnique({
           where: { id },
-          include: { run: { include: { operation: { select: { settingsSnapshot: true } } } } },
+          include: {
+            run: {
+              include: { operation: { select: { settingsSnapshot: true, createdById: true } } },
+            },
+          },
         })
       : null;
     // Строки нет (версию удалили - каскад): переводить нечего; уцелевшие языки - `failed` (В6).

@@ -21,6 +21,13 @@ import { MONEY_DOC, MONEY_PATTERN, notUndefined, toMoneyString } from '../../llm
 import { ResumeLlmOperationDto } from '../../llm-worker/dto/resume-llm-operation.dto';
 import { toQueryList } from './translation-compare-request.dto';
 
+/**
+ * Булев параметр строки запроса: не «да» и не «нет» - значение как есть, `@IsBoolean` отвечает 400,
+ * а не снимает флаг молча. В теле старта приходит уже булевым.
+ */
+const toQueryBoolean = ({ value }: { value: unknown }): unknown =>
+  value === 'true' ? true : value === 'false' ? false : value;
+
 /** Языки и модель перевода запуска (`F05-4b`, шаги 2-3); общая часть оценки и старта. */
 export class TranslationRunEstimateQueryDto {
   @ApiProperty({
@@ -47,6 +54,17 @@ export class TranslationRunEstimateQueryDto {
   @IsString()
   @MaxLength(200)
   translateModel?: string;
+
+  @ApiPropertyOptional({
+    type: Boolean,
+    default: false,
+    description:
+      'Write Summary (F06-5): the summary run of a language starts by itself when the language is done; the estimate gets summaryUsd per language. Its money is its own operation and limit, not the run limit',
+  })
+  @IsOptional()
+  @Transform(toQueryBoolean)
+  @IsBoolean()
+  writeSummary?: boolean;
 }
 
 export class StartTranslationRunDto extends TranslationRunEstimateQueryDto {
@@ -134,10 +152,7 @@ export class ListTranslationRunsQueryDto extends PaginationDto {
 
   @ApiPropertyOptional({ description: 'Only runs not finished: the operation active or paused' })
   @IsOptional()
-  // Не «да» и не «нет» - значение как есть, `@IsBoolean` отвечает 400, а не снимает фильтр молча.
-  @Transform(({ value }: { value: unknown }) =>
-    value === 'true' ? true : value === 'false' ? false : value,
-  )
+  @Transform(toQueryBoolean)
   @IsBoolean()
   active?: boolean;
 }

@@ -22,12 +22,13 @@ export const STEP_ERROR = 'STEP_ERROR';
 /**
  * Итог одного шага. `continue` - та же строка снова `pending`: язык идёт строго по шагу за раз
  * (Р1). `wait` - не статус, а `pending` с `runAfter` в будущем: условие перепроверяет сам
- * обработчик при следующем захвате.
+ * обработчик при следующем захвате; `runAfter` не задан - пауза `waitMs` воркера (своя пауза -
+ * автозапуск раздела `F06-5`, решение арбитра `F06 | F06-5`).
  */
 export type LlmTaskStepResult =
   | { kind: 'done' }
   | { kind: 'continue'; runAfter?: Date }
-  | { kind: 'wait'; reason: string }
+  | { kind: 'wait'; reason: string; runAfter?: Date }
   | { kind: 'fail'; reason: string };
 
 export interface LlmTaskContext {

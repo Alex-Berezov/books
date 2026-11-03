@@ -4,6 +4,7 @@ import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
 import { CompareContextLineDto, DossierContextLineDto } from './translation-compare-response.dto';
 import { TranslationRunStageModelsDto } from './translation-run-request.dto';
+import { TranslationRunSummaryDto } from './translation-run-summary.dto';
 
 /**
  * Этап языка (`product.md` §2.3): строится досье, строится глоссарий, перевод кусков (с нарезкой
@@ -106,6 +107,14 @@ export class TranslationRunLanguageDto {
       'Draft version this language writes into; empty before its creation or after its deletion. Stage assemble with a draft - chapters go into the draft',
   })
   draftVersionId!: string | null;
+
+  @ApiProperty({
+    type: () => TranslationRunSummaryDto,
+    nullable: true,
+    description:
+      'Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done',
+  })
+  summary!: TranslationRunSummaryDto | null;
 }
 
 export class TranslationRunDto {
@@ -126,6 +135,13 @@ export class TranslationRunDto {
     description: 'Stage models of this run over its snapshot',
   })
   stageModels!: TranslationRunStageModelsDto;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'Write Summary (F06-5): the summary run of a language starts by itself when it is done',
+  })
+  writeSummary!: boolean;
 
   @ApiProperty({
     type: () => LlmOperationDto,
@@ -201,6 +217,14 @@ export class TranslationRunLanguageResultDto {
     description: 'Draft version of this language; empty before its creation or after its deletion',
   })
   draftVersionId!: string | null;
+
+  @ApiProperty({
+    type: () => TranslationRunSummaryDto,
+    nullable: true,
+    description:
+      'Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done',
+  })
+  summary!: TranslationRunSummaryDto | null;
 }
 
 /**
@@ -225,6 +249,13 @@ export class TranslationRunListItemDto {
     description: 'Stage models of this run over its snapshot',
   })
   stageModels!: TranslationRunStageModelsDto;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'Write Summary (F06-5): the summary run of a language starts by itself when it is done',
+  })
+  writeSummary!: boolean;
 
   @ApiProperty({
     type: () => LlmOperationDto,
@@ -252,7 +283,7 @@ export class TranslationRunListItemDto {
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'Spent by all operations of the run (dossier, glossaries, retries): totalUsd of its report',
+      'Spent by all operations of the run (dossier, glossaries, retries, Write Summary of its languages): totalUsd of its report',
   })
   costUsd!: string;
 
@@ -301,7 +332,16 @@ export class TranslationRunLanguageEstimateDto {
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
-    description: 'Split, translate, check, final check and metadata of this language',
+    nullable: true,
+    description:
+      'Write Summary (F06-5), upper estimate by the source chapters: sections, full and very short, author and check twice each. Its own operation and limit - not in minLimitUsd; null without writeSummary',
+  })
+  summaryUsd!: string | null;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Split, translate, check, final check and metadata of this language, plus summaryUsd when it is set',
   })
   totalUsd!: string;
 }
@@ -339,7 +379,15 @@ export class TranslationRunEstimateDto {
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
-    description: 'Translations plus the dossier and glossaries built first',
+    nullable: true,
+    description:
+      'All languages: Write Summary (F06-5), shown apart - its own operations and limits, not in minLimitUsd; null without writeSummary',
+  })
+  summaryUsd!: string | null;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description: 'Translations plus the dossier and glossaries built first, plus summaryUsd',
   })
   totalUsd!: string;
 

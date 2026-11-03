@@ -5,6 +5,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Language, LlmOperation, Prisma, TranslationRunLanguage } from '@prisma/client';
+import { runSummaries } from './run-summary';
+import { TranslationRunSummaryDto } from '../dto/translation-run-summary.dto';
+import { summaryUpperUsd } from '../summary-write/summary-estimate';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../../shared/dto/paginated-response.dto';
 import { sanitizeRichHtml } from '../../../shared/sanitize/rich-html';
@@ -185,6 +188,7 @@ export class TranslationRunService {
             bookVersionId: versionId,
             sourceLanguage: estimate.sourceLanguage,
             stageModels: dto.translateModel ? { [TRANSLATE_STAGE]: dto.translateModel } : {},
+            writeSummary: dto.writeSummary === true,
             languages: { create: [...dto.languages].sort().map((language) => ({ language })) },
           },
           include: { languages: true },
@@ -238,6 +242,7 @@ export class TranslationRunService {
           operation: { include: { createdBy: { select: { id: true, email: true, name: true } } } },
           languages: {
             select: {
+              id: true,
               language: true,
               status: true,
               reason: true,
@@ -264,6 +269,10 @@ export class TranslationRunService {
         })
       : [];
     const spentByRun = new Map(spent.map((g) => [g.translationRunId, g._sum.spentUsd]));
+    const summaries = await runSummaries(
+      this.prisma,
+      rows.flatMap((r) => r.languages.map((l) => ({ ...l, runId: r.id }))),
+    );
     return paginated(
       rows.map(({ operation: { createdBy, ...operation }, ...run }) => ({
         id: run.id,
@@ -271,6 +280,7 @@ export class TranslationRunService {
         sourceLanguage: run.sourceLanguage,
         languages: run.languages.map((l) => l.language),
         stageModels: (run.stageModels ?? {}) as TranslationRunStageModelsDto,
+        writeSummary: run.writeSummary,
         operation: toOperationDto(operation),
         createdAt: run.createdAt.toISOString(),
         createdBy,
@@ -282,6 +292,7 @@ export class TranslationRunService {
           reason: l.reason,
           reasonText: l.reasonText,
           draftVersionId: l.bookVersionId,
+          summary: summaries.get(l.id) ?? null,
         })),
       })),
       { page, limit, total },
@@ -329,6 +340,10 @@ export class TranslationRunService {
         ? this.prisma.llmOperation.findMany({ where: { id: { in: blockers } } })
         : Promise.resolve<LlmOperation[]>([]),
     ]);
+    const summaries = await runSummaries(
+      this.prisma,
+      run.languages.map((l) => ({ id: l.id, runId: run.id, bookVersionId: l.bookVersionId })),
+    );
     const operations = [
       ...own,
       ...blocking.filter((b) => b.id !== run.operationId && !own.some((o) => o.id === b.id)),
@@ -340,6 +355,7 @@ export class TranslationRunService {
       sourceLanguage: run.sourceLanguage,
       dossierId: run.dossierId,
       stageModels: (run.stageModels ?? {}) as TranslationRunStageModelsDto,
+      writeSummary: run.writeSummary,
       operation: toOperationDto(run.operation),
       operations: operations.map(toOperationDto),
       createdAt: run.createdAt.toISOString(),
@@ -349,6 +365,7 @@ export class TranslationRunService {
           run.dossierId !== null,
           numbers,
           chunks.filter((c) => c.runLanguageId === l.id && c.chapterNumber === l.chapterNumber),
+          summaries.get(l.id) ?? null,
         ),
       ),
     };
@@ -492,6 +509,11 @@ export class TranslationRunService {
     const splitUsd = plans.reduce((sum, p) => sum.add(chapterSplitUsd(split, p)), zero());
     let upperBound = false;
     let translationsUsd = zero();
+    // «Write Summary» (`F06-5`; `tech.md` §7): своя операция и лимит - в итог только для показа.
+    let summaryTotalUsd = zero();
+    const summaries = query.writeSummary
+      ? await summaryUpperUsd(this.llm, this.prisma, versionId, query.languages)
+      : null;
     let minLimitUsd = context.dossier?.suggestedLimitUsd ?? zero();
     let contextUsd = context.dossier?.estimateUsd ?? zero();
     // Вход сверх промпта, пока контекст не готов: от языка не зависит - один раз на оценку.
@@ -557,6 +579,8 @@ export class TranslationRunService {
         .add(finalCheckUsd)
         .add(languageMetadataUsd);
       translationsUsd = translationsUsd.add(totalUsd);
+      const summaryUsd = summaries?.get(language) ?? null;
+      if (summaryUsd) summaryTotalUsd = summaryTotalUsd.add(summaryUsd);
       if (glossary) {
         minLimitUsd = minLimitUsd.add(glossary.suggestedLimitUsd);
         contextUsd = contextUsd.add(glossary.estimateUsd);
@@ -569,7 +593,8 @@ export class TranslationRunService {
         checkUsd: moneyUsd(checkUsd),
         finalCheckUsd: moneyUsd(finalCheckUsd),
         metadataUsd: moneyUsd(languageMetadataUsd),
-        totalUsd: moneyUsd(totalUsd),
+        summaryUsd: summaryUsd && moneyUsd(summaryUsd),
+        totalUsd: moneyUsd(summaryUsd ? totalUsd.add(summaryUsd) : totalUsd),
       });
     }
     const budget = await this.budget.getBudget();
@@ -587,7 +612,8 @@ export class TranslationRunService {
         languages,
         upperBound,
         translationsUsd: moneyUsd(translationsUsd),
-        totalUsd: moneyUsd(translationsUsd.add(contextUsd)),
+        summaryUsd: query.writeSummary ? moneyUsd(summaryTotalUsd) : null,
+        totalUsd: moneyUsd(translationsUsd.add(contextUsd).add(summaryTotalUsd)),
         minLimitUsd: moneyUsd(minLimitUsd),
         defaultLimitUsd: moneyUsd(budget?.defaultRunLimitUsd ?? zero()),
         nearLimitChapters,
@@ -734,6 +760,7 @@ function languageDto(
   hasDossier: boolean,
   chapters: readonly number[],
   chunks: Array<{ status: string; _count: { _all: number } }>,
+  summary: TranslationRunSummaryDto | null,
 ): TranslationRunLanguageDto {
   const total = chunks.reduce((sum, c) => sum + c._count._all, 0);
   const done = chunks
@@ -759,6 +786,7 @@ function languageDto(
     glossaryId: l.glossaryId,
     blockedByOperationId: l.blockedByOperationId,
     draftVersionId: l.bookVersionId,
+    summary,
   };
 }
 

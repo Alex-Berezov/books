@@ -47,6 +47,10 @@ function motifsOf(dossierData: unknown, numbers: ReadonlySet<number>): DossierMo
   });
 }
 
+/** Операция заведена запуском перевода (автозапуск и ход `F06-5`); перегенерации его не несут. */
+const isRunOperation = (op: Pick<LlmOperation, 'translationRunId'>): boolean =>
+  typeof op.translationRunId === 'string';
+
 function draftIdOf(task: LlmTask): string | null {
   const id = (task.payload as Record<string, unknown> | null)?.draftId;
   return typeof id === 'string' ? id : null;
@@ -80,11 +84,13 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
 
   /**
    * «Continue» операции `draft`: заготовка, ход пересказа (`F06-2`) - своей задачей; строки с этой
-   * операцией нет - это операция перегенерации текста хода (решение арбитра `F06 | F06-2`, Р2).
+   * операцией нет - это операция перегенерации текста хода (решение арбитра `F06 | F06-2`, Р2) или
+   * автозапуска (`F06-5`): у перегенерации `translationRunId` нет никогда, автозапуск закрывает свою
+   * операцию сам - продолжать нечего (решение арбитра `F06 | F06-5`, Р4).
    */
   async resumeTasks(op: LlmOperation): Promise<EnqueueTaskInput[]> {
     const row = await this.prisma.contentDraft.findUnique({ where: { operationId: op.id } });
-    if (!row) return this.summaryWrite.regenResume(op);
+    if (!row) return isRunOperation(op) ? [] : this.summaryWrite.regenResume(op);
     if (row.status !== 'building') return [];
     return row.kind === 'summary_write'
       ? [summaryWriteTaskInput(row, row.operationId)]
@@ -100,7 +106,8 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
       where: { operationId: op.id, status: 'building' },
       data: { status: 'failed', failedReason: DRAFT_CANCELLED },
     });
-    await this.summaryWrite.onRegenCancelled(op, tx);
+    // Операция запуска (ход и автозапуск `F06-5`) - не перегенерация: отметок текста у неё нет (Р4).
+    if (!isRunOperation(op)) await this.summaryWrite.onRegenCancelled(op, tx);
   }
 
   private async run(task: LlmTask, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {

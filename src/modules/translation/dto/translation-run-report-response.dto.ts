@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language, TranslationChapterStatus, TranslationRunLanguageStatus } from '@prisma/client';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
+import { TranslationRunSummaryDto } from './translation-run-summary.dto';
 
 /**
  * Отчёт запуска перевода (`F05-6`, шаг 8): по языкам - куски, повторы, флаги кусков и глав
@@ -215,6 +216,14 @@ export class TranslationReportLanguageDto {
 
   @ApiProperty({ type: () => TranslationReportFinalCheckDto })
   finalCheck!: TranslationReportFinalCheckDto;
+
+  @ApiProperty({
+    type: () => TranslationRunSummaryDto,
+    nullable: true,
+    description:
+      'Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done',
+  })
+  summary!: TranslationRunSummaryDto | null;
 }
 
 export class TranslationReportCostDto {
@@ -256,7 +265,7 @@ export class TranslationRunReportDto {
   @ApiProperty({
     type: () => [TranslationReportCostDto],
     description:
-      'Cost by stage and model over every operation of the run (the run, its dossier and glossaries)',
+      'Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary - its spending is summary.spentUsd of each language; totalUsd covers both',
   })
   costs!: TranslationReportCostDto[];
 

@@ -13236,6 +13236,11 @@ export interface components {
        * @example anthropic/claude-sonnet-5.5
        */
       translateModel?: string;
+      /**
+       * @description Write Summary (F06-5): the summary run of a language starts by itself when the language is done; the estimate gets summaryUsd per language. Its money is its own operation and limit, not the run limit
+       * @default false
+       */
+      writeSummary: boolean;
     };
     SummaryWriteDto: {
       /** Format: uuid */
@@ -14167,6 +14172,8 @@ export interface components {
       reason: string | null;
       reasonText: string | null;
       status: components['schemas']['TranslationRunLanguageStatus'];
+      /** @description Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done */
+      summary: components['schemas']['TranslationRunSummaryDto'] | null;
       /** @description Chapter numbers already taken in the draft by another chapter: skipped, not written by the run */
       takenChapters: number[];
       /** @description Chapters the run wrote to the draft; 0 with a draft - a draft without chapters of the run */
@@ -14198,6 +14205,8 @@ export interface components {
       sourceLanguage: components['schemas']['Language'];
       /** @description Stage models of this run over its snapshot */
       stageModels: components['schemas']['TranslationRunStageModelsDto'];
+      /** @description Write Summary (F06-5): the summary run of a language starts by itself when it is done */
+      writeSummary: boolean;
     };
     TranslationRunEstimateDto: {
       /** @description Source chapters with text to translate */
@@ -14223,7 +14232,13 @@ export interface components {
       nearLimitChapters: number[];
       /**
        * Format: decimal
-       * @description Translations plus the dossier and glossaries built first
+       * @description All languages: Write Summary (F06-5), shown apart - its own operations and limits, not in minLimitUsd; null without writeSummary
+       * @example 100.00000000
+       */
+      summaryUsd: string | null;
+      /**
+       * Format: decimal
+       * @description Translations plus the dossier and glossaries built first, plus summaryUsd
        * @example 100.00000000
        */
       totalUsd: string;
@@ -14288,6 +14303,8 @@ export interface components {
         | 'failed'
         | 'cancelled';
       status: components['schemas']['TranslationRunLanguageStatus'];
+      /** @description Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done */
+      summary: components['schemas']['TranslationRunSummaryDto'] | null;
     };
     TranslationRunLanguageEstimateDto: {
       /**
@@ -14319,7 +14336,13 @@ export interface components {
       splitUsd: string;
       /**
        * Format: decimal
-       * @description Split, translate, check, final check and metadata of this language
+       * @description Write Summary (F06-5), upper estimate by the source chapters: sections, full and very short, author and check twice each. Its own operation and limit - not in minLimitUsd; null without writeSummary
+       * @example 100.00000000
+       */
+      summaryUsd: string | null;
+      /**
+       * Format: decimal
+       * @description Split, translate, check, final check and metadata of this language, plus summaryUsd when it is set
        * @example 100.00000000
        */
       totalUsd: string;
@@ -14342,6 +14365,8 @@ export interface components {
       /** @description Text of the service that refused to create the draft version (reason CREATE_REJECTED), up to 300 characters; empty otherwise */
       reasonText: string | null;
       status: components['schemas']['TranslationRunLanguageStatus'];
+      /** @description Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done */
+      summary: components['schemas']['TranslationRunSummaryDto'] | null;
     };
     /** @enum {string} */
     TranslationRunLanguageStatus: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -14353,7 +14378,7 @@ export interface components {
       bookVersionId: string;
       /**
        * Format: decimal
-       * @description Spent by all operations of the run (dossier, glossaries, retries): totalUsd of its report
+       * @description Spent by all operations of the run (dossier, glossaries, retries, Write Summary of its languages): totalUsd of its report
        * @example 100.00000000
        */
       costUsd: string;
@@ -14372,11 +14397,13 @@ export interface components {
       sourceLanguage: components['schemas']['Language'];
       /** @description Stage models of this run over its snapshot */
       stageModels: components['schemas']['TranslationRunStageModelsDto'];
+      /** @description Write Summary (F06-5): the summary run of a language starts by itself when it is done */
+      writeSummary: boolean;
     };
     TranslationRunReportDto: {
       /** Format: uuid */
       bookVersionId: string;
-      /** @description Cost by stage and model over every operation of the run (the run, its dossier and glossaries) */
+      /** @description Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary - its spending is summary.spentUsd of each language; totalUsd covers both */
       costs: components['schemas']['TranslationReportCostDto'][];
       /** Format: uuid */
       id: string;
@@ -14414,6 +14441,38 @@ export interface components {
       metadata?: string;
       /** @example anthropic/claude-sonnet-5.5 */
       translate?: string;
+    };
+    TranslationRunSummaryDto: {
+      /** @description The very short of the run has a text; false - not built yet or failed (it waits for the full) */
+      briefDone: boolean;
+      /**
+       * Format: uuid
+       * @description Summary run of the draft version: GET /admin/versions/:id/drafts/summary_write of draftVersionId
+       */
+      draftId: string | null;
+      /** @description Texts of the run that failed (sections, full, very short): a ready run with failed texts is not «Done» */
+      failedTexts: number;
+      /** @description Texts of the run with model flags (verdict flags) - texts, not remarks: «Done, texts with model flags: N»; the remarks of a text are on the Summary tab */
+      flaggedTexts: number;
+      /** @description The full summary of the run has a text; false - not built yet or failed (it waits for every section) */
+      fullDone: boolean;
+      /** @description Status of the operation of the summary run: paused - Continue on the Summary tab of the draft version */
+      operationStatus: components['schemas']['LlmOperationStatus'] | null;
+      pauseReason: components['schemas']['LlmPauseReason'] | null;
+      /** @description Sections of the dossier plan */
+      plannedSections: number | null;
+      /** @description Always set for skipped and failed. skipped (not started) - AUTOSTART_SKIPPED_EXISTING | AUTOSTART_SKIPPED_IN_PROGRESS | AUTOSTART_SKIPPED_LLM_DISABLED | AUTOSTART_NOTHING_TO_START, or the refusal of the start (LLM_CEILING_REACHED, DOSSIER_TOO_LONG, DOSSIER_STALE, SOURCE_HAS_NO_CHAPTERS...); failed - failedReason of the run, or AUTOSTART_FAILED | AUTOSTART_CANCELLED when the autostart operation failed or was cancelled */
+      reason: string | null;
+      /** @description Sections of the plan with a text */
+      sectionsDone: number;
+      /**
+       * Format: decimal
+       * @description Spent by the summary operations of this language: the Summary line of the run
+       * @example 100.00000000
+       */
+      spentUsd: string;
+      /** @enum {string} */
+      status: 'pending' | 'skipped' | 'building' | 'ready' | 'failed' | 'discarded';
     };
     TranslationSourceDto: {
       canTranslate: boolean;
@@ -21441,6 +21500,8 @@ export interface operations {
         languages: components['schemas']['Language'][];
         /** @description Translate model of this run only, one model without fallbacks; settings are not changed. Default - the translate stage model */
         translateModel?: string;
+        /** @description Write Summary (F06-5): the summary run of a language starts by itself when the language is done; the estimate gets summaryUsd per language. Its money is its own operation and limit, not the run limit */
+        writeSummary?: boolean;
       };
       header?: never;
       path: {

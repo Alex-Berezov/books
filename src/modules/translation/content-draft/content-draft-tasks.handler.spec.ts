@@ -28,6 +28,7 @@ const draftRow = (patch: Partial<ContentDraft> = {}): ContentDraft => ({
   dossierId: 'dos1',
   glossaryId: null,
   waitingFor: null,
+  translationRunLanguageId: null,
   createdAt: new Date(),
   updatedAt: new Date(),
   ...patch,
@@ -93,7 +94,7 @@ function setup(row: ContentDraft | null, answer: unknown = {}) {
     drafts as unknown as ContentDraftService,
     summaryWrite as unknown as SummaryWriteHandler,
   );
-  return { handler, prisma, llm, tasks, tx, drafts };
+  return { handler, prisma, llm, tasks, tx, drafts, summaryWrite };
 }
 
 describe('ContentDraftTasksHandler (F05-11, F06-3)', () => {
@@ -352,5 +353,43 @@ describe('ContentDraftTasksHandler, analysis (F05-11)', () => {
       { data: { data: { motifs: unknown } } },
     ];
     expect(arg.data.data.motifs).toEqual([{ image: 'rain', chapters: [] }]);
+  });
+});
+
+/**
+ * Операция вида `draft` без строки - перегенерация текста хода (`F06-2`, Р2) или автозапуск (`F06-5`):
+ * у перегенерации `translationRunId` нет никогда, автозапуск свою операцию закрывает сам - в ветку
+ * перегенерации он не идёт ни на «Continue», ни на отмене (решение арбитра `F06 | F06-5`, Р4).
+ */
+describe('ContentDraftTasksHandler: операция автозапуска (F06-5)', () => {
+  const tx = () =>
+    ({ contentDraft: { updateMany: jest.fn() } }) as unknown as Prisma.TransactionClient;
+  const autostartOp = { id: 'op1', translationRunId: 'r1' } as never;
+  const regenOp = { id: 'op1', translationRunId: null } as never;
+
+  it('без строки: Continue - пусто, отмена - без снятия отметок перегенерации', async () => {
+    const { handler, summaryWrite } = setup(null);
+    await expect(handler.resumeTasks(autostartOp)).resolves.toEqual([]);
+    await handler.onCancelled(autostartOp, tx());
+    expect(summaryWrite.regenResume).toHaveBeenCalledTimes(0);
+    expect(summaryWrite.onRegenCancelled).toHaveBeenCalledTimes(0);
+  });
+
+  it('со строкой failed отказа старта: Continue - пусто, перегенерация не задета', async () => {
+    const { handler, summaryWrite } = setup(
+      draftRow({ kind: 'summary_write', status: 'failed', translationRunLanguageId: 'l1' }),
+    );
+    await expect(handler.resumeTasks(autostartOp)).resolves.toEqual([]);
+    await handler.onCancelled(autostartOp, tx());
+    expect(summaryWrite.regenResume).toHaveBeenCalledTimes(0);
+    expect(summaryWrite.onRegenCancelled).toHaveBeenCalledTimes(0);
+  });
+
+  it('перегенерация (translationRunId нет) по-прежнему идёт в свою ветку', async () => {
+    const { handler, summaryWrite } = setup(null);
+    await handler.resumeTasks(regenOp);
+    await handler.onCancelled(regenOp, tx());
+    expect(summaryWrite.regenResume).toHaveBeenCalledTimes(1);
+    expect(summaryWrite.onRegenCancelled).toHaveBeenCalledTimes(1);
   });
 });

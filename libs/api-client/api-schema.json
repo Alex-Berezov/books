@@ -24647,6 +24647,11 @@
             "description": "Translate model of this run only, one model without fallbacks; settings are not changed. Default - the translate stage model",
             "example": "anthropic/claude-sonnet-5.5",
             "type": "string"
+          },
+          "writeSummary": {
+            "default": false,
+            "description": "Write Summary (F06-5): the summary run of a language starts by itself when the language is done; the estimate gets summaryUsd per language. Its money is its own operation and limit, not the run limit",
+            "type": "boolean"
           }
         },
         "required": [
@@ -27414,6 +27419,16 @@
               }
             ]
           },
+          "summary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunSummaryDto"
+              }
+            ],
+            "description": "Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done",
+            "nullable": true,
+            "type": "object"
+          },
           "takenChapters": {
             "description": "Chapter numbers already taken in the draft by another chapter: skipped, not written by the run",
             "items": {
@@ -27441,7 +27456,8 @@
           "notWrittenChapters",
           "writtenChapters",
           "takenChapters",
-          "finalCheck"
+          "finalCheck",
+          "summary"
         ],
         "type": "object"
       },
@@ -27521,6 +27537,10 @@
               }
             ],
             "description": "Stage models of this run over its snapshot"
+          },
+          "writeSummary": {
+            "description": "Write Summary (F06-5): the summary run of a language starts by itself when it is done",
+            "type": "boolean"
           }
         },
         "required": [
@@ -27529,6 +27549,7 @@
           "sourceLanguage",
           "dossierId",
           "stageModels",
+          "writeSummary",
           "operation",
           "operations",
           "languages",
@@ -27581,8 +27602,15 @@
             },
             "type": "array"
           },
+          "summaryUsd": {
+            "description": "All languages: Write Summary (F06-5), shown apart - its own operations and limits, not in minLimitUsd; null without writeSummary",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
           "totalUsd": {
-            "description": "Translations plus the dossier and glossaries built first",
+            "description": "Translations plus the dossier and glossaries built first, plus summaryUsd",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -27610,6 +27638,7 @@
           "languages",
           "upperBound",
           "translationsUsd",
+          "summaryUsd",
           "totalUsd",
           "minLimitUsd",
           "defaultLimitUsd",
@@ -27715,6 +27744,16 @@
                 "$ref": "#/components/schemas/TranslationRunLanguageStatus"
               }
             ]
+          },
+          "summary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunSummaryDto"
+              }
+            ],
+            "description": "Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done",
+            "nullable": true,
+            "type": "object"
           }
         },
         "required": [
@@ -27734,7 +27773,8 @@
           "flaggedChapters",
           "glossaryId",
           "blockedByOperationId",
-          "draftVersionId"
+          "draftVersionId",
+          "summary"
         ],
         "type": "object"
       },
@@ -27781,8 +27821,15 @@
             "format": "decimal",
             "type": "string"
           },
+          "summaryUsd": {
+            "description": "Write Summary (F06-5), upper estimate by the source chapters: sections, full and very short, author and check twice each. Its own operation and limit - not in minLimitUsd; null without writeSummary",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
+          },
           "totalUsd": {
-            "description": "Split, translate, check, final check and metadata of this language",
+            "description": "Split, translate, check, final check and metadata of this language, plus summaryUsd when it is set",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -27802,6 +27849,7 @@
           "checkUsd",
           "finalCheckUsd",
           "metadataUsd",
+          "summaryUsd",
           "totalUsd"
         ],
         "type": "object"
@@ -27837,6 +27885,16 @@
                 "$ref": "#/components/schemas/TranslationRunLanguageStatus"
               }
             ]
+          },
+          "summary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunSummaryDto"
+              }
+            ],
+            "description": "Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done",
+            "nullable": true,
+            "type": "object"
           }
         },
         "required": [
@@ -27844,7 +27902,8 @@
           "status",
           "reason",
           "reasonText",
-          "draftVersionId"
+          "draftVersionId",
+          "summary"
         ],
         "type": "object"
       },
@@ -27866,7 +27925,7 @@
             "type": "string"
           },
           "costUsd": {
-            "description": "Spent by all operations of the run (dossier, glossaries, retries): totalUsd of its report",
+            "description": "Spent by all operations of the run (dossier, glossaries, retries, Write Summary of its languages): totalUsd of its report",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -27930,6 +27989,10 @@
               }
             ],
             "description": "Stage models of this run over its snapshot"
+          },
+          "writeSummary": {
+            "description": "Write Summary (F06-5): the summary run of a language starts by itself when it is done",
+            "type": "boolean"
           }
         },
         "required": [
@@ -27938,6 +28001,7 @@
           "sourceLanguage",
           "languages",
           "stageModels",
+          "writeSummary",
           "operation",
           "createdAt",
           "createdBy",
@@ -27954,7 +28018,7 @@
             "type": "string"
           },
           "costs": {
-            "description": "Cost by stage and model over every operation of the run (the run, its dossier and glossaries)",
+            "description": "Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary - its spending is summary.spentUsd of each language; totalUsd covers both",
             "items": {
               "$ref": "#/components/schemas/TranslationReportCostDto"
             },
@@ -28036,6 +28100,95 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "TranslationRunSummaryDto": {
+        "properties": {
+          "briefDone": {
+            "description": "The very short of the run has a text; false - not built yet or failed (it waits for the full)",
+            "type": "boolean"
+          },
+          "draftId": {
+            "description": "Summary run of the draft version: GET /admin/versions/:id/drafts/summary_write of draftVersionId",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "failedTexts": {
+            "description": "Texts of the run that failed (sections, full, very short): a ready run with failed texts is not «Done»",
+            "type": "number"
+          },
+          "flaggedTexts": {
+            "description": "Texts of the run with model flags (verdict flags) - texts, not remarks: «Done, texts with model flags: N»; the remarks of a text are on the Summary tab",
+            "type": "number"
+          },
+          "fullDone": {
+            "description": "The full summary of the run has a text; false - not built yet or failed (it waits for every section)",
+            "type": "boolean"
+          },
+          "operationStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationStatus"
+              }
+            ],
+            "description": "Status of the operation of the summary run: paused - Continue on the Summary tab of the draft version",
+            "nullable": true
+          },
+          "pauseReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmPauseReason"
+              }
+            ],
+            "nullable": true
+          },
+          "plannedSections": {
+            "description": "Sections of the dossier plan",
+            "nullable": true,
+            "type": "number"
+          },
+          "reason": {
+            "description": "Always set for skipped and failed. skipped (not started) - AUTOSTART_SKIPPED_EXISTING | AUTOSTART_SKIPPED_IN_PROGRESS | AUTOSTART_SKIPPED_LLM_DISABLED | AUTOSTART_NOTHING_TO_START, or the refusal of the start (LLM_CEILING_REACHED, DOSSIER_TOO_LONG, DOSSIER_STALE, SOURCE_HAS_NO_CHAPTERS...); failed - failedReason of the run, or AUTOSTART_FAILED | AUTOSTART_CANCELLED when the autostart operation failed or was cancelled",
+            "nullable": true,
+            "type": "string"
+          },
+          "sectionsDone": {
+            "description": "Sections of the plan with a text",
+            "type": "number"
+          },
+          "spentUsd": {
+            "description": "Spent by the summary operations of this language: the Summary line of the run",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "skipped",
+              "building",
+              "ready",
+              "failed",
+              "discarded"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "reason",
+          "draftId",
+          "operationStatus",
+          "pauseReason",
+          "plannedSections",
+          "sectionsDone",
+          "fullDone",
+          "briefDone",
+          "flaggedTexts",
+          "failedTexts",
+          "spentUsd"
+        ],
         "type": "object"
       },
       "TranslationSourceDto": {
@@ -41965,6 +42118,16 @@
             "schema": {
               "example": "anthropic/claude-sonnet-5.5",
               "type": "string"
+            }
+          },
+          {
+            "description": "Write Summary (F06-5): the summary run of a language starts by itself when the language is done; the estimate gets summaryUsd per language. Its money is its own operation and limit, not the run limit",
+            "in": "query",
+            "name": "writeSummary",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
             }
           }
         ],

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
 import {
   LlmOperation,
   LlmPauseReason,
@@ -8,11 +8,19 @@ import {
   TranslationRun,
   TranslationRunLanguage,
 } from '@prisma/client';
+import * as Sentry from '@sentry/node';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskStepResult } from '../../llm-worker/llm-task.types';
 import { DRAFT_DELETED } from '../draft/draft.constants';
+import {
+  autostartPairKey,
+  AUTOSTART_SKIPPED_LLM_DISABLED,
+  AutostartSkipReason,
+  CONTENT_AUTOSTART_TASK_KIND,
+} from '../autostart/content-autostart.constants';
+import { httpCode } from '../../llm-worker/llm-worker.errors';
 import { sourceFingerprint } from '../source-fingerprint';
 import { chunkStepContext } from '../translate/chunk-steps';
 import { CHECK_SEMANTIC_STAGE, CHECK_NO_COMPLIANT_PROVIDER } from '../check/check.constants';
@@ -25,11 +33,15 @@ import { runStageModels, StageModels } from './run-models';
 import {
   RUN_LANGUAGE_UNFINISHED,
   RUN_LANGUAGES_MAX,
+  RUN_TX_OPTIONS,
   UNRESUMABLE_REASONS,
 } from './translation-run.constants';
 import { StaleClosure, staleClosure } from './stale-closure';
 
-export type RunRow = TranslationRun & { operation: Pick<LlmOperation, 'settingsSnapshot'> };
+/** Автор запуска - автор его операции (`TranslationRun.createdById` нет; решение арбитра `F06 | F06-5`, Р2). */
+export type RunRow = TranslationRun & {
+  operation: Pick<LlmOperation, 'settingsSnapshot' | 'createdById'>;
+};
 export type LanguageRow = TranslationRunLanguage & { run: RunRow };
 /** Кусок без ответа модели: шаги читают главу целиком, ответ нужен одному шагу находок. */
 export type ChunkRow = Omit<TranslationChunk, 'rawResponse'>;
@@ -76,6 +88,8 @@ export function stageModelsOf(run: RunRow, stage: string): StageModels {
  */
 @Injectable()
 export class RunStepSupportService {
+  private readonly logger = new Logger(RunStepSupportService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
@@ -197,12 +211,74 @@ export class RunStepSupportService {
    * закончивших одновременно, тот, кто считает позже, видит оба и закрывает операцию.
    */
   async finishLanguage(lang: LanguageRow): Promise<LlmTaskStepResult> {
-    await this.prisma.translationRunLanguage.updateMany({
-      where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
-      data: { status: 'done', reason: null },
-    });
+    // Данные операции автозапуска - до транзакции (`L-020`): их отказ не держит `done` языка.
+    const autostart = lang.run.writeSummary ? await this.autostartData(lang) : null;
+    await this.prisma.$transaction(async (tx) => {
+      const done = await tx.translationRunLanguage.updateMany({
+        where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
+        data: { status: 'done', reason: null },
+      });
+      // `done` записан этим вызовом - и только тогда автозапуск: повтор шага второго не заводит.
+      if (done.count === 1 && autostart) await this.startAutostart(tx, lang, autostart);
+    }, RUN_TX_OPTIONS);
+    // После коммита: операция запуска закрывается, своя операция автозапуска - нет (`tech.md` §4 п.1).
     await this.completeIfFinished(lang.run);
     return { kind: 'done' };
+  }
+
+  /**
+   * Строка операции автозапуска (`F06-5`; `tech.md` §4 п.1): вид `draft`, лимит 0 (задача LLM не
+   * зовёт), `translationRunId` запуска, автор - автор запуска. LLM выключен (`LLM_DISABLED`) -
+   * операция без снимка, закрытая сразу с причиной: язык не застревает, пропуск виден в истории.
+   * Иной отказ (база, настройки этапов) - не «LLM выключен»: шаг языка падает до `done` и
+   * повторяется (L-013).
+   */
+  private async autostartData(lang: LanguageRow): Promise<AutostartData> {
+    const base = {
+      kind: 'draft' as const,
+      bookVersionId: lang.bookVersionId,
+      limitUsd: new Prisma.Decimal(0),
+      createdById: lang.run.operation.createdById,
+      translationRunId: lang.run.id,
+    };
+    try {
+      return { data: await this.llm.operationData(base), skipReason: null };
+    } catch (error) {
+      if (!(error instanceof HttpException && httpCode(error) === 'LLM_DISABLED')) throw error;
+      return {
+        data: { ...base, status: 'done', skipReason: AUTOSTART_SKIPPED_LLM_DISABLED },
+        skipReason: AUTOSTART_SKIPPED_LLM_DISABLED,
+      };
+    }
+  }
+
+  private async startAutostart(
+    tx: Prisma.TransactionClient,
+    lang: LanguageRow,
+    autostart: AutostartData,
+  ): Promise<void> {
+    const op = await tx.llmOperation.create({ data: autostart.data, select: { id: true } });
+    if (autostart.skipReason) return;
+    const queued = await this.tasks.enqueue(
+      {
+        kind: CONTENT_AUTOSTART_TASK_KIND,
+        operationId: op.id,
+        bookVersionId: lang.bookVersionId,
+        language: lang.language,
+        payload: { runLanguageId: lang.id },
+        pairKey: autostartPairKey(lang.id, 'summary_write'),
+      },
+      tx,
+    );
+    // Ключ свой на язык и вид: держатель - нарушение инварианта, а не повод держать `done`.
+    // Операция без задачи закрывается `failed` (иначе «ждёт старта» навсегда); в журнал и Sentry -
+    // только идентификаторы (`tech.md` §4 п.1).
+    if (!queued.created) {
+      await tx.llmOperation.update({ where: { id: op.id }, data: { status: 'failed' } });
+      const message = `Autostart task pair of run language ${lang.id} is held by task ${queued.holder.id}`;
+      this.logger.error(message);
+      Sentry.captureMessage(message, 'error');
+    }
   }
 
   /**
@@ -229,4 +305,9 @@ export class RunStepSupportService {
     });
     if (open === 0) await this.tasks.completeOperation(run.operationId);
   }
+}
+
+interface AutostartData {
+  data: Prisma.LlmOperationUncheckedCreateInput;
+  skipReason: AutostartSkipReason | null;
 }

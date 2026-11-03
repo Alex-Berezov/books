@@ -406,7 +406,7 @@ export class LlmTaskService {
     }
     const runAfter =
       result.kind === 'wait'
-        ? new Date(now.getTime() + this.config.waitMs())
+        ? (result.runAfter ?? new Date(now.getTime() + this.config.waitMs()))
         : (result.runAfter ?? now);
     // Статус операции читается под `FOR SHARE`: «продолжить» или пауза, идущие в своей
     // транзакции, дожидаются друг друга, а не решаются по снимку. Иначе «продолжить», нашедшее

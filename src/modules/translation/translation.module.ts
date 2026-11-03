@@ -6,6 +6,8 @@ import { LlmStageRegistry } from '../llm/llm-stages.registry';
 import { LlmOperationKindRegistry } from '../llm-worker/llm-operation-kind.registry';
 import { LlmTaskHandlerRegistry } from '../llm-worker/llm-task-handler.registry';
 import { LlmWorkerModule } from '../llm-worker/llm-worker.module';
+import { CONTENT_AUTOSTART_TASK_KIND } from './autostart/content-autostart.constants';
+import { ContentAutostartHandler } from './autostart/content-autostart.handler';
 import { COMPARE_TASK_KIND } from './compare/compare.constants';
 import { TranslationCompareService } from './compare/compare.service';
 import { CompareTasksHandler } from './compare/compare-tasks.handler';
@@ -104,6 +106,7 @@ import { BookSummaryModule } from '../book-summary/book-summary.module';
     SummaryWriteFields,
     SummaryWriteHandler,
     SummaryWriteService,
+    ContentAutostartHandler,
   ],
 })
 export class TranslationModule implements OnModuleInit {
@@ -117,6 +120,7 @@ export class TranslationModule implements OnModuleInit {
     private readonly retryTasks: ChunkRetryHandler,
     private readonly draftTasks: ContentDraftTasksHandler,
     private readonly summaryWriteTasks: SummaryWriteHandler,
+    private readonly autostartTasks: ContentAutostartHandler,
   ) {}
 
   onModuleInit(): void {
@@ -140,5 +144,8 @@ export class TranslationModule implements OnModuleInit {
     registerSummaryWriteStages(this.stages);
     // Ход пересказа (`F06-2`): операция вида `draft` - «Continue» и отмена идут через `draftTasks`.
     this.handlers.register(SUMMARY_WRITE_TASK_KIND, this.summaryWriteTasks.handler);
+    // Автозапуск раздела по `done` языка (`F06-5`): операция вида `draft` - «Continue» и отмена
+    // идут через `draftTasks` (решение арбитра `F06 | F06-5`, Р4).
+    this.handlers.register(CONTENT_AUTOSTART_TASK_KIND, this.autostartTasks.handler);
   }
 }

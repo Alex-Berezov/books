@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { ContentDraft, Language, LlmOperation, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { uniqueViolationFields } from '../../../shared/prisma/prisma-error.util';
 import { lockSummary } from '../../book-summary/book-summary-lock';
 import { moneyUsd } from '../../llm/dto/llm-money';
 import { LlmBudgetService } from '../../llm/llm-budget.service';
@@ -13,9 +14,13 @@ import { LlmService } from '../../llm/llm.service';
 import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
+import {
+  AUTOSTART_DUPLICATE,
+  AUTOSTART_SKIPPED_EXISTING,
+  AUTOSTART_SKIPPED_IN_PROGRESS,
+} from '../autostart/content-autostart.constants';
 import { chapterPages } from '../chapter-pages';
 import { DOSSIER_TOO_LONG } from '../dossier/dossier.constants';
-import { stageEstimatorFor } from '../llm-model-checks';
 import { contextUpperChars } from '../translate/translate-estimate';
 import {
   DRAFT_IN_PROGRESS,
@@ -36,16 +41,13 @@ import {
   SummaryWriteStateDto,
 } from '../dto/summary-write-response.dto';
 import { summaryHtml } from './summary-html';
+import { chapterSources, writeEstimators } from './summary-estimate';
 import {
   ACCEPT_ALL_CHAPTER_CHANGE,
-  SUMMARY_BRIEF_WRITE_STAGE,
   SUMMARY_FULL_UNFINISHED,
-  SUMMARY_FULL_WRITE_STAGE,
   SUMMARY_ITEM_NOT_PROPOSED,
   SUMMARY_ITEM_UNKNOWN,
   SUMMARY_REGEN_IN_PROGRESS,
-  SUMMARY_REVIEW_STAGE,
-  SUMMARY_SECTION_WRITE_STAGE,
   SUMMARY_SECTIONS_UNFINISHED,
   SUMMARY_WRITE_NOT_READY,
 } from './summary-write.constants';
@@ -74,13 +76,21 @@ import {
   sectionSource,
   SectionSource,
   tailUsd,
-  WriteEstimators,
 } from './summary-write.parts';
 
 const KIND = 'summary_write' as const;
 
 /** Порядок «Accept all»: разделы по номеру, затем полный и «Очень кратко» (`tech.md` §5). */
 const TARGET_ORDER = { section: 0, full: 1, brief: 2 } as const;
+
+/**
+ * Старт автозапуском по `done` языка запуска (`F06-5`; `tech.md` §4 п.2-п.4): прежние ходы не
+ * отбрасываются, ход и его операция несут ссылки на язык и запуск (решение арбитра `F06 | F06-5`, Р5).
+ */
+export interface SummaryAutostartLink {
+  translationRunLanguageId: string;
+  translationRunId: string;
+}
 
 interface Estimate {
   dto: SummaryWriteEstimateDto;
@@ -115,12 +125,21 @@ export class SummaryWriteService {
   /**
    * Ручной старт (`tech.md` §6): прежний готовый или упавший ход отбрасывается вместе с операциями
    * его перегенераций; право хода на поля - под замком пересказа в одной транзакции со строкой (§5).
+   *
+   * Автозапуск (`autostart`, `F06-5`): прежние не отбрасываются; неотброшенный ход вида под замком -
+   * 409 `AUTOSTART_SKIPPED_EXISTING` (`ready`) или `AUTOSTART_SKIPPED_IN_PROGRESS` (`building`),
+   * второй автозапуск того же языка - 409 `AUTOSTART_DUPLICATE` уникальным индексом (`L-019`).
    */
   async start(
     versionId: string,
     limitUsd: Prisma.Decimal | undefined,
-    createdById: string,
+    createdById: string | null,
+    autostart: SummaryAutostartLink | null = null,
   ): Promise<SummaryWriteDto> {
+    // Живой ход вида главнее отказов старта (`tech.md` §4 п.4, Р9): иначе потолок или устаревшее
+    // досье завели бы строку `failed` рядом с `ready`. Чтение до отказов выбирает исход, под замком
+    // транзакции та же проверка повторяется (L-019).
+    if (autostart) await assertNoLiveRun(this.prisma, versionId);
     this.llm.assertEnabled();
     const estimate = await this.estimateOf(versionId);
     if (estimate.dto.dossier?.refusedTooLong) {
@@ -146,22 +165,27 @@ export class SummaryWriteService {
       bookVersionId: versionId,
       limitUsd: limit,
       createdById,
+      translationRunId: autostart?.translationRunId ?? null,
     });
     let id: string;
     let stale: string[] = [];
     try {
       id = await this.prisma.$transaction(async (tx) => {
         await lockSummary(tx, versionId);
-        const previous = await tx.contentDraft.findMany({
-          where: { bookVersionId: versionId, kind: KIND, status: { in: ['ready', 'failed'] } },
-          select: { id: true, data: true },
-          take: 100,
-        });
-        await tx.contentDraft.updateMany({
-          where: { id: { in: previous.map((p) => p.id) } },
-          data: { status: 'discarded' },
-        });
-        stale = previous.flatMap((p) => regenOperations(p.data));
+        if (autostart) {
+          await assertNoLiveRun(tx, versionId);
+        } else {
+          const previous = await tx.contentDraft.findMany({
+            where: { bookVersionId: versionId, kind: KIND, status: { in: ['ready', 'failed'] } },
+            select: { id: true, data: true },
+            take: 100,
+          });
+          await tx.contentDraft.updateMany({
+            where: { id: { in: previous.map((p) => p.id) } },
+            data: { status: 'discarded' },
+          });
+          stale = previous.flatMap((p) => regenOperations(p.data));
+        }
         const data = emptyWriteData(...(await this.ownership(tx, versionId)));
         const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
         const row = await tx.contentDraft.create({
@@ -172,6 +196,7 @@ export class SummaryWriteService {
             operationId: op.id,
             dossierId: estimate.context.run?.dossierId ?? null,
             glossaryId: estimate.context.run?.glossaryId ?? null,
+            translationRunLanguageId: autostart?.translationRunLanguageId ?? null,
             data: toJson(data),
           },
         });
@@ -179,11 +204,7 @@ export class SummaryWriteService {
         return row.id;
       }, DRAFT_TX_OPTIONS);
     } catch (error) {
-      // Один строящийся ход на версию - частичным уникальным индексом, а не чтением (L-019).
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw llmTaskConflict(DRAFT_IN_PROGRESS, 'A summary run is already being built');
-      }
-      throw error;
+      throw startConflict(error, autostart !== null);
     }
     // Перегенерации отброшенных ходов - после коммита нового хода: старт не удался - их оплаченная
     // работа не снята. Обрыв здесь оставляет операцию, которая сама кончится на условии строки
@@ -359,8 +380,9 @@ export class SummaryWriteService {
       try {
         await this.fields.accept(row, index, false);
       } catch (error) {
-        // По одному (`tech.md` §5): отказ после части принятых - 409 с тем, что уже записано.
-        if (error instanceof ConflictException && accepted.length > 0) {
+        // По одному (`tech.md` §5): отказ - 409 с тем, что уже записано, и пустым списком тоже:
+        // клиент отличает «ничего не записано» от «неизвестно» (ревью `F06-3`, перенесено в `F06-5`).
+        if (error instanceof ConflictException) {
           const body = error.getResponse();
           throw new ConflictException({
             ...(typeof body === 'object' ? body : { message: body }),
@@ -435,16 +457,6 @@ export class SummaryWriteService {
     return item;
   }
 
-  private async estimators(): Promise<WriteEstimators> {
-    const [section, full, brief, review] = await Promise.all([
-      stageEstimatorFor(this.llm, SUMMARY_SECTION_WRITE_STAGE),
-      stageEstimatorFor(this.llm, SUMMARY_FULL_WRITE_STAGE),
-      stageEstimatorFor(this.llm, SUMMARY_BRIEF_WRITE_STAGE),
-      stageEstimatorFor(this.llm, SUMMARY_REVIEW_STAGE),
-    ]);
-    return { section, full, brief, review };
-  }
-
   /**
    * Оценка конвейера (`tech.md` §6-§7): план досье известен - по разделу плана на главах версии;
    * досье ещё нет - сверху, по главе на раздел. Версия без текста глав - отказ до досье (§8 п.11).
@@ -458,7 +470,7 @@ export class SummaryWriteService {
     if (!(await this.hasChapterText(versionId))) {
       throw llmTaskConflict('SOURCE_HAS_NO_CHAPTERS', 'The version has no chapter text');
     }
-    const calls = await this.estimators();
+    const calls = await writeEstimators(this.llm);
     const context = await this.drafts.draftContext(versionId, version);
     const partContext: PartContext = {
       language: version.language,
@@ -469,21 +481,7 @@ export class SummaryWriteService {
     const upperBound = plan.length === 0;
     const sources: SectionSource[] = [];
     if (upperBound) {
-      for await (const page of chapterPages(this.prisma, versionId, {
-        number: true,
-        title: true,
-        content: true,
-      })) {
-        for (const c of page) {
-          sources.push(
-            sectionSource(
-              { number: c.number, title: c.title, chapters: [c.number], why: '' },
-              [c],
-              version.language,
-            ),
-          );
-        }
-      }
+      sources.push(...(await chapterSources(this.prisma, versionId, version.language)));
     } else {
       for (const section of plan) {
         const chapters = await sectionChapters(this.prisma, versionId, section);
@@ -520,7 +518,7 @@ export class SummaryWriteService {
     item: WriteItem,
     remark: string | null,
   ): Promise<Prisma.Decimal> {
-    const calls = await this.estimators();
+    const calls = await writeEstimators(this.llm);
     const dossier = row.dossierId
       ? await this.prisma.bookDossier.findUnique({ where: { id: row.dossierId } })
       : null;
@@ -605,6 +603,39 @@ export class SummaryWriteService {
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
+  }
+}
+
+/**
+ * Отказ записи старта (`tech.md` §4 п.3): один строящийся ход на версию - частичным уникальным
+ * индексом, а не чтением (L-019). P2002 по индексу автозапуска (язык, вид) - `AUTOSTART_DUPLICATE`,
+ * тихий выход; прочее (частичный индекс строящегося, пустой разбор под адаптером) -
+ * `DRAFT_IN_PROGRESS`. Не P2002 - как есть.
+ */
+export function startConflict(error: unknown, autostart: boolean): unknown {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) {
+    return error;
+  }
+  if (autostart && uniqueViolationFields(error).includes('translationRunLanguageId')) {
+    return llmTaskConflict(AUTOSTART_DUPLICATE, 'This language has already started a run');
+  }
+  return llmTaskConflict(DRAFT_IN_PROGRESS, 'A summary run is already being built');
+}
+
+/**
+ * Автозапуск рядом с живым ходом вида не заводится (решение арбитра `F06 | F06-5`, Р9): чтение под
+ * замком пересказа - ручной старт берёт тот же замок до своей строки.
+ */
+async function assertNoLiveRun(tx: Prisma.TransactionClient, versionId: string): Promise<void> {
+  const live = await tx.contentDraft.findFirst({
+    where: { bookVersionId: versionId, kind: KIND, status: { in: ['building', 'ready'] } },
+    select: { status: true },
+  });
+  if (live?.status === 'building') {
+    throw llmTaskConflict(AUTOSTART_SKIPPED_IN_PROGRESS, 'A summary run is already being built');
+  }
+  if (live) {
+    throw llmTaskConflict(AUTOSTART_SKIPPED_EXISTING, 'The version already has a summary run');
   }
 }
 
