@@ -24876,6 +24876,24 @@
             "nullable": true,
             "type": "string"
           },
+          "regenOperationStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationStatus"
+              }
+            ],
+            "description": "Status of the regeneration operation; null - no regeneration is running",
+            "nullable": true
+          },
+          "regenPauseReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmPauseReason"
+              }
+            ],
+            "description": "Why the regeneration operation is paused; null - not paused",
+            "nullable": true
+          },
           "regenerating": {
             "description": "A regeneration of this text is running",
             "type": "boolean"
@@ -24935,7 +24953,9 @@
           "authorModel",
           "regenFailedReason",
           "regenerating",
-          "regenOperationId"
+          "regenOperationId",
+          "regenOperationStatus",
+          "regenPauseReason"
         ],
         "type": "object"
       },

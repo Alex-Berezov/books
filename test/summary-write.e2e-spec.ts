@@ -1049,6 +1049,25 @@ describe('Summary run «Write Summary» (e2e)', () => {
       .expect(202);
     const regenItem = (await runOf(versionId)).items[0] as Item & { regenOperationId: string };
     expect(regenItem.regenerating).toBe(true);
+    // F06-5c: статус и причина паузы перегенерации - из её операции, по строке в базе.
+    expect(regenItem).toMatchObject({ regenOperationStatus: 'active', regenPauseReason: null });
+    await prisma.llmOperation.update({
+      where: { id: regenItem.regenOperationId },
+      data: { status: 'paused', pauseReason: 'LIMIT_REACHED' },
+    });
+    expect((await runOf(versionId)).items[0]).toMatchObject({
+      regenerating: true,
+      regenOperationStatus: 'paused',
+      regenPauseReason: 'LIMIT_REACHED',
+    });
+    expect(itemOf(await runOf(versionId), 'full')).toMatchObject({
+      regenOperationStatus: null,
+      regenPauseReason: null,
+    });
+    await prisma.llmOperation.update({
+      where: { id: regenItem.regenOperationId },
+      data: { status: 'active', pauseReason: null },
+    });
     await auth(http().post(`/admin/content-drafts/${run.id}/discard-run`)).expect(200);
     // Операция перегенерации отменена - по её строке в базе, а не по ответу ручки (L-017).
     const regenOp = await prisma.llmOperation.findUniqueOrThrow({

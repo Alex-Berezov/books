@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ContentDraftStatus, Language } from '@prisma/client';
+import { ContentDraftStatus, Language, LlmOperationStatus, LlmPauseReason } from '@prisma/client';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
 import { DRAFT_REMARK_CODES, DraftRemarkCode } from '../draft-quality/text-checks';
@@ -177,6 +177,22 @@ export class SummaryWriteItemDto {
     description: 'Operation of the running regeneration',
   })
   regenOperationId!: string | null;
+
+  @ApiProperty({
+    enum: LlmOperationStatus,
+    enumName: 'LlmOperationStatus',
+    nullable: true,
+    description: 'Status of the regeneration operation; null - no regeneration is running',
+  })
+  regenOperationStatus!: LlmOperationStatus | null;
+
+  @ApiProperty({
+    enum: LlmPauseReason,
+    enumName: 'LlmPauseReason',
+    nullable: true,
+    description: 'Why the regeneration operation is paused; null - not paused',
+  })
+  regenPauseReason!: LlmPauseReason | null;
 }
 
 export class SummaryWriteOwnsDto {

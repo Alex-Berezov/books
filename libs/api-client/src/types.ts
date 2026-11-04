@@ -13324,6 +13324,10 @@ export interface components {
        * @description Operation of the running regeneration
        */
       regenOperationId: string | null;
+      /** @description Status of the regeneration operation; null - no regeneration is running */
+      regenOperationStatus: components['schemas']['LlmOperationStatus'] | null;
+      /** @description Why the regeneration operation is paused; null - not paused */
+      regenPauseReason: components['schemas']['LlmPauseReason'] | null;
       /** @description A regeneration of this text is running */
       regenerating: boolean;
       /** @description Flags of the code checks and the reviewer model */

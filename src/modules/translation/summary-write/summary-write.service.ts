@@ -586,6 +586,18 @@ export class SummaryWriteService {
       });
       waitingFor = glossary ? 'glossary' : 'dossier';
     }
+    // Статус и причина паузы перегенераций (F06-5c): одним запросом по идущим операциям.
+    const regenIds = regenOperations(row.data);
+    const regenOps = new Map(
+      regenIds.length === 0
+        ? []
+        : (
+            await this.prisma.llmOperation.findMany({
+              where: { id: { in: regenIds } },
+              select: { id: true, status: true, pauseReason: true },
+            })
+          ).map((op) => [op.id, op] as const),
+    );
     return {
       id: row.id,
       bookVersionId: row.bookVersionId,
@@ -598,7 +610,7 @@ export class SummaryWriteService {
       // Разделы с текстом: «не удалось» в счёт «Writing: sections N of M» не идёт.
       sectionsDone: data.items.filter((i) => i.target === 'section' && hasText(i)).length,
       owns: data.owns,
-      items: data.items.map(itemDto),
+      items: data.items.map((item, index) => itemDto(item, index, regenOps)),
       chapterChanges: row.status === 'ready' ? await this.fields.chapterChanges(row, data) : [],
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
@@ -644,7 +656,14 @@ function regenOperations(data: unknown): string[] {
   return readWriteData(data).items.flatMap((i) => (i.regen ? [i.regen.operationId] : []));
 }
 
-function itemDto(item: WriteItem, index: number): SummaryWriteItemDto {
+type RegenOperationState = Pick<LlmOperation, 'id' | 'status' | 'pauseReason'>;
+
+function itemDto(
+  item: WriteItem,
+  index: number,
+  regenOps: ReadonlyMap<string, RegenOperationState>,
+): SummaryWriteItemDto {
+  const regenOp = item.regen ? regenOps.get(item.regen.operationId) : undefined;
   return {
     index,
     target: item.target,
@@ -667,5 +686,7 @@ function itemDto(item: WriteItem, index: number): SummaryWriteItemDto {
     regenFailedReason: item.regenFailedReason,
     regenerating: item.regen !== null,
     regenOperationId: item.regen?.operationId ?? null,
+    regenOperationStatus: regenOp?.status ?? null,
+    regenPauseReason: regenOp?.pauseReason ?? null,
   };
 }
