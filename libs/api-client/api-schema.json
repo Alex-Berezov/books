@@ -879,6 +879,504 @@
         ],
         "type": "object"
       },
+      "AnalysisWriteDroppedQuoteDto": {
+        "properties": {
+          "chapter": {
+            "nullable": true,
+            "type": "number"
+          },
+          "path": {
+            "description": "Where the quotation was: keyQuotes.2, style.0.example…",
+            "type": "string"
+          },
+          "reason": {
+            "description": "QUOTE_NOT_VERBATIM: NOT_FOUND - not word for word in the chapter; NO_CHAPTER - no chapter; CHAPTER_MISSING - the chapter is not in the version",
+            "enum": [
+              "NOT_FOUND",
+              "NO_CHAPTER",
+              "CHAPTER_MISSING"
+            ],
+            "type": "string"
+          },
+          "step": {
+            "enum": [
+              1,
+              2,
+              3
+            ],
+            "type": "number"
+          },
+          "text": {
+            "description": "The text of the model",
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "path",
+          "text",
+          "chapter",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "AnalysisWriteDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "droppedQuotes": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisWriteDroppedQuoteDto"
+            },
+            "type": "array"
+          },
+          "failedReason": {
+            "description": "Code of the final refusal (failed)",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisWriteItemDto"
+            },
+            "type": "array"
+          },
+          "language": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/LlmOperationDto"
+          },
+          "owns": {
+            "description": "Blocks the run writes directly: empty at the start on an unpublished version",
+            "items": {
+              "enum": [
+                "facts.settingPlace",
+                "facts.settingTime",
+                "facts.narrator",
+                "facts.structure",
+                "characters",
+                "keyQuotes",
+                "style",
+                "mainIdea",
+                "themes",
+                "symbols",
+                "titleMeaning",
+                "endingMeaning"
+              ],
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "status": {
+            "description": "A paused operation keeps the run building: the reason is operation.pauseReason",
+            "enum": [
+              "building",
+              "ready",
+              "failed",
+              "discarded"
+            ],
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisWriteStepDto"
+            },
+            "type": "array"
+          },
+          "stepsTotal": {
+            "description": "Steps of the run in all (3)",
+            "type": "number"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "waitingFor": {
+            "enum": [
+              "dossier",
+              "glossary"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "bookVersionId",
+          "status",
+          "language",
+          "failedReason",
+          "waitingFor",
+          "operation",
+          "stepsTotal",
+          "owns",
+          "steps",
+          "items",
+          "droppedQuotes",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "AnalysisWriteEstimateDto": {
+        "properties": {
+          "dossier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DossierContextLineDto"
+              }
+            ],
+            "description": "The dossier is built first by its own operation; null - it is ready",
+            "nullable": true,
+            "type": "object"
+          },
+          "glossary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CompareContextLineDto"
+              }
+            ],
+            "description": "The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language)",
+            "nullable": true,
+            "type": "object"
+          },
+          "stageUsd": {
+            "description": "Upper estimate of steps 1-3: each step reads the whole version text, plus the reviewer of each step, each step × 2 passes",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "suggestedLimitUsd": {
+            "description": "Default operation limit: max(steps × 1.5, dossier and glossary limits)",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "upperBound": {
+            "description": "The dossier or the glossary is not ready: their size is taken from their stages",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dossier",
+          "glossary",
+          "stageUsd",
+          "upperBound",
+          "suggestedLimitUsd"
+        ],
+        "type": "object"
+      },
+      "AnalysisWriteFixDto": {
+        "properties": {
+          "code": {
+            "description": "Fixed by code without a redo: CHAPTER_UNKNOWN - a chapter number not in the version removed; LIMIT_OUT - elements over the import limit cut; IMPORT_INVALID - a theme link to an unknown element dropped",
+            "enum": [
+              "CHAPTER_UNKNOWN",
+              "LIMIT_OUT",
+              "IMPORT_INVALID"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "path": {
+            "description": "Path of the field",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "path",
+          "note"
+        ],
+        "type": "object"
+      },
+      "AnalysisWriteItemDto": {
+        "properties": {
+          "failedReason": {
+            "description": "IMPORT_INVALID - the block failed the import after the redo; DRAFT_DATA_INVALID",
+            "nullable": true,
+            "type": "string"
+          },
+          "index": {
+            "description": "Index of the block in the run",
+            "type": "number"
+          },
+          "links": {
+            "description": "themeKeys of step 3 in the characters or key quotations of steps 1-2",
+            "type": "boolean"
+          },
+          "outcome": {
+            "description": "written - in the analysis; proposed - a proposal; waiting - the write is not decided yet; accepted, discarded - the editor decided; none - not written (failedReason)",
+            "enum": [
+              "waiting",
+              "written",
+              "proposed",
+              "accepted",
+              "discarded",
+              "none"
+            ],
+            "type": "string"
+          },
+          "remarks": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisWriteRemarkDto"
+            },
+            "type": "array"
+          },
+          "review": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisWriteReviewDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "step": {
+            "enum": [
+              1,
+              2,
+              3
+            ],
+            "type": "number"
+          },
+          "target": {
+            "description": "A block or a facts subfield",
+            "enum": [
+              "facts.settingPlace",
+              "facts.settingTime",
+              "facts.narrator",
+              "facts.structure",
+              "characters",
+              "keyQuotes",
+              "style",
+              "mainIdea",
+              "themes",
+              "symbols",
+              "titleMeaning",
+              "endingMeaning"
+            ],
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "ok",
+              "flags",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "target",
+          "step",
+          "verdict",
+          "remarks",
+          "review",
+          "outcome",
+          "failedReason",
+          "links"
+        ],
+        "type": "object"
+      },
+      "AnalysisWriteRemarkDto": {
+        "properties": {
+          "by": {
+            "enum": [
+              "code",
+              "model"
+            ],
+            "type": "string"
+          },
+          "code": {
+            "enum": [
+              "LANGUAGE_MIXED",
+              "NAME_MISMATCH",
+              "JUNK",
+              "STYLE_POOR",
+              "IMPORT_INVALID",
+              "CHAPTER_UNKNOWN",
+              "LIMIT_OUT",
+              "CORE_MISSING",
+              "NOT_IN_TEXT",
+              "GENERIC",
+              "CONTRADICTION",
+              "RETELLING",
+              "ONE_SIDED"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "description": "What to fix, in English",
+            "type": "string"
+          },
+          "where": {
+            "description": "The field path and a short fragment, or the step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "where",
+          "note",
+          "by"
+        ],
+        "type": "object"
+      },
+      "AnalysisWriteReviewDto": {
+        "properties": {
+          "kind": {
+            "description": "answered - the reviewer model checked the step; otherwise why the model check was not done",
+            "enum": [
+              "answered",
+              "not_independent",
+              "too_long",
+              "invalid",
+              "no_provider",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "description": "The reviewer model (answered)",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "model"
+        ],
+        "type": "object"
+      },
+      "AnalysisWriteStateDto": {
+        "properties": {
+          "draft": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisWriteDto"
+              }
+            ],
+            "description": "The latest analysis run that is not discarded, in any status; null - none",
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "draft"
+        ],
+        "type": "object"
+      },
+      "AnalysisWriteStepDto": {
+        "properties": {
+          "attempt": {
+            "description": "2 - the text of the one redo",
+            "enum": [
+              1,
+              2
+            ],
+            "type": "number"
+          },
+          "authorModel": {
+            "nullable": true,
+            "type": "string"
+          },
+          "dropped": {
+            "items": {
+              "$ref": "#/components/schemas/AnalysisWriteFixDto"
+            },
+            "type": "array"
+          },
+          "failedReason": {
+            "description": "Why the step gave no text: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE",
+            "nullable": true,
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "remarks": {
+            "description": "Flags of the step: code checks, the reviewer model, CORE_MISSING after step 3",
+            "items": {
+              "$ref": "#/components/schemas/AnalysisWriteRemarkDto"
+            },
+            "type": "array"
+          },
+          "review": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/AnalysisWriteReviewDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "source": {
+            "description": "text - the whole version text; summaries - the chapter summaries of the dossier",
+            "enum": [
+              "text",
+              "summaries"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "step": {
+            "enum": [
+              1,
+              2,
+              3
+            ],
+            "type": "number"
+          },
+          "verdict": {
+            "description": "ok - no remarks; flags - remarks after the redo or no model check; failed - no text",
+            "enum": [
+              "ok",
+              "flags",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "verdict",
+          "remarks",
+          "attempt",
+          "outcome",
+          "failedReason",
+          "authorModel",
+          "review",
+          "source",
+          "dropped"
+        ],
+        "type": "object"
+      },
       "AppHealthResponseDto": {
         "properties": {
           "status": {
@@ -40973,6 +41471,143 @@
           }
         ],
         "summary": "Upper cost estimate of building the dossier of this version",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/drafts/analysis_write": {
+      "get": {
+        "operationId": "ContentDraftController_analysisLatest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisWriteStateDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The latest analysis run that is not discarded, in any status: its steps, flags, dropped quotations, what is written and what is proposed; null - none",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "ContentDraftController_analysisStart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartContentDraftDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisWriteDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first"
+          },
+          "404": {
+            "description": "Book version not found"
+          },
+          "409": {
+            "description": "DRAFT_IN_PROGRESS: an analysis run is being built; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED; DRAFT_TOO_LONG is not a start refusal: a step whose input does not fit even as chapter summaries is marked with it and the run goes on"
+          },
+          "503": {
+            "description": "LLM_DISABLED: no OpenRouter key"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "«Write Analysis»: steps 1-3 (card and characters, key quotations and style, interpretations) in the background under its own operation; blocks empty at the start of an unpublished version are written through the import, the rest become proposals; the previous ready or failed run is discarded",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/drafts/analysis_write/estimate": {
+      "get": {
+        "operationId": "ContentDraftController_analysisEstimate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisWriteEstimateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Book version not found"
+          },
+          "409": {
+            "description": "SOURCE_HAS_NO_CHAPTERS: the version or the dossier source has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upper cost estimate of the analysis run: steps 1-3, each reads the whole version text, plus the reviewer of each step, each step × 2 passes of the author and the reviewer",
         "tags": [
           "admin"
         ]

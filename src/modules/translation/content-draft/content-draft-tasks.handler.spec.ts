@@ -168,6 +168,20 @@ describe('ContentDraftTasksHandler (F05-11, F06-3)', () => {
     prisma.contentDraft.findUnique.mockResolvedValue(draftRow({ status: 'ready' }));
     await expect(handler.resumeTasks({ id: 'op1' } as never)).resolves.toEqual([]);
   });
+
+  // Л1 `F07-1a`: строящийся ход анализа не уходит задачей заготовки (она отбила бы строку чужого
+  // вида `DRAFT_INPUT_MISSING`); «Continue» хода анализа - `F07-1b`, до него - пусто (409).
+  it('a building analysis run is not resumed as a draft task; cancel fails it like any row', async () => {
+    const { handler } = setup(draftRow({ kind: 'analysis_write' }));
+    await expect(handler.resumeTasks({ id: 'op1' } as never)).resolves.toEqual([]);
+    const tx = { contentDraft: { updateMany: jest.fn() } };
+    await handler.onCancelled({ id: 'op1' } as never, tx as unknown as Prisma.TransactionClient);
+    expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
+    expect(tx.contentDraft.updateMany).toHaveBeenCalledWith({
+      where: { operationId: 'op1', status: 'building' },
+      data: { status: 'failed', failedReason: 'DRAFT_CANCELLED' },
+    });
+  });
 });
 
 describe('ContentDraftTasksHandler, analysis (F05-11)', () => {

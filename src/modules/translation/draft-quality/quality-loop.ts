@@ -16,7 +16,11 @@ import { DraftRemark, DraftRemarkCode } from './text-checks';
  * не пропадает. Проверяющая выбирается по семейству **фактически ответившей** модели-автора.
  */
 
-/** Коды, которые ставит проверяющая модель (§3): длину, строй, язык, цитаты и мусор ставит код. */
+/**
+ * Коды, которые ставит проверяющая модель пересказа (§3): длину, строй, язык, цитаты и мусор ставит
+ * код. Умолчание `QualityLoopSpec.reviewCodes`: у анализа `F07` свой набор (решение арбитра
+ * `F07 | F07-1`, В2).
+ */
 export const REVIEW_REMARK_CODES = [
   'NAME_MISMATCH',
   'FACT_UNSUPPORTED',
@@ -28,19 +32,27 @@ export const REVIEW_REMARK_CODES = [
 
 const str = 'string' as const;
 
-/** Ответ проверяющей: `{ verdict: 'ok' | 'remarks', remarks: [{ code, where, note }] }` (`tech.md` §3). */
-export const REVIEW_SHAPE: Shape = {
-  object: {
-    verdict: { enum: ['ok', 'remarks'] },
-    remarks: {
-      array: { object: { code: { enum: [...REVIEW_REMARK_CODES] }, where: str, note: str } },
+/**
+ * Ответ проверяющей: `{ verdict: 'ok' | 'remarks', remarks: [{ code, where, note }] }` (`tech.md` §3);
+ * `code` - только из `codes`: код не из своего набора отбивается формой, а не доходит до флагов.
+ */
+export function reviewShapeOf(codes: readonly DraftRemarkCode[]): Shape {
+  return {
+    object: {
+      verdict: { enum: ['ok', 'remarks'] },
+      remarks: {
+        array: { object: { code: { enum: [...codes] }, where: str, note: str } },
+      },
     },
-  },
-};
+  };
+}
+
+/** Форма ответа проверяющей пересказа. */
+export const REVIEW_SHAPE: Shape = reviewShapeOf(REVIEW_REMARK_CODES);
 
 interface ReviewAnswer {
   verdict: 'ok' | 'remarks';
-  remarks: Array<{ code: (typeof REVIEW_REMARK_CODES)[number]; where: string; note: string }>;
+  remarks: Array<{ code: DraftRemarkCode; where: string; note: string }>;
 }
 
 /** Замечания проверяющей; вердикт `ok` при непустом списке - замечания всё равно в счёт. */
@@ -67,6 +79,11 @@ export interface QualityLoopSpec<T> {
   /** Код-проверки части. */
   codeCheck: (draft: T) => DraftRemark[];
   reviewStage: string;
+  /**
+   * Коды проверяющей: из них строится форма её ответа (`reviewShapeOf`). Нет - коды пересказа
+   * (`REVIEW_REMARK_CODES`); запрос `reviewRequest` строится той же формой.
+   */
+  reviewCodes?: readonly DraftRemarkCode[];
   reviewModels: StageModels;
   reviewRequest: (draft: T) => ShapedRequest;
   /**
@@ -152,6 +169,7 @@ export async function runQualityLoop<T>(
   spec: QualityLoopSpec<T>,
 ): Promise<QualityLoopResult<T>> {
   let costUsd = new Prisma.Decimal(0);
+  const reviewShape = spec.reviewCodes ? reviewShapeOf(spec.reviewCodes) : REVIEW_SHAPE;
 
   const round = async (redo: Redo<T> | null, attempt: 1 | 2): Promise<Round<T> | null> => {
     const answer = await callShaped(
@@ -177,7 +195,7 @@ export async function runQualityLoop<T>(
       operationId,
       spec.reviewStage,
       spec.reviewRequest(draft),
-      REVIEW_SHAPE,
+      reviewShape,
       reviewRemarks,
       authorModel,
       spec.reviewModels,

@@ -353,6 +353,103 @@ describe('runQualityLoop', () => {
     },
   );
 
+  // Коды проверяющей - из спецификации цикла (решение арбитра `F07 | F07-1`, В2): проверяющая
+  // анализа с кодом пересказа отбивается формой - ни переделки по нему, ни флага с ним.
+  it('reviewCodes of the analysis: a reviewer answer with a summary code fails the form', async () => {
+    const { llm, calls } = fakeLlm(
+      {
+        [AUTHOR_STAGE]: [{ json: { text: 'clean' }, model: 'z-ai/glm-5.3' }],
+        [REVIEW_STAGE]: [
+          {
+            json: {
+              verdict: 'remarks',
+              remarks: [{ code: 'EVENT_MISSING', where: 'a', note: 'b' }],
+            },
+            model: 'openai/gpt-6-luna',
+          },
+          {
+            json: {
+              verdict: 'remarks',
+              remarks: [{ code: 'EVENT_MISSING', where: 'a', note: 'b' }],
+            },
+            model: 'openai/gpt-6-luna',
+          },
+        ],
+      },
+      ['openai/gpt-6-luna'],
+    );
+    const result = await runQualityLoop(llm, 'op', ctx, {
+      ...spec(() => [], []),
+      reviewCodes: ['NOT_IN_TEXT', 'GENERIC'],
+    });
+    expect(result).toMatchObject({
+      ok: true,
+      attempt: 1,
+      remarks: [],
+      review: { kind: 'invalid' },
+    });
+    expect(calls.filter((c) => c.stage === AUTHOR_STAGE)).toHaveLength(1);
+  });
+
+  it('the default (no reviewCodes) is the summary set: an analysis code fails the form', async () => {
+    const notInText = {
+      verdict: 'remarks',
+      remarks: [{ code: 'NOT_IN_TEXT', where: 'a', note: 'b' }],
+    };
+    const { llm, calls } = fakeLlm(
+      {
+        [AUTHOR_STAGE]: [{ json: { text: 'clean' }, model: 'z-ai/glm-5.3' }],
+        [REVIEW_STAGE]: [
+          { json: notInText, model: 'openai/gpt-6-luna' },
+          { json: notInText, model: 'openai/gpt-6-luna' },
+        ],
+      },
+      ['openai/gpt-6-luna'],
+    );
+    const result = await runQualityLoop(
+      llm,
+      'op',
+      ctx,
+      spec(() => [], []),
+    );
+    expect(result).toMatchObject({
+      ok: true,
+      attempt: 1,
+      remarks: [],
+      review: { kind: 'invalid' },
+    });
+    expect(calls.filter((c) => c.stage === AUTHOR_STAGE)).toHaveLength(1);
+  });
+
+  it('reviewCodes of the analysis: an analysis code passes the form and leads to the one redo', async () => {
+    const notInText = {
+      verdict: 'remarks',
+      remarks: [{ code: 'NOT_IN_TEXT', where: 'themes.guilt.interpretation', note: 'no scene' }],
+    };
+    const { llm } = fakeLlm(
+      {
+        [AUTHOR_STAGE]: [
+          { json: { text: 'first' }, model: 'z-ai/glm-5.3' },
+          { json: { text: 'second' }, model: 'z-ai/glm-5.3' },
+        ],
+        [REVIEW_STAGE]: [
+          { json: notInText, model: 'openai/gpt-6-luna' },
+          { json: ok, model: 'openai/gpt-6-luna' },
+        ],
+      },
+      ['openai/gpt-6-luna'],
+    );
+    const redos: Array<Redo<string> | null> = [];
+    const result = await runQualityLoop(llm, 'op', ctx, {
+      ...spec(() => [], redos),
+      reviewCodes: ['NOT_IN_TEXT'],
+    });
+    expect(result).toMatchObject({ ok: true, draft: 'second', attempt: 2, verdict: 'ok' });
+    expect(redos[1]?.remarks).toEqual([
+      { code: 'NOT_IN_TEXT', where: 'themes.guilt.interpretation', note: 'no scene', by: 'model' },
+    ]);
+  });
+
   it('the cost sums every paid answer of both rounds, an invalid review included', async () => {
     const { llm } = fakeLlm(
       {

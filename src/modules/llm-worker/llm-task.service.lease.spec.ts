@@ -8,6 +8,10 @@ import {
   SUMMARY_WRITE_TASK_KIND,
 } from '../translation/summary-write/summary-write.constants';
 import { CHECK_STAGE_DEFINITIONS } from '../translation/check/check.constants';
+import {
+  ANALYSIS_WRITE_TASK_KIND,
+  registerAnalysisWriteStages,
+} from '../translation/analysis-write/analysis-write.constants';
 import { LlmWorkerConfig } from './llm-worker.config';
 
 // Аренда задачи от самого длинного таймаута этапа (`LEGACY-479`, решение арбитра `F05 | F05-13c`):
@@ -89,6 +93,16 @@ describe('LlmTaskService lease', () => {
     const stages = new LlmStageRegistry();
     for (const definition of CHECK_STAGE_DEFINITIONS) stages.register(definition);
     registerSummaryWriteStages(stages);
+    expect(leaseOf(stages, SUMMARY_WRITE_TASK_KIND)).toBe(1_200_000);
+    expect(leaseOf(stages, 'translation_run')).toBe(840_000);
+  });
+
+  it('the real F06 and F07 registration: the analysis task leases 1680 s (step 3 is 840 s), the summary 1200 s, the translation 840 s', () => {
+    const stages = new LlmStageRegistry();
+    for (const definition of CHECK_STAGE_DEFINITIONS) stages.register(definition);
+    registerSummaryWriteStages(stages);
+    registerAnalysisWriteStages(stages);
+    expect(leaseOf(stages, ANALYSIS_WRITE_TASK_KIND)).toBe(1_680_000);
     expect(leaseOf(stages, SUMMARY_WRITE_TASK_KIND)).toBe(1_200_000);
     expect(leaseOf(stages, 'translation_run')).toBe(840_000);
   });

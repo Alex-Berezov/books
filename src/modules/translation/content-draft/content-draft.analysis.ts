@@ -78,9 +78,12 @@ export interface AnalysisDraftAnswer {
   style: Array<{ device: string; explanation: string; example: string; exampleChapter: number }>;
 }
 
-/** Подполя `facts`, которые есть в тексте книги; жанр, направление и годы - внешние (§5.1 п.4). */
-const FILLABLE_FACTS = ['settingPlace', 'settingTime', 'narrator', 'structure'] as const;
-type FillableFact = (typeof FILLABLE_FACTS)[number];
+/**
+ * Подполя `facts`, которые есть в тексте книги; жанр, направление и годы - внешние (§5.1 п.4).
+ * Те же подполя пишет шаг 1 хода анализа `F07` (владение, запись и предложение - по подполю).
+ */
+export const FILLABLE_FACTS = ['settingPlace', 'settingTime', 'narrator', 'structure'] as const;
+export type FillableFact = (typeof FILLABLE_FACTS)[number];
 
 /** Блоки анализа, которые строит заготовка, - форма ответа ручки (`tech.md` §2б). */
 export type AnalysisDraftJson = ContentDraftAnalysisDto;
@@ -249,11 +252,9 @@ function flatten(errors: ValidationError[], prefix = ''): string[] {
  * Ошибки, на которых сохранение анализа отказало бы (Р2): тело - через `UpdateBookAnalysisDto`
  * с опциями боевого `ValidationPipe` (`main.ts`), ссылки - `checkAnalysisRefs` по записи после
  * слияния, как у `PUT versions/:id/analysis`. Не копия схемы: те же классы и та же функция.
+ * Тело - любые блоки импорта: заготовка `F05-11` и шаги хода анализа `F07`.
  */
-export function analysisImportErrors(
-  stored: StoredBookAnalysis,
-  analysis: AnalysisDraftJson,
-): string[] {
+export function analysisImportErrors(stored: StoredBookAnalysis, analysis: object): string[] {
   const dto = plainToInstance(UpdateBookAnalysisDto, analysis);
   const errors = flatten(validateSync(dto, { whitelist: true, forbidNonWhitelisted: true }));
   if (errors.length > 0) return errors;

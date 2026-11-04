@@ -2,7 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { ContentDraftStatus, Language, LlmOperationStatus, LlmPauseReason } from '@prisma/client';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
-import { DRAFT_REMARK_CODES, DraftRemarkCode } from '../draft-quality/text-checks';
+import { DraftRemarkCode, SUMMARY_REMARK_CODES } from '../draft-quality/text-checks';
 import {
   ITEM_OUTCOMES,
   ITEM_TARGETS,
@@ -64,7 +64,7 @@ export class SummaryWriteEstimateDto {
 }
 
 export class SummaryWriteRemarkDto {
-  @ApiProperty({ enum: DRAFT_REMARK_CODES })
+  @ApiProperty({ enum: SUMMARY_REMARK_CODES })
   code!: DraftRemarkCode;
 
   @ApiProperty({ type: String, description: 'A short fragment of the text or the part name' })

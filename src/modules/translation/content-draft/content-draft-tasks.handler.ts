@@ -92,6 +92,9 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     const row = await this.prisma.contentDraft.findUnique({ where: { operationId: op.id } });
     if (!row) return isRunOperation(op) ? [] : this.summaryWrite.regenResume(op);
     if (row.status !== 'building') return [];
+    // Ход анализа (`F07-1a`): «Continue» - `F07-1b`; до него операция не продолжается (409),
+    // а не уходит задачей заготовки, которая отбила бы строку чужого вида (Л1).
+    if (row.kind === 'analysis_write') return [];
     return row.kind === 'summary_write'
       ? [summaryWriteTaskInput(row, row.operationId)]
       : [draftTaskInput(row)];

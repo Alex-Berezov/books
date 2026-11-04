@@ -60,6 +60,14 @@ import { SummaryWriteFields } from './summary-write/summary-write.fields';
 import { SummaryWriteHandler } from './summary-write/summary-write.handler';
 import { SummaryWriteService } from './summary-write/summary-write.service';
 import { BookSummaryModule } from '../book-summary/book-summary.module';
+import { BookAnalysisModule } from '../book-analysis/book-analysis.module';
+import {
+  ANALYSIS_WRITE_TASK_KIND,
+  registerAnalysisWriteStages,
+} from './analysis-write/analysis-write.constants';
+import { AnalysisWriteFields } from './analysis-write/analysis-write.fields';
+import { AnalysisWriteHandler } from './analysis-write/analysis-write.handler';
+import { AnalysisWriteService } from './analysis-write/analysis-write.service';
 
 /**
  * Автоперевод книги (F05): исходник по D8, блоки главы, отпечаток текста, досье и глоссарий
@@ -70,8 +78,16 @@ import { BookSummaryModule } from '../book-summary/book-summary.module';
  * после этого `onModuleInit`.
  */
 @Module({
-  // `BookSummaryModule` - запись хода пересказа `F06-2` теми же сервисами, что ручки Summary.
-  imports: [LlmModule, LlmWorkerModule, BookVersionModule, ChapterModule, BookSummaryModule],
+  // `BookSummaryModule` - запись хода пересказа `F06-2` теми же сервисами, что ручки Summary;
+  // `BookAnalysisModule` - запись хода анализа `F07` тем же путём, что импорт `F03` (`saveGuarded`).
+  imports: [
+    LlmModule,
+    LlmWorkerModule,
+    BookVersionModule,
+    ChapterModule,
+    BookSummaryModule,
+    BookAnalysisModule,
+  ],
   controllers: [
     DossierController,
     TranslationCompareController,
@@ -106,6 +122,9 @@ import { BookSummaryModule } from '../book-summary/book-summary.module';
     SummaryWriteFields,
     SummaryWriteHandler,
     SummaryWriteService,
+    AnalysisWriteFields,
+    AnalysisWriteHandler,
+    AnalysisWriteService,
     ContentAutostartHandler,
   ],
 })
@@ -120,6 +139,7 @@ export class TranslationModule implements OnModuleInit {
     private readonly retryTasks: ChunkRetryHandler,
     private readonly draftTasks: ContentDraftTasksHandler,
     private readonly summaryWriteTasks: SummaryWriteHandler,
+    private readonly analysisWriteTasks: AnalysisWriteHandler,
     private readonly autostartTasks: ContentAutostartHandler,
   ) {}
 
@@ -144,6 +164,9 @@ export class TranslationModule implements OnModuleInit {
     registerSummaryWriteStages(this.stages);
     // Ход пересказа (`F06-2`): операция вида `draft` - «Continue» и отмена идут через `draftTasks`.
     this.handlers.register(SUMMARY_WRITE_TASK_KIND, this.summaryWriteTasks.handler);
+    registerAnalysisWriteStages(this.stages);
+    // Ход анализа (`F07-1a`): операция вида `draft` - отмена идёт через `draftTasks`; «Continue» - `F07-1b`.
+    this.handlers.register(ANALYSIS_WRITE_TASK_KIND, this.analysisWriteTasks.handler);
     // Автозапуск раздела по `done` языка (`F06-5`): операция вида `draft` - «Continue» и отмена
     // идут через `draftTasks` (решение арбитра `F06 | F06-5`, Р4).
     this.handlers.register(CONTENT_AUTOSTART_TASK_KIND, this.autostartTasks.handler);

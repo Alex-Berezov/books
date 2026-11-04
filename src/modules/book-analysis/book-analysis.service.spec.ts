@@ -588,4 +588,125 @@ describe('BookAnalysisService', () => {
       ).rejects.toBeInstanceOf(NotFoundException);
     });
   });
+
+  // Запись хода анализа `F07` (решение арбитра `F07 | F07-1`, В5): то же тело транзакции, что импорт.
+  describe('saveGuarded', () => {
+    const dto = (over: Partial<UpdateBookAnalysisDto> = {}) =>
+      ({ language: 'en', ...over }) as UpdateBookAnalysisDto;
+
+    it('allow = false: no write and no done, under the same lock', async () => {
+      tx.bookAnalysis.findUnique.mockResolvedValue(row({ mainIdea: 'Editor' }));
+      const allow = jest.fn().mockResolvedValue(false);
+      const done = jest.fn();
+      await expect(
+        service.saveGuarded('v1', dto({ mainIdea: 'Run' }), { allow, done }),
+      ).resolves.toBe(false);
+      expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
+      expect(allow).toHaveBeenCalledTimes(1);
+      expect(allow).toHaveBeenCalledWith(tx, expect.objectContaining({ mainIdea: 'Editor' }));
+      expect(tx.bookAnalysis.update).not.toHaveBeenCalled();
+      expect(tx.bookAnalysis.create).not.toHaveBeenCalled();
+      expect(done).not.toHaveBeenCalled();
+    });
+
+    it('allow = true: the import write, then done once on the same tx with the blocks read back from the row, not the dto', async () => {
+      // Строка, которую вернула база, отличается от тела: done получает её (Л2), а не dto.
+      tx.bookAnalysis.create.mockResolvedValue(
+        row({ hasCore: false, mainIdea: 'Run (as stored)', titleMeaning: 'Stored' }),
+      );
+      const allow = jest.fn().mockResolvedValue(true);
+      const done = jest.fn();
+      await expect(
+        service.saveGuarded('v1', dto({ mainIdea: 'Run' }), { allow, done }),
+      ).resolves.toBe(true);
+      expect(allow).toHaveBeenCalledTimes(1);
+      expect(tx.bookAnalysis.create).toHaveBeenCalledTimes(1);
+      expect(tx.bookAnalysis.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ mainIdea: 'Run' }) }),
+      );
+      expect(done).toHaveBeenCalledTimes(1);
+      expect(done).toHaveBeenCalledWith(
+        tx,
+        expect.objectContaining({ mainIdea: 'Run (as stored)', titleMeaning: 'Stored' }),
+      );
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(prisma.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        timeout: 30_000,
+        maxWait: 10_000,
+      });
+    });
+
+    it('an existing analysis: the update branch under the same lock, done once', async () => {
+      tx.bookAnalysis.findUnique.mockResolvedValue(row({ mainIdea: 'Old' }));
+      tx.bookAnalysis.update.mockResolvedValue(row({ mainIdea: 'New' }));
+      const done = jest.fn();
+      await expect(
+        service.saveGuarded('v1', dto({ mainIdea: 'New' }), {
+          allow: jest.fn().mockResolvedValue(true),
+          done,
+        }),
+      ).resolves.toBe(true);
+      expect(tx.bookAnalysis.create).not.toHaveBeenCalled();
+      expect(tx.bookAnalysis.update).toHaveBeenCalledTimes(1);
+      expect(tx.bookAnalysis.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { bookVersionId: 'v1' },
+          data: expect.objectContaining({ mainIdea: 'New' }),
+        }),
+      );
+      expect(done).toHaveBeenCalledTimes(1);
+      expect(done).toHaveBeenCalledWith(tx, expect.objectContaining({ mainIdea: 'New' }));
+    });
+
+    it('refs fail on the merged record - 400 like the import, done is not called', async () => {
+      const done = jest.fn();
+      const bad = dto({ characters: [{ key: 'r', name: 'R', role: 'main', themeKeys: ['x'] }] });
+      await expect(
+        service.saveGuarded('v1', bad, { allow: jest.fn().mockResolvedValue(true), done }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(done).not.toHaveBeenCalled();
+    });
+
+    it('done throws after the write: the error goes out as is and the write is inside the rolled back transaction (L-019)', async () => {
+      // Транзакция с откатом: запись видна снаружи, только если колбэк дошёл до конца.
+      let committed = 0;
+      let txOfCallback: unknown = null;
+      prisma.$transaction.mockImplementation(async (cb: (client: typeof tx) => unknown) => {
+        txOfCallback = tx;
+        const result = await cb(tx);
+        committed += tx.bookAnalysis.create.mock.calls.length;
+        return result;
+      });
+      tx.bookAnalysis.create.mockResolvedValue(row({ mainIdea: 'Run' }));
+      const failure = new Error('the run row is gone');
+      const done = jest.fn().mockRejectedValue(failure);
+      await expect(
+        service.saveGuarded('v1', dto({ mainIdea: 'Run' }), {
+          allow: jest.fn().mockResolvedValue(true),
+          done,
+        }),
+      ).rejects.toBe(failure);
+      expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+      expect(tx.bookAnalysis.create).toHaveBeenCalledTimes(1);
+      expect(done).toHaveBeenCalledTimes(1);
+      expect(done.mock.calls[0][0]).toBe(txOfCallback);
+      expect(done.mock.invocationCallOrder[0]).toBeGreaterThan(
+        tx.bookAnalysis.create.mock.invocationCallOrder[0],
+      );
+      // Колбэк транзакции не дошёл до конца - записи нет.
+      expect(committed).toBe(0);
+    });
+
+    it.each(['P2003', 'P2025'])('the version is gone during the write (%s) - 404', async (code) => {
+      tx.bookAnalysis.create.mockRejectedValue(
+        new Prisma.PrismaClientKnownRequestError('gone', { code, clientVersion: 'test' }),
+      );
+      await expect(
+        service.saveGuarded('v1', dto({ mainIdea: 'I' }), {
+          allow: jest.fn().mockResolvedValue(true),
+          done: jest.fn(),
+        }),
+      ).rejects.toBeInstanceOf(NotFoundException);
+    });
+  });
 });

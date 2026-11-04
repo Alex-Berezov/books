@@ -18,8 +18,12 @@ import { ChapterIndex, findVerbatim, paragraphsOf } from './quote-check';
  * не выкидывается (U5).
  */
 
-/** Коды замечаний §3 `product.md`: код ставит первые семь, проверяющая модель - кроме длины и строя. */
-export const DRAFT_REMARK_CODES = [
+/**
+ * Коды замечаний пересказа - §3 `product.md` `F06`: код ставит первые семь, проверяющая модель -
+ * кроме длины и строя. Перечень ответа хода пересказа (`SummaryWriteRemarkDto`, решение арбитра
+ * `F07 | F07-1a`, Р13): коды анализа в него не попадают.
+ */
+export const SUMMARY_REMARK_CODES = [
   'LENGTH_OUT',
   'STRUCTURE_BROKEN',
   'LANGUAGE_MIXED',
@@ -33,7 +37,48 @@ export const DRAFT_REMARK_CODES = [
   'ORDER_BROKEN',
   'STYLE_POOR',
 ] as const;
+
+/**
+ * Все коды чистовика: коды пересказа и коды анализа `F07` (`features/F07-analysis-autofill/product.md`
+ * §3.2, §3.4; решение арбитра `F07 | F07-1`, В2): код - `IMPORT_INVALID`, `CHAPTER_UNKNOWN`,
+ * `LIMIT_OUT`, `CORE_MISSING`, проверяющая - `NOT_IN_TEXT` … `ONE_SIDED` и общий `STYLE_POOR`.
+ */
+export const DRAFT_REMARK_CODES = [
+  ...SUMMARY_REMARK_CODES,
+  'IMPORT_INVALID',
+  'CHAPTER_UNKNOWN',
+  'LIMIT_OUT',
+  'CORE_MISSING',
+  'NOT_IN_TEXT',
+  'GENERIC',
+  'CONTRADICTION',
+  'RETELLING',
+  'ONE_SIDED',
+] as const;
 export type DraftRemarkCode = (typeof DRAFT_REMARK_CODES)[number];
+
+/**
+ * Коды, которые ставит ход анализа `F07` (решение арбитра `F07 | F07-1a`, А4): общие код-проверки
+ * текста (язык, имена, мусор), проверяющая анализа (`ANALYSIS_REVIEW_CODES` с общим `STYLE_POOR`)
+ * и коды анализа. Перечень ответа хода анализа (`AnalysisWriteRemarkDto`); кодов пересказа, которых
+ * ход не ставит, в нём нет. Полноту держит `analysis-checks.spec.ts`.
+ */
+export const ANALYSIS_REMARK_CODES = [
+  'LANGUAGE_MIXED',
+  'NAME_MISMATCH',
+  'JUNK',
+  'STYLE_POOR',
+  'IMPORT_INVALID',
+  'CHAPTER_UNKNOWN',
+  'LIMIT_OUT',
+  'CORE_MISSING',
+  'NOT_IN_TEXT',
+  'GENERIC',
+  'CONTRADICTION',
+  'RETELLING',
+  'ONE_SIDED',
+] as const satisfies readonly DraftRemarkCode[];
+export type AnalysisRemarkCode = (typeof ANALYSIS_REMARK_CODES)[number];
 
 /** Замечание к тексту (`tech.md` §2): место - короткий фрагмент текста или имя части. */
 export interface DraftRemark {
@@ -225,8 +270,13 @@ export function blocksOf(text: string): string[] {
 /**
  * `JUNK` (§3): служебная фраза модели, Markdown в простом поле, обрыв на полуслове.
  * `subheadings` - поле допускает подзаголовки `##` (полный пересказ), остальной Markdown - нет.
+ * `breakOff: false` - обрыв не проверяется: короткое поле анализа (имя, подпись, строка карточки) -
+ * фраза, а не законченное предложение (решение арбитра `F07 | F07-1a`, Р10). Нет - проверяется.
  */
-export function checkJunk(text: string, options: { subheadings: boolean }): DraftRemark[] {
+export function checkJunk(
+  text: string,
+  options: { subheadings: boolean; breakOff?: boolean },
+): DraftRemark[] {
   const remarks: DraftRemark[] = [];
   const norm = normalized(text);
   const phrase = JUNK_PHRASES.find((p) => hasPhrase(norm, p));
@@ -252,7 +302,7 @@ export function checkJunk(text: string, options: { subheadings: boolean }): Draf
     );
   }
   const trimmed = text.trim();
-  if (trimmed !== '' && !TEXT_END.test(trimmed)) {
+  if (options.breakOff !== false && trimmed !== '' && !TEXT_END.test(trimmed)) {
     remarks.push(
       codeRemark('JUNK', trimmed.slice(-WHERE_MAX), 'The text breaks off mid-sentence. Finish it.'),
     );

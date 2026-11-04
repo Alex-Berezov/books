@@ -40,6 +40,12 @@ import {
   SummaryWriteStateDto,
 } from '../dto/summary-write-response.dto';
 import { SummaryWriteService } from '../summary-write/summary-write.service';
+import {
+  AnalysisWriteDto,
+  AnalysisWriteEstimateDto,
+  AnalysisWriteStateDto,
+} from '../dto/analysis-write-response.dto';
+import { AnalysisWriteService } from '../analysis-write/analysis-write.service';
 import { CONTENT_DRAFT_KINDS, DraftKind } from './content-draft.constants';
 import { ContentDraftService } from './content-draft.service';
 
@@ -55,8 +61,46 @@ const KIND_PIPE = new ParseEnumPipe(
   Object.fromEntries(CONTENT_DRAFT_KINDS.map((k) => [k, k])) as Record<DraftKind, DraftKind>,
 );
 
-const WRITE_START_CONFLICTS =
-  'DRAFT_IN_PROGRESS: a summary run is being built; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED';
+/** Общие части описаний отказов: версия без текста, контекст досье и глоссария, цена этапов. */
+const NO_CHAPTERS_CONFLICT = 'SOURCE_HAS_NO_CHAPTERS: the version has no chapter text';
+const CONTEXT_CONFLICTS =
+  'DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone';
+const SPEND_CONFLICTS =
+  'LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong)';
+const STAGE_CONFLICTS = 'LLM_NO_PRICE; LLM_STAGE_DISABLED';
+
+const WRITE_START_CONFLICTS = [
+  'DRAFT_IN_PROGRESS: a summary run is being built',
+  NO_CHAPTERS_CONFLICT,
+  CONTEXT_CONFLICTS,
+  SPEND_CONFLICTS,
+  STAGE_CONFLICTS,
+].join('; ');
+
+/**
+ * Отказы старта хода анализа - те же, что у хода пересказа (решение арбитра `F07 | F07-1a`, К2):
+ * строка собирается из тех же частей, а не копией и не подменой по тексту.
+ */
+const ANALYSIS_START_CONFLICTS = [
+  'DRAFT_IN_PROGRESS: an analysis run is being built',
+  NO_CHAPTERS_CONFLICT,
+  CONTEXT_CONFLICTS,
+  SPEND_CONFLICTS,
+  STAGE_CONFLICTS,
+  'DRAFT_TOO_LONG is not a start refusal: a step whose input does not fit even as chapter summaries is marked with it and the run goes on',
+].join('; ');
+
+/**
+ * Отказы оценки хода анализа - только то, что бросает `AnalysisWriteService.estimateOf`: версия
+ * без текста глав (или источник досье без них), отказы контекста `draftContext` и оценщиков
+ * этапов. Потолка, строящегося хода и отказа сводки досье оценка не бросает: `refusedTooLong` -
+ * поле ответа.
+ */
+const ANALYSIS_ESTIMATE_CONFLICTS = [
+  'SOURCE_HAS_NO_CHAPTERS: the version or the dossier source has no chapter text',
+  CONTEXT_CONFLICTS,
+  STAGE_CONFLICTS,
+].join('; ');
 
 const ITEM_CONFLICTS =
   'SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated';
@@ -80,7 +124,62 @@ export class ContentDraftController {
   constructor(
     private readonly drafts: ContentDraftService,
     private readonly summaryWrite: SummaryWriteService,
+    private readonly analysisWrite: AnalysisWriteService,
   ) {}
+
+  // Ход анализа «Write Analysis» (`F07-1a`, `features/F07-analysis-autofill/tech.md` §5-§6):
+  // литеральные маршруты выше `:kind` (решение арбитра `F07 | F07-1`, В6); `CONTENT_DRAFT_KINDS`
+  // не расширяется. Предложения, «Accept» и «Continue» хода - `F07-1b`.
+
+  @Get('versions/:id/drafts/analysis_write/estimate')
+  @ApiOperation({
+    summary:
+      'Upper cost estimate of the analysis run: steps 1-3, each reads the whole version text, plus the reviewer of each step, each step × 2 passes of the author and the reviewer',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AnalysisWriteEstimateDto })
+  @ApiNotFoundResponse({ description: 'Book version not found' })
+  @ApiConflictResponse({ description: ANALYSIS_ESTIMATE_CONFLICTS })
+  analysisEstimate(@Param('id') id: string): Promise<AnalysisWriteEstimateDto> {
+    return this.analysisWrite.estimate(id);
+  }
+
+  @Get('versions/:id/drafts/analysis_write')
+  @ApiOperation({
+    summary:
+      'The latest analysis run that is not discarded, in any status: its steps, flags, dropped quotations, what is written and what is proposed; null - none',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: AnalysisWriteStateDto })
+  analysisLatest(@Param('id') id: string): Promise<AnalysisWriteStateDto> {
+    return this.analysisWrite.latest(id);
+  }
+
+  @Post('versions/:id/drafts/analysis_write')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary:
+      '«Write Analysis»: steps 1-3 (card and characters, key quotations and style, interpretations) in the background under its own operation; blocks empty at the start of an unpublished version are written through the import, the rest become proposals; the previous ready or failed run is discarded',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiAcceptedResponse({ type: AnalysisWriteDto })
+  @ApiBadRequestResponse({
+    description: 'DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first',
+  })
+  @ApiNotFoundResponse({ description: 'Book version not found' })
+  @ApiConflictResponse({ description: ANALYSIS_START_CONFLICTS })
+  @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
+  analysisStart(
+    @Param('id') id: string,
+    @Body() dto: StartContentDraftDto,
+    @Req() req: { user: RequestUser },
+  ): Promise<AnalysisWriteDto> {
+    return this.analysisWrite.start(
+      id,
+      dto.limitUsd != null ? new Prisma.Decimal(dto.limitUsd) : undefined,
+      req.user.userId,
+    );
+  }
 
   // Ход пересказа «Write Summary» (`F06-2`, `tech.md` §6): литеральные маршруты выше `:kind`, иначе
   // вид ушёл бы в `KIND_PIPE` и ответил 400.

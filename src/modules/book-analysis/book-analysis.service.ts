@@ -20,6 +20,7 @@ import {
   type StoredBookAnalysis,
 } from './book-analysis-data';
 import { computeAnalysisCore } from './book-analysis-core';
+import { BOOK_ANALYSIS_TX_OPTIONS, lockBookAnalysis } from './book-analysis-lock';
 import { checkAnalysisRefs, collectChapterRefs } from './book-analysis-refs';
 import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
 import { settledClaimBlockWhere } from '../rights-claims/settled-claim-block';
@@ -32,10 +33,6 @@ import type {
   BookAnalysisWarningDto,
 } from './dto/book-analysis-response.dto';
 
-// Пространство имён двухаргументного `pg_advisory_xact_lock`; занятые — в перечне у `RECHECK_SCAN_LOCK_KEY`.
-const BOOK_ANALYSIS_LOCK_NAMESPACE = 831_427_006;
-// Явные границы (`L-020`): писатель, дождавшийся замка, не должен падать P2028 на дефолтных 5 секундах.
-const BOOK_ANALYSIS_TX_OPTIONS = { timeout: 30_000, maxWait: 10_000 } as const;
 /** Порция списка закрытий анализа (`listClaimClosures`, порог `id > последний`) и предел порций - граница памяти. */
 export const CLAIM_CLOSURES_BATCH = 1000;
 export const CLAIM_CLOSURES_MAX_BATCHES = 20;
@@ -46,6 +43,18 @@ export const CLAIM_CLOSURES_MAX_BATCHES = 20;
 export const CHAPTER_NUMBERS_LIMIT = 5000;
 
 type AnalysisRow = Prisma.BookAnalysisGetPayload<{ select: typeof BOOK_ANALYSIS_SELECT }>;
+
+/**
+ * Условие и учёт записи хода анализа `F07` (`saveGuarded`; `features/F07-analysis-autofill/tech.md` §5):
+ * оба зовутся под замком анализа в транзакции записи. `allow` видит сохранённые блоки до слияния
+ * и решает, писать ли; `done` получает блоки, перечитанные из базы после записи.
+ */
+export interface BookAnalysisWriteGuard {
+  allow(tx: Prisma.TransactionClient, existing: StoredBookAnalysis): Promise<boolean>;
+  done(tx: Prisma.TransactionClient, saved: StoredBookAnalysis): Promise<void>;
+}
+
+type SavedAnalysis = { row: AnalysisRow; hasCore: boolean; warnings: BookAnalysisWarningDto[] };
 
 @Injectable()
 export class BookAnalysisService {
@@ -184,15 +193,57 @@ export class BookAnalysisService {
       return { analysis: null, ...(await this.describe(this.prisma, bookVersionId, merged)) };
     }
 
-    let saved: { row: AnalysisRow; hasCore: boolean; warnings: BookAnalysisWarningDto[] };
+    const saved = await this.saveLocked(bookVersionId, dto, null);
+    // Номера глав — после коммита и вне замка (F03-3): замок держит только «прочитал — слил —
+    // записал», чтение глав версии запись не защищает и замок не удлиняет.
+    const { row, ...summary } = saved;
+    const chapterNumbers = await loadChapterNumbers(this.prisma, bookVersionId);
+    return { analysis: toResponse(row, version.language, chapterNumbers), ...summary };
+  }
+
+  /**
+   * Запись хода анализа `F07` (`tech.md` §5, решение арбитра `F07 | F07-1`, В5): то же тело, что
+   * у импорта, — замок, слияние, проверка ссылок на слитой записи, ядро, — если `guard.allow` под
+   * замком разрешил; `guard.done` — учёт хода в той же транзакции. Права не проверяются: их держит
+   * ручка хода. Язык ставит вызывающий (язык версии). `false` — `allow` отказал, записи нет.
+   * Ссылки не сошлись — 400, как у импорта (вызывающий превращает его в своё замечание); версии
+   * нет — 404.
+   */
+  async saveGuarded(
+    bookVersionId: string,
+    dto: UpdateBookAnalysisDto,
+    guard: BookAnalysisWriteGuard,
+  ): Promise<boolean> {
+    return (await this.saveLocked(bookVersionId, dto, guard)) !== null;
+  }
+
+  /** Тело записи под замком — одно на импорт и ход; `null` — отказ `guard.allow`. */
+  private saveLocked(
+    bookVersionId: string,
+    dto: UpdateBookAnalysisDto,
+    guard: null,
+  ): Promise<SavedAnalysis>;
+  private saveLocked(
+    bookVersionId: string,
+    dto: UpdateBookAnalysisDto,
+    guard: BookAnalysisWriteGuard,
+  ): Promise<SavedAnalysis | null>;
+  private async saveLocked(
+    bookVersionId: string,
+    dto: UpdateBookAnalysisDto,
+    guard: BookAnalysisWriteGuard | null,
+  ): Promise<SavedAnalysis | null> {
     try {
-      saved = await this.prisma.$transaction(async (tx) => {
-        await tx.$queryRaw`SELECT true AS locked
-          FROM pg_advisory_xact_lock(${BOOK_ANALYSIS_LOCK_NAMESPACE}::int4, hashtext(${bookVersionId}::text))`;
+      return await this.prisma.$transaction(async (tx) => {
+        await lockBookAnalysis(tx, bookVersionId);
         const existing = await tx.bookAnalysis.findUnique({
           where: { bookVersionId },
           select: BOOK_ANALYSIS_SELECT,
         });
+        if (guard) {
+          const stored = existing ? readStoredAnalysis(existing) : EMPTY_BOOK_ANALYSIS;
+          if (!(await guard.allow(tx, stored))) return null;
+        }
         const merged = this.validateMerged(existing, dto);
         const summary = await this.describe(tx, bookVersionId, merged);
         const data = { ...toAnalysisWrite(merged), hasCore: summary.hasCore };
@@ -206,6 +257,7 @@ export class BookAnalysisService {
               data: { bookVersionId, ...data },
               select: BOOK_ANALYSIS_SELECT,
             });
+        await guard?.done(tx, readStoredAnalysis(row));
         return { row, ...summary };
       }, BOOK_ANALYSIS_TX_OPTIONS);
     } catch (e: unknown) {
@@ -219,11 +271,6 @@ export class BookAnalysisService {
       }
       throw e;
     }
-    // Номера глав — после коммита и вне замка (F03-3): замок держит только «прочитал — слил —
-    // записал», чтение глав версии запись не защищает и замок не удлиняет.
-    const { row, ...summary } = saved;
-    const chapterNumbers = await loadChapterNumbers(this.prisma, bookVersionId);
-    return { analysis: toResponse(row, version.language, chapterNumbers), ...summary };
   }
 
   private validateMerged(existing: AnalysisRow | null, dto: UpdateBookAnalysisDto) {
