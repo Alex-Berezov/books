@@ -132,7 +132,7 @@ cd /opt/books/app/src            # каталог репозитория на с
 | `yarn prisma:generate`       | быстрая       | после правки `prisma/schema.prisma`, до `yarn typecheck`                                         |
 | `yarn lint`                  | средняя       | перед сдачей; точечно - `npx eslint <файл>`                                                      |
 | `yarn test`                  | средняя       | перед сдачей и после правок в сервисах                                                           |
-| `yarn test:e2e`              | тяжёлая       | только под изменения контроллеров и миграций; нужен поднятый `docker compose` с postgres и redis |
+| `yarn test:e2e`              | тяжёлая       | под изменения контроллеров, сервисов, DTO, модулей и миграций (условие гейта `e2e` в правилах обвязки, с 04.11.2026); нужен поднятый `docker compose` с postgres и redis |
 | `yarn build`                 | тяжёлая       | в самом конце и только под правки `nest-cli.json`, `tsconfig*.json`, `package.json`              |
 | `yarn ci`                    | полный набор  | руками почти никогда, это то, что гоняет CI                                                      |
 
