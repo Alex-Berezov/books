@@ -3,6 +3,8 @@ import { ContentDraft, LlmOperation, LlmTask, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { lockBookAnalysis } from '../../book-analysis/book-analysis-lock';
 import { LlmService } from '../../llm/llm.service';
+import { SourceFetcherService } from '../../source-fetch/source-fetcher.service';
+import type { SourceFetchResult } from '../../source-fetch/source-fetch.types';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
 import { allChapters } from '../chapter-pages';
@@ -30,9 +32,19 @@ import { runStageModels } from '../run/run-models';
 import { blockOfPath, stepDroppedQuotes } from './analysis-checks';
 import {
   ANALYSIS_REVIEW_STAGE,
-  ANALYSIS_STEPS,
   ANALYSIS_WRITE_TASK_KIND,
+  CORE_STEP,
+  EXTERNAL_STEP,
 } from './analysis-write.constants';
+import {
+  externalChecks,
+  hostOf,
+  PageCheck,
+  sourcesOffline,
+  verifyExternal,
+  withoutDoubted,
+  withoutInvalidSources,
+} from './analysis-write.external';
 import {
   analysisDataJson,
   AnalysisItem,
@@ -41,6 +53,7 @@ import {
   AnalysisTarget,
   AnalysisWriteData,
   blocksValue,
+  DroppedSource,
   mergeSteps,
   PendingStep,
   regenBase,
@@ -52,6 +65,7 @@ import {
   STEP_TARGETS,
   StepBlocks,
   StepDraft,
+  StepFix,
   StepSource,
   stepKey,
 } from './analysis-write.data';
@@ -91,6 +105,22 @@ class RunGone extends Error {
 
 type LoopDraft = Extract<QualityLoopResult<StepDraft>, { ok: true }>;
 
+/**
+ * Ни один источник шага 5 не открылся по вине канала (`sourcesOffline`): задача падает, операция
+ * встаёт на паузу `STEP_FAILED`, «Continue» повторяет шаг с оплаченным текстом автора.
+ */
+class SourcesOffline extends Error {
+  constructor() {
+    super('No source of the external step could be reached: the network of the worker is down');
+    this.name = 'SourcesOffline';
+  }
+}
+
+/** Версий книги в выборке названий для проверки страниц источников: книга на пяти языках. */
+const NAME_VERSIONS_MAX = 10;
+/** Причина блока шага 5, который сняла проверка источников (виден как `failedReason`). */
+export const EXTERNAL_UNVERIFIED = 'EXTERNAL_UNVERIFIED';
+
 /** Блоки, которые знает разбор места замечания (`where` начинается с пути поля). */
 const BLOCK_NAMES = new Set([
   'facts',
@@ -102,6 +132,14 @@ const BLOCK_NAMES = new Set([
   'symbols',
   'titleMeaning',
   'endingMeaning',
+  'misreadings',
+  'discussionQuestions',
+  'faq',
+  'context',
+  'timeline',
+  'reception',
+  'adaptations',
+  'sources',
 ]);
 
 /**
@@ -179,6 +217,7 @@ export class AnalysisWriteHandler {
     private readonly dossiers: DossierDemandService,
     private readonly drafts: ContentDraftService,
     private readonly fields: AnalysisWriteFields,
+    private readonly fetcher: SourceFetcherService,
   ) {}
 
   readonly handler: LlmTaskHandler = {
@@ -361,7 +400,7 @@ export class AnalysisWriteHandler {
     data = await this.fields.read(row, gate);
     if (!data) return this.stepGone(row.operationId);
     const step = data.steps.length + 1;
-    if (step > ANALYSIS_STEPS) {
+    if (step > data.stepsTotal) {
       if ((await this.fields.markCore(row, gate)) === null) return this.stepGone(row.operationId);
       return this.finish(row);
     }
@@ -378,6 +417,11 @@ export class AnalysisWriteHandler {
     // решается - следующий шаг начнёт с записанного.
     if (!saved.written) return { kind: 'continue' };
     if ((await this.fields.settleStep(row, gate, n)) === 'gone') {
+      return this.stepGone(row.operationId);
+    }
+    // Ядро - по записанному после шага 3 (`tech.md` §3, К5), а не в конце хода: шаги 4-5 его не
+    // меняют, и плашка ядра видна, пока они идут.
+    if (n === CORE_STEP && (await this.fields.markCore(row, gate)) === null) {
       return this.stepGone(row.operationId);
     }
     return { kind: 'continue' };
@@ -455,7 +499,33 @@ export class AnalysisWriteHandler {
       throw error;
     }
     if (!result.ok) return failedRecord(step, DRAFT_INVALID_RESPONSE, fit.source);
-    return doneRecord(step, result, fit.source);
+    if (step !== EXTERNAL_STEP) return doneRecord(step, result, fit.source);
+    // Шаг 5: сначала снимается то, что не пишется и так (импорт, сомнение проверяющей), затем
+    // источники открывает код - источник считается нужным только по утверждениям, которые
+    // будут записаны; утверждения без проверенного источника снимаются.
+    const sourced = withoutInvalidSources(result.draft, result.remarks);
+    const { valid } = withoutInvalid(sourced.draft.blocks, sourced.remarks);
+    // Сомнение снимает утверждение, только если осталось после переделки (`product.md` §3.4):
+    // переделки не было (второй проход не удался) - сомнение остаётся флагом.
+    const doubted =
+      result.attempt === 2
+        ? withoutDoubted({ ...sourced.draft, blocks: valid }, sourced.remarks)
+        : { draft: { ...sourced.draft, blocks: valid }, fixes: [] as StepFix[], applied: [] };
+    const checks = await openSources(this.fetcher, doubted.draft);
+    if (sourcesOffline(checks)) throw new SourcesOffline();
+    const verdict = verifyExternal(
+      doubted.draft,
+      checks,
+      context.names?.titles ?? [context.bookTitle],
+      context.names?.authors ?? [context.author],
+    );
+    // Снятое сомнением утверждение уходит из флагов: причина - в `dropped`, а путь замечания
+    // указывал бы уже на соседний элемент. Сомнение, которое ничего не сняло, остаётся флагом.
+    const remarks = sourced.remarks.filter((r) => !doubted.applied.includes(r));
+    return doneRecord(step, { ...result, remarks, draft: verdict.draft }, fit.source, {
+      ...verdict,
+      fixes: [...sourced.fixes, ...doubted.fixes, ...verdict.fixes],
+    });
   }
 
   /** Досье, глоссарий, главы, сохранённый анализ и ключи другого языка - вход шага. */
@@ -464,10 +534,10 @@ export class AnalysisWriteHandler {
     dossier: unknown,
     data: AnalysisWriteData,
   ): Promise<StepContext> {
-    const [version, glossary, chapters, state, otherKeys] = await Promise.all([
+    const [version, glossary, chapters, state, otherKeys, versions] = await Promise.all([
       this.prisma.bookVersion.findUnique({
         where: { id: row.bookVersionId },
-        select: { title: true, author: true },
+        select: { title: true, author: true, originalLanguage: true },
       }),
       row.glossaryId
         ? this.prisma.bookGlossary.findUnique({
@@ -478,6 +548,11 @@ export class AnalysisWriteHandler {
       allChapters(this.prisma, row.bookVersionId, { number: true, title: true, content: true }),
       this.fields.state(this.prisma, row.bookVersionId),
       otherLanguageKeys(this.prisma, this.dossiers, row.bookVersionId, row.language),
+      this.prisma.bookVersion.findMany({
+        where: { book: { versions: { some: { id: row.bookVersionId } } } },
+        select: { title: true, author: true },
+        take: NAME_VERSIONS_MAX,
+      }),
     ]);
     return {
       language: row.language,
@@ -489,6 +564,15 @@ export class AnalysisWriteHandler {
       merged: data.merged,
       chapters: chapters.filter((c) => htmlToParagraphs(c.content) !== ''),
       otherKeys,
+      originalLanguage: version?.originalLanguage ?? '',
+      names: {
+        titles: [...new Set([version?.title ?? '', ...versions.map((v) => v.title)])].filter(
+          (t) => t !== '',
+        ),
+        authors: [...new Set([version?.author ?? '', ...versions.map((v) => v.author)])].filter(
+          (a) => a !== '',
+        ),
+      },
     };
   }
 
@@ -525,6 +609,45 @@ export class AnalysisWriteHandler {
   }
 }
 
+/**
+ * Открытие источников шага 5 фетчером (`tech.md` §4, решение арбитра `F07 | F07-2a`): не больше
+ * четырёх одновременно; разовый сбой канала или сервера (`NETWORK`, `TIMEOUT`, 5xx) - один повтор,
+ * адрес - не больше двух запросов. Не открылась - отказ (`opened: false`), текст не хранится;
+ * `transport` - отказ канала, а не адреса (`sourcesOffline`).
+ */
+export async function openSources(
+  fetcher: Pick<SourceFetcherService, 'fetchMany'>,
+  draft: StepDraft,
+): Promise<PageCheck[]> {
+  const urls = (draft.blocks.sources ?? []).map((source) => source.url);
+  const pages: SourceFetchResult[] = await fetcher.fetchMany(urls, new Map());
+  const again = pages.flatMap((page, i) => (retryable(page) ? [i] : []));
+  if (again.length > 0) {
+    const second = await fetcher.fetchMany(
+      again.map((i) => urls[i]),
+      new Map(),
+    );
+    again.forEach((i, k) => (pages[i] = second[k]));
+  }
+  return pages.map((page, i) => ({
+    host: page.host || hostOf(urls[i]),
+    opened: page.ok,
+    text: page.ok ? page.text : '',
+    // Канал - только `NETWORK` (нет сети или имён у исполнителя). Медленный сайт (`TIMEOUT`) и
+    // отказ его сервера (`CONNECTION`) - свойство адреса: иначе такой источник ставил бы ход на
+    // паузу, и «Continue» повторял бы её без конца.
+    transport: page.reason === 'NETWORK',
+  }));
+}
+
+/** Разовый сбой, который стоит повторить: канал или ответ сервера 5xx. */
+const retryable = (page: SourceFetchResult): boolean =>
+  !page.ok &&
+  (page.reason === 'NETWORK' ||
+    page.reason === 'TIMEOUT' ||
+    page.reason === 'CONNECTION' ||
+    (page.reason === 'HTTP_STATUS' && (page.status ?? 0) >= 500));
+
 /** Итог шага до записи: запись шага, блоки к записи, связи и выброшенные цитаты. */
 export interface StepRecord {
   step: AnalysisStep;
@@ -535,6 +658,10 @@ export interface StepRecord {
    */
   invalid: Set<string>;
   review: AnalysisItem['review'];
+  /** Источники шага 5, не прошедшие проверку кода (`product.md` §3.3). */
+  droppedSources?: DroppedSource[];
+  /** Единицы записи шага 5, которые проверка источников сняла целиком. */
+  unverified?: ReadonlySet<string>;
 }
 
 function failedRecord(
@@ -561,13 +688,25 @@ function failedRecord(
   };
 }
 
-function doneRecord(step: AnalysisStepNumber, result: LoopDraft, source: StepSource): StepRecord {
+export function doneRecord(
+  step: AnalysisStepNumber,
+  result: LoopDraft,
+  source: StepSource,
+  external?: { droppedSources: DroppedSource[]; fixes: StepFix[]; unverified: string[] },
+): StepRecord {
   const { valid, invalid } = withoutInvalid(result.draft.blocks, result.remarks);
   const remarks = [...result.remarks];
+  // Все записанные внешние блоки несут флаг: человек сверяет даты и имена (`product.md` §3.3).
+  const checks = external ? externalChecks(valid) : [];
+  remarks.push(...checks);
   return {
     step: {
       step,
-      verdict: result.verdict,
+      // Внешний шаг что-то записал (сверяет человек) или что-то снял (видно, что и почему) - `flags`.
+      verdict:
+        (checks.length > 0 || (external?.fixes.length ?? 0) > 0) && result.verdict === 'ok'
+          ? 'flags'
+          : result.verdict,
       remarks,
       attempt: result.attempt,
       outcome: 'done',
@@ -575,11 +714,14 @@ function doneRecord(step: AnalysisStepNumber, result: LoopDraft, source: StepSou
       authorModel: result.authorModel,
       review: result.review,
       source,
-      dropped: result.draft.fixes,
+      dropped: [...result.draft.fixes, ...(external?.fixes ?? [])],
     },
     draft: { ...result.draft, blocks: valid },
     invalid,
     review: result.review,
+    ...(external
+      ? { droppedSources: external.droppedSources, unverified: new Set(external.unverified) }
+      : {}),
   };
 }
 
@@ -596,6 +738,10 @@ export function withStep(data: AnalysisWriteData, record: StepRecord): AnalysisW
     const value = blocksValue(blocks, target);
     const remarks = remarksOfTarget(record.step.remarks, target);
     if (value === undefined) {
+      if (record.unverified?.has(target)) {
+        items.push(item(target, n, 'failed', [], record, 'none', null, EXTERNAL_UNVERIFIED));
+        continue;
+      }
       if (!isInvalidTarget(record.invalid, target)) continue;
       items.push(item(target, n, 'failed', remarks, record, 'none', null, 'IMPORT_INVALID'));
       continue;
@@ -628,6 +774,7 @@ export function withStep(data: AnalysisWriteData, record: StepRecord): AnalysisW
       ...data.droppedQuotes,
       ...stepDroppedQuotes(n, record.draft?.droppedQuotes ?? []),
     ],
+    droppedSources: [...data.droppedSources, ...(record.droppedSources ?? [])],
     pending: null,
   };
 }

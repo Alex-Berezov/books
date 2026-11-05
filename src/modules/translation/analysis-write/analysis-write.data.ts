@@ -4,6 +4,7 @@ import { isRecord } from '../../../shared/prisma/json-record.util';
 import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
 import { FillableFact } from '../content-draft/content-draft.analysis';
 import { DRAFT_DATA_INVALID } from '../content-draft/content-draft.constants';
+import { ANALYSIS_STEPS, LEGACY_ANALYSIS_STEPS } from './analysis-write.constants';
 import { QualityLoopResume, ReviewState } from '../draft-quality/quality-loop';
 import { QUOTE_CHECK_REASONS, QuoteCheckReason } from '../draft-quality/quote-check';
 import { DRAFT_REMARK_CODES, DraftRemark, DraftRemarkCode } from '../draft-quality/text-checks';
@@ -29,12 +30,29 @@ export const ANALYSIS_TARGETS = [
   'symbols',
   'titleMeaning',
   'endingMeaning',
+  'misreadings',
+  'discussionQuestions',
+  'faq',
+  'facts.genre',
+  'facts.movement',
+  'facts.writtenYears',
+  'context',
+  'timeline',
+  'reception',
+  'adaptations',
+  'sources',
 ] as const;
 export type AnalysisTarget = (typeof ANALYSIS_TARGETS)[number];
 
+/** Подполя `facts`, которые пишет внешний шаг (`product.md` §2, шаг 5); флаг `EXTERNAL_CHECK` - только у них. */
+export const EXTERNAL_FACTS = ['genre', 'movement', 'writtenYears'] as const;
+export type ExternalFact = (typeof EXTERNAL_FACTS)[number];
+
 /** Подполе `facts` единицы записи `facts.<подполе>`; блок целиком - `null`. */
-export const factField = (target: AnalysisTarget): FillableFact | null =>
-  target.startsWith('facts.') ? (target.slice('facts.'.length) as FillableFact) : null;
+export const factField = (target: AnalysisTarget): FillableFact | ExternalFact | null =>
+  target.startsWith('facts.')
+    ? (target.slice('facts.'.length) as FillableFact | ExternalFact)
+    : null;
 
 /** Блок анализа единицы записи: `facts.<подполе>` - блок `facts`. */
 export const blockOfTarget = (target: AnalysisTarget): string =>
@@ -51,13 +69,24 @@ export function pathInTarget(path: string, target: AnalysisTarget): boolean {
   return path === target || ['.', '[', ':'].some((edge) => path.startsWith(`${target}${edge}`));
 }
 
-export type AnalysisStepNumber = 1 | 2 | 3;
+export type AnalysisStepNumber = 1 | 2 | 3 | 4 | 5;
 
 /** Блоки, которые пишет шаг (`product.md` §2); `themeKeys` шага 3 - отдельными элементами. */
 export const STEP_TARGETS: Record<AnalysisStepNumber, readonly AnalysisTarget[]> = {
   1: ['facts.settingPlace', 'facts.settingTime', 'facts.narrator', 'facts.structure', 'characters'],
   2: ['keyQuotes', 'style'],
   3: ['mainIdea', 'themes', 'symbols', 'titleMeaning', 'endingMeaning'],
+  4: ['misreadings', 'discussionQuestions', 'faq'],
+  5: [
+    'facts.genre',
+    'facts.movement',
+    'facts.writtenYears',
+    'context',
+    'timeline',
+    'reception',
+    'adaptations',
+    'sources',
+  ],
 };
 
 /** Блоки анализа, которые пишут шаги 1-3. Ключа нет - блок шаг не дал (`[]` и `''` не бывает, Л4). */
@@ -71,7 +100,15 @@ export type StepBlocks = Partial<{
     | 'themes'
     | 'symbols'
     | 'titleMeaning'
-    | 'endingMeaning']: NonNullable<StoredBookAnalysis[K]>;
+    | 'endingMeaning'
+    | 'misreadings'
+    | 'discussionQuestions'
+    | 'faq'
+    | 'context'
+    | 'timeline'
+    | 'reception'
+    | 'adaptations'
+    | 'sources']: NonNullable<StoredBookAnalysis[K]>;
 }>;
 
 /**
@@ -101,6 +138,10 @@ export const STEP_FIX_CODES = [
   'CHAPTER_UNKNOWN',
   'LIMIT_OUT',
   'IMPORT_INVALID',
+  'SOURCE_UNREACHABLE',
+  'SOURCE_UNRELATED',
+  'SOURCE_UNVERIFIED',
+  'EXTERNAL_DOUBT',
 ] as const satisfies readonly DraftRemarkCode[];
 export type StepFixCode = (typeof STEP_FIX_CODES)[number];
 
@@ -110,11 +151,34 @@ export interface StepFix {
   note: string;
 }
 
+/**
+ * Ссылки внешних утверждений шага 5 на `sources` (`tech.md` §4, `sourceRefs`): индексы источников
+ * ответа по порядку утверждений - абзацы `context` и `reception`, события `timeline`, экранизации
+ * `adaptations`; у фактов - по имени. Служебные, в импорт не уходят.
+ */
+export interface SourceRefs {
+  facts: Partial<Record<ExternalFact, number[]>>;
+  context: number[][];
+  reception: number[][];
+  timeline: number[][];
+  adaptations: number[][];
+}
+
+/** Источник, отброшенный проверкой кода (`product.md` §3.3). */
+export interface DroppedSource {
+  title: string;
+  /** Только хост: полный адрес с параметрами в данные и журнал не идёт. */
+  host: string;
+  reason: 'SOURCE_UNREACHABLE' | 'SOURCE_UNRELATED';
+}
+
 /** Ответ шага после правок кода - то, что видят код-проверки, проверяющая и запись. */
 export interface StepDraft {
   blocks: StepBlocks;
   /** Только у шага 3. */
   themeLinks: ThemeLinks | null;
+  /** Только у шага 5; нет поля - как `null`. */
+  refs?: SourceRefs | null;
   droppedQuotes: Array<Omit<DroppedQuote, 'step'>>;
   fixes: StepFix[];
 }
@@ -137,14 +201,18 @@ export const ANALYSIS_REVIEW_KINDS = [
 export const EMPTY_DRAFT: StepDraft = {
   blocks: {},
   themeLinks: null,
+  refs: null,
   droppedQuotes: [],
   fixes: [],
 };
 
 export const STEP_OUTCOMES = ['done', 'failed'] as const;
 
-/** Откуда шаг брал книгу: весь текст версии или краткое содержание глав досье (`tech.md` §2). */
-export const STEP_SOURCES = ['text', 'summaries'] as const;
+/**
+ * Откуда шаг брал книгу: весь текст версии, краткое содержание глав досье (`tech.md` §2) или ниоткуда
+ * (шаг 5 - внешний, текста книги не читает).
+ */
+export const STEP_SOURCES = ['text', 'summaries', 'none'] as const;
 export type StepSource = (typeof STEP_SOURCES)[number];
 
 export interface AnalysisStep {
@@ -234,6 +302,10 @@ export interface AnalysisWriteData {
   merged: StepBlocks;
   themeLinks: ThemeLinks | null;
   droppedQuotes: DroppedQuote[];
+  /** Источники, не прошедшие проверку кода (шаг 5). */
+  droppedSources: DroppedSource[];
+  /** Шагов в ходе: ходы `F07-1` - три, новые - пять (`F07-2a`). */
+  stepsTotal: number;
   /** Право хода на блок - на старте (`tech.md` §5): версия не опубликована и блок пуст. */
   owns: Partial<Record<AnalysisTarget, boolean>>;
   /** Отпечаток блока после последней записи хода (на старте - блока на старте). */
@@ -255,6 +327,8 @@ export const emptyAnalysisData = (
   merged: {},
   themeLinks: null,
   droppedQuotes: [],
+  droppedSources: [],
+  stepsTotal: ANALYSIS_STEPS,
   owns,
   written,
   pending: null,
@@ -303,7 +377,7 @@ const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
 const oneOf = <T extends string>(list: readonly T[], v: unknown): T | null =>
   typeof v === 'string' && (list as readonly string[]).includes(v) ? (v as T) : null;
 const stepOf = (v: unknown): AnalysisStepNumber | null =>
-  v === 1 || v === 2 || v === 3 ? v : null;
+  v === 1 || v === 2 || v === 3 || v === 4 || v === 5 ? v : null;
 
 function remarkOf(v: unknown): DraftRemark[] {
   if (!isRecord(v)) return [];
@@ -382,16 +456,70 @@ function blocksOf(v: unknown): StepBlocks {
     'symbols',
     'titleMeaning',
     'endingMeaning',
+    'misreadings',
+    'discussionQuestions',
+    'faq',
+    'context',
+    'timeline',
+    'reception',
+    'adaptations',
+    'sources',
   ]) {
     const value = v[key];
     if (value === undefined || value === null) continue;
-    const textBlock = ['mainIdea', 'titleMeaning', 'endingMeaning'].includes(key);
-    const listBlock = ['characters', 'keyQuotes', 'style', 'themes', 'symbols'].includes(key);
+    const textBlock = [
+      'mainIdea',
+      'titleMeaning',
+      'endingMeaning',
+      'context',
+      'reception',
+    ].includes(key);
+    const listBlock = [
+      'characters',
+      'keyQuotes',
+      'style',
+      'themes',
+      'symbols',
+      'misreadings',
+      'discussionQuestions',
+      'faq',
+      'timeline',
+      'adaptations',
+      'sources',
+    ].includes(key);
     if (textBlock && typeof value === 'string') out[key] = value;
     if (listBlock && Array.isArray(value)) out[key] = value;
     if (key === 'facts' && isRecord(value)) out[key] = value;
   }
   return out as StepBlocks;
+}
+
+/** Ссылки утверждения на источники: неотрицательные целые; прочее - не ссылка. Одно правило у разбора ответа и у чтения данных хода. */
+export const refIndexes = (v: unknown): number[] =>
+  Array.isArray(v) ? v.filter((n): n is number => Number.isInteger(n) && (n as number) >= 0) : [];
+const refLists = (v: unknown): number[][] => (Array.isArray(v) ? v.map(refIndexes) : []);
+
+function refsOf(v: unknown): SourceRefs | null {
+  if (!isRecord(v)) return null;
+  const facts = isRecord(v.facts) ? v.facts : {};
+  return {
+    facts: Object.fromEntries(EXTERNAL_FACTS.map((f) => [f, refIndexes(facts[f])])),
+    context: refLists(v.context),
+    reception: refLists(v.reception),
+    timeline: refLists(v.timeline),
+    adaptations: refLists(v.adaptations),
+  };
+}
+
+function droppedSourcesOf(v: unknown): DroppedSource[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((d) => {
+    if (!isRecord(d)) return [];
+    const title = str(d.title);
+    const host = str(d.host);
+    const reason = oneOf(['SOURCE_UNREACHABLE', 'SOURCE_UNRELATED'] as const, d.reason);
+    return title !== null && host !== null && reason ? [{ title, host, reason }] : [];
+  });
 }
 
 /** Текст шага из `pending` или итога проверки; не той формы - `null`. */
@@ -400,6 +528,7 @@ function stepDraftOf(v: unknown): StepDraft | null {
   return {
     blocks: blocksOf(v.blocks),
     themeLinks: linksOf(v.themeLinks),
+    refs: refsOf(v.refs),
     droppedQuotes: droppedOf(v.droppedQuotes),
     fixes: fixesOf(v.fixes),
   };
@@ -678,6 +807,13 @@ export function readAnalysisData(data: unknown): AnalysisWriteData {
     merged: blocksOf(d.merged),
     themeLinks: linksOf(d.themeLinks),
     droppedQuotes: droppedQuotesOf(d.droppedQuotes),
+    droppedSources: droppedSourcesOf(d.droppedSources),
+    stepsTotal:
+      Number.isInteger(d.stepsTotal) &&
+      (d.stepsTotal as number) >= LEGACY_ANALYSIS_STEPS &&
+      (d.stepsTotal as number) <= ANALYSIS_STEPS
+        ? (d.stepsTotal as number)
+        : LEGACY_ANALYSIS_STEPS,
     owns: flagsOf(d.owns, (v) => (v === true ? true : v === false ? false : null)),
     written: flagsOf(d.written, str),
     pending: pendingOf(d.pending),
@@ -692,6 +828,8 @@ export const analysisDataJson = (data: AnalysisWriteData): Prisma.InputJsonValue
     merged: data.merged,
     themeLinks: data.themeLinks,
     droppedQuotes: data.droppedQuotes,
+    droppedSources: data.droppedSources,
+    stepsTotal: data.stepsTotal,
     owns: data.owns,
     written: data.written,
     pending: data.pending,

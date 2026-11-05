@@ -4,21 +4,34 @@ import { GPT_TERRA_MODEL } from '../translate/translate.constants';
 
 /**
  * Этапы хода анализа «Write Analysis» (`F07-1a`; `features/F07-analysis-autofill/tech.md` §2):
- * шаг 1 - карточка и герои, шаг 2 - цитаты и приёмы, шаг 3 - толкования; проверяющая - своя,
- * другого семейства, чем фактически ответивший автор. Шаги 4-5 - `F07-2`. Строк `LlmStageSetting`
+ * шаг 1 - карточка и герои, шаг 2 - цитаты и приёмы, шаг 3 - толкования, шаг 4 - блоки для читателя, шаг 5 - внешние блоки с проверкой источников; проверяющая - своя,
+ * другого семейства, чем фактически ответивший автор. Строк `LlmStageSetting`
  * нет - действует умолчание кода, экран «LLM settings» показывает этапы из реестра. Калибровка
  * лимитов - `F07-5`.
  */
 export const ANALYSIS_CAST_WRITE_STAGE = 'analysis_cast_write';
 export const ANALYSIS_QUOTES_WRITE_STAGE = 'analysis_quotes_write';
 export const ANALYSIS_MEANING_WRITE_STAGE = 'analysis_meaning_write';
+export const ANALYSIS_READER_WRITE_STAGE = 'analysis_reader_write';
+export const ANALYSIS_EXTERNAL_WRITE_STAGE = 'analysis_external_write';
 export const ANALYSIS_REVIEW_STAGE = 'analysis_review';
 
 /** Вид задачи исполнителя хода анализа (`ContentDraft` вида `analysis_write`). */
 export const ANALYSIS_WRITE_TASK_KIND = 'analysis_write';
 
-/** Шагов в ходе `F07-1`: после третьего ход `ready` (решение арбитра `F07 | F07-1`, В4). */
-export const ANALYSIS_STEPS = 3;
+/**
+ * Шагов в новом ходе (`F07-2a`): после пятого ход `ready`. Ходы `F07-1` шли тремя шагами (решение
+ * арбитра `F07 | F07-1`, В4): число шагов хода лежит в его данных (`stepsTotal`, нет поля - 3).
+ */
+export const ANALYSIS_STEPS = 5;
+/** Шагов в ходе без поля `stepsTotal` - ходы `F07-1`. */
+export const LEGACY_ANALYSIS_STEPS = 3;
+/** Шаг с блоками для читателя (`F07-2a`): по итогам шагов 1-3 и кратким содержаниям глав. */
+export const READER_STEP = 4;
+/** Внешний шаг с проверкой источников (`F07-2a`): текста книги не читает. */
+export const EXTERNAL_STEP = 5;
+/** Шаг, после которого считается ядро (`CORE_MISSING`): шаги 4-5 на ядро не влияют. */
+export const CORE_STEP = 3;
 
 /**
  * Шаги, блоки которых перегенерируются (`tech.md` §2:42, «Regenerate» блока шагов 1-2): разрешающий
@@ -70,6 +83,28 @@ export const ANALYSIS_WRITE_STAGE_DEFINITIONS: LlmStageDefinition[] = [
     enabled: true,
     reasoningAnswerReserve: 12_000,
     callTimeoutMs: MEANING_CALL_TIMEOUT_MS,
+    truncationEndsModel: true,
+  },
+  {
+    stage: ANALYSIS_READER_WRITE_STAGE,
+    model: AUTHOR,
+    fallbacks: AUTHOR_FALLBACKS,
+    temperature: 0.4,
+    maxTokens: 16_000,
+    enabled: true,
+    reasoningAnswerReserve: 6_000,
+    callTimeoutMs: CHECK_CALL_TIMEOUT_MS,
+    truncationEndsModel: true,
+  },
+  {
+    stage: ANALYSIS_EXTERNAL_WRITE_STAGE,
+    model: AUTHOR,
+    fallbacks: AUTHOR_FALLBACKS,
+    temperature: 0.4,
+    maxTokens: 16_000,
+    enabled: true,
+    reasoningAnswerReserve: 6_000,
+    callTimeoutMs: CHECK_CALL_TIMEOUT_MS,
     truncationEndsModel: true,
   },
   {

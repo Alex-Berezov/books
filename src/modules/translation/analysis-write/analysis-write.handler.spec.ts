@@ -1,3 +1,4 @@
+import { SourceFetcherService } from '../../source-fetch/source-fetcher.service';
 import { NotFoundException } from '@nestjs/common';
 import { ContentDraft, LlmOperation, LlmTask } from '@prisma/client';
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
@@ -66,7 +67,7 @@ const rowOf = (patch: Partial<ContentDraft> = {}): ContentDraft => ({
   ...patch,
 });
 
-const stepRow = (step: 1 | 2 | 3): AnalysisStep => ({
+const stepRow = (step: 1 | 2 | 3 | 4 | 5): AnalysisStep => ({
   step,
   verdict: 'ok',
   remarks: [],
@@ -150,6 +151,7 @@ function setup(row: ContentDraft | null = rowOf()) {
     {} as DossierDemandService,
     { languageOf: jest.fn() } as unknown as ContentDraftService,
     fields as unknown as AnalysisWriteFields,
+    { fetchMany: jest.fn().mockResolvedValue([]) } as unknown as SourceFetcherService,
   );
   jest
     .spyOn(handler, 'contextOf')
@@ -334,9 +336,27 @@ describe('AnalysisWriteHandler: a step of the run (F07-1a)', () => {
     expect(fields.settleStep).not.toHaveBeenCalled();
   });
 
+  it('a run of F07-1 (three steps) is ready after step 3; a run of five steps is ready after step 5, not before', async () => {
+    const legacy = setup();
+    legacy.fields.read.mockResolvedValue(
+      dataOf({ steps: [stepRow(1), stepRow(2), stepRow(3)], stepsTotal: 3 }),
+    );
+    await legacy.handler.handler.run(task(), ctx);
+    expect(legacy.fields.markCore).toHaveBeenCalledTimes(1);
+    const five = setup();
+    five.fields.read.mockResolvedValue(
+      dataOf({ steps: [1, 2, 3, 4, 5].map((n) => stepRow(n as 1 | 2 | 3 | 4 | 5)), stepsTotal: 5 }),
+    );
+    await five.handler.handler.run(task(), ctx);
+    expect(five.fields.markCore).toHaveBeenCalledTimes(1);
+    expect(five.tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
+  });
+
   it('after step 3 the core is marked and the run is ready together with its operation; a run that stopped taking writes is only closed', async () => {
     const { handler, fields, tasks, tx } = setup();
-    fields.read.mockResolvedValue(dataOf({ steps: [stepRow(1), stepRow(2), stepRow(3)] }));
+    fields.read.mockResolvedValue(
+      dataOf({ steps: [stepRow(1), stepRow(2), stepRow(3)], stepsTotal: 3 }),
+    );
     await expect(handler.handler.run(task(), ctx)).resolves.toEqual({ kind: 'done' });
     expect(fields.markCore).toHaveBeenCalledTimes(1);
     expect(tasks.completeOperation).toHaveBeenCalledTimes(1);

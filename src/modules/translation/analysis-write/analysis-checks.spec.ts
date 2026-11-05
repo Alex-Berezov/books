@@ -3,6 +3,7 @@ import { indexChapters } from '../draft-quality/quote-check';
 import { ANALYSIS_REMARK_CODES, SUMMARY_REMARK_CODES } from '../draft-quality/text-checks';
 import { coreRemark, fixDraft, importRemarks, stepRemarks, textRemarks } from './analysis-checks';
 import { STEP_FIX_CODES } from './analysis-write.data';
+import { externalChecks } from './analysis-write.external';
 import { ANALYSIS_REVIEW_CODES } from './analysis-write.prompts';
 
 /**
@@ -273,9 +274,17 @@ describe('ANALYSIS_REMARK_CODES (А4)', () => {
         [{ key: 'anna', source: 'Anna', target: 'Annette', keepOriginal: false }],
       ),
       coreRemark(EMPTY_BOOK_ANALYSIS),
+      ...externalChecks({ context: 'Epoch.', facts: { genre: 'novel' } }),
     ].flatMap((r) => (r ? [r.code] : []));
     expect(new Set(checks)).toEqual(
-      new Set(['IMPORT_INVALID', 'LANGUAGE_MIXED', 'JUNK', 'NAME_MISMATCH', 'CORE_MISSING']),
+      new Set([
+        'IMPORT_INVALID',
+        'LANGUAGE_MIXED',
+        'JUNK',
+        'NAME_MISMATCH',
+        'CORE_MISSING',
+        'EXTERNAL_CHECK',
+      ]),
     );
     const can = new Set<string>([...checks, ...STEP_FIX_CODES, ...ANALYSIS_REVIEW_CODES]);
     const list = new Set<string>(ANALYSIS_REMARK_CODES);

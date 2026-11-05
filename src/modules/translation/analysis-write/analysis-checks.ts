@@ -188,7 +188,35 @@ export function fixDraft(
     out.symbols = limited(symbols, LIMITS.symbols, 'symbols', fixes);
   }
 
-  for (const key of ['characters', 'keyQuotes', 'style', 'themes', 'symbols'] as const) {
+  // Шаги 4-5: пределы импорта; пределы `timeline` и `adaptations` режет разбор ответа вместе со
+  // ссылками на источники (`readExternal`).
+  if (blocks.misreadings) {
+    out.misreadings = limited(blocks.misreadings, LIMITS.misreadings, 'misreadings', fixes);
+  }
+  if (blocks.discussionQuestions) {
+    out.discussionQuestions = limited(
+      blocks.discussionQuestions,
+      LIMITS.discussionQuestions,
+      'discussionQuestions',
+      fixes,
+    );
+  }
+  if (blocks.faq) out.faq = limited(blocks.faq, LIMITS.faq, 'faq', fixes);
+  if (blocks.sources) out.sources = limited(blocks.sources, LIMITS.sources, 'sources', fixes);
+
+  for (const key of [
+    'characters',
+    'keyQuotes',
+    'style',
+    'themes',
+    'symbols',
+    'misreadings',
+    'discussionQuestions',
+    'faq',
+    'timeline',
+    'adaptations',
+    'sources',
+  ] as const) {
     if (out[key]?.length === 0) delete out[key];
   }
   return { blocks: out, droppedQuotes, fixes };
@@ -254,6 +282,23 @@ function textFields(blocks: StepBlocks): TextField[] {
   add('mainIdea', blocks.mainIdea, true);
   add('titleMeaning', blocks.titleMeaning, true);
   add('endingMeaning', blocks.endingMeaning, true);
+  add('context', blocks.context, true);
+  add('reception', blocks.reception, true);
+  (blocks.misreadings ?? []).forEach((m, i) => {
+    add(`misreadings.${i}.myth`, m.myth, false);
+    add(`misreadings.${i}.explanation`, m.explanation, true);
+  });
+  (blocks.discussionQuestions ?? []).forEach((q, i) => add(`discussionQuestions.${i}`, q, false));
+  (blocks.faq ?? []).forEach((f, i) => {
+    add(`faq.${i}.question`, f.question, false);
+    add(`faq.${i}.answer`, f.answer, true);
+  });
+  (blocks.timeline ?? []).forEach((t, i) => add(`timeline.${i}.event`, t.event, false));
+  (blocks.adaptations ?? []).forEach((a, i) => {
+    add(`adaptations.${i}.title`, a.title, false);
+    add(`adaptations.${i}.differences`, a.differences, true);
+  });
+  (blocks.sources ?? []).forEach((src, i) => add(`sources.${i}.title`, src.title, false));
   (blocks.characters ?? []).forEach((c) => {
     add(`characters.${c.key}.name`, c.name, false);
     add(`characters.${c.key}.description`, c.description, true);

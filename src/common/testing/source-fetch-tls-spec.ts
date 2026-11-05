@@ -1,0 +1,53 @@
+// Имя кончается на `-spec.ts`: `tsconfig.build.json` исключает `**/*spec.ts`, поэтому ключ не попадает
+// в `dist` и образ; набором тестов файл не считается (`testRegex` - `\.spec\.ts$`, e2e - `.e2e-spec.ts$`).
+// Тестовая пара ключ/сертификат (самоподписанный, CN=source.test, срок 100 лет): имя проверяется только для `source.test`, e2e проверку имени снимает.
+// Ключ одноразовый, сгенерирован только для спеков и не защищает ничего.
+export const TEST_TLS_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvwIBADANBgkqhkiG9w0BAQEFAASCBKkwggSlAgEAAoIBAQDb6jtkgfKIIM7R
+7JJ9pH8mScb8ToHVSfxnrFfVMtCzuQANkDX76tJ09ONgCl8s19Hocs7o6qFXNaQY
+4RLPxo/eytH/W/+P6VWJTgqby4ZB0FgFYjSHlZvu98Yn/PSsT9lw6VqgJpgZWaNN
+2kYGbYa8pkJ5jAaCEoxPNKK5qQ9648OLqz8PrSgxh1rS4vCqP8+P+blCbSzraybX
+ipj4DpI4A9cqPcHG8j4MsADfPrxVEkZQ38A+m8lZxpqULAEHuLhcVDfaja55AcjA
+njaAXlmJ2jbTh0FX0bkV6/Qaor1GduuQg2gIxVzLVjMySoawJETT96vaDwiOqsME
+DUmDepKbAgMBAAECggEBAJFq6askYoOxbhFSJev/AjUHRBVCtIedTNIhHFNWLrso
+8egGHCxgspmz9UZklVrJu3vBryBFRjqstb3d1tqdqjTgWMxKwUsgN/d7K3iptDWA
+1zN4JNQjEeGK5fU7R29Jvbb0F4EfBCR/KYUpeHR3qEjGh95nwUXxjeYyIAg0yo+v
+Io1ELfCsfGulRkxkqF+NplEdSAHc32cG8k06bMCV+x0CHK9uBYnAmR8EC1CzA5xK
+pF8MdVq0FiQPz4yxn64ckwOHolXfiaHGAhZTN0J/CDRdcHoxIdATdUz89cuC7GVS
+kxFhOCVAAWbPR5rhuiungfOAplRXKCwa/s/xIcMwN0ECgYEA899FAb5HUIiCHvZk
+0yz8Firq5UdBnPDH0VM33gUC2hhGSkLEhMpejOHwP37wdK95uLzQll2UclYrgPxS
+KckIL2za7swXOxjwyBHa/DEPraTMcDnYKUPmA6BEiIzJbz3rcsme0dp+yJhPbY7V
+BgrXNw0umLp3jgYCU2k6Wi/uwz0CgYEA5tn21P1PdYDXMUP4uSJl24XVi0FSBgIR
+P/E59H4cnbBSKzYkqcb/JCZGtlY/40YMnccwK95rwm6ciy0iT0iKoHg5f7PDJ4R1
+KwxNqZ4M3xpgHnTQDpJai7pCmd1hgTaIljIY8LCpT2XTURYBjBkHB9n1A7AHaF4D
+D47SEvspKrcCgYEA6MtYtDFPIjEtBSFvXaazfPW7BOLgX0/5bnhh/C4MauSBNKJH
+tfr4BsQm8nXaU4iuSQr0kpUB/6MCJD64r+qXRa5Dz3BDPMayEkn5IIQ00y1dekO9
+dKa8CvoSccbzAp25A/ozAV/xZsr+BzcxYnM2vfZ3ZJObTJev4K+yZCUdZoECgYA4
+HcXlsontO1uUKzy77EOsYFUvm7pPoZMF4yK+byWPo3vl6yxwZOJCrFdGHaM8IRwS
+AoiQMWoqgm7lWhxb/3tLVM5NX6pR4d4Fj+EVGUlxtlylKqok0KjYDHgCJRF9sn7z
+W8w6Pgd6OHts25eWscLGwtHPiqvSUAAYeRRR7uHr8wKBgQCWr/zk6UZV+Q0q1TW/
+aeMZXmmVTP0ZMyY7YLUOQ6ucrDBAXqzAbLAsm5tkM0j5eNwckAGcT7LbhcnojeNx
+/qHfgTOiUnRiTRFu1YJ4nNBmUlmoRJaYM8KdwyNYVVTDaLaeWszpCvhdkKgVsJ9e
+QXQ9/zeMzAmRt/ICk1HE09Q/0g==
+-----END PRIVATE KEY-----
+`;
+
+export const TEST_TLS_CERT = `-----BEGIN CERTIFICATE-----
+MIIC7DCCAdSgAwIBAgIUGi+kKBSpUwp4JNGS2WTR0mqD10EwDQYJKoZIhvcNAQEL
+BQAwFjEUMBIGA1UEAwwLc291cmNlLnRlc3QwIBcNMjYxMTA1MTEwOTQ4WhgPMjEy
+NjEwMTIxMTA5NDhaMBYxFDASBgNVBAMMC3NvdXJjZS50ZXN0MIIBIjANBgkqhkiG
+9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2+o7ZIHyiCDO0eySfaR/JknG/E6B1Un8Z6xX
+1TLQs7kADZA1++rSdPTjYApfLNfR6HLO6OqhVzWkGOESz8aP3srR/1v/j+lViU4K
+m8uGQdBYBWI0h5Wb7vfGJ/z0rE/ZcOlaoCaYGVmjTdpGBm2GvKZCeYwGghKMTzSi
+uakPeuPDi6s/D60oMYda0uLwqj/Pj/m5Qm0s62sm14qY+A6SOAPXKj3BxvI+DLAA
+3z68VRJGUN/APpvJWcaalCwBB7i4XFQ32o2ueQHIwJ42gF5Zido204dBV9G5Fev0
+GqK9RnbrkINoCMVcy1YzMkqGsCRE0/er2g8IjqrDBA1Jg3qSmwIDAQABozAwLjAe
+BgNVHREEFzAVggtzb3VyY2UudGVzdIIGKi50ZXN0MAwGA1UdEwQFMAMBAf8wDQYJ
+KoZIhvcNAQELBQADggEBAL0U32VxvKtTRymcoErzEGghCYbNsWGllspR/4iCQ7A+
+pXbyt69+C8ViDFJTIZDUMmyc3aDuSPadQTcfNYHLWV87RTJrChGfI1d39SXx84kW
+3XMecMC+bcvQZPWf6iY1YN9J516GYozPdVHgSbQh4EYajnucpdaFFrrL0RMTji6r
+c0Ob+6BxE6UDiVWevrnV/Y8VNMbGlUUCzE82kZIlOVgha8sRDDxI47KQN6PjG+mD
+EbWvpOf+0cMFiye9OWYFdCVd8NyAjGxcH/fWOuZArz13Bgf0fP7COOavY93kmBV2
+DzBzsvKZZayrOIzhC6mjcxiM7lUMBjZTKo57sAeotxw=
+-----END CERTIFICATE-----
+`;

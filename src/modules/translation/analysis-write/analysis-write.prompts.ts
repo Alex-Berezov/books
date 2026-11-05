@@ -8,11 +8,20 @@ import { Redo, reviewShapeOf } from '../draft-quality/quality-loop';
 import { DraftRemark, DraftRemarkCode } from '../draft-quality/text-checks';
 import {
   ANALYSIS_CAST_WRITE_STAGE,
+  ANALYSIS_EXTERNAL_WRITE_STAGE,
   ANALYSIS_MEANING_WRITE_STAGE,
+  ANALYSIS_READER_WRITE_STAGE,
   ANALYSIS_QUOTES_WRITE_STAGE,
   ANALYSIS_REVIEW_STAGE,
+  EXTERNAL_STEP,
+  READER_STEP,
 } from './analysis-write.constants';
-import { AnalysisStepNumber, AnalysisTarget, StepDraft } from './analysis-write.data';
+import {
+  AnalysisStepNumber,
+  AnalysisTarget,
+  EXTERNAL_FACTS,
+  StepDraft,
+} from './analysis-write.data';
 
 /**
  * Промпты шагов хода анализа (`F07-1a`; `features/F07-analysis-autofill/product.md` §2-§3, канон -
@@ -104,19 +113,69 @@ const MEANING_SHAPE: Shape = {
   },
 };
 
+/** Шаг 4: блоки для читателя. */
+const READER_SHAPE: Shape = {
+  object: {
+    misreadings: { array: { object: { myth: str, explanation: str } } },
+    discussionQuestions: { array: str },
+    faq: { array: { object: { question: str, answer: str } } },
+  },
+};
+
+const TIMELINE_KIND = { enum: ['author', 'epoch', 'book'] } as const;
+const ADAPTATION_KIND = { enum: ['film', 'series', 'stage', 'other'] } as const;
+
+/**
+ * Шаг 5: внешние блоки и ссылки утверждений на `sources` (`tech.md` §4, `sourceRefs`). Строгая форма
+ * без словарей: ссылки лежат рядом с утверждением - `refs` абзаца, события, экранизации и
+ * `<факт>Refs`; индексы - позиции в `sources` этого же ответа. Абзацы `context` и `reception` -
+ * списком, код склеивает их пустой строкой.
+ */
+const EXTERNAL_SHAPE: Shape = {
+  object: {
+    genre: str,
+    genreRefs: { array: int },
+    movement: str,
+    movementRefs: { array: int },
+    writtenYears: str,
+    writtenYearsRefs: { array: int },
+    context: { array: { object: { text: str, refs: { array: int } } } },
+    timeline: {
+      array: { object: { year: str, event: str, kind: TIMELINE_KIND, refs: { array: int } } },
+    },
+    reception: { array: { object: { text: str, refs: { array: int } } } },
+    adaptations: {
+      array: {
+        object: {
+          title: str,
+          year: int,
+          kind: ADAPTATION_KIND,
+          differences: str,
+          refs: { array: int },
+        },
+      },
+    },
+    sources: { array: { object: { title: str, url: str } } },
+  },
+};
+
 export const STEP_SHAPES: Record<AnalysisStepNumber, Shape> = {
   1: CAST_SHAPE,
   2: QUOTES_SHAPE,
   3: MEANING_SHAPE,
+  4: READER_SHAPE,
+  5: EXTERNAL_SHAPE,
 };
 
 export const STEP_STAGES: Record<AnalysisStepNumber, string> = {
   1: ANALYSIS_CAST_WRITE_STAGE,
   2: ANALYSIS_QUOTES_WRITE_STAGE,
   3: ANALYSIS_MEANING_WRITE_STAGE,
+  4: ANALYSIS_READER_WRITE_STAGE,
+  5: ANALYSIS_EXTERNAL_WRITE_STAGE,
 };
 
-/** Коды проверяющей анализа (`product.md` §3.4) - шаги 1-3; коды шагов 4-5 - `F07-2`. */
+/** Коды проверяющей анализа (`product.md` §3.4); `FAQ_WEAK`, `MYTH_INVENTED` - шаг 4, `EXTERNAL_DOUBT` - шаг 5. */
 export const ANALYSIS_REVIEW_CODES = [
   'NOT_IN_TEXT',
   'GENERIC',
@@ -124,6 +183,9 @@ export const ANALYSIS_REVIEW_CODES = [
   'RETELLING',
   'ONE_SIDED',
   'STYLE_POOR',
+  'FAQ_WEAK',
+  'MYTH_INVENTED',
+  'EXTERNAL_DOUBT',
 ] as const satisfies readonly DraftRemarkCode[];
 
 const ANALYSIS_REVIEW_SHAPE: Shape = reviewShapeOf(ANALYSIS_REVIEW_CODES);
@@ -137,8 +199,33 @@ const QUOTE_MARKS: Record<Language, string> = {
   pt: 'aspas “”',
 };
 
+/**
+ * Правила внешнего шага (`F07-2a`): текста книги шагу не дают, цитат и глав в нём нет, а факты
+ * допустимы - но только с источником (`product.md` §3.3).
+ */
+function externalRules(language: Language): string {
+  const name = LANGUAGE_NAMES[language];
+  return [
+    `Write for the reader of ${name} (language code "${language}"), not a translation from ` +
+      'English: the living literary language of a native speaker, no calques, no mixing of ' +
+      'languages. The title of the book and the names exactly as in the data given. Examples, ' +
+      'critics, adaptations and disputes - those this reader knows: the translations into this ' +
+      'language, the school, the known responses in this culture, when they are reliably known.',
+    'Facts only if they are confirmed by a source from your sources list; never present a ' +
+      'guess as a fact. Not sure of a date, a name or a fact - leave the statement out: an empty ' +
+      'block is not shown, a mistake stays on the page.',
+    'No quotations of the book and no chapter numbers in this step.',
+    'Plain text: no HTML, no Markdown (no **, #, - lists, links in the text), no emoji. ' +
+      `Quotation marks of the language: ${QUOTE_MARKS[language]}.`,
+    'Do not speak for the site: no "our editors think", no "we have prepared".',
+  ]
+    .map((rule, i) => `${i + 1}. ${rule}`)
+    .join('\n');
+}
+
 /** «Главные правила» канона `F03` для шагов по тексту книги (правила 1-7). */
-function mainRules(language: Language): string {
+function mainRules(language: Language, step?: AnalysisStepNumber): string {
+  if (step === EXTERNAL_STEP) return externalRules(language);
   const name = LANGUAGE_NAMES[language];
   return [
     `Write for the reader of ${name} (language code "${language}"), not a translation from ` +
@@ -179,6 +266,18 @@ const QUALITY_BAR =
   'interpretation.';
 
 const LIMITS = BOOK_ANALYSIS_LIMITS;
+
+/**
+ * Планка качества шага: внешнему шагу (без текста книги, без цитат) опора - источник, а не сцена
+ * с цитатой и главой; прочее в планке то же.
+ */
+const qualityBar = (step: AnalysisStepNumber): string =>
+  step === EXTERNAL_STEP
+    ? QUALITY_BAR.replace(
+        'it rests on a scene, a ' + 'detail, a line or a quotation with its chapter',
+        'it rests on a fact that a source of your list confirms',
+      )
+    : QUALITY_BAR;
 
 /** Блоки шага (раздел «Блоки» канона) и проверка перед ответом своего шага. */
 const STEP_RULES: Record<AnalysisStepNumber, string> = {
@@ -245,6 +344,66 @@ const STEP_RULES: Record<AnalysisStepNumber, string> = {
     'characters - by key from the CHARACTERS block; keyQuotes - by id from the KEY_QUOTES block; ' +
     `themeKeys - keys of your themes, at most ${LIMITS.themeKeys}. Do not return the characters and ` +
     'the quotations themselves.',
+  4:
+    'You write the blocks for the reader, relying on the previous steps (characters, quotations, ' +
+    'themes, symbols, meanings) and the chapter summaries.' +
+    `\nmisreadings - 2-6 common misunderstandings of the book (at most ${LIMITS.misreadings}): myth - the ` +
+    'mistake in one phrase, as a reader or a school essay words it (at most ' +
+    `${LIMITS.question} characters); explanation - why it is not so, resting on the text (at most ` +
+    `${LIMITS.mediumText} characters). Good candidates: the simplified "the moral of the book is…", ` +
+    'a character taken for the author, anachronisms, the ' +
+    'literal reading of irony. Never invent a mistake only to refute it: only those that really ' +
+    'occur.' +
+    `\ndiscussionQuestions - 5-10 open questions (at most ${LIMITS.discussionQuestions}, each at most ` +
+    `${LIMITS.question} characters) for a lesson, a book club, an essay: no yes/no questions, ` +
+    'no questions with one defensible answer; mix questions about characters, themes, devices ' +
+    'and the link of the book with today. Plain strings.' +
+    `\nfaq - 4-8 questions (at most ${LIMITS.faq}) that people really search for about the analysis ` +
+    'of this book in this language ("what is the meaning of…", "why does the hero…", "how does it ' +
+    'end…", "what does … symbolise"): question - worded the way it is typed into a search in this ' +
+    `language (at most ${LIMITS.question} characters); answer - 1-4 sentences, the direct answer in ` +
+    `the first sentence, no links to the site, at most ${LIMITS.longText} characters. Do not copy ` +
+    'the text of other blocks word for word - compress it into an answer.',
+  5:
+    'You write the external blocks: facts about the genre and the history of the book that the ' +
+    'text itself does not hold. Rely only on what you know for certain and what the sources ' +
+    'confirm.' +
+    '\nEvery statement carries refs: the positions (from 0) in your own sources list of the ' +
+    'sources that confirm it. A statement without a source is thrown away by the code, and a ' +
+    'source that does not open or is not about this book is thrown away with the statements ' +
+    'that rest only on it. Give 2-6 sources; no sure address - no source and no statement.' +
+    '\ngenre - the genre in a short phrase ("a psychological novel"); movement - the literary ' +
+    'movement ("realism"), "" when there is no established one; writtenYears - the years of work ' +
+    'on the book ("1865-1866"); each with its genreRefs / movementRefs / writtenYearsRefs, and ' +
+    '"" with an empty list when you are not sure.' +
+    '\ncontext - 1-4 paragraphs (together at most ' +
+    `${LIMITS.longText} characters): the epoch and the questions the book answers, the ` +
+    'circumstances of the work, the prototypes and the sources of the idea, what a modern reader ' +
+    'would not notice without the context. Only what biographies and commentaries confirm. When ' +
+    'the book came out in this language under another title, or the original title holds a play ' +
+    'on words the translation loses, say it here - only with a source (these facts are not in the text of the version). Each paragraph is an ' +
+    'element with its refs.' +
+    `\ntimeline - events by year, ascending (at most ${LIMITS.timeline}): year - a string ("1866", ` +
+    '"1850-1854", "1860s"); event - one event in one phrase; kind - author (the life of the ' +
+    'author), epoch (the epoch) or book (the history of the book: the idea, the first ' +
+    'publication, the first translation into this language when the date is exactly known). Only ' +
+    'events that explain the book. Each with its refs.' +
+    '\nreception - 1-3 paragraphs (together at most ' +
+    `${LIMITS.longText} characters): how contemporaries took the book, which disputes it ` +
+    'caused, how it is read now; name only real critics and works; how the book entered the ' +
+    'culture of this reader (translations, school, known responses) when it is reliably known. ' +
+    'Each paragraph with its refs.' +
+    `\nadaptations - the most known ones (at most ${LIMITS.adaptations}): title - the name it is known ` +
+    'under in this language; year - a number from ' +
+    `${LIMITS.adaptationYear.min} to ${LIMITS.adaptationYear.max}; kind - film, series, stage ` +
+    'or other; differences - how it differs from the book (1-3 sentences, at most ' +
+    `${LIMITS.mediumText} characters). Not sure of the year or of the fact itself - leave it out. ` +
+    'Each with its refs.' +
+    `\nsources - at most ${LIMITS.sources}: title and url. The url is a full address that starts with ` +
+    'https:// and names a host (no IP address, no port, no login in it). Only the addresses you are ' +
+    'sure exist: encyclopedias, Wikipedia in the language of this version, academic editions and ' +
+    'commentaries, museums. The code opens every address and looks in the page for the title of ' +
+    'the book or the surname of the author.',
 };
 
 /** Переделка (U5): прошлый ответ шага и замечания - данными. */
@@ -259,11 +418,12 @@ function messages(
   lead: (names: string[]) => string,
   redo: StepRedo | null,
   outside: readonly string[],
+  previousOf: (draft: StepDraft) => unknown = (draft) => draft.blocks,
 ): LlmChatMessage[] {
   const all = redo
     ? [
         ...items,
-        ['PREVIOUS_ANSWER', JSON.stringify(redo.previous.blocks)] as const,
+        ['PREVIOUS_ANSWER', JSON.stringify(previousOf(redo.previous))] as const,
         ['REMARKS', remarksText(redo.remarks)] as const,
       ]
     : items;
@@ -326,6 +486,76 @@ interface StepPromptInput {
   redo: StepRedo | null;
   /** Перегенерация одного блока вместо шага целиком (`F07-1b`); `null` - шаг хода. */
   regen?: StepRegen | null;
+  /** Язык оригинала книги - вход внешнего шага (`tech.md` §2); пусто - неизвестен. */
+  originalLanguage?: string;
+}
+
+/**
+ * Ответ внешнего шага в его форме (`EXTERNAL_SHAPE`) из блоков и ссылок: обратный разбору
+ * (`readExternal`) - для прошлого ответа в переделке.
+ */
+export function externalAnswerOf(draft: StepDraft): Record<string, unknown> {
+  const b = draft.blocks;
+  const refs = draft.refs ?? {
+    facts: {},
+    context: [],
+    reception: [],
+    timeline: [],
+    adaptations: [],
+  };
+  const paragraphs = (text: string | undefined, own: number[][]) =>
+    (text ? text.split('\n\n') : []).map((p, i) => ({ text: p, refs: own[i] ?? [] }));
+  const withRefs = (rows: readonly object[] | undefined, own: number[][]) =>
+    (rows ?? []).map((row, i) => ({ ...row, refs: own[i] ?? [] }));
+  return {
+    ...Object.fromEntries(
+      EXTERNAL_FACTS.flatMap(
+        (f): Array<[string, unknown]> => [
+          [f, b.facts?.[f] ?? ''],
+          [`${f}Refs`, refs.facts[f] ?? []],
+        ],
+      ),
+    ),
+    context: paragraphs(b.context, refs.context),
+    timeline: withRefs(b.timeline, refs.timeline),
+    reception: paragraphs(b.reception, refs.reception),
+    adaptations: withRefs(b.adaptations, refs.adaptations),
+    sources: b.sources ?? [],
+  };
+}
+
+/**
+ * Вход внешнего шага (`tech.md` §2): название, автор, язык оригинала, язык версии (в правилах) и
+ * итог шага 3. Ни текста книги, ни досье, ни глоссария, ни списка глав: внешние факты - из знаний
+ * модели под проверку источников, а не пересказ текста.
+ */
+function externalWriteRequest(input: StepPromptInput, system: string): ShapedRequest {
+  const items: Array<readonly [string, string]> = [
+    ['BOOK_TITLE', input.bookTitle],
+    ['AUTHOR', input.author],
+    ['ORIGINAL_LANGUAGE', input.originalLanguage || 'unknown'],
+    ...input.previous,
+    ['EXAMPLE', input.example],
+  ];
+  return shapedRequest(
+    STEP_STAGES[input.step],
+    STEP_SHAPES[input.step],
+    messages(
+      system,
+      items,
+      (n) =>
+        `The title of the book is in ${n[0]}, the author in ${n[1]}, the language of the ` +
+        `original in ${n[2]}` +
+        input.previous.map(([label], i) => `, ${label.toLowerCase()} in ${n[3 + i]}`).join('') +
+        `, a sample answer for another book in this language in ${n[items.length - 1]}. ` +
+        'The sample shows the form and the level only: never take its content or its addresses.',
+      input.redo,
+      [],
+      // Переделка видит прошлый ответ в форме ответа - со ссылками на источники, иначе ссылки
+      // пришлось бы собирать заново и верные утверждения ушли бы без источника.
+      externalAnswerOf,
+    ),
+  );
 }
 
 export function stepWriteRequest(input: StepPromptInput): ShapedRequest {
@@ -333,8 +563,8 @@ export function stepWriteRequest(input: StepPromptInput): ShapedRequest {
     'You write a part of the analysis page of a book for the site: the reader comes for the ' +
     'meaning of the book, not for its plot. This is the text for publication, not a draft.\n' +
     'Main rules (breaking any is a defect):\n' +
-    mainRules(input.language) +
-    `\n${QUALITY_BAR}` +
+    mainRules(input.language, input.step) +
+    `\n${qualityBar(input.step)}` +
     `\n${STEP_RULES[input.step]}` +
     (input.regen ? regenRule(input.regen) : '') +
     (input.bookIsSummaries
@@ -342,9 +572,13 @@ export function stepWriteRequest(input: StepPromptInput): ShapedRequest {
         'Quote only what you know word for word from this version; a quotation the code cannot ' +
         'find in the chapter is thrown away.'
       : '') +
-    '\nBefore answering, check: every element has its required fields; every chapter number is ' +
-    'in the list of chapters; every key is ^[a-z0-9-]{1,60}$ and unique in its list; every ' +
-    'quotation is a line of this text word for word; no empty template values.';
+    (input.step === EXTERNAL_STEP
+      ? '\nBefore answering, check: every statement has refs to sources of your list; every ' +
+        'source has a full https address; no quotation of the book; no empty template values.'
+      : '\nBefore answering, check: every element has its required fields; every chapter number ' +
+        'is in the list of chapters; every key is ^[a-z0-9-]{1,60}$ and unique in its list; every ' +
+        'quotation is a line of this text word for word; no empty template values.');
+  if (input.step === EXTERNAL_STEP) return externalWriteRequest(input, system);
   const items: Array<readonly [string, string]> = [
     ['BOOK_TITLE', input.bookTitle],
     ['AUTHOR', input.author],
@@ -392,6 +626,8 @@ const REVIEW_STEP: Record<AnalysisStepNumber, string> = {
   1: 'the card of the work and the characters',
   2: 'the key quotations and the devices of the style',
   3: 'the main idea, the themes, the symbols, the meaning of the title and of the ending',
+  4: 'the common misunderstandings, the discussion questions and the FAQ',
+  5: 'the genre, the context, the timeline, the reception and the adaptations',
 };
 
 interface StepReviewInput {
@@ -405,21 +641,39 @@ interface StepReviewInput {
 }
 
 export function stepReviewRequest(input: StepReviewInput): ShapedRequest {
+  const external = input.step === EXTERNAL_STEP;
   const system =
     `You check ${REVIEW_STEP[input.step]} of the analysis page of a book written for publication ` +
-    'on the site. Compare the answer with the book and the previous steps and list what is ' +
-    'wrong. The rules the answer must follow:\n' +
-    mainRules(input.language) +
-    `\n${QUALITY_BAR}` +
+    'on the site. ' +
+    (external
+      ? 'The text of the book is not given for this step: compare the answer with the previous ' +
+        'steps and with what is reliably known about the book, and list what is wrong. '
+      : 'Compare the answer with the book and the previous steps and list what is wrong. ') +
+    'The rules the answer must follow:\n' +
+    mainRules(input.language, input.step) +
+    `\n${qualityBar(input.step)}` +
     `\n${STEP_RULES[input.step]}` +
     '\nRemark codes:' +
-    '\n- NOT_IN_TEXT: an interpretation rests on a scene or a detail that is not in the text.' +
+    (external
+      ? ''
+      : '\n- NOT_IN_TEXT: an interpretation rests on a scene or a detail that is not in the text.') +
     '\n- GENERIC: the text is true for any book (replace the title - nothing changes).' +
     '\n- CONTRADICTION: blocks contradict each other or the previous steps (theme, character, ' +
     'symbol).' +
     '\n- RETELLING: a retelling of the plot instead of an interpretation.' +
     '\n- ONE_SIDED: the disputable is presented as the only right reading.' +
     '\n- STYLE_POOR: clichés, empty praise, officialese, calques.' +
+    (input.step === READER_STEP
+      ? '\n- FAQ_WEAK: a FAQ question is not like a search query of this language, or the answer ' +
+        'is not direct in the first sentence.' +
+        '\n- MYTH_INVENTED: a "misunderstanding" looks invented only to be refuted.'
+      : '') +
+    (input.step === EXTERNAL_STEP
+      ? '\n- EXTERNAL_DOUBT: an external statement is doubtful (a date, a name, the fact of an ' +
+        'adaptation): the code removes the statement when the doubt stays after the redo. where: ' +
+        'the path of the statement itself - facts.genre, context.1 (the second paragraph; ' +
+        'paragraphs are separated by an empty line), reception.0, timeline.2, adaptations.0.'
+      : '') +
     '\nThe import form, the chapter numbers, whether quotations are word for word, the language ' +
     'and service phrases are checked by code: do not remark on them. where: the field path first ' +
     '(themes.guilt.interpretation, characters.anna.description, mainIdea), then a short ' +

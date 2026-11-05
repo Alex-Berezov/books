@@ -15,8 +15,10 @@ import {
 import { TRANSLATE_STAGE_DEFINITIONS } from '../translate/translate.constants';
 import {
   ANALYSIS_CAST_WRITE_STAGE,
+  ANALYSIS_EXTERNAL_WRITE_STAGE,
   ANALYSIS_MEANING_WRITE_STAGE,
   ANALYSIS_QUOTES_WRITE_STAGE,
+  ANALYSIS_READER_WRITE_STAGE,
   ANALYSIS_REVIEW_STAGE,
   ANALYSIS_WRITE_STAGE_DEFINITIONS,
 } from '../analysis-write/analysis-write.constants';
@@ -52,6 +54,8 @@ const ANALYSIS_WRITE = [
   ANALYSIS_CAST_WRITE_STAGE,
   ANALYSIS_QUOTES_WRITE_STAGE,
   ANALYSIS_MEANING_WRITE_STAGE,
+  ANALYSIS_READER_WRITE_STAGE,
+  ANALYSIS_EXTERNAL_WRITE_STAGE,
   ANALYSIS_REVIEW_STAGE,
 ];
 
@@ -80,6 +84,9 @@ describe('reasoning answer reserve of the translation stages', () => {
       maxTokens: 32_000,
       reasoningAnswerReserve: 12_000,
     });
+    for (const stage of [ANALYSIS_READER_WRITE_STAGE, ANALYSIS_EXTERNAL_WRITE_STAGE]) {
+      expect(of(stage)).toMatchObject({ maxTokens: 16_000, reasoningAnswerReserve: 6_000 });
+    }
     expect(of(ANALYSIS_REVIEW_STAGE)).toMatchObject({
       model: 'openai/gpt-6-luna',
       maxTokens: 16_000,
@@ -131,6 +138,8 @@ describe('call timeout of the translation stages', () => {
       [ANALYSIS_CAST_WRITE_STAGE]: 600_000,
       [ANALYSIS_QUOTES_WRITE_STAGE]: 420_000,
       [ANALYSIS_MEANING_WRITE_STAGE]: 840_000,
+      [ANALYSIS_READER_WRITE_STAGE]: 420_000,
+      [ANALYSIS_EXTERNAL_WRITE_STAGE]: 420_000,
       [ANALYSIS_REVIEW_STAGE]: 420_000,
     });
   });

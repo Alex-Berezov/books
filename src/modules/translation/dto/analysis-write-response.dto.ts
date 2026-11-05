@@ -2,11 +2,16 @@ import { ApiProperty } from '@nestjs/swagger';
 import { ContentDraftStatus, Language, LlmOperationStatus, LlmPauseReason } from '@prisma/client';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import {
+  BookAnalysisAdaptationDto,
   BookAnalysisCharacterDto,
+  BookAnalysisFaqDto,
   BookAnalysisKeyQuoteDto,
+  BookAnalysisMisreadingDto,
+  BookAnalysisSourceDto,
   BookAnalysisStyleDto,
   BookAnalysisSymbolDto,
   BookAnalysisThemeDto,
+  BookAnalysisTimelineEventDto,
 } from '../../book-analysis/dto/book-analysis-blocks.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
 import {
@@ -17,6 +22,7 @@ import {
   ANALYSIS_TARGETS,
   AnalysisItemOutcome,
   AnalysisTarget,
+  DroppedSource,
   STEP_FIX_CODES,
   STEP_OUTCOMES,
   STEP_SOURCES,
@@ -106,7 +112,7 @@ export class AnalysisWriteFixDto {
   @ApiProperty({
     enum: STEP_FIX_CODES,
     description:
-      'Fixed by code without a redo: CHAPTER_UNKNOWN - a chapter number not in the version removed; LIMIT_OUT - elements over the import limit cut; IMPORT_INVALID - a theme link to an unknown element dropped',
+      'Fixed by code without a redo: CHAPTER_UNKNOWN - a chapter number not in the version removed; LIMIT_OUT - elements over the import limit cut; IMPORT_INVALID - a theme link to an unknown element dropped; SOURCE_UNREACHABLE, SOURCE_UNRELATED - a source of step 5 dropped; SOURCE_UNVERIFIED - a statement of step 5 with no verified source dropped; EXTERNAL_DOUBT - a statement of step 5 the reviewer still doubts after the redo dropped',
   })
   code!: StepFixCode;
 
@@ -118,7 +124,7 @@ export class AnalysisWriteFixDto {
 }
 
 export class AnalysisWriteDroppedQuoteDto {
-  @ApiProperty({ type: Number, enum: [1, 2, 3] })
+  @ApiProperty({ type: Number, enum: [1, 2, 3, 4, 5] })
   step!: number;
 
   @ApiProperty({
@@ -141,8 +147,23 @@ export class AnalysisWriteDroppedQuoteDto {
   reason!: QuoteCheckReason;
 }
 
+export class AnalysisWriteDroppedSourceDto {
+  @ApiProperty({ type: String })
+  title!: string;
+
+  @ApiProperty({ type: String, description: 'The host only, never the full address' })
+  host!: string;
+
+  @ApiProperty({
+    enum: ['SOURCE_UNREACHABLE', 'SOURCE_UNRELATED'],
+    description:
+      'SOURCE_UNREACHABLE - did not open (status, type, size, address not allowed); SOURCE_UNRELATED - the page names neither the book nor the author',
+  })
+  reason!: DroppedSource['reason'];
+}
+
 export class AnalysisWriteStepDto {
-  @ApiProperty({ type: Number, enum: [1, 2, 3] })
+  @ApiProperty({ type: Number, enum: [1, 2, 3, 4, 5] })
   step!: number;
 
   @ApiProperty({
@@ -180,7 +201,8 @@ export class AnalysisWriteStepDto {
   @ApiProperty({
     enum: STEP_SOURCES,
     nullable: true,
-    description: 'text - the whole version text; summaries - the chapter summaries of the dossier',
+    description:
+      'text - the whole version text; summaries - the chapter summaries of the dossier; none - the step reads no book text (step 5)',
   })
   source!: StepSource | null;
 
@@ -197,7 +219,8 @@ export class AnalysisWriteValueDto {
   @ApiProperty({
     type: String,
     nullable: true,
-    description: 'A facts subfield (facts.<name>), mainIdea, titleMeaning, endingMeaning',
+    description:
+      'A facts subfield (facts.<name>), mainIdea, titleMeaning, endingMeaning, context, reception',
   })
   text!: string | null;
 
@@ -215,6 +238,24 @@ export class AnalysisWriteValueDto {
 
   @ApiProperty({ type: [BookAnalysisSymbolDto], nullable: true })
   symbols!: BookAnalysisSymbolDto[] | null;
+
+  @ApiProperty({ type: [BookAnalysisMisreadingDto], nullable: true })
+  misreadings!: BookAnalysisMisreadingDto[] | null;
+
+  @ApiProperty({ type: [String], nullable: true })
+  discussionQuestions!: string[] | null;
+
+  @ApiProperty({ type: [BookAnalysisFaqDto], nullable: true })
+  faq!: BookAnalysisFaqDto[] | null;
+
+  @ApiProperty({ type: [BookAnalysisTimelineEventDto], nullable: true })
+  timeline!: BookAnalysisTimelineEventDto[] | null;
+
+  @ApiProperty({ type: [BookAnalysisAdaptationDto], nullable: true })
+  adaptations!: BookAnalysisAdaptationDto[] | null;
+
+  @ApiProperty({ type: [BookAnalysisSourceDto], nullable: true })
+  sources!: BookAnalysisSourceDto[] | null;
 }
 
 export class AnalysisWriteItemDto {
@@ -224,7 +265,7 @@ export class AnalysisWriteItemDto {
   @ApiProperty({ enum: ANALYSIS_TARGETS, description: 'A block or a facts subfield' })
   target!: AnalysisTarget;
 
-  @ApiProperty({ type: Number, enum: [1, 2, 3] })
+  @ApiProperty({ type: Number, enum: [1, 2, 3, 4, 5] })
   step!: number;
 
   @ApiProperty({ enum: ANALYSIS_VERDICTS })
@@ -316,7 +357,7 @@ export class AnalysisWriteDto {
   @ApiProperty({ type: LlmOperationDto })
   operation!: LlmOperationDto;
 
-  @ApiProperty({ type: Number, description: 'Steps of the run in all (3)' })
+  @ApiProperty({ type: Number, description: 'Steps of the run in all (5; runs of F07-1 have 3)' })
   stepsTotal!: number;
 
   @ApiProperty({
@@ -334,6 +375,12 @@ export class AnalysisWriteDto {
 
   @ApiProperty({ type: [AnalysisWriteDroppedQuoteDto] })
   droppedQuotes!: AnalysisWriteDroppedQuoteDto[];
+
+  @ApiProperty({
+    type: [AnalysisWriteDroppedSourceDto],
+    description: 'Sources of step 5 the code dropped: did not open or not about this book',
+  })
+  droppedSources!: AnalysisWriteDroppedSourceDto[];
 
   @ApiProperty({ type: String, format: 'date-time' })
   createdAt!: string;

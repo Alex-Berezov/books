@@ -2,9 +2,14 @@ import { createHash } from 'crypto';
 import { Language, Prisma } from '@prisma/client';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
+import { BOOK_ANALYSIS_LIMITS } from '../../book-analysis/dto/book-analysis-blocks.dto';
 import type {
+  BookAnalysisAdaptationDto,
   BookAnalysisCharacterDto,
   BookAnalysisFactsDto,
+  BookAnalysisFaqDto,
+  BookAnalysisMisreadingDto,
+  BookAnalysisTimelineEventDto,
   BookAnalysisKeyQuoteDto,
   BookAnalysisStyleDto,
   BookAnalysisSymbolDto,
@@ -20,7 +25,7 @@ import { ChapterIndex, normalizeQuote } from '../draft-quality/quote-check';
 import { StageModels } from '../run/run-models';
 import { glossaryNames, glossaryText, PartContext } from '../summary-write/summary-write.parts';
 import { fixDraft, stepRemarks } from './analysis-checks';
-import { ANALYSIS_REVIEW_STAGE } from './analysis-write.constants';
+import { ANALYSIS_REVIEW_STAGE, EXTERNAL_STEP, READER_STEP } from './analysis-write.constants';
 import { EXAMPLE_ANALYSES } from './examples';
 import {
   AnalysisStepNumber,
@@ -31,7 +36,11 @@ import {
   withoutTarget,
   StepBlocks,
   EMPTY_DRAFT,
+  EXTERNAL_FACTS,
+  refIndexes,
+  SourceRefs,
   StepDraft,
+  StepSource,
   StepFix,
   ThemeLinks,
 } from './analysis-write.data';
@@ -177,6 +186,175 @@ function readMeaning(value: unknown): StepBlocks {
   return out;
 }
 
+/** Шаг 4: ошибки понимания, вопросы для обсуждения и FAQ; пустые элементы не отдаются. */
+function readReader(value: unknown): StepBlocks {
+  const v = rec(value);
+  const misreadings = list(v.misreadings).flatMap((raw) => {
+    const m = rec(raw);
+    const myth = trimmed(m.myth);
+    const explanation = trimmed(m.explanation);
+    return myth !== '' && explanation !== ''
+      ? [{ myth, explanation } as BookAnalysisMisreadingDto]
+      : [];
+  });
+  const discussionQuestions = list(v.discussionQuestions)
+    .map(trimmed)
+    .filter((q) => q !== '');
+  const faq = list(v.faq).flatMap((raw) => {
+    const f = rec(raw);
+    const question = trimmed(f.question);
+    const answer = trimmed(f.answer);
+    return question !== '' && answer !== '' ? [{ question, answer } as BookAnalysisFaqDto] : [];
+  });
+  const out: StepBlocks = {};
+  if (misreadings.length > 0) out.misreadings = misreadings;
+  if (discussionQuestions.length > 0) out.discussionQuestions = discussionQuestions;
+  if (faq.length > 0) out.faq = faq;
+  return out;
+}
+
+/** Ссылки утверждения в индексах списка источников после разбора: выброшенный источник - не ссылка. */
+const remapRefs = (v: unknown, remap: ReadonlyMap<number, number>): number[] =>
+  refIndexes(v).flatMap((n) => (remap.has(n) ? [remap.get(n) as number] : []));
+
+/**
+ * Абзацы `context`/`reception`: текст склеивается пустой строкой, ссылки остаются по абзацам.
+ * Пустая строка внутри абзаца ответа делит его на абзацы с теми же ссылками: иначе разбиение
+ * склеенного текста при проверке источников (`verifyExternal`) сдвинуло бы ссылки абзацев.
+ */
+function readParagraphs(
+  value: unknown,
+  remap: ReadonlyMap<number, number>,
+): { text: string; refs: number[][] } {
+  const rows = list(value)
+    .map(rec)
+    .flatMap((r) => {
+      const refs = remapRefs(r.refs, remap);
+      return trimmed(r.text)
+        .split(/\n\s*\n/)
+        .map((text) => text.trim())
+        .filter((text) => text !== '')
+        .map((text) => ({ text, refs }));
+    });
+  return { text: rows.map((r) => r.text).join('\n\n'), refs: rows.map((r) => r.refs) };
+}
+
+/**
+ * Источники ответа без пустых и карта «индекс ответа → индекс после разбора»: ссылки утверждений
+ * считаются по списку ответа, а выброшенный пустой источник не должен сдвигать остальные.
+ */
+function readSources(value: unknown): {
+  sources: Array<{ title: string; url: string }>;
+  remap: Map<number, number>;
+} {
+  const sources: Array<{ title: string; url: string }> = [];
+  const remap = new Map<number, number>();
+  list(value).forEach((raw, i) => {
+    const x = rec(raw);
+    if (trimmed(x.title) === '' || trimmed(x.url) === '') return;
+    remap.set(i, sources.length);
+    sources.push({ title: trimmed(x.title), url: trimmed(x.url) });
+  });
+  return { sources, remap };
+}
+
+/** Хвост списка сверх предела с ссылками по месту: отрезается вместе (`LIMIT_OUT`). */
+function cut<T>(
+  rows: T[],
+  refs: number[][],
+  max: number,
+  path: string,
+  fixes: StepFix[],
+): { rows: T[]; refs: number[][] } {
+  if (rows.length <= max) return { rows, refs };
+  fixes.push({
+    code: 'LIMIT_OUT',
+    path,
+    note: `${rows.length - max} of ${rows.length} cut: the import takes at most ${max}`,
+  });
+  return { rows: rows.slice(0, max), refs: refs.slice(0, max) };
+}
+
+/**
+ * Шаг 5: внешние блоки и ссылки утверждений на `sources` (`tech.md` §4). Ссылки идут в `refs`
+ * отдельно от блоков - в импорт они не уходят. Пределы `timeline` и `adaptations` режутся здесь,
+ * вместе со ссылками, чтобы те не разъехались с элементами.
+ */
+function readExternal(value: unknown, fixes: StepFix[]): { blocks: StepBlocks; refs: SourceRefs } {
+  const v = rec(value);
+  const { sources, remap } = readSources(v.sources);
+  const refs: SourceRefs = { facts: {}, context: [], reception: [], timeline: [], adaptations: [] };
+  const facts: BookAnalysisFactsDto = {};
+  for (const field of EXTERNAL_FACTS) {
+    const text = trimmed(v[field]);
+    if (text === '') continue;
+    facts[field] = text;
+    refs.facts[field] = remapRefs(v[`${field}Refs`], remap);
+  }
+  const context = readParagraphs(v.context, remap);
+  const reception = readParagraphs(v.reception, remap);
+  refs.context = context.refs;
+  refs.reception = reception.refs;
+  const timelineRows = list(v.timeline)
+    .map(rec)
+    .flatMap((t) => {
+      const year = trimmed(t.year);
+      const event = trimmed(t.event);
+      return year !== '' && event !== ''
+        ? [
+            {
+              row: { year, event, kind: t.kind } as unknown as BookAnalysisTimelineEventDto,
+              refs: remapRefs(t.refs, remap),
+            },
+          ]
+        : [];
+    });
+  const timeline = cut(
+    timelineRows.map((r) => r.row),
+    timelineRows.map((r) => r.refs),
+    BOOK_ANALYSIS_LIMITS.timeline,
+    'timeline',
+    fixes,
+  );
+  const adaptationRows = list(v.adaptations)
+    .map(rec)
+    .flatMap((a) => {
+      const title = trimmed(a.title);
+      const year = Number.isInteger(a.year) ? (a.year as number) : 0;
+      const { min, max } = BOOK_ANALYSIS_LIMITS.adaptationYear;
+      // Не уверен в годе - экранизации нет (канон `F03`, «adaptations»): без года не пишется.
+      if (title === '' || year < min || year > max) return [];
+      return [
+        {
+          row: compact({
+            title,
+            year,
+            kind: a.kind,
+            differences: trimmed(a.differences),
+          }) as unknown as BookAnalysisAdaptationDto,
+          refs: remapRefs(a.refs, remap),
+        },
+      ];
+    });
+  const adaptations = cut(
+    adaptationRows.map((r) => r.row),
+    adaptationRows.map((r) => r.refs),
+    BOOK_ANALYSIS_LIMITS.adaptations,
+    'adaptations',
+    fixes,
+  );
+  refs.timeline = timeline.refs;
+  refs.adaptations = adaptations.refs;
+  const blocks: StepBlocks = {};
+  if (Object.keys(facts).length > 0) blocks.facts = facts;
+  if (context.text !== '') blocks.context = context.text;
+  if (timeline.rows.length > 0) blocks.timeline = timeline.rows;
+  if (reception.text !== '') blocks.reception = reception.text;
+  if (adaptations.rows.length > 0) blocks.adaptations = adaptations.rows;
+  if (sources.length > 0) blocks.sources = sources;
+  return { blocks, refs };
+}
+
 /** На что вправе ссылаться связи шага 3: герои и цитаты входа (`id` - отпечаток). */
 export interface LinkTargets {
   characterKeys: ReadonlySet<string>;
@@ -234,6 +412,14 @@ function readLinks(
   };
 }
 
+/** Разбор ответа шага по тексту книги и шага для читателя; внешний шаг - `readExternal` со ссылками. */
+const STEP_READERS: Record<Exclude<AnalysisStepNumber, 5>, (value: unknown) => StepBlocks> = {
+  1: readCast,
+  2: readQuotes,
+  3: readMeaning,
+  4: readReader,
+};
+
 /** Ответ шага → блоки импорта; язык ставит код (Л5), пустые блоки не отдаются (Л4). */
 export function readStepAnswer(
   step: AnalysisStepNumber,
@@ -241,11 +427,21 @@ export function readStepAnswer(
   chapters: ChapterIndex,
   targets: LinkTargets,
 ): StepDraft {
-  const raw = step === 1 ? readCast(value) : step === 2 ? readQuotes(value) : readMeaning(value);
+  const readFixes: StepFix[] = [];
+  let refs: SourceRefs | null = null;
+  let raw: StepBlocks;
+  if (step === EXTERNAL_STEP) {
+    const external = readExternal(value, readFixes);
+    raw = external.blocks;
+    refs = external.refs;
+  } else {
+    raw = STEP_READERS[step](value);
+  }
   const fixed = fixDraft(raw, chapters);
+  fixed.fixes.unshift(...readFixes);
   const themeLinks =
     step === 3 ? readLinks(value, fixed.blocks.themes ?? [], targets, fixed.fixes) : null;
-  return { ...fixed, themeLinks };
+  return { ...fixed, themeLinks, refs };
 }
 
 /**
@@ -259,6 +455,7 @@ export function onlyTarget(draft: StepDraft, target: AnalysisTarget): StepDraft 
   return {
     blocks,
     themeLinks: null,
+    refs: null,
     droppedQuotes: draft.droppedQuotes.filter((d) => own(d.path)),
     fixes: draft.fixes.filter((f) => own(f.path)),
   };
@@ -279,6 +476,13 @@ export interface StepContext extends PartContext {
   chapters: ReadonlyArray<{ number: number; title: string; content: string }>;
   /** Ключи анализа этой книги на другом языке (U7) - строкой для промпта. */
   otherKeys: string;
+  /**
+   * Названия книги и имена авторов всех её версий - чем страница источника подтверждает, что она
+   * про эту книгу (название на языке версии или оригинала, фамилия автора; `product.md` §3.3).
+   */
+  names?: { titles: string[]; authors: string[] };
+  /** Язык оригинала книги (`BookVersion.originalLanguage`) - вход внешнего шага (`tech.md` §2). */
+  originalLanguage?: string;
 }
 
 interface DossierChapters {
@@ -290,6 +494,18 @@ export const versionBook = (context: StepContext): StepBook => ({
   text: chaptersText(context.chapters),
   isSummaries: false,
 });
+
+/** Шагу 5 книгу не дают: он пишет по названию, автору и итогу шага 3 (`tech.md` §2). */
+const NO_BOOK: StepBook = { text: 'none', isSummaries: false };
+
+/**
+ * Книга шага (`tech.md` §2): шагам 1-3 - весь текст версии, шагу 4 - краткое содержание глав
+ * досье, шагу 5 - ничего. Краткое содержание глав досье влезает всегда, когда влезает досье.
+ */
+export function bookFor(step: AnalysisStepNumber, context: StepContext): StepBook {
+  if (step === EXTERNAL_STEP) return NO_BOOK;
+  return step === READER_STEP ? summariesBook(context) : versionBook(context);
+}
 
 /**
  * Краткое содержание глав досье - когда текст не влезает во вход (`product.md` §6); за ним -
@@ -317,7 +533,7 @@ function summariesBook(context: StepContext, chapters: readonly number[] = []): 
  * По порядку первого упоминания, без повторов, только главы версии.
  */
 export function referencedChapters(step: AnalysisStepNumber, context: StepContext): number[] {
-  if (step === 1) return [];
+  if (step === 1 || step >= 4) return [];
   const m = context.merged;
   const mentions: Array<number | null | undefined> = (m.characters ?? []).map(
     (c) => c.quote?.chapter,
@@ -355,7 +571,14 @@ export async function fitStepInput(
   quotes: ChapterIndex,
   fits: (input: StepInput) => Promise<boolean>,
   regen: StepRegen | null = null,
-): Promise<{ input: StepInput; source: 'text' | 'summaries' } | null> {
+): Promise<{ input: StepInput; source: StepSource } | null> {
+  // Шаги 4-5 текста версии не читают: вход один, и он либо влезает, либо `DRAFT_TOO_LONG`.
+  if (step >= 4) {
+    const only = stepInput(step, context, bookFor(step, context), quotes, regen);
+    return (await fits(only))
+      ? { input: only, source: step === READER_STEP ? 'summaries' : 'none' }
+      : null;
+  }
   const whole = stepInput(step, context, versionBook(context), quotes, regen);
   if (await fits(whole)) return { input: whole, source: 'text' };
   const chapters = referencedChapters(step, context);
@@ -442,12 +665,78 @@ function quotesOf(context: StepContext): Array<{ id: string; text: string }> {
   });
 }
 
+/**
+ * Итоги шагов 1-3 для шагов 4-5 (`tech.md` §2): шаг 4 видит итог шагов 1-3 - героев, ключевые
+ * цитаты, символы, смысл названия и финала, главную мысль и темы с толкованием (на них опираются
+ * ошибки понимания и FAQ), шаг 5 - главную мысль и темы названиями (контекст про то же).
+ */
+function laterPrevious(
+  step: AnalysisStepNumber,
+  context: StepContext,
+): Array<readonly [string, string]> {
+  const themes = context.merged.themes ?? context.stored.themes ?? [];
+  const mainIdea = context.merged.mainIdea ?? context.stored.mainIdea ?? '';
+  if (step === EXTERNAL_STEP) {
+    return [
+      ['MAIN_IDEA', mainIdea],
+      ['THEMES', JSON.stringify(themes.map((th) => ({ key: th.key, title: th.title })))],
+    ];
+  }
+  const m = context.merged;
+  const s = context.stored;
+  return [
+    [
+      'CHARACTERS',
+      JSON.stringify(
+        castOf(context).map((c) => ({
+          key: c.key,
+          name: c.name,
+          role: c.role,
+          description: c.description ?? '',
+        })),
+      ),
+    ],
+    [
+      'KEY_QUOTES',
+      JSON.stringify(
+        (m.keyQuotes ?? s.keyQuotes ?? []).map((q) => ({
+          text: q.text,
+          interpretation: q.interpretation ?? '',
+        })),
+      ),
+    ],
+    [
+      'SYMBOLS',
+      JSON.stringify(
+        (m.symbols ?? s.symbols ?? []).map((sy) => ({
+          title: sy.title,
+          interpretation: sy.interpretation ?? '',
+        })),
+      ),
+    ],
+    ['TITLE_MEANING', m.titleMeaning ?? s.titleMeaning ?? ''],
+    ['ENDING_MEANING', m.endingMeaning ?? s.endingMeaning ?? ''],
+    ['MAIN_IDEA', mainIdea],
+    [
+      'THEMES',
+      JSON.stringify(
+        themes.map((th) => ({
+          key: th.key,
+          title: th.title,
+          interpretation: th.interpretation ?? '',
+        })),
+      ),
+    ],
+  ];
+}
+
 /** Итоги прошлых шагов для промпта шага. */
 function previousOf(
   step: AnalysisStepNumber,
   context: StepContext,
 ): Array<readonly [string, string]> {
   if (step === 1) return [];
+  if (step >= 4) return laterPrevious(step, context);
   const cast = JSON.stringify(
     castOf(context).map((c) => ({
       key: c.key,
@@ -472,6 +761,8 @@ function previousOf(
  */
 const FOREIGN_FACT_CHARACTERS = ['razumikhin', 'porfiry'];
 const FOREIGN_FACT_QUOTE_INDEX = 1;
+/** Вопрос FAQ эталона о названии романа - индекс в `faq` эталона любого языка. */
+const FOREIGN_FACT_FAQ_INDEX = 1;
 const FOREIGN_FACT_THEMES: ReadonlySet<string> = new Set(['alienation', 'guilt']);
 /** Приём эталона с топографией города («readers still walk them») - индекс в `style` канона языка. */
 const TOPOGRAPHY_STYLE_INDEX: Partial<Record<Language, number>> = { en: 3, ru: 3 };
@@ -532,6 +823,16 @@ export function exampleSlice(step: AnalysisStepNumber, language: Language): stri
       ),
     });
   }
+  if (step === READER_STEP) {
+    return JSON.stringify({
+      misreadings: example.misreadings,
+      discussionQuestions: example.discussionQuestions,
+      // Вне `ru` ответ «Почему роман так называется» объясняет игру слов русского названия -
+      // внешний факт без источника (А1): шагу 4 источников нет.
+      faq: list(example.faq).filter((_, i) => language === 'ru' || i !== FOREIGN_FACT_FAQ_INDEX),
+    });
+  }
+  if (step === EXTERNAL_STEP) return externalSample(example);
   return JSON.stringify({
     mainIdea: example.mainIdea,
     themes:
@@ -541,6 +842,39 @@ export function exampleSlice(step: AnalysisStepNumber, language: Language): stri
     symbols: example.symbols,
     ...(language === 'ru' ? { titleMeaning: example.titleMeaning } : {}),
     endingMeaning: example.endingMeaning,
+  });
+}
+
+const SAMPLE_REFS = [0];
+
+/**
+ * Эталон внешнего шага в форме **ответа**, а не импорта (`EXTERNAL_SHAPE`): абзацы и элементы со
+ * ссылками `refs`, факты с `<факт>Refs`. Адреса источников эталона заменены на заглушку: реальные
+ * адреса другой книги модель скопировала бы в свой ответ.
+ */
+function externalSample(example: (typeof EXAMPLE_ANALYSES)[Language]): string {
+  const facts = rec(example.facts);
+  const paragraphs = (text: unknown) =>
+    trimmed(text)
+      .split(/\n\s*\n/)
+      .filter((p) => p.trim() !== '')
+      .map((p) => ({ text: p.trim(), refs: SAMPLE_REFS }));
+  const withRefs = (rows: unknown) => list(rows).map((row) => ({ ...rec(row), refs: SAMPLE_REFS }));
+  return JSON.stringify({
+    ...Object.fromEntries(
+      EXTERNAL_FACTS.flatMap((f) => [
+        [f, trimmed(facts[f])],
+        [`${f}Refs`, trimmed(facts[f]) === '' ? [] : SAMPLE_REFS],
+      ]),
+    ),
+    context: paragraphs(example.context),
+    timeline: withRefs(example.timeline),
+    reception: paragraphs(example.reception),
+    adaptations: withRefs(example.adaptations),
+    sources: list(example.sources).map((src, i) => ({
+      title: trimmed(rec(src).title),
+      url: `https://encyclopedia.example/article-${i + 1}`,
+    })),
   });
 }
 
@@ -588,6 +922,7 @@ export function stepInput(
         example: exampleSlice(step, context.language),
         redo,
         regen,
+        originalLanguage: context.originalLanguage ?? '',
       }),
     review: (draft) =>
       stepReviewRequest({
@@ -641,6 +976,8 @@ export interface AnalysisEstimators {
   cast: StageCallEstimator;
   quotes: StageCallEstimator;
   meaning: StageCallEstimator;
+  reader: StageCallEstimator;
+  external: StageCallEstimator;
   review: StageCallEstimator;
 }
 
@@ -651,6 +988,8 @@ export const stepAuthors = (
   1: calls.cast,
   2: calls.quotes,
   3: calls.meaning,
+  4: calls.reader,
+  5: calls.external,
 });
 
 /** Проходов автора и проверки на шаг: первый и одна переделка (U5). */
@@ -670,7 +1009,7 @@ export function stepUsd(
 }
 
 /**
- * Оценка шагов 1-3 сверху (`tech.md` §6): каждый шаг читает весь текст версии, плюс проверка
+ * Оценка шагов 1-5 сверху (`tech.md` §6): каждый шаг читает весь текст версии, плюс проверка
  * каждого шага, каждый шаг × 2 прохода автора и проверки. Итог прошлых шагов, которого ещё нет, -
  * сверху выходом их этапов; `extraInputTokens` - сверху на досье и глоссарий, которых ещё нет.
  * Одна функция на оценку ручного старта и будущую оценку запуска (`F07-3`).
@@ -680,12 +1019,11 @@ export function analysisPipelineUsd(
   context: StepContext,
   extraInputTokens: number,
 ): Prisma.Decimal {
-  const book = versionBook(context);
   const authors = stepAuthors(calls);
   let usd = new Prisma.Decimal(0);
   let previousOut = 0;
-  for (const step of [1, 2, 3] as const) {
-    const input = stepInput(step, context, book, new Map());
+  for (const step of [1, 2, 3, 4, 5] as const) {
+    const input = stepInput(step, context, bookFor(step, context), new Map());
     const author = authors[step];
     const extra = extraInputTokens + previousOut;
     usd = usd.add(stepUsd(author, calls.review, input, extra));

@@ -45,6 +45,8 @@ import { stageEstimatorFor } from '../llm-model-checks';
 import { contextUpperChars } from '../translate/translate-estimate';
 import {
   ANALYSIS_CAST_WRITE_STAGE,
+  ANALYSIS_EXTERNAL_WRITE_STAGE,
+  ANALYSIS_READER_WRITE_STAGE,
   ANALYSIS_ITEM_NOT_PROPOSED,
   ANALYSIS_ITEM_NOT_REGENERABLE,
   ANALYSIS_ITEM_UNKNOWN,
@@ -52,7 +54,6 @@ import {
   ANALYSIS_QUOTES_WRITE_STAGE,
   ANALYSIS_REGEN_IN_PROGRESS,
   ANALYSIS_REVIEW_STAGE,
-  ANALYSIS_STEPS,
   ANALYSIS_WRITE_NOT_READY,
   REGENERABLE_STEPS,
 } from './analysis-write.constants';
@@ -97,13 +98,15 @@ function acceptRank(item: AnalysisItem): number {
 
 /** Оценщики этапов хода анализа - общие у оценки ручного старта и будущей оценки запуска. */
 async function analysisEstimators(llm: LlmService): Promise<AnalysisEstimators> {
-  const [cast, quotes, meaning, review] = await Promise.all([
+  const [cast, quotes, meaning, reader, external, review] = await Promise.all([
     stageEstimatorFor(llm, ANALYSIS_CAST_WRITE_STAGE),
     stageEstimatorFor(llm, ANALYSIS_QUOTES_WRITE_STAGE),
     stageEstimatorFor(llm, ANALYSIS_MEANING_WRITE_STAGE),
+    stageEstimatorFor(llm, ANALYSIS_READER_WRITE_STAGE),
+    stageEstimatorFor(llm, ANALYSIS_EXTERNAL_WRITE_STAGE),
     stageEstimatorFor(llm, ANALYSIS_REVIEW_STAGE),
   ]);
-  return { cast, quotes, meaning, review };
+  return { cast, quotes, meaning, reader, external, review };
 }
 
 /**
@@ -540,7 +543,7 @@ export class AnalysisWriteService {
       failedReason: row.failedReason,
       waitingFor,
       operation: toOperationDto(row.operation),
-      stepsTotal: ANALYSIS_STEPS,
+      stepsTotal: data.stepsTotal,
       owns: ANALYSIS_TARGETS.filter((t) => data.owns[t] === true),
       steps: data.steps.map((s) => ({
         ...s,
@@ -549,6 +552,7 @@ export class AnalysisWriteService {
       })),
       items: data.items.map((item, index) => itemDto(item, index, regenOps)),
       droppedQuotes: data.droppedQuotes,
+      droppedSources: data.droppedSources,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
@@ -574,7 +578,19 @@ function reviewDto(review: AnalysisItem['review']) {
     : null;
 }
 
-const LIST_VALUE_TARGETS = ['characters', 'keyQuotes', 'style', 'themes', 'symbols'] as const;
+const LIST_VALUE_TARGETS = [
+  'characters',
+  'keyQuotes',
+  'style',
+  'themes',
+  'symbols',
+  'misreadings',
+  'discussionQuestions',
+  'faq',
+  'timeline',
+  'adaptations',
+  'sources',
+] as const;
 
 /**
  * Содержимое предложения для `GET items/:index`: ровно одно поле по виду блока; значение не той
@@ -590,6 +606,12 @@ function valueDto(item: AnalysisItem): AnalysisWriteValueDto | null {
     style: null,
     themes: null,
     symbols: null,
+    misreadings: null,
+    discussionQuestions: null,
+    faq: null,
+    timeline: null,
+    adaptations: null,
+    sources: null,
   };
   const list = LIST_VALUE_TARGETS.find((target) => target === item.target);
   if (list) return Array.isArray(value) ? { ...empty, [list]: value } : null;

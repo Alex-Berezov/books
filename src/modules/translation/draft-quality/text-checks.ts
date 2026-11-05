@@ -54,6 +54,14 @@ export const DRAFT_REMARK_CODES = [
   'CONTRADICTION',
   'RETELLING',
   'ONE_SIDED',
+  // Шаги 4-5 хода анализа (`F07-2a`, `product.md` §3.3-§3.4).
+  'FAQ_WEAK',
+  'MYTH_INVENTED',
+  'EXTERNAL_DOUBT',
+  'EXTERNAL_CHECK',
+  'SOURCE_UNREACHABLE',
+  'SOURCE_UNRELATED',
+  'SOURCE_UNVERIFIED',
 ] as const;
 export type DraftRemarkCode = (typeof DRAFT_REMARK_CODES)[number];
 
@@ -77,6 +85,13 @@ export const ANALYSIS_REMARK_CODES = [
   'CONTRADICTION',
   'RETELLING',
   'ONE_SIDED',
+  'FAQ_WEAK',
+  'MYTH_INVENTED',
+  'EXTERNAL_DOUBT',
+  'EXTERNAL_CHECK',
+  'SOURCE_UNREACHABLE',
+  'SOURCE_UNRELATED',
+  'SOURCE_UNVERIFIED',
 ] as const satisfies readonly DraftRemarkCode[];
 export type AnalysisRemarkCode = (typeof ANALYSIS_REMARK_CODES)[number];
 

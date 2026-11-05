@@ -61,6 +61,7 @@ import { SummaryWriteHandler } from './summary-write/summary-write.handler';
 import { SummaryWriteService } from './summary-write/summary-write.service';
 import { BookSummaryModule } from '../book-summary/book-summary.module';
 import { BookAnalysisModule } from '../book-analysis/book-analysis.module';
+import { SourceFetchModule } from '../source-fetch/source-fetch.module';
 import {
   ANALYSIS_WRITE_TASK_KIND,
   registerAnalysisWriteStages,
@@ -87,6 +88,8 @@ import { AnalysisWriteService } from './analysis-write/analysis-write.service';
     ChapterModule,
     BookSummaryModule,
     BookAnalysisModule,
+    // Исходящие запросы к адресам из ответа модели - только через него (`F07-2a`, `tech.md` §4).
+    SourceFetchModule,
   ],
   controllers: [
     DossierController,

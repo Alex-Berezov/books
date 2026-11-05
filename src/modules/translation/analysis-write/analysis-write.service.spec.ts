@@ -449,6 +449,27 @@ describe('AnalysisWriteService.regenerate (F07-1b)', () => {
     ).toBe('ANALYSIS_ITEM_NOT_REGENERABLE');
   });
 
+  it('F07-2a: every block of steps 4-5 is 409 until F07-2b (decision F07 | F07-2)', async () => {
+    const later: Array<[AnalysisTarget, 4 | 5]> = [
+      ['misreadings', 4],
+      ['discussionQuestions', 4],
+      ['faq', 4],
+      ['facts.genre', 5],
+      ['facts.movement', 5],
+      ['facts.writtenYears', 5],
+      ['context', 5],
+      ['timeline', 5],
+      ['reception', 5],
+      ['adaptations', 5],
+      ['sources', 5],
+    ];
+    for (const [target, step] of later) {
+      const run = setup(rowOf([item(target, { step })]));
+      const error = await run.service.regenerate('d1', 0, null, 'u1').catch((e: unknown) => e);
+      expect([target, codeOf(error)]).toEqual([target, 'ANALYSIS_ITEM_NOT_REGENERABLE']);
+    }
+  });
+
   it('a second regeneration of the same block - 409 ANALYSIS_REGEN_IN_PROGRESS; a run that is not ready - 409', async () => {
     const regen = { operationId: 'op2', remark: null, pending: null, previous: null };
     const busy = setup(rowOf([item('characters', { regen })]));
@@ -626,6 +647,16 @@ describe('AnalysisWriteService.discard (discard-run, F07-1b; /fix 2 blocker 2)',
   });
 });
 
+/** Блоки шагов 4-5 в содержимом предложения: пусты, пока предложение не про них (`F07-2a`). */
+const NO_LATER_BLOCKS = {
+  misreadings: null,
+  discussionQuestions: null,
+  faq: null,
+  timeline: null,
+  adaptations: null,
+  sources: null,
+};
+
 describe('the content of a proposal (F07-1b, decision А: GET items/:index, not the run answer)', () => {
   const runRow = (items: AnalysisItem[]) => ({
     ...rowOf(items),
@@ -671,6 +702,7 @@ describe('the content of a proposal (F07-1b, decision А: GET items/:index, not 
       style: null,
       themes: null,
       symbols: null,
+      ...NO_LATER_BLOCKS,
     });
     await expect(service.proposal('d1', 1)).resolves.toEqual({
       text: 'Third person',
@@ -679,6 +711,7 @@ describe('the content of a proposal (F07-1b, decision А: GET items/:index, not 
       style: null,
       themes: null,
       symbols: null,
+      ...NO_LATER_BLOCKS,
     });
   });
 

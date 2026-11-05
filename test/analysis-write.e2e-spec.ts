@@ -1,4 +1,6 @@
 /* eslint-disable @typescript-eslint/no-unsafe-member-access -- supertest отдаёт body как any, и обращение к полям ответа иначе не написать; тот же приём во всех e2e-спеках репозитория */
+import { createServer, Server } from 'node:https';
+import { AddressInfo } from 'node:net';
 import request from 'supertest';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
@@ -12,6 +14,8 @@ import {
   DossierDemandService,
 } from '../src/modules/translation/dossier/dossier-demand.service';
 import { quotePrint } from '../src/modules/translation/analysis-write/analysis-write.steps';
+import { SourceFetcherService } from '../src/modules/source-fetch/source-fetcher.service';
+import { TEST_TLS_CERT, TEST_TLS_KEY } from '../src/common/testing/source-fetch-tls-spec';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { llmCallName } from './helpers/llm-call-name';
@@ -206,6 +210,39 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
   };
   const OK_REVIEW = { verdict: 'ok', remarks: [] };
 
+  const READER = {
+    misreadings: [
+      {
+        myth: 'The book is only about leaving a town.',
+        explanation: 'It is about what leaving costs, as the river scene shows.',
+      },
+    ],
+    discussionQuestions: ['Is Anna free when she leaves?'],
+    faq: [
+      {
+        question: 'What is the book about?',
+        answer: 'It is about leaving home and what it costs.',
+      },
+    ],
+  };
+  /** Страницы источников: хост задаёт ответ (`about.test` про книгу, `other.test` не про неё, `missing.test` - 404). */
+  const sourceUrl = (host: string) => `https://${host}:${sourcePort}/page`;
+  const external = (hosts: string[] = ['about.test']) => ({
+    genre: 'a novel',
+    genreRefs: [0],
+    movement: '',
+    movementRefs: [],
+    writtenYears: '',
+    writtenYearsRefs: [],
+    context: [{ text: 'The epoch asked who may leave home.', refs: [0] }],
+    timeline: [{ year: '1866', event: 'The book was published.', kind: 'book', refs: [0] }],
+    reception: [{ text: 'Readers argued about the ending.', refs: [0] }],
+    adaptations: [],
+    sources: hosts.map((host) => ({ title: `Source ${host}`, url: sourceUrl(host) })),
+  });
+  let sourceServer: Server;
+  let sourcePort = 0;
+
   let app: INestApplication;
   let prisma: PrismaService;
   let worker: LlmWorkerService;
@@ -231,6 +268,8 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
       analysis_cast_write: CAST,
       analysis_quotes_write: QUOTES,
       analysis_meaning_write: MEANING,
+      analysis_reader_write: READER,
+      analysis_external_write: external(),
       analysis_review: OK_REVIEW,
     })[name];
 
@@ -383,9 +422,47 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     });
 
   beforeAll(async () => {
+    // Фетчер источников ходит по `https.request`, а не через `fetch`: страницы отдаёт локальный
+    // HTTPS-сервер, резолвер тестовой сборки сводит любое имя на него (`tech.md` §8).
+    sourceServer = createServer({ key: TEST_TLS_KEY, cert: TEST_TLS_CERT }, (req, res) => {
+      const host = (req.headers.host ?? '').split(':')[0];
+      if (host === 'missing.test') {
+        res.writeHead(404, { 'Content-Type': 'text/html' }).end('<p>Not found</p>');
+      } else if (host === 'other.test') {
+        res.writeHead(200, { 'Content-Type': 'text/html' }).end('<p>A recipe for soup.</p>');
+      } else {
+        res.writeHead(200, { 'Content-Type': 'text/html' }).end('<p>Book en by Author.</p>');
+      }
+    });
+    await new Promise<void>((resolve) => sourceServer.listen(0, '127.0.0.1', resolve));
+    sourcePort = (sourceServer.address() as AddressInfo).port;
+    const fetcher = new SourceFetcherService({
+      // `down.test` - сервер имён не отвечает (`EAI_AGAIN`): «лёг» канал исполнителя;
+      // `nowhere.test` - имени нет (`ENOTFOUND`): модель выдумала адрес, источник плохой.
+      lookup: (host) =>
+        host === 'down.test'
+          ? Promise.reject(
+              Object.assign(new Error('getaddrinfo EAI_AGAIN down.test'), { code: 'EAI_AGAIN' }),
+            )
+          : host === 'nowhere.test'
+            ? Promise.reject(
+                Object.assign(new Error('getaddrinfo ENOTFOUND nowhere.test'), {
+                  code: 'ENOTFOUND',
+                }),
+              )
+            : Promise.resolve([{ address: '127.0.0.1', family: 4 }]),
+      // Один тестовый сертификат на все имена страниц: цепочка проверяется по `ca`, имя - нет.
+      requestOptions: { ca: TEST_TLS_CERT, checkServerIdentity: () => undefined },
+      allowPort: sourcePort,
+      // Запрет адресов снят только для имён страниц теста, не для всех (`tech.md` §8).
+      allowBlockedAddresses: ['about.test', 'other.test', 'missing.test'],
+    });
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(SourceFetcherService)
+      .useValue(fetcher)
+      .compile();
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
@@ -448,6 +525,7 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
   afterAll(async () => {
     for (const slug of slugs) await cleanupBookWithRights(prisma, slug);
     await app.close();
+    await new Promise<void>((resolve) => sourceServer.close(() => resolve()));
   });
 
   it('access: admin only on the estimate, the run and the start; no token - 401', async () => {
@@ -464,7 +542,7 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(0);
   });
 
-  it('an empty unpublished version: steps 1-3 write the analysis, the core is ready, themeKeys of step 3 are written into the blocks of steps 1-2 without proposals', async () => {
+  it('an empty unpublished version: steps 1-5 write the analysis, the core is ready, themeKeys of step 3 are written into the blocks of steps 1-2 without proposals', async () => {
     const versionId = await sourceWithDossier();
     const estimate = await auth(http().get(`${base(versionId)}/estimate`)).expect(200);
     expect(estimate.body).toMatchObject({ dossier: null, glossary: null, upperBound: false });
@@ -482,6 +560,9 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
       [1, 'done', 'ok'],
       [2, 'done', 'ok'],
       [3, 'done', 'ok'],
+      [4, 'done', 'ok'],
+      // Внешний шаг несёт EXTERNAL_CHECK: человек сверяет даты и имена.
+      [5, 'done', 'flags'],
     ]);
     expect(run.items.every((i) => i.outcome === 'written')).toBe(true);
     expect(outcomes(run).filter(([, , kind]) => kind === 'links')).toEqual([
@@ -490,7 +571,7 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     ]);
     const analysis = await analysisOf(versionId);
     expect(analysis?.hasCore).toBe(true);
-    expect(analysis?.facts).toEqual(CAST.facts);
+    expect(analysis?.facts).toEqual({ ...CAST.facts, genre: 'a novel' });
     expect(analysis?.mainIdea).toBe(MEANING.mainIdea);
     const characters = analysis?.characters as Array<{ key: string; themeKeys?: string[] }>;
     expect(characters.map((c) => [c.key, c.themeKeys])).toEqual([
@@ -502,13 +583,209 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     // Один проход на шаг: замечаний нет - переделки нет; проверяющая - другого семейства.
     expect(callsOf('analysis_cast_write')).toHaveLength(1);
     expect(callsOf('analysis_meaning_write')).toHaveLength(1);
-    expect(callsOf('analysis_review').map((c) => c.body.model)).toEqual([
-      REVIEWER,
-      REVIEWER,
-      REVIEWER,
-    ]);
+    expect(callsOf('analysis_review').map((c) => c.body.model)).toEqual(
+      Array.from({ length: 5 }, () => REVIEWER),
+    );
     // Шагу 3 цитаты шага 2 подаются списком { id, text }.
     expect(textOf(callsOf('analysis_meaning_write')[0].body)).toContain(quotePrint(LINES.never));
+  });
+
+  it('step 4 writes the blocks for the reader; step 5 writes the external blocks with the verified source only, flagged EXTERNAL_CHECK, and the model never gets the book text', async () => {
+    const versionId = await sourceWithDossier();
+    answer = (name) =>
+      name === 'analysis_external_write'
+        ? {
+            ...external(['about.test', 'other.test']),
+            adaptations: [
+              { title: 'The film', year: 1970, kind: 'film', differences: 'Shorter.', refs: [1] },
+            ],
+          }
+        : defaultAnswer(name);
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    const analysis = await analysisOf(versionId);
+    expect(analysis?.misreadings).toEqual(READER.misreadings);
+    expect(analysis?.discussionQuestions).toEqual(READER.discussionQuestions);
+    expect(analysis?.faq).toEqual(READER.faq);
+    expect(analysis?.facts).toMatchObject({ genre: 'a novel' });
+    expect(analysis?.context).toBe('The epoch asked who may leave home.');
+    // Экранизация держалась на источнике не про книгу: снята вместе с ним.
+    expect(analysis?.adaptations ?? null).toBeNull();
+    expect(analysis?.sources).toEqual([
+      { title: 'Source about.test', url: sourceUrl('about.test') },
+    ]);
+    const step5 = run.steps.find((s) => s.step === 5);
+    expect(step5?.remarks.map((r) => r.code)).toEqual(expect.arrayContaining(['EXTERNAL_CHECK']));
+    expect(step5?.dropped.map((d) => d.code)).toEqual(
+      expect.arrayContaining(['SOURCE_UNRELATED', 'SOURCE_UNVERIFIED']),
+    );
+    expect((run as unknown as { droppedSources: unknown[] }).droppedSources).toEqual([
+      { title: 'Source other.test', host: 'other.test', reason: 'SOURCE_UNRELATED' },
+    ]);
+    // Шаг 5 не читает текст книги.
+    const prompt = textOf(callsOf('analysis_external_write')[0].body);
+    expect(prompt).not.toContain('BOOK_TEXT');
+    expect(prompt).not.toContain(LINES.river);
+    // Шаги 4-5 на ядро не влияют.
+    expect(analysis?.hasCore).toBe(true);
+  });
+
+  it('a source that answers 404: the external blocks are not written, the run is ready, the reason is shown; the core and the blocks of steps 1-4 stay', async () => {
+    const versionId = await sourceWithDossier();
+    answer = (name) =>
+      name === 'analysis_external_write' ? external(['missing.test']) : defaultAnswer(name);
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    expect(run.status).toBe('ready');
+    const analysis = await analysisOf(versionId);
+    expect(analysis?.hasCore).toBe(true);
+    expect(analysis?.faq).toEqual(READER.faq);
+    expect(analysis?.context ?? null).toBeNull();
+    expect(analysis?.sources ?? null).toBeNull();
+    expect(analysis?.facts).not.toHaveProperty('genre');
+    expect(
+      run.items.filter((i) => i.step === 5).map((i) => [i.target, i.outcome, i.failedReason]),
+    ).toEqual(
+      expect.arrayContaining([
+        ['context', 'none', 'EXTERNAL_UNVERIFIED'],
+        ['sources', 'none', 'EXTERNAL_UNVERIFIED'],
+      ]),
+    );
+    expect((run as unknown as { droppedSources: unknown[] }).droppedSources).toEqual([
+      { title: 'Source missing.test', host: 'missing.test', reason: 'SOURCE_UNREACHABLE' },
+    ]);
+  });
+
+  it('no source opens because the channel of the worker is down: step 5 is not decided, the operation pauses STEP_FAILED, nothing external is written', async () => {
+    const versionId = await sourceWithDossier();
+    // Без тем ядро не собрано: флаг CORE_MISSING ставится после шага 3, а не в конце хода.
+    answer = (name) =>
+      name === 'analysis_external_write'
+        ? external(['down.test'])
+        : name === 'analysis_meaning_write'
+          ? { ...MEANING, themes: [] }
+          : defaultAnswer(name);
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    expect(run.status).toBe('building');
+    expect(run.operation.status).toBe('paused');
+    expect(run.steps.map((s) => s.step)).toEqual([1, 2, 3, 4]);
+    expect((run as unknown as { droppedSources: unknown[] }).droppedSources).toEqual([]);
+    const analysis = await analysisOf(versionId);
+    expect(analysis?.context ?? null).toBeNull();
+    expect(run.steps[2].remarks.map((r) => r.code)).toContain('CORE_MISSING');
+  });
+
+  it('the model invented every address (no such name): the sources are dropped as unreachable and the run is ready, not paused', async () => {
+    const versionId = await sourceWithDossier();
+    answer = (name) =>
+      name === 'analysis_external_write' ? external(['nowhere.test']) : defaultAnswer(name);
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    expect(run.status).toBe('ready');
+    expect((run as unknown as { droppedSources: unknown[] }).droppedSources).toEqual([
+      { title: 'Source nowhere.test', host: 'nowhere.test', reason: 'SOURCE_UNREACHABLE' },
+    ]);
+    expect((await analysisOf(versionId))?.context ?? null).toBeNull();
+  });
+
+  it('one source with an address the import refuses: only that source goes, the statements on the others are written', async () => {
+    const versionId = await sourceWithDossier();
+    answer = (name) =>
+      name === 'analysis_external_write'
+        ? {
+            ...external(['about.test']),
+            context: [{ text: 'The epoch asked who may leave home.', refs: [1] }],
+            sources: [
+              { title: 'Plain http', url: 'http://about.test/page' },
+              { title: 'Source about.test', url: sourceUrl('about.test') },
+            ],
+          }
+        : defaultAnswer(name);
+    await start(versionId).expect(202);
+    await drain();
+    const analysis = await analysisOf(versionId);
+    expect(analysis?.context).toBe('The epoch asked who may leave home.');
+    expect(analysis?.sources).toEqual([
+      { title: 'Source about.test', url: sourceUrl('about.test') },
+    ]);
+    const step5 = (await runOf(versionId)).steps.find((s) => s.step === 5);
+    expect(step5?.dropped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'IMPORT_INVALID', path: 'sources.0' }),
+      ]),
+    );
+  });
+
+  it('EXTERNAL_DOUBT without a redo (the second pass failed) does not remove the statement: it stays a flag', async () => {
+    const versionId = await sourceWithDossier();
+    let externalCalls = 0;
+    answer = (name, body) => {
+      if (name === 'analysis_external_write' && ++externalCalls > 1) return { broken: true };
+      return name === 'analysis_review' &&
+        textOf(body).includes('the genre, the context, the timeline')
+        ? {
+            verdict: 'remarks',
+            remarks: [
+              { code: 'EXTERNAL_DOUBT', where: 'timeline.0', note: 'The year is doubtful.' },
+            ],
+          }
+        : defaultAnswer(name);
+    };
+    await start(versionId).expect(202);
+    await drain();
+    const step5 = (await runOf(versionId)).steps.find((s) => s.step === 5);
+    expect(step5?.attempt).toBe(1);
+    expect(step5?.remarks.map((r) => r.code)).toContain('EXTERNAL_DOUBT');
+    expect((await analysisOf(versionId))?.timeline).toEqual([
+      { year: '1866', event: 'The book was published.', kind: 'book' },
+    ]);
+  });
+
+  it('EXTERNAL_DOUBT that stays after the redo removes the statement: it is not written with a flag', async () => {
+    const versionId = await sourceWithDossier();
+    answer = (name, body) =>
+      name === 'analysis_review' && textOf(body).includes('the genre, the context, the timeline')
+        ? {
+            verdict: 'remarks',
+            remarks: [
+              { code: 'EXTERNAL_DOUBT', where: 'timeline.0', note: 'The year is doubtful.' },
+            ],
+          }
+        : defaultAnswer(name);
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    const step5 = run.steps.find((s) => s.step === 5);
+    expect(step5?.attempt).toBe(2);
+    expect(step5?.dropped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'EXTERNAL_DOUBT', path: 'timeline.0' }),
+      ]),
+    );
+    const analysis = await analysisOf(versionId);
+    expect(analysis?.timeline ?? null).toBeNull();
+    expect(analysis?.context).toBe('The epoch asked who may leave home.');
+  });
+
+  it('a source with an address the fetcher refuses (an IP literal): no request is made, the block is not written', async () => {
+    const versionId = await sourceWithDossier();
+    answer = (name) =>
+      name === 'analysis_external_write'
+        ? {
+            ...external(),
+            sources: [{ title: 'Local', url: 'https://127.0.0.1/admin' }],
+          }
+        : defaultAnswer(name);
+    await start(versionId).expect(202);
+    await drain();
+    const analysis = await analysisOf(versionId);
+    expect(analysis?.context ?? null).toBeNull();
+    expect(analysis?.sources ?? null).toBeNull();
   });
 
   it('an invented quotation is dropped with its reason, the rest is written', async () => {
@@ -564,7 +841,7 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     expect(characters?.remarks.map((r) => r.where)).toContain('characters.0.key');
     const analysis = await analysisOf(versionId);
     expect(analysis?.characters).toBeNull();
-    expect(analysis?.facts).toEqual(CAST.facts);
+    expect(analysis?.facts).toEqual({ ...CAST.facts, genre: 'a novel' });
   });
 
   it('the editor changed the characters mid-run: their themeKeys come as a proposal, the key quotations are written', async () => {
@@ -1110,6 +1387,9 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     for (const [target, links] of [
       ['themes', false],
       ['characters', true],
+      // Шаги 4-5 перегенерируются в `F07-2b`: до него - отказ (решение арбитра `F07 | F07-2`).
+      ['faq', false],
+      ['context', false],
     ] as const) {
       const refused = await decide(run, target, 'regenerate', links).expect(409);
       expect(refused.body.code).toBe('ANALYSIS_ITEM_NOT_REGENERABLE');

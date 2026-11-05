@@ -20,7 +20,7 @@ import {
   ANALYSIS_BLOCK_CHANGED,
   ANALYSIS_ITEM_NOT_PROPOSED,
   ANALYSIS_REGEN_IN_PROGRESS,
-  ANALYSIS_STEPS,
+  CORE_STEP,
   ANALYSIS_WRITE_REFUSED,
 } from './analysis-write.constants';
 import {
@@ -678,7 +678,7 @@ export class AnalysisWriteFields {
       return {
         ...data,
         steps: data.steps.map((s) => {
-          if (s.step !== ANALYSIS_STEPS) return s;
+          if (s.step !== CORE_STEP) return s;
           const remarks = [...s.remarks.filter((r) => r.code !== 'CORE_MISSING')];
           if (remark) remarks.push(remark);
           const verdict = s.outcome === 'failed' ? 'failed' : remark ? 'flags' : s.verdict;

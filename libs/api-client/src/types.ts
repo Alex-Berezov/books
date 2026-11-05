@@ -5486,9 +5486,19 @@ export interface components {
        */
       reason: 'NOT_FOUND' | 'NO_CHAPTER' | 'CHAPTER_MISSING';
       /** @enum {number} */
-      step: 1 | 2 | 3;
+      step: 1 | 2 | 3 | 4 | 5;
       /** @description The text of the model */
       text: string;
+    };
+    AnalysisWriteDroppedSourceDto: {
+      /** @description The host only, never the full address */
+      host: string;
+      /**
+       * @description SOURCE_UNREACHABLE - did not open (status, type, size, address not allowed); SOURCE_UNRELATED - the page names neither the book nor the author
+       * @enum {string}
+       */
+      reason: 'SOURCE_UNREACHABLE' | 'SOURCE_UNRELATED';
+      title: string;
     };
     AnalysisWriteDto: {
       /** Format: uuid */
@@ -5496,6 +5506,8 @@ export interface components {
       /** Format: date-time */
       createdAt: string;
       droppedQuotes: components['schemas']['AnalysisWriteDroppedQuoteDto'][];
+      /** @description Sources of step 5 the code dropped: did not open or not about this book */
+      droppedSources: components['schemas']['AnalysisWriteDroppedSourceDto'][];
       /** @description Code of the final refusal (failed) */
       failedReason: string | null;
       /** Format: uuid */
@@ -5518,6 +5530,17 @@ export interface components {
         | 'symbols'
         | 'titleMeaning'
         | 'endingMeaning'
+        | 'misreadings'
+        | 'discussionQuestions'
+        | 'faq'
+        | 'facts.genre'
+        | 'facts.movement'
+        | 'facts.writtenYears'
+        | 'context'
+        | 'timeline'
+        | 'reception'
+        | 'adaptations'
+        | 'sources'
       )[];
       /**
        * @description A paused operation keeps the run building: the reason is operation.pauseReason
@@ -5525,7 +5548,7 @@ export interface components {
        */
       status: 'building' | 'ready' | 'failed' | 'discarded';
       steps: components['schemas']['AnalysisWriteStepDto'][];
-      /** @description Steps of the run in all (3) */
+      /** @description Steps of the run in all (5; runs of F07-1 have 3) */
       stepsTotal: number;
       /** Format: date-time */
       updatedAt: string;
@@ -5554,10 +5577,17 @@ export interface components {
     };
     AnalysisWriteFixDto: {
       /**
-       * @description Fixed by code without a redo: CHAPTER_UNKNOWN - a chapter number not in the version removed; LIMIT_OUT - elements over the import limit cut; IMPORT_INVALID - a theme link to an unknown element dropped
+       * @description Fixed by code without a redo: CHAPTER_UNKNOWN - a chapter number not in the version removed; LIMIT_OUT - elements over the import limit cut; IMPORT_INVALID - a theme link to an unknown element dropped; SOURCE_UNREACHABLE, SOURCE_UNRELATED - a source of step 5 dropped; SOURCE_UNVERIFIED - a statement of step 5 with no verified source dropped; EXTERNAL_DOUBT - a statement of step 5 the reviewer still doubts after the redo dropped
        * @enum {string}
        */
-      code: 'CHAPTER_UNKNOWN' | 'LIMIT_OUT' | 'IMPORT_INVALID';
+      code:
+        | 'CHAPTER_UNKNOWN'
+        | 'LIMIT_OUT'
+        | 'IMPORT_INVALID'
+        | 'SOURCE_UNREACHABLE'
+        | 'SOURCE_UNRELATED'
+        | 'SOURCE_UNVERIFIED'
+        | 'EXTERNAL_DOUBT';
       note: string;
       /** @description Path of the field */
       path: string;
@@ -5590,7 +5620,7 @@ export interface components {
       remarks: components['schemas']['AnalysisWriteRemarkDto'][];
       review: components['schemas']['AnalysisWriteReviewDto'] | null;
       /** @enum {number} */
-      step: 1 | 2 | 3;
+      step: 1 | 2 | 3 | 4 | 5;
       /**
        * @description A block or a facts subfield
        * @enum {string}
@@ -5607,7 +5637,18 @@ export interface components {
         | 'themes'
         | 'symbols'
         | 'titleMeaning'
-        | 'endingMeaning';
+        | 'endingMeaning'
+        | 'misreadings'
+        | 'discussionQuestions'
+        | 'faq'
+        | 'facts.genre'
+        | 'facts.movement'
+        | 'facts.writtenYears'
+        | 'context'
+        | 'timeline'
+        | 'reception'
+        | 'adaptations'
+        | 'sources';
       /** @enum {string} */
       verdict: 'ok' | 'flags' | 'failed';
     };
@@ -5628,7 +5669,14 @@ export interface components {
         | 'GENERIC'
         | 'CONTRADICTION'
         | 'RETELLING'
-        | 'ONE_SIDED';
+        | 'ONE_SIDED'
+        | 'FAQ_WEAK'
+        | 'MYTH_INVENTED'
+        | 'EXTERNAL_DOUBT'
+        | 'EXTERNAL_CHECK'
+        | 'SOURCE_UNREACHABLE'
+        | 'SOURCE_UNRELATED'
+        | 'SOURCE_UNVERIFIED';
       /** @description What to fix, in English */
       note: string;
       /** @description The field path and a short fragment, or the step */
@@ -5663,12 +5711,12 @@ export interface components {
       remarks: components['schemas']['AnalysisWriteRemarkDto'][];
       review: components['schemas']['AnalysisWriteReviewDto'] | null;
       /**
-       * @description text - the whole version text; summaries - the chapter summaries of the dossier
+       * @description text - the whole version text; summaries - the chapter summaries of the dossier; none - the step reads no book text (step 5)
        * @enum {string|null}
        */
-      source: 'text' | 'summaries' | null;
+      source: 'text' | 'summaries' | 'none' | null;
       /** @enum {number} */
-      step: 1 | 2 | 3;
+      step: 1 | 2 | 3 | 4 | 5;
       /**
        * @description ok - no remarks; flags - remarks after the redo or no model check; failed - no text
        * @enum {string}
@@ -5676,13 +5724,19 @@ export interface components {
       verdict: 'ok' | 'flags' | 'failed';
     };
     AnalysisWriteValueDto: {
+      adaptations: components['schemas']['BookAnalysisAdaptationDto'][] | null;
       characters: components['schemas']['BookAnalysisCharacterDto'][] | null;
+      discussionQuestions: string[] | null;
+      faq: components['schemas']['BookAnalysisFaqDto'][] | null;
       keyQuotes: components['schemas']['BookAnalysisKeyQuoteDto'][] | null;
+      misreadings: components['schemas']['BookAnalysisMisreadingDto'][] | null;
+      sources: components['schemas']['BookAnalysisSourceDto'][] | null;
       style: components['schemas']['BookAnalysisStyleDto'][] | null;
       symbols: components['schemas']['BookAnalysisSymbolDto'][] | null;
-      /** @description A facts subfield (facts.<name>), mainIdea, titleMeaning, endingMeaning */
+      /** @description A facts subfield (facts.<name>), mainIdea, titleMeaning, endingMeaning, context, reception */
       text: string | null;
       themes: components['schemas']['BookAnalysisThemeDto'][] | null;
+      timeline: components['schemas']['BookAnalysisTimelineEventDto'][] | null;
     };
     AppHealthResponseDto: {
       /** @example ok */

@@ -108,7 +108,8 @@ describe('analysis run data', () => {
   });
 
   it('not its form at all - an empty run without rights on blocks', () => {
-    expect(readAnalysisData('x')).toEqual(emptyAnalysisData({}, {}));
+    // Нет поля `stepsTotal` - ход `F07-1`, три шага (`F07-2a`).
+    expect(readAnalysisData('x')).toEqual({ ...emptyAnalysisData({}, {}), stepsTotal: 3 });
   });
 });
 

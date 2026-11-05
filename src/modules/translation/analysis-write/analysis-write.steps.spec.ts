@@ -220,7 +220,7 @@ describe('the example of the version language (К3)', () => {
   });
 
   const SLICE_CASES = (['en', 'es', 'fr', 'pt', 'ru'] as const).flatMap((language) =>
-    ([1, 2, 3] as const).map((step) => [language, step] as const),
+    ([1, 2, 3, 4] as const).map((step) => [language, step] as const),
   );
   const OUTSIDE_FACTS = [
     /\b1[89]\d\d\b/,
