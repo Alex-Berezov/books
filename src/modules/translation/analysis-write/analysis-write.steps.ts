@@ -24,6 +24,11 @@ import { ANALYSIS_REVIEW_STAGE } from './analysis-write.constants';
 import { EXAMPLE_ANALYSES } from './examples';
 import {
   AnalysisStepNumber,
+  AnalysisTarget,
+  blocksValue,
+  pathInTarget,
+  targetBlocks,
+  withoutTarget,
   StepBlocks,
   EMPTY_DRAFT,
   StepDraft,
@@ -35,6 +40,7 @@ import {
   STEP_SHAPES,
   STEP_STAGES,
   StepRedo,
+  StepRegen,
   stepReviewRequest,
   stepWriteRequest,
 } from './analysis-write.prompts';
@@ -242,6 +248,22 @@ export function readStepAnswer(
   return { ...fixed, themeLinks };
 }
 
+/**
+ * Ответ шага, сведённый к одному блоку перегенерации (`F07-1b`): прочие блоки отброшены, как их
+ * выброшенные цитаты и правки кода; связи тем - только у шага 3, перегенерации его блоков нет.
+ */
+export function onlyTarget(draft: StepDraft, target: AnalysisTarget): StepDraft {
+  const blocks = targetBlocks(target, blocksValue(draft.blocks, target));
+  // Путь блока `facts` целиком относится и к его подполю (правило одно - `pathInTarget`).
+  const own = (path: string) => pathInTarget(path, target);
+  return {
+    blocks,
+    themeLinks: null,
+    droppedQuotes: draft.droppedQuotes.filter((d) => own(d.path)),
+    fixes: draft.fixes.filter((f) => own(f.path)),
+  };
+}
+
 /** Книга шага: весь текст версии или краткое содержание глав досье (`tech.md` §2). */
 interface StepBook {
   text: string;
@@ -332,12 +354,13 @@ export async function fitStepInput(
   context: StepContext,
   quotes: ChapterIndex,
   fits: (input: StepInput) => Promise<boolean>,
+  regen: StepRegen | null = null,
 ): Promise<{ input: StepInput; source: 'text' | 'summaries' } | null> {
-  const whole = stepInput(step, context, versionBook(context), quotes);
+  const whole = stepInput(step, context, versionBook(context), quotes, regen);
   if (await fits(whole)) return { input: whole, source: 'text' };
   const chapters = referencedChapters(step, context);
   const withChapters = (count: number) =>
-    stepInput(step, context, summariesBook(context, chapters.slice(0, count)), quotes);
+    stepInput(step, context, summariesBook(context, chapters.slice(0, count)), quotes, regen);
   let best = withChapters(0);
   if (!(await fits(best))) return null;
   let low = 0;
@@ -536,6 +559,7 @@ export function stepInput(
   context: StepContext,
   book: StepBook,
   quotes: ChapterIndex,
+  regen: StepRegen | null = null,
 ): StepInput {
   const glossary = glossaryText(context);
   const names = glossaryNames(context.glossary);
@@ -563,6 +587,7 @@ export function stepInput(
         previous,
         example: exampleSlice(step, context.language),
         redo,
+        regen,
       }),
     review: (draft) =>
       stepReviewRequest({
@@ -570,10 +595,17 @@ export function stepInput(
         language: context.language,
         book: book.text,
         glossary,
-        previous: JSON.stringify(context.merged),
+        // Перегенерация: прежний вид самого блока - не «итог прошлых шагов», иначе проверяющая
+        // сверила бы новый блок со старым (`CONTRADICTION`) и позвала платную переделку.
+        previous: JSON.stringify(
+          regen ? withoutTarget(context.merged, regen.target) : context.merged,
+        ),
         answer: draft,
       }),
-    read: (value) => readStepAnswer(step, value, quotes, targets),
+    read: (value) => {
+      const draft = readStepAnswer(step, value, quotes, targets);
+      return regen ? onlyTarget(draft, regen.target) : draft;
+    },
     codeCheck: (draft) =>
       stepRemarks({
         language: context.language,
@@ -612,8 +644,30 @@ export interface AnalysisEstimators {
   review: StageCallEstimator;
 }
 
+/** Оценщик автора шага: у оценки хода и у оценки перегенерации блока - один. */
+export const stepAuthors = (
+  calls: AnalysisEstimators,
+): Record<AnalysisStepNumber, StageCallEstimator> => ({
+  1: calls.cast,
+  2: calls.quotes,
+  3: calls.meaning,
+});
+
 /** Проходов автора и проверки на шаг: первый и одна переделка (U5). */
 const PASSES = 2;
+
+/** Цена одного шага сверху: автор и проверяющая, каждый `PASSES` прохода (`tech.md` §6). */
+export function stepUsd(
+  author: StageCallEstimator,
+  review: StageCallEstimator,
+  input: StepInput,
+  extraInputTokens: number,
+): Prisma.Decimal {
+  return author
+    .estimate(input.author(null), extraInputTokens)
+    .add(review.estimate(input.review(EMPTY_DRAFT), extraInputTokens + author.maxTokens))
+    .mul(PASSES);
+}
 
 /**
  * Оценка шагов 1-3 сверху (`tech.md` §6): каждый шаг читает весь текст версии, плюс проверка
@@ -627,23 +681,14 @@ export function analysisPipelineUsd(
   extraInputTokens: number,
 ): Prisma.Decimal {
   const book = versionBook(context);
-  const authors: Record<AnalysisStepNumber, StageCallEstimator> = {
-    1: calls.cast,
-    2: calls.quotes,
-    3: calls.meaning,
-  };
+  const authors = stepAuthors(calls);
   let usd = new Prisma.Decimal(0);
   let previousOut = 0;
   for (const step of [1, 2, 3] as const) {
     const input = stepInput(step, context, book, new Map());
     const author = authors[step];
     const extra = extraInputTokens + previousOut;
-    usd = usd.add(
-      author
-        .estimate(input.author(null), extra)
-        .add(calls.review.estimate(input.review(EMPTY_DRAFT), extra + author.maxTokens))
-        .mul(PASSES),
-    );
+    usd = usd.add(stepUsd(author, calls.review, input, extra));
     previousOut += author.maxTokens;
   }
   return usd;

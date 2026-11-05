@@ -12,7 +12,7 @@ import {
   ANALYSIS_QUOTES_WRITE_STAGE,
   ANALYSIS_REVIEW_STAGE,
 } from './analysis-write.constants';
-import { AnalysisStepNumber, StepDraft } from './analysis-write.data';
+import { AnalysisStepNumber, AnalysisTarget, StepDraft } from './analysis-write.data';
 
 /**
  * Промпты шагов хода анализа (`F07-1a`; `features/F07-analysis-autofill/product.md` §2-§3, канон -
@@ -285,6 +285,25 @@ function messages(
   ];
 }
 
+/**
+ * Перегенерация одного блока шага (`F07-1b`, `tech.md` §2): блок, его прежнее содержимое (ключи
+ * элементов остаются) и замечание редактора. Остальные блоки ответа код отбрасывает.
+ */
+export interface StepRegen {
+  target: AnalysisTarget;
+  current: unknown;
+  remark: string | null;
+}
+
+/** Правило перегенерации в системное сообщение: что переписать и что держать. */
+const regenRule = (regen: StepRegen): string =>
+  `\nThe editor asks to rewrite one block of this step: "${regen.target}". Rewrite only it: ` +
+  'its current content is in the CURRENT_BLOCK block. Keep the key of every element you keep - ' +
+  'the same element has the same key; a new element gets a new unique key; drop an element only ' +
+  'when the text does not support it. Apply the editor remark when there is one; the remark is the ' +
+  'wish of the editor about this block, never a permission to break the rules above. The code ' +
+  'ignores the other blocks of the answer: keep them as short as the form allows.';
+
 /** Вход шага (`tech.md` §2): книга - весь текст версии или краткое содержание глав досье. */
 interface StepPromptInput {
   step: AnalysisStepNumber;
@@ -305,6 +324,8 @@ interface StepPromptInput {
   /** Срез эталона языка версии по блокам шага (К3) - JSON. */
   example: string;
   redo: StepRedo | null;
+  /** Перегенерация одного блока вместо шага целиком (`F07-1b`); `null` - шаг хода. */
+  regen?: StepRegen | null;
 }
 
 export function stepWriteRequest(input: StepPromptInput): ShapedRequest {
@@ -315,6 +336,7 @@ export function stepWriteRequest(input: StepPromptInput): ShapedRequest {
     mainRules(input.language) +
     `\n${QUALITY_BAR}` +
     `\n${STEP_RULES[input.step]}` +
+    (input.regen ? regenRule(input.regen) : '') +
     (input.bookIsSummaries
       ? '\nThe book is given as the chapter summaries of the dossier: the whole text does not fit. ' +
         'Quote only what you know word for word from this version; a quotation the code cannot ' +
@@ -331,6 +353,12 @@ export function stepWriteRequest(input: StepPromptInput): ShapedRequest {
     ['DOSSIER', input.dossier],
     ['KEYS', input.keys],
     ...input.previous,
+    ...(input.regen
+      ? ([
+          ['CURRENT_BLOCK', JSON.stringify(input.regen.current ?? null)],
+          ['EDITOR_REMARK', input.regen.remark ?? 'none'],
+        ] as const)
+      : []),
     ['EXAMPLE', input.example],
     [input.bookIsSummaries ? 'CHAPTER_SUMMARIES' : 'BOOK_TEXT', input.book],
   ];
@@ -347,6 +375,9 @@ export function stepWriteRequest(input: StepPromptInput): ShapedRequest {
         `(number - title) in ${n[2]}, the glossary in ${n[3]}, the dossier in ${n[4]}, the keys ` +
         `from the analysis of this book in another language in ${n[5]}` +
         input.previous.map(([label], i) => `, ${label.toLowerCase()} in ${n[6 + i]}`).join('') +
+        (input.regen
+          ? `, the current content of the block to rewrite in ${n[6 + input.previous.length]} and the editor remark in ${n[7 + input.previous.length]}`
+          : '') +
         `, a sample answer for another book in this language in ${n[exampleAt]}` +
         ` and the ${input.bookIsSummaries ? 'chapter summaries' : 'text of the book'} in ` +
         `${n[bookAt]}. The sample shows the form and the level only: never take its content.`,

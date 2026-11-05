@@ -18,6 +18,9 @@ import { llmCallName } from './helpers/llm-call-name';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
+ * F07-1b: решения редактора по ходу - «Accept» (хэш блока, themeKeys), «Discard», «Accept all»,
+ * отмена хода, «Regenerate» блока, «Continue»; развилка общих ручек `content-drafts/:id/*` по виду строки.
+ *
  * F07-1a: ход анализа «Write Analysis» - шаги 1-3 (карточка и герои, цитаты и приёмы, толкования)
  * циклом качества, запись блоков через импорт `F03` под условием, предложения, выброс цитат,
  * переделка по DTO импорта, ядро. Исполнитель на базе, проходы руками; внешний `fetch` подменён,
@@ -340,10 +343,16 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     outcome: string;
     failedReason: string | null;
     links: boolean;
+    regenerating: boolean;
+    regenOperationId?: string | null;
+    regenOperationStatus?: string | null;
+    regenPauseReason?: string | null;
+    regenFailedReason: string | null;
   }
   interface Run {
     id: string;
     status: string;
+    operation: { id: string; status: string };
     owns: string[];
     steps: Array<{
       step: number;
@@ -810,5 +819,449 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     expect(
       await prisma.llmOperation.count({ where: { bookVersionId: versionId, kind: 'draft' } }),
     ).toBe(1);
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // F07-1b: решения редактора по ходу `ready`.
+
+  const itemOf = (run: Run, target: string, links = false): Item => {
+    const found = run.items.find((i) => i.target === target && i.links === links);
+    if (!found) throw new Error(`no item ${target}`);
+    return found;
+  };
+  const itemUrl = (run: Run, item: Item, action: string) =>
+    `/admin/content-drafts/${run.id}/items/${item.index}/${action}`;
+  const decide = (run: Run, target: string, action: string, links = false) =>
+    auth(http().post(itemUrl(run, itemOf(run, target, links), action))).send({});
+  /** Содержимое предложения - своей ручкой, не в ответе хода (решение арбитра `F07 | F07-1b`, А). */
+  interface Proposal {
+    text: string | null;
+    characters: Array<{ key: string; description: string; themeKeys?: string[] }> | null;
+    keyQuotes: unknown[] | null;
+    themes: unknown[] | null;
+  }
+  const proposalOf = async (run: Run, item: Item, status = 200) =>
+    (await auth(http().get(`/admin/content-drafts/${run.id}/items/${item.index}`)).expect(status))
+      .body as Proposal & { code?: string };
+
+  /** Версия опубликована: ход ничего не пишет сам, каждый блок - предложение редактору. */
+  const proposedRun = async () => {
+    const versionId = await sourceWithDossier({ status: 'published' });
+    await start(versionId).expect(202);
+    await drain();
+    return { versionId, run: await runOf(versionId) };
+  };
+
+  const EDITED_CHARACTERS = [
+    { key: 'anna', name: 'Anna', role: 'main', description: 'Edited by hand.' },
+  ];
+
+  it('Accept: the proposal shows its content; after another block was written meanwhile it succeeds; the themeKeys of the run links are poured by key', async () => {
+    const { versionId, run } = await proposedRun();
+    const characters = itemOf(run, 'characters');
+    expect(characters.outcome).toBe('proposed');
+    // Ответ хода содержимого блоков не несёт; предложение - `GET items/:index`, одно поле по виду.
+    expect(run.items.every((i) => !('value' in i))).toBe(true);
+    const shown = await proposalOf(run, characters);
+    expect(shown).toMatchObject({ text: null, keyQuotes: null, themes: null });
+    expect(shown.characters?.map((c) => c.key)).toEqual(['anna', 'boris']);
+    // Другой блок записан уже после предложения: хэш у каждого блока свой.
+    await prisma.bookAnalysis.create({
+      data: { bookVersionId: versionId, style: [{ device: 'Repetition', explanation: 'x' }] },
+    });
+    await decide(run, 'themes', 'accept').expect(200);
+    const accepted = await decide(run, 'characters', 'accept').expect(200);
+    expect(itemOf(accepted.body as Run, 'characters').outcome).toBe('accepted');
+    const analysis = await analysisOf(versionId);
+    const stored = analysis?.characters as Array<{ key: string; themeKeys?: string[] }>;
+    expect(stored.find((c) => c.key === 'anna')?.themeKeys).toEqual(['loss', 'home']);
+    expect(stored.find((c) => c.key === 'boris')?.themeKeys).toEqual(['home']);
+    expect(analysis?.style).toEqual([{ device: 'Repetition', explanation: 'x' }]);
+    // Принятое второй раз - уже не предложение.
+    expect((await decide(run, 'characters', 'accept').expect(409)).body.code).toBe(
+      'ANALYSIS_ITEM_NOT_PROPOSED',
+    );
+    // Принятый блок - не предложение: его содержимого ручка не отдаёт.
+    expect((await proposalOf(run, characters, 409)).code).toBe('ANALYSIS_ITEM_NOT_PROPOSED');
+    const path = `/admin/content-drafts/${run.id}/items/${characters.index}`;
+    await auth(http().get(path), 'cm').expect(403);
+    await http().get(path).expect(401);
+  });
+
+  it('Accept after the editor changed this block: 409 ANALYSIS_BLOCK_CHANGED with the current content, the block stays', async () => {
+    const { versionId, run } = await proposedRun();
+    await prisma.bookAnalysis.create({
+      data: { bookVersionId: versionId, characters: EDITED_CHARACTERS },
+    });
+    const refused = await decide(run, 'characters', 'accept').expect(409);
+    expect(refused.body.code).toBe('ANALYSIS_BLOCK_CHANGED');
+    expect(refused.body.current).toEqual(EDITED_CHARACTERS);
+    expect((await analysisOf(versionId))?.characters).toEqual(EDITED_CHARACTERS);
+    expect(itemOf(await runOf(versionId), 'characters').outcome).toBe('proposed');
+  });
+
+  it('Accept the quotations: the themeKeys come by the print of the text and the limit of the import is kept', async () => {
+    const { versionId, run } = await proposedRun();
+    await decide(run, 'themes', 'accept').expect(200);
+    await decide(run, 'characters', 'accept').expect(200);
+    await decide(run, 'keyQuotes', 'accept').expect(200);
+    const quotes = (await analysisOf(versionId))?.keyQuotes as Array<{
+      text: string;
+      themeKeys?: string[];
+    }>;
+    expect(quotes.find((q) => q.text === LINES.never)?.themeKeys).toEqual(['loss']);
+    expect(quotes.find((q) => q.text === LINES.bell)?.themeKeys).toEqual(['home']);
+    expect(quotes.every((q) => (q.themeKeys ?? []).length <= 8)).toBe(true);
+  });
+
+  it('Discard: the proposal is closed and the block is not touched; Accept of it is then 409', async () => {
+    const { versionId, run } = await proposedRun();
+    const res = await decide(run, 'style', 'discard').expect(200);
+    expect(itemOf(res.body as Run, 'style').outcome).toBe('discarded');
+    expect(await analysisOf(versionId)).toBeNull();
+    expect((await decide(run, 'style', 'accept').expect(409)).body.code).toBe(
+      'ANALYSIS_ITEM_NOT_PROPOSED',
+    );
+    expect((await decide(run, 'style', 'discard').expect(409)).body.code).toBe(
+      'ANALYSIS_ITEM_NOT_PROPOSED',
+    );
+    await auth(http().post(`/admin/content-drafts/${run.id}/items/99/accept`))
+      .send({})
+      .expect(400);
+  });
+
+  it('Accept all: interpretations, characters and quotations in the order that keeps the references; a block the editor changed is skipped and stays a proposal, the answer is 200', async () => {
+    const { versionId, run } = await proposedRun();
+    await prisma.bookAnalysis.create({
+      data: { bookVersionId: versionId, style: [{ device: 'Repetition', explanation: 'x' }] },
+    });
+    const done = await auth(http().post(`/admin/content-drafts/${run.id}/accept-all`))
+      .send({})
+      .expect(200);
+    const left = (done.body as Run).items.filter((i) => i.outcome === 'proposed');
+    // Пропущен только блок, который трогал редактор: он - его решением.
+    expect(left.map((i) => i.target)).toEqual(['style']);
+    expect(itemOf(done.body as Run, 'characters').outcome).toBe('accepted');
+    expect((await analysisOf(versionId))?.style).toEqual([
+      { device: 'Repetition', explanation: 'x' },
+    ]);
+    expect((await analysisOf(versionId))?.hasCore).toBe(true);
+  });
+
+  it('discard-run: a ready run is closed, the blocks of the analysis stay; the latest run is gone', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    const before = await analysisOf(versionId);
+    const res = await auth(http().post(`/admin/content-drafts/${run.id}/discard-run`))
+      .send({})
+      .expect(200);
+    expect(res.body.status).toBe('discarded');
+    expect(await analysisOf(versionId)).toEqual(before);
+    const latest = await auth(http().get(base(versionId))).expect(200);
+    expect(latest.body.draft).toBeNull();
+    // Закрытый ход решений больше не принимает.
+    expect((await decide(run, 'characters', 'discard').expect(409)).body.code).toBe(
+      'ANALYSIS_WRITE_NOT_READY',
+    );
+  });
+
+  it('discard-run of a building run cancels its operation', async () => {
+    const versionId = await sourceWithDossier();
+    const started = await start(versionId).expect(202);
+    const res = await auth(
+      http().post(`/admin/content-drafts/${started.body.id as string}/discard-run`),
+    )
+      .send({})
+      .expect(200);
+    expect(res.body.status).toBe('discarded');
+    const op = await prisma.llmOperation.findUniqueOrThrow({
+      where: { id: started.body.operation.id as string },
+    });
+    expect(op.status).toBe('cancelled');
+    await drain();
+    expect(await analysisOf(versionId)).toBeNull();
+  });
+
+  it('the fork by the kind of the row: a summary run behaves as before, a draft of another kind and an unknown id are 404, the access is admin only', async () => {
+    const versionId = await sourceWithDossier();
+    const summaryOp = await prisma.llmOperation.create({
+      data: { kind: 'draft', limitUsd: 1, status: 'done', bookVersionId: versionId },
+    });
+    const summaryRun = await prisma.contentDraft.create({
+      data: {
+        bookVersionId: versionId,
+        kind: 'summary_write',
+        status: 'ready',
+        language: 'en',
+        operationId: summaryOp.id,
+        data: { items: [] },
+      },
+    });
+    // У хода пересказа своей ручки содержимого нет.
+    await auth(http().get(`/admin/content-drafts/${summaryRun.id}/items/0`)).expect(404);
+    const noText = await auth(http().post(`/admin/content-drafts/${summaryRun.id}/items/0/accept`))
+      .send({})
+      .expect(400);
+    expect(noText.body.code).toBe('SUMMARY_ITEM_UNKNOWN');
+    const discarded = await auth(http().post(`/admin/content-drafts/${summaryRun.id}/discard-run`))
+      .send({})
+      .expect(200);
+    expect(discarded.body).toMatchObject({ id: summaryRun.id, status: 'discarded' });
+    // Ответ хода пересказа, а не анализа: его поля (план разделов не задан - `null`).
+    expect(discarded.body.plannedSections).toBeNull();
+    expect(discarded.body).not.toHaveProperty('stepsTotal');
+
+    const draftOp = await prisma.llmOperation.create({
+      data: { kind: 'draft', limitUsd: 1, status: 'done', bookVersionId: versionId },
+    });
+    const draft = await prisma.contentDraft.create({
+      data: {
+        bookVersionId: versionId,
+        kind: 'analysis',
+        status: 'ready',
+        language: 'en',
+        operationId: draftOp.id,
+      },
+    });
+    for (const path of [
+      `/admin/content-drafts/${draft.id}/items/0/accept`,
+      `/admin/content-drafts/${draft.id}/items/0/discard`,
+      `/admin/content-drafts/${draft.id}/items/0/regenerate`,
+      `/admin/content-drafts/${draft.id}/discard-run`,
+      `/admin/content-drafts/${draft.id}/accept-all`,
+      '/admin/content-drafts/00000000-0000-4000-8000-000000000000/accept-all',
+    ]) {
+      await auth(http().post(path)).send({}).expect(404);
+      await auth(http().post(path), 'cm').send({}).expect(403);
+      await auth(http().post(path), 'user').send({}).expect(403);
+      await http().post(path).send({}).expect(401);
+    }
+    expect((await prisma.contentDraft.findUniqueOrThrow({ where: { id: draft.id } })).status).toBe(
+      'ready',
+    );
+  });
+
+  it('Regenerate: the prompt carries the block, its keys and the remark; the saved block stays, the result is a proposal with the links poured back; Accept writes it', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    expect(itemOf(run, 'characters').outcome).toBe('written');
+    const before = await analysisOf(versionId);
+    calls.length = 0;
+    answer = (name, body) =>
+      name === 'analysis_cast_write' && textOf(body).includes('CURRENT_BLOCK')
+        ? {
+            ...CAST,
+            characters: CAST.characters.map((c) => ({
+              ...c,
+              description: `${c.description} Rewritten.`,
+            })),
+          }
+        : defaultAnswer(name);
+    const res = await auth(http().post(itemUrl(run, itemOf(run, 'characters'), 'regenerate')))
+      .send({ remark: 'Make it shorter' })
+      .expect(202);
+    expect(itemOf(res.body as Run, 'characters')).toMatchObject({ regenerating: true });
+    // Вторая перегенерация того же блока до конца первой - 409.
+    const second = await auth(http().post(itemUrl(run, itemOf(run, 'characters'), 'regenerate')))
+      .send({})
+      .expect(409);
+    expect(second.body.code).toBe('ANALYSIS_REGEN_IN_PROGRESS');
+    expect((await decide(run, 'characters', 'discard').expect(409)).body.code).toBe(
+      'ANALYSIS_REGEN_IN_PROGRESS',
+    );
+    await drain();
+    const cast = callsOf('analysis_cast_write');
+    expect(cast).toHaveLength(1);
+    const prompt = textOf(cast[0].body);
+    expect(prompt).toContain('Make it shorter');
+    expect(prompt).toContain('"key":"anna"');
+    expect(prompt).toContain('"key":"boris"');
+
+    const after = await runOf(versionId);
+    const characters = itemOf(after, 'characters');
+    expect(characters).toMatchObject({ outcome: 'proposed', regenerating: false });
+    // Одно поле по виду блока: у героев - `characters`, остальные поля пусты.
+    const shown = await proposalOf(after, characters);
+    expect(shown).toMatchObject({ text: null, keyQuotes: null, themes: null });
+    const proposal = shown.characters ?? [];
+    expect(proposal.map((c) => c.key)).toEqual(['anna', 'boris']);
+    expect(proposal[0].description).toContain('Rewritten.');
+    // Связи тем шага 3 влиты заново по ключам.
+    expect(proposal[0].themeKeys).toEqual(['loss', 'home']);
+    expect((await analysisOf(versionId))?.characters).toEqual(before?.characters);
+    // Другие блоки шага не меняются: подполя карточки остались как были записаны.
+    expect(itemOf(after, 'facts.narrator').outcome).toBe('written');
+    expect((await analysisOf(versionId))?.facts).toEqual(before?.facts);
+
+    await decide(after, 'characters', 'accept').expect(200);
+    const written = (await analysisOf(versionId))?.characters as Array<{ description: string }>;
+    expect(written[0].description).toContain('Rewritten.');
+  });
+
+  it('Regenerate: the blocks of step 3 and the theme links are refused 409; an unknown block 400', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    for (const [target, links] of [
+      ['themes', false],
+      ['characters', true],
+    ] as const) {
+      const refused = await decide(run, target, 'regenerate', links).expect(409);
+      expect(refused.body.code).toBe('ANALYSIS_ITEM_NOT_REGENERABLE');
+    }
+    await auth(http().post(`/admin/content-drafts/${run.id}/items/99/regenerate`))
+      .send({})
+      .expect(400);
+  });
+
+  it('Regenerate drops a character the saved quotations still point at: the result is a proposal flagged IMPORT_INVALID with the path, the saved characters stay, the keys of the rest are kept', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    const before = await analysisOf(versionId);
+    answer = (name, body) =>
+      name === 'analysis_cast_write' && textOf(body).includes('CURRENT_BLOCK')
+        ? { ...CAST, characters: [{ ...CAST.characters[0], relations: [] }] }
+        : defaultAnswer(name);
+    await auth(http().post(itemUrl(run, itemOf(run, 'characters'), 'regenerate')))
+      .send({})
+      .expect(202);
+    await drain();
+    const after = await runOf(versionId);
+    const characters = itemOf(after, 'characters');
+    expect(characters).toMatchObject({ outcome: 'proposed', verdict: 'flags' });
+    expect(characters.remarks.map((r) => r.code)).toContain('IMPORT_INVALID');
+    expect(characters.remarks.find((r) => r.code === 'IMPORT_INVALID')?.where).toContain(
+      'keyQuotes',
+    );
+    expect((await proposalOf(after, characters)).characters?.map((c) => c.key)).toEqual(['anna']);
+    expect((await analysisOf(versionId))?.characters).toEqual(before?.characters);
+    // Принять такое предложение анализ не даёт: ссылки на слитом объекте не сходятся.
+    const refused = await decide(after, 'characters', 'accept').expect(409);
+    expect(refused.body.code).toBe('ANALYSIS_WRITE_REFUSED');
+    expect((await analysisOf(versionId))?.characters).toEqual(before?.characters);
+  });
+
+  it('Regenerate: cancel from the operations page clears the mark and the run stays ready; Continue of a paused regeneration finishes it', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    let run = await runOf(versionId);
+    const first = await auth(http().post(itemUrl(run, itemOf(run, 'style'), 'regenerate')))
+      .send({})
+      .expect(202);
+    expect(itemOf(first.body as Run, 'style')).toMatchObject({
+      regenerating: true,
+      regenOperationStatus: 'active',
+      regenPauseReason: null,
+    });
+    const op = await prisma.llmOperation.findFirstOrThrow({
+      where: { bookVersionId: versionId, kind: 'draft', status: 'active' },
+      orderBy: { createdAt: 'desc' },
+    });
+    await auth(http().post(`/admin/llm/operations/${op.id}/cancel`)).expect(200);
+    run = await runOf(versionId);
+    expect(run.status).toBe('ready');
+    expect(itemOf(run, 'style').regenerating).toBe(false);
+
+    await auth(http().post(itemUrl(run, itemOf(run, 'style'), 'regenerate')))
+      .send({})
+      .expect(202);
+    const paused = await prisma.llmOperation.findFirstOrThrow({
+      where: { bookVersionId: versionId, kind: 'draft', status: 'active' },
+      orderBy: { createdAt: 'desc' },
+    });
+    await prisma.llmBudget.update({ where: { id: LLM_BUDGET_ID }, data: { ceilingUsd: 0.00001 } });
+    await drain();
+    expect((await prisma.llmOperation.findUniqueOrThrow({ where: { id: paused.id } })).status).toBe(
+      'paused',
+    );
+    // Состояние операции перегенерации - в ответе хода значением.
+    expect(itemOf(await runOf(versionId), 'style')).toMatchObject({
+      regenerating: true,
+      regenOperationId: paused.id,
+      regenOperationStatus: 'paused',
+      regenPauseReason: 'CEILING_REACHED',
+    });
+    await resetBudget();
+    await auth(http().post(`/admin/llm/operations/${paused.id}/resume`))
+      .send({})
+      .expect(200);
+    await drain();
+    run = await runOf(versionId);
+    expect(itemOf(run, 'style')).toMatchObject({ regenerating: false, outcome: 'proposed' });
+    expect((await prisma.llmOperation.findUniqueOrThrow({ where: { id: paused.id } })).status).toBe(
+      'done',
+    );
+  });
+
+  it('Continue of a paused run puts the analysis_write task and the run finishes; no role - 403, nothing is enqueued', async () => {
+    const versionId = await sourceWithDossier();
+    answer = async (name) => {
+      if (name === 'analysis_cast_write') {
+        await prisma.llmBudget.update({
+          where: { id: LLM_BUDGET_ID },
+          data: { ceilingUsd: 0.00001 },
+        });
+      }
+      return defaultAnswer(name);
+    };
+    const started = await start(versionId).expect(202);
+    await drain();
+    const opId = started.body.operation.id as string;
+    expect((await runOf(versionId)).operation.status).toBe('paused');
+    await resetBudget();
+    answer = (name) => defaultAnswer(name);
+    const tasksOf = () =>
+      prisma.llmTask.count({ where: { operationId: opId, kind: 'analysis_write' } });
+    const before = await tasksOf();
+    await auth(http().post(`/admin/llm/operations/${opId}/resume`), 'cm')
+      .send({})
+      .expect(403);
+    await auth(http().post(`/admin/llm/operations/${opId}/resume`), 'user')
+      .send({})
+      .expect(403);
+    expect(await tasksOf()).toBe(before);
+    await auth(http().post(`/admin/llm/operations/${opId}/resume`))
+      .send({})
+      .expect(200);
+    expect(await tasksOf()).toBe(before + 1);
+    const pending = await prisma.llmTask.findFirstOrThrow({
+      where: { operationId: opId, kind: 'analysis_write', status: 'pending' },
+    });
+    expect(pending.payload).toEqual({ draftId: started.body.id as string });
+    await drain();
+    const run = await runOf(versionId);
+    expect(run.status).toBe('ready');
+    expect(run.items.every((i) => i.outcome === 'written')).toBe(true);
+  });
+
+  it('a new start while a regeneration of the previous run is running: the previous run is discarded, its regeneration operation cancelled and its mark cleared', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    await auth(http().post(itemUrl(run, itemOf(run, 'style'), 'regenerate')))
+      .send({})
+      .expect(202);
+    const regenOp = await prisma.llmOperation.findFirstOrThrow({
+      where: { bookVersionId: versionId, kind: 'draft', status: 'active' },
+      orderBy: { createdAt: 'desc' },
+    });
+    // Новый старт - без исполнения перегенерации: отметка ещё стоит на блоке прежнего хода.
+    await start(versionId).expect(202);
+    expect(
+      (await prisma.llmOperation.findUniqueOrThrow({ where: { id: regenOp.id } })).status,
+    ).toBe('cancelled');
+    const old = await prisma.contentDraft.findUniqueOrThrow({ where: { id: run.id } });
+    expect(old.status).toBe('discarded');
+    const items = (old.data as { items: Array<{ target: string; regen: unknown }> }).items;
+    expect(items.find((i) => i.target === 'style')?.regen).toBeNull();
   });
 });

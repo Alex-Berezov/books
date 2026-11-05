@@ -31,6 +31,11 @@ import { ContentDraftService, DraftData, draftTaskInput } from './content-draft.
 import { chaptersText, htmlToParagraphs } from './content-draft.text';
 import { awaitDraftContext } from './draft-context-wait';
 import { summaryWriteTaskInput, SummaryWriteHandler } from '../summary-write/summary-write.handler';
+import { runTaskPayload } from '../draft-quality/run-regen';
+import {
+  AnalysisWriteHandler,
+  analysisWriteTaskInput,
+} from '../analysis-write/analysis-write.handler';
 
 /**
  * Мотивы досье для «Вводных» (Р10): главы - только этой версии; элемент не той формы пропускается,
@@ -51,11 +56,6 @@ function motifsOf(dossierData: unknown, numbers: ReadonlySet<number>): DossierMo
 const isRunOperation = (op: Pick<LlmOperation, 'translationRunId'>): boolean =>
   typeof op.translationRunId === 'string';
 
-function draftIdOf(task: LlmTask): string | null {
-  const id = (task.payload as Record<string, unknown> | null)?.draftId;
-  return typeof id === 'string' ? id : null;
-}
-
 /**
  * Шаги заготовки Analysis (`F05-11`). Одна задача на заготовку: сначала досье и глоссарий
  * (строят свои операции, заготовка - ждущий по Р20), затем один вызов. Пауза операции заготовку
@@ -75,6 +75,7 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     private readonly dossiers: DossierDemandService,
     private readonly drafts: ContentDraftService,
     private readonly summaryWrite: SummaryWriteHandler,
+    private readonly analysisWrite: AnalysisWriteHandler,
   ) {}
 
   readonly handler: LlmTaskHandler = {
@@ -83,21 +84,27 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
   };
 
   /**
-   * «Continue» операции `draft`: заготовка, ход пересказа (`F06-2`) - своей задачей; строки с этой
-   * операцией нет - это операция перегенерации текста хода (решение арбитра `F06 | F06-2`, Р2) или
-   * автозапуска (`F06-5`): у перегенерации `translationRunId` нет никогда, автозапуск закрывает свою
-   * операцию сам - продолжать нечего (решение арбитра `F06 | F06-5`, Р4).
+   * «Continue» операции `draft`: заготовка, ход пересказа (`F06-2`) и ход анализа (`F07-1b`) -
+   * своей задачей; строки с этой операцией нет - это операция перегенерации текста или блока хода
+   * (решение арбитра `F06 | F06-2`, Р2) или автозапуска (`F06-5`): у перегенерации
+   * `translationRunId` нет никогда, автозапуск закрывает свою операцию сам - продолжать нечего
+   * (решение арбитра `F06 | F06-5`, Р4).
    */
   async resumeTasks(op: LlmOperation): Promise<EnqueueTaskInput[]> {
     const row = await this.prisma.contentDraft.findUnique({ where: { operationId: op.id } });
-    if (!row) return isRunOperation(op) ? [] : this.summaryWrite.regenResume(op);
+    if (!row) return isRunOperation(op) ? [] : this.regenResume(op);
     if (row.status !== 'building') return [];
-    // Ход анализа (`F07-1a`): «Continue» - `F07-1b`; до него операция не продолжается (409),
-    // а не уходит задачей заготовки, которая отбила бы строку чужого вида (Л1).
-    if (row.kind === 'analysis_write') return [];
+    // Ход анализа свой задачей: задача заготовки отбила бы строку чужого вида (Л1 `F07-1a`).
+    if (row.kind === 'analysis_write') return [analysisWriteTaskInput(row, row.operationId)];
     return row.kind === 'summary_write'
       ? [summaryWriteTaskInput(row, row.operationId)]
       : [draftTaskInput(row)];
+  }
+
+  /** Перегенерация хода: блок ищется у обоих видов хода по отметке операции. */
+  private async regenResume(op: LlmOperation): Promise<EnqueueTaskInput[]> {
+    const summary = await this.summaryWrite.regenResume(op);
+    return summary.length > 0 ? summary : this.analysisWrite.regenResume(op);
   }
 
   /**
@@ -110,11 +117,14 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
       data: { status: 'failed', failedReason: DRAFT_CANCELLED },
     });
     // Операция запуска (ход и автозапуск `F06-5`) - не перегенерация: отметок текста у неё нет (Р4).
-    if (!isRunOperation(op)) await this.summaryWrite.onRegenCancelled(op, tx);
+    if (!isRunOperation(op)) {
+      await this.summaryWrite.onRegenCancelled(op, tx);
+      await this.analysisWrite.onRegenCancelled(op, tx);
+    }
   }
 
   private async run(task: LlmTask, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
-    const id = draftIdOf(task);
+    const id = runTaskPayload(task).draftId;
     const row = id ? await this.prisma.contentDraft.findUnique({ where: { id } }) : null;
     // Строки нет (версию удалили - каскад) или она уже не строится (discard): делать нечего.
     if (!row || row.status !== 'building') {

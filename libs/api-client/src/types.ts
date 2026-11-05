@@ -283,7 +283,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Accept all proposals of the summary run one by one: sections by number, then the full and the very short summary */
+    /** Accept all proposals of the run one by one: a summary run - sections by number, then the full and the very short summary; an analysis run - interpretations, characters, key quotations, then the theme links */
     post: operations['ContentDraftController_acceptAll'];
     delete?: never;
     options?: never;
@@ -317,8 +317,25 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Discard a summary run: one being built cancels its operation; the regenerations of its texts are cancelled; the fields are not touched */
+    /** Discard a summary or analysis run: one being built cancels its operation; the regenerations of its texts or blocks are cancelled; the fields and the blocks are not touched */
     post: operations['ContentDraftController_discardRun'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/content-drafts/{id}/items/{index}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The content of a proposal of a ready analysis run: one field by the kind of the block, the others null; the run answer does not carry it */
+    get: operations['ContentDraftController_proposal'];
+    put?: never;
+    post?: never;
     delete?: never;
     options?: never;
     head?: never;
@@ -334,7 +351,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Accept a proposal of the summary run into its field when the field has not changed since; a section replaces the section of the same number, numbering never changes; beyond the last section - added at the end */
+    /** Accept a proposal of the summary run into its field when the field has not changed since (a section replaces the section of the same number, numbering never changes; beyond the last section - added at the end), or a proposal of the analysis run into its block when the content of the block has not changed since; the kind of the run is taken from its row */
     post: operations['ContentDraftController_accept'];
     delete?: never;
     options?: never;
@@ -351,7 +368,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Discard a proposal of the summary run: the field is not touched */
+    /** Discard a proposal of a summary or analysis run: the field or the block is not touched */
     post: operations['ContentDraftController_discardItem'];
     delete?: never;
     options?: never;
@@ -368,7 +385,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Regenerate one text of a ready summary run under its own operation, with the editor remark in the author prompt; the first text of a section also builds the full and the very short summary */
+    /** Regenerate one text of a ready summary run (the first text of a section also builds the full and the very short summary) or one block of steps 1-2 of a ready analysis run, under its own operation, with the editor remark in the author prompt; the kind of the run is taken from its row */
     post: operations['ContentDraftController_regenerate'];
     delete?: never;
     options?: never;
@@ -5557,6 +5574,19 @@ export interface components {
        * @enum {string}
        */
       outcome: 'waiting' | 'written' | 'proposed' | 'accepted' | 'discarded' | 'none';
+      /** @description The last regeneration gave no text: the previous content stays, this is why */
+      regenFailedReason: string | null;
+      /**
+       * Format: uuid
+       * @description Operation of the running regeneration
+       */
+      regenOperationId: string | null;
+      /** @description Status of the regeneration operation; null - no regeneration is running */
+      regenOperationStatus: components['schemas']['LlmOperationStatus'] | null;
+      /** @description Why the regeneration operation is paused; null - not paused */
+      regenPauseReason: components['schemas']['LlmPauseReason'] | null;
+      /** @description A regeneration of this block is running */
+      regenerating: boolean;
       remarks: components['schemas']['AnalysisWriteRemarkDto'][];
       review: components['schemas']['AnalysisWriteReviewDto'] | null;
       /** @enum {number} */
@@ -5644,6 +5674,15 @@ export interface components {
        * @enum {string}
        */
       verdict: 'ok' | 'flags' | 'failed';
+    };
+    AnalysisWriteValueDto: {
+      characters: components['schemas']['BookAnalysisCharacterDto'][] | null;
+      keyQuotes: components['schemas']['BookAnalysisKeyQuoteDto'][] | null;
+      style: components['schemas']['BookAnalysisStyleDto'][] | null;
+      symbols: components['schemas']['BookAnalysisSymbolDto'][] | null;
+      /** @description A facts subfield (facts.<name>), mainIdea, titleMeaning, endingMeaning */
+      text: string | null;
+      themes: components['schemas']['BookAnalysisThemeDto'][] | null;
     };
     AppHealthResponseDto: {
       /** @example ok */
@@ -16368,17 +16407,19 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['SummaryWriteDto'];
+          'application/json':
+            | components['schemas']['SummaryWriteDto']
+            | components['schemas']['AnalysisWriteDto'];
         };
       };
-      /** @description Summary run not found */
+      /** @description Run not found (a draft of another kind too) */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (acceptedIndexes - what is written already). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal and the answer is 200 */
       409: {
         headers: {
           [name: string]: unknown;
@@ -16431,11 +16472,63 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['SummaryWriteDto'];
+          'application/json':
+            | components['schemas']['SummaryWriteDto']
+            | components['schemas']['AnalysisWriteDto'];
         };
       };
-      /** @description Summary run not found (a draft of another kind too) */
+      /** @description Run not found (a draft of another kind too) */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description ANALYSIS_REGEN_IN_PROGRESS: an analysis run - a regeneration of its blocks keeps starting while the run is discarded, discard again */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_proposal: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        index: number;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AnalysisWriteValueDto'];
+        };
+      };
+      /** @description ANALYSIS_ITEM_UNKNOWN: the run has no such block */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Analysis run not found (a summary run and a draft of another kind too) */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED: the block is not a proposal */
+      409: {
         headers: {
           [name: string]: unknown;
         };
@@ -16464,24 +16557,26 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['SummaryWriteDto'];
+          'application/json':
+            | components['schemas']['SummaryWriteDto']
+            | components['schemas']['AnalysisWriteDto'];
         };
       };
-      /** @description SUMMARY_ITEM_UNKNOWN: the run has no such text */
+      /** @description SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description Summary run not found */
+      /** @description Run not found (a draft of another kind too) */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors) */
       409: {
         headers: {
           [name: string]: unknown;
@@ -16507,24 +16602,26 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['SummaryWriteDto'];
+          'application/json':
+            | components['schemas']['SummaryWriteDto']
+            | components['schemas']['AnalysisWriteDto'];
         };
       };
-      /** @description SUMMARY_ITEM_UNKNOWN: the run has no such text */
+      /** @description SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description Summary run not found */
+      /** @description Run not found (a draft of another kind too) */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal */
       409: {
         headers: {
           [name: string]: unknown;
@@ -16554,24 +16651,26 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['SummaryWriteDto'];
+          'application/json':
+            | components['schemas']['SummaryWriteDto']
+            | components['schemas']['AnalysisWriteDto'];
         };
       };
-      /** @description SUMMARY_ITEM_UNKNOWN: the run has no such text */
+      /** @description SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description Summary run not found */
+      /** @description Run not found (a draft of another kind too) */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); LLM_CEILING_REACHED */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_REGENERABLE: only the blocks of steps 1-2 are regenerated; LLM_CEILING_REACHED */
       409: {
         headers: {
           [name: string]: unknown;

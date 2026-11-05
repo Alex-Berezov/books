@@ -1,11 +1,20 @@
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
 import {
   analysisDataJson,
+  AnalysisItem,
+  AnalysisTarget,
+  AnalysisWriteData,
   blockPrint,
   emptyAnalysisData,
+  pathInTarget,
   readAnalysisData,
+  regenBase,
+  RegenResult,
   stableJson,
   targetValue,
+  withoutRegen,
+  withRegenerated,
+  withRegenTaken,
 } from './analysis-write.data';
 
 /**
@@ -59,6 +68,8 @@ describe('analysis run data', () => {
           value: [{ key: 'anna' }],
           failedReason: null,
           links: false,
+          regen: null,
+          regenFailedReason: null,
         },
       ],
       themeLinks: { characters: { anna: ['loss'] }, keyQuotes: {} },
@@ -98,5 +109,168 @@ describe('analysis run data', () => {
 
   it('not its form at all - an empty run without rights on blocks', () => {
     expect(readAnalysisData('x')).toEqual(emptyAnalysisData({}, {}));
+  });
+});
+
+describe('pathInTarget (F07-1b, blocker 4)', () => {
+  it('a path belongs to its unit of write on a segment border only', () => {
+    expect(pathInTarget('facts.settingTime', 'facts.settingTime')).toBe(true);
+    expect(pathInTarget('keyQuotes.2', 'keyQuotes')).toBe(true);
+    expect(pathInTarget('characters[key=anna].name', 'characters')).toBe(true);
+    expect(pathInTarget('characters: unknown key', 'characters')).toBe(true);
+    // Префикс без границы сегмента - чужое поле.
+    expect(pathInTarget('facts.settingTime', 'facts.setting' as AnalysisTarget)).toBe(false);
+    expect(pathInTarget('keyQuotesExtra.0', 'keyQuotes')).toBe(false);
+    expect(pathInTarget('facts.settingPlace', 'facts.settingTime')).toBe(false);
+    // Путь всего `facts` - и каждого подполя: одно правило у ответа перегенерации и у выбросов хода.
+    expect(pathInTarget('facts', 'facts.settingTime')).toBe(true);
+    expect(pathInTarget('facts', 'characters')).toBe(false);
+  });
+});
+
+describe('the result of a regeneration in the data of the run (F07-1b, /fix 1 blockers 2, 3, 5, 9; /fix 2 blocker 4)', () => {
+  const item = (patch: Partial<AnalysisItem> = {}): AnalysisItem => ({
+    target: 'characters',
+    step: 1,
+    verdict: 'ok',
+    remarks: [],
+    review: null,
+    outcome: 'written',
+    hash: null,
+    value: [{ key: 'old' }],
+    failedReason: null,
+    links: false,
+    regen: { operationId: 'op2', remark: null, pending: null, previous: null },
+    regenFailedReason: null,
+    ...patch,
+  });
+  const result = (patch: Partial<RegenResult> = {}): RegenResult => ({
+    value: [{ key: 'new' }],
+    verdict: 'ok',
+    remarks: [],
+    review: { kind: 'answered', model: 'r' },
+    droppedQuotes: [],
+    ...patch,
+  });
+  const data = (items: AnalysisItem[]): AnalysisWriteData => ({
+    ...emptyAnalysisData({}, {}),
+    steps: [],
+    items,
+    merged: { characters: [{ key: 'old' }] as never, keyQuotes: [] },
+    droppedQuotes: [
+      { step: 1, path: 'characters.0.quote', text: 'old drop', chapter: 1, reason: 'NOT_FOUND' },
+      { step: 1, path: 'facts.settingTime', text: 'neighbour', chapter: 1, reason: 'NOT_FOUND' },
+    ],
+  });
+
+  it('a block in the analysis is regenerated from the saved content (keys of the editor); a proposal - from the content of the run', () => {
+    const stored = {
+      ...EMPTY_BOOK_ANALYSIS,
+      characters: [{ key: 'saved', name: 'S', role: 'main' as const }],
+    };
+    for (const outcome of ['written', 'accepted'] as const) {
+      expect(regenBase(item({ outcome }), stored)).toEqual(stored.characters);
+    }
+    expect(regenBase(item({ outcome: 'proposed' }), stored)).toEqual([{ key: 'old' }]);
+    expect(regenBase(item({ outcome: 'none', value: null }), stored)).toEqual(stored.characters);
+  });
+
+  it('the waiting result changes neither merged nor the dropped quotations nor the record of the step; the block before it is kept', () => {
+    const before = data([item()]);
+    const drop = {
+      step: 1 as const,
+      path: 'characters.1.quote',
+      text: 'new drop',
+      chapter: 2,
+      reason: 'NOT_FOUND' as const,
+    };
+    const waiting = withRegenerated(before, 0, result({ droppedQuotes: [drop] }));
+    expect(waiting.merged).toBe(before.merged);
+    expect(waiting.droppedQuotes).toBe(before.droppedQuotes);
+    expect(waiting.steps).toBe(before.steps);
+    expect(waiting.items[0]).toMatchObject({
+      outcome: 'waiting',
+      value: [{ key: 'new' }],
+      pendingDropped: [drop],
+    });
+    expect(waiting.items[0].regen?.previous).toMatchObject({
+      outcome: 'written',
+      value: [{ key: 'old' }],
+      regen: null,
+    });
+  });
+
+  it('a cancel or a failure before the decision rolls the block back; merged and the dropped quotations stay as before', () => {
+    const before = data([item()]);
+    const rolledBack = withoutRegen(withRegenerated(before, 0, result()), 0, null);
+    expect(rolledBack.items[0]).toMatchObject({
+      outcome: 'written',
+      value: [{ key: 'old' }],
+      regen: null,
+    });
+    expect(rolledBack.items[0].pendingDropped ?? null).toBeNull();
+    expect(rolledBack.merged).toEqual(before.merged);
+    expect(rolledBack.droppedQuotes).toEqual(before.droppedQuotes);
+    const settled = withoutRegen(
+      { ...before, items: [{ ...item(), outcome: 'proposed', value: [{ key: 'new' }] }] },
+      0,
+      'DRAFT_TOO_LONG',
+    );
+    expect(settled.items[0]).toMatchObject({
+      outcome: 'proposed',
+      regen: null,
+      regenFailedReason: 'DRAFT_TOO_LONG',
+    });
+  });
+
+  it('taken into the analysis (written or accepted): the block goes into merged, the dropped quotations of this unit are replaced, not those of a neighbour subfield', () => {
+    const drop = {
+      step: 1 as const,
+      path: 'facts.settingPlace',
+      text: 'new drop',
+      chapter: 2,
+      reason: 'NOT_FOUND' as const,
+    };
+    const facts = item({ target: 'facts.settingPlace', value: 'Town' });
+    const before: AnalysisWriteData = {
+      ...data([facts]),
+      droppedQuotes: [
+        { step: 1, path: 'facts.settingPlace', text: 'own', chapter: 1, reason: 'NOT_FOUND' },
+        { step: 1, path: 'facts.settingTime', text: 'neighbour', chapter: 1, reason: 'NOT_FOUND' },
+      ],
+    };
+    const waiting = withRegenerated(
+      before,
+      0,
+      result({ value: 'River town', droppedQuotes: [drop] }),
+    );
+    const taken = withRegenTaken(
+      { ...waiting, items: [{ ...waiting.items[0], outcome: 'written' }] },
+      0,
+      'River town, as written',
+    );
+    // В merged - записанное значение (/fix 3, блокер 4), а не значение итога.
+    expect(taken.merged.facts).toEqual({ settingPlace: 'River town, as written' });
+    expect(taken.droppedQuotes.map((d) => d.text)).toEqual(['neighbour', 'new drop']);
+    expect(taken.items[0].pendingDropped).toBeNull();
+    // Не из перегенерации - ничего не меняется.
+    expect(withRegenTaken(before, 0, 'x')).toBe(before);
+  });
+
+  it('the block before the regeneration and the pending dropped quotations survive the round trip through the stored data', () => {
+    const drop = {
+      step: 1 as const,
+      path: 'characters.0',
+      text: 'd',
+      chapter: 1,
+      reason: 'NOT_FOUND' as const,
+    };
+    const waiting = withRegenerated(data([item()]), 0, result({ droppedQuotes: [drop] }));
+    const read = readAnalysisData(JSON.parse(JSON.stringify(analysisDataJson(waiting))));
+    expect(read.items[0].regen?.previous).toMatchObject({
+      outcome: 'written',
+      value: [{ key: 'old' }],
+    });
+    expect(read.items[0].pendingDropped).toEqual([drop]);
   });
 });

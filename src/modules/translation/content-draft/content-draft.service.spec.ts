@@ -337,3 +337,25 @@ describe('ContentDraftService analysis estimate (F05-Rb, Р2)', () => {
     await expect(codeOf(service.estimate('v1', 'analysis'))).resolves.toBe('DRAFT_TOO_LONG');
   });
 });
+
+describe('ContentDraftService.runKindOf (F07-1b, В6)', () => {
+  it('the kind of a run row decides: summary_write and analysis_write come out, one select of the row', async () => {
+    const { service, prisma } = setup();
+    prisma.contentDraft.findUnique.mockResolvedValue({ kind: 'analysis_write' });
+    await expect(service.runKindOf('d1')).resolves.toBe('analysis_write');
+    prisma.contentDraft.findUnique.mockResolvedValue({ kind: 'summary_write' });
+    await expect(service.runKindOf('d1')).resolves.toBe('summary_write');
+    expect(prisma.contentDraft.findUnique).toHaveBeenCalledWith({
+      where: { id: 'd1' },
+      select: { kind: true },
+    });
+  });
+
+  it('no row, a draft of the analysis kind and a retired kind are 404, not a run of someone else', async () => {
+    const { service, prisma } = setup();
+    for (const row of [null, { kind: 'analysis' }, { kind: 'summary_full' }]) {
+      prisma.contentDraft.findUnique.mockResolvedValue(row);
+      await expect(service.runKindOf('d1')).rejects.toBeInstanceOf(NotFoundException);
+    }
+  });
+});

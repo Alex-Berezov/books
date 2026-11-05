@@ -20,6 +20,12 @@ export const ANALYSIS_WRITE_TASK_KIND = 'analysis_write';
 /** Шагов в ходе `F07-1`: после третьего ход `ready` (решение арбитра `F07 | F07-1`, В4). */
 export const ANALYSIS_STEPS = 3;
 
+/**
+ * Шаги, блоки которых перегенерируются (`tech.md` §2:42, «Regenerate» блока шагов 1-2): разрешающий
+ * список, а не запрет прочих - шаги, которые добавит `F07-2`, без решения сюда не попадают.
+ */
+export const REGENERABLE_STEPS: readonly number[] = [1, 2];
+
 /** Таймаут вызова шага 1: 24 000 токенов ответа (`tech.md` §2). */
 const CAST_CALL_TIMEOUT_MS = 600_000;
 /** Таймаут вызова шага 3: 32 000 токенов ответа (`tech.md` §2, `LEGACY-479`). */
@@ -91,3 +97,20 @@ export function registerAnalysisWriteStages(stages: LlmStageRegistry): void {
     ANALYSIS_WRITE_STAGE_DEFINITIONS.map((d) => d.stage),
   );
 }
+
+/**
+ * Коды отказов ручек `content-drafts/:id/*` для хода анализа (`F07-1b`, решение арбитра
+ * `F07 | F07-1`, В6): `ANALYSIS_WRITE_NOT_READY` - ход строится, упал или отброшен;
+ * `ANALYSIS_ITEM_UNKNOWN` (400) - у хода нет блока с таким номером; `ANALYSIS_ITEM_NOT_PROPOSED` -
+ * блок не предложение; `ANALYSIS_BLOCK_CHANGED` - блок изменили после предложения (в теле `current`);
+ * `ANALYSIS_WRITE_REFUSED` - анализ отказал в записи (ссылки не сошлись на слитом объекте);
+ * `ANALYSIS_REGEN_IN_PROGRESS` - этот блок уже перегенерируется; `ANALYSIS_ITEM_NOT_REGENERABLE` -
+ * перегенерируются блоки шагов 1-2, не связи тем и не шаг 3.
+ */
+export const ANALYSIS_WRITE_NOT_READY = 'ANALYSIS_WRITE_NOT_READY';
+export const ANALYSIS_ITEM_UNKNOWN = 'ANALYSIS_ITEM_UNKNOWN';
+export const ANALYSIS_ITEM_NOT_PROPOSED = 'ANALYSIS_ITEM_NOT_PROPOSED';
+export const ANALYSIS_BLOCK_CHANGED = 'ANALYSIS_BLOCK_CHANGED';
+export const ANALYSIS_WRITE_REFUSED = 'ANALYSIS_WRITE_REFUSED';
+export const ANALYSIS_REGEN_IN_PROGRESS = 'ANALYSIS_REGEN_IN_PROGRESS';
+export const ANALYSIS_ITEM_NOT_REGENERABLE = 'ANALYSIS_ITEM_NOT_REGENERABLE';

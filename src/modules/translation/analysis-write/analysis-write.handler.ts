@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { ContentDraft, LlmTask } from '@prisma/client';
+import { ContentDraft, LlmOperation, LlmTask, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { lockBookAnalysis } from '../../book-analysis/book-analysis-lock';
 import { LlmService } from '../../llm/llm.service';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
@@ -16,6 +17,12 @@ import { htmlToParagraphs } from '../content-draft/content-draft.text';
 import { awaitDraftContext } from '../content-draft/draft-context-wait';
 import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { QualityLoopResult, runQualityLoop } from '../draft-quality/quality-loop';
+import {
+  clearRegenMarkOf,
+  regenResumeOf,
+  runTaskInput,
+  runTaskPayload,
+} from '../draft-quality/run-regen';
 import { indexChapters } from '../draft-quality/quote-check';
 import { DraftRemark } from '../draft-quality/text-checks';
 import { PAUSE_BY_FAILURE } from '../pause-by-failure';
@@ -27,21 +34,34 @@ import {
   ANALYSIS_WRITE_TASK_KIND,
 } from './analysis-write.constants';
 import {
+  analysisDataJson,
   AnalysisItem,
   AnalysisStep,
   AnalysisStepNumber,
   AnalysisTarget,
   AnalysisWriteData,
   blocksValue,
+  mergeSteps,
   PendingStep,
+  regenBase,
+  RegenResult,
+  withoutRegen,
+  withRegenerated,
+  readAnalysisData,
+  withItem,
   STEP_TARGETS,
   StepBlocks,
   StepDraft,
   StepSource,
   stepKey,
 } from './analysis-write.data';
-import { analysisRunGate, AnalysisGate, AnalysisWriteFields } from './analysis-write.fields';
-import { STEP_STAGES } from './analysis-write.prompts';
+import {
+  analysisRegenGate,
+  analysisRunGate,
+  AnalysisGate,
+  AnalysisWriteFields,
+} from './analysis-write.fields';
+import { STEP_STAGES, StepRegen } from './analysis-write.prompts';
 import {
   StepContext,
   StepInput,
@@ -51,25 +71,15 @@ import {
 } from './analysis-write.steps';
 import { otherLanguageKeys } from './analysis-keys';
 
-/** Задача хода анализа: одна задача - один шаг, продолжение - следующей задачей. */
-export function analysisWriteTaskInput(
+/**
+ * Задача хода анализа: одна задача - один шаг, продолжение - следующей задачей; `index` - задача
+ * перегенерации блока `index` своей операции (`F07-1b`, как у хода пересказа).
+ */
+export const analysisWriteTaskInput = (
   row: Pick<ContentDraft, 'id' | 'bookVersionId' | 'language'>,
   operationId: string,
-): EnqueueTaskInput {
-  return {
-    kind: ANALYSIS_WRITE_TASK_KIND,
-    operationId,
-    bookVersionId: row.bookVersionId,
-    language: row.language,
-    payload: { draftId: row.id },
-    pairKey: `${operationId}:${row.id}`,
-  };
-}
-
-function draftIdOf(task: LlmTask): string | null {
-  const id = (task.payload as Record<string, unknown> | null)?.draftId;
-  return typeof id === 'string' ? id : null;
-}
+  index: number | null = null,
+): EnqueueTaskInput => runTaskInput(ANALYSIS_WRITE_TASK_KIND, row, operationId, index);
 
 /** Строка хода больше не принимает запись этой операции: цикл качества обрывается без вызовов. */
 class RunGone extends Error {
@@ -110,13 +120,6 @@ export function remarksOfTarget(
     const path = r.where.split(':', 1)[0];
     return path === 'facts' || path === target || path.startsWith(`${target}.`);
   });
-}
-
-/** Итоги шага поверх итогов прошлых шагов; `facts` - по подполям. */
-function mergeSteps(merged: StepBlocks, blocks: StepBlocks): StepBlocks {
-  const out: StepBlocks = { ...merged, ...blocks };
-  if (merged.facts && blocks.facts) out.facts = { ...merged.facts, ...blocks.facts };
-  return out;
 }
 
 /**
@@ -183,9 +186,43 @@ export class AnalysisWriteHandler {
     onFailed: (task, reason) => this.onFailed(task, reason),
   };
 
+  /**
+   * «Continue» операции перегенерации: её строку `findUnique` по `operationId` не находит - строка
+   * ищется по `data @> regen.operationId`; задача - только пока перегенерация её (`F07-1b`).
+   */
+  regenResume(op: LlmOperation): Promise<EnqueueTaskInput[]> {
+    return regenResumeOf(this.prisma, 'analysis_write', op, (data) => readAnalysisData(data).items);
+  }
+
+  /** Отмена операции перегенерации: отметка снимается у её блока, ход остаётся `ready`. */
+  onRegenCancelled(op: LlmOperation, tx: Prisma.TransactionClient): Promise<void> {
+    return this.clearRegenMark(op.id, tx);
+  }
+
+  /**
+   * Отметка перегенерации `operationId` снимается у её блока в транзакции отмены или конца задачи;
+   * `failedReason` - почему блок не получил текста (виден как `regenFailedReason`). Итог, записанный,
+   * но не решённый (`waiting`), уходит вместе с отметкой: блок возвращается к `previous`.
+   */
+  clearRegenMark(
+    operationId: string,
+    tx: Prisma.TransactionClient,
+    failedReason: string | null = null,
+  ): Promise<void> {
+    return clearRegenMarkOf(tx, 'analysis_write', operationId, {
+      lock: lockBookAnalysis,
+      read: readAnalysisData,
+      clear: (data, index) => analysisDataJson(withoutRegen(data, index, failedReason)),
+    });
+  }
+
   private async run(task: LlmTask, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
-    const id = draftIdOf(task);
+    const { draftId: id, index } = runTaskPayload(task);
     const row = id ? await this.prisma.contentDraft.findUnique({ where: { id } }) : null;
+    if (index !== null) {
+      if (!row || row.kind !== 'analysis_write') return this.finishRegen(task.operationId);
+      return this.regenStep(row, index, task, ctx);
+    }
     // Ход отбросили, он кончился или задача не его операции: делать нечего.
     if (
       !row ||
@@ -216,6 +253,90 @@ export class AnalysisWriteHandler {
       if (error instanceof NotFoundException) return this.fail(row, DRAFT_INPUT_MISSING);
       throw error;
     }
+  }
+
+  /**
+   * Перегенерация блока `index` хода `ready` (`F07-1b`; `tech.md` §2): шаг блока тем же циклом
+   * качества, замечание редактора и прежнее содержимое в промпт автора, остальные блоки ответа
+   * отброшены; итог решается как итог шага - в блок (он ещё ход) или предложением. Оплаченный итог,
+   * не дошедший до решения, дорешивается без второго вызова модели; отметка снимается вместе с
+   * концом операции.
+   */
+  private async regenStep(
+    row: ContentDraft,
+    index: number,
+    task: LlmTask,
+    ctx: LlmTaskContext,
+  ): Promise<LlmTaskStepResult> {
+    const gate = analysisRegenGate(task.operationId, index);
+    const data = await this.fields.read(row, gate);
+    const item = data?.items[index];
+    if (!data || !item?.regen) return this.finishRegen(task.operationId);
+    if (item.outcome === 'waiting') {
+      await this.fields.settleStep(row, gate, item.step, index);
+      return this.finishRegen(task.operationId);
+    }
+    const dossier = row.dossierId
+      ? await this.prisma.bookDossier.findUnique({ where: { id: row.dossierId } })
+      : null;
+    if (!dossier) return this.finishRegen(task.operationId, DRAFT_INPUT_MISSING);
+    try {
+      const context = await this.contextOf(row, dossier.data, data);
+      const spec: StepRegen = {
+        target: item.target,
+        current: regenBase(item, context.stored),
+        remark: item.regen.remark,
+      };
+      const record = await this.produceStep(
+        row,
+        gate,
+        item.step,
+        context,
+        item.regen.pending,
+        ctx,
+        {
+          spec,
+          index,
+        },
+      );
+      if (record === null) return await this.finishRegen(task.operationId);
+      if (record.step.outcome === 'failed') {
+        return await this.finishRegen(
+          task.operationId,
+          record.step.failedReason ?? DRAFT_INVALID_RESPONSE,
+        );
+      }
+      const value = blocksValue(record.draft?.blocks ?? {}, item.target);
+      if (value === undefined) {
+        return await this.finishRegen(
+          task.operationId,
+          isInvalidTarget(record.invalid, item.target) ? 'IMPORT_INVALID' : DRAFT_INVALID_RESPONSE,
+        );
+      }
+      await ctx.renewLease();
+      const saved = await this.fields.mutate(row, gate, (current) =>
+        withRegenerated(current, index, regenResult(record, item, value)),
+      );
+      if (!saved) return await this.finishRegen(task.operationId);
+      await this.fields.settleStep(row, gate, item.step, index);
+      return await this.finishRegen(task.operationId);
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        return this.finishRegen(task.operationId, DRAFT_INPUT_MISSING);
+      }
+      throw error;
+    }
+  }
+
+  /** Конец перегенерации: отметка снимается в той же транзакции, что закрывает операцию. */
+  private async finishRegen(
+    operationId: string,
+    failedReason: string | null = null,
+  ): Promise<LlmTaskStepResult> {
+    await this.tasks.completeOperation(operationId, (tx) =>
+      this.clearRegenMark(operationId, tx, failedReason),
+    );
+    return { kind: 'done' };
   }
 
   private async runStep(
@@ -271,8 +392,9 @@ export class AnalysisWriteHandler {
     step: AnalysisStepNumber,
     context: StepContext,
     quotes: ReturnType<typeof indexChapters>,
+    regen: StepRegen | null,
   ): Promise<{ input: StepInput; source: StepSource } | null> {
-    return fitStepInput(step, context, quotes, (input) => stepInputFits(this.llm, input));
+    return fitStepInput(step, context, quotes, (input) => stepInputFits(this.llm, input), regen);
   }
 
   /** Шаг: цикл качества и итог; `null` - ход больше не принимает шаг этой операции. */
@@ -283,28 +405,34 @@ export class AnalysisWriteHandler {
     context: StepContext,
     pending: PendingStep | null,
     ctx: LlmTaskContext,
+    regen: { spec: StepRegen; index: number } | null = null,
   ): Promise<StepRecord | null> {
     const quotes = indexChapters(
       new Map(context.chapters.map((c) => [c.number, htmlToParagraphs(c.content)])),
     );
-    const fit = await this.fittingInput(step, context, quotes);
+    const fit = await this.fittingInput(step, context, quotes, regen?.spec ?? null);
     if (fit === null) return failedRecord(step, DRAFT_TOO_LONG, null);
+    // Вызовы и снимок моделей - операции задачи: у перегенерации она своя, не операция хода.
+    const owner = gate.operationId ?? row.operationId;
     const op = await this.prisma.llmOperation.findUnique({
-      where: { id: row.operationId },
+      where: { id: owner },
       select: { settingsSnapshot: true },
     });
     const snapshot = op?.settingsSnapshot ?? null;
-    const key = stepKey(step);
+    // Перегенерация держит оплаченный текст в своём блоке, ход - в данных хода.
+    const key = regen ? `regen:${regen.index}` : stepKey(step);
     const keep = async (resume: PendingStep['resume']) => {
-      const saved = await this.fields.mutate(row, gate, (data) => ({
-        ...data,
-        pending: { key, operationId: row.operationId, resume },
-      }));
+      const saved = await this.fields.mutate(row, gate, (data) => {
+        const pending = { key, operationId: owner, resume };
+        if (!regen) return { ...data, pending };
+        const current = data.items[regen.index]?.regen;
+        return current ? withItem(data, regen.index, { regen: { ...current, pending } }) : null;
+      });
       if (saved === null) throw new RunGone();
     };
     let result: QualityLoopResult<StepDraft>;
     try {
-      result = await runQualityLoop(this.llm, row.operationId, ctx, {
+      result = await runQualityLoop(this.llm, owner, ctx, {
         ...stepLoopSpec(fit.input, {
           author: runStageModels(snapshot, null, STEP_STAGES[step]),
           review: runStageModels(snapshot, null, ANALYSIS_REVIEW_STAGE),
@@ -318,7 +446,7 @@ export class AnalysisWriteHandler {
             checked: { remarks: first.remarks, review: first.review },
           }),
         resume:
-          pending && pending.key === key && pending.operationId === row.operationId
+          pending && pending.key === key && pending.operationId === owner
             ? pending.resume
             : undefined,
       });
@@ -331,7 +459,7 @@ export class AnalysisWriteHandler {
   }
 
   /** Досье, глоссарий, главы, сохранённый анализ и ключи другого языка - вход шага. */
-  private async contextOf(
+  async contextOf(
     row: ContentDraft,
     dossier: unknown,
     data: AnalysisWriteData,
@@ -504,6 +632,19 @@ export function withStep(data: AnalysisWriteData, record: StepRecord): AnalysisW
   };
 }
 
+/** Итог перегенерации блока из итога шага: флаги своего блока, выброшенные цитаты с номером шага. */
+function regenResult(record: StepRecord, target: AnalysisItem, value: unknown): RegenResult {
+  const remarks = remarksOfTarget(record.step.remarks, target.target);
+  const answered = record.review?.kind === 'answered';
+  return {
+    value,
+    verdict: remarks.length === 0 && answered ? 'ok' : 'flags',
+    remarks,
+    review: record.review,
+    droppedQuotes: stepDroppedQuotes(target.step, record.draft?.droppedQuotes ?? []),
+  };
+}
+
 function item(
   target: AnalysisTarget,
   step: AnalysisStepNumber,
@@ -525,5 +666,7 @@ function item(
     value,
     failedReason,
     links: false,
+    regen: null,
+    regenFailedReason: null,
   };
 }

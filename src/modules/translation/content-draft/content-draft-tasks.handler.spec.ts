@@ -8,6 +8,7 @@ import { ContentDraftTasksHandler } from './content-draft-tasks.handler';
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
 import { ContentDraftService } from './content-draft.service';
 import { SummaryWriteHandler } from '../summary-write/summary-write.handler';
+import { AnalysisWriteHandler } from '../analysis-write/analysis-write.handler';
 
 /**
  * Шаги заготовки Analysis (F05-11) на подменённых базе и модели: окончательные отказы пишут
@@ -86,6 +87,10 @@ function setup(row: ContentDraft | null, answer: unknown = {}) {
     regenResume: jest.fn().mockResolvedValue([]),
     onRegenCancelled: jest.fn().mockResolvedValue(undefined),
   };
+  const analysisWrite = {
+    regenResume: jest.fn().mockResolvedValue([]),
+    onRegenCancelled: jest.fn().mockResolvedValue(undefined),
+  };
   const handler = new ContentDraftTasksHandler(
     prisma as unknown as PrismaService,
     llm as unknown as LlmService,
@@ -93,8 +98,9 @@ function setup(row: ContentDraft | null, answer: unknown = {}) {
     {} as DossierDemandService,
     drafts as unknown as ContentDraftService,
     summaryWrite as unknown as SummaryWriteHandler,
+    analysisWrite as unknown as AnalysisWriteHandler,
   );
-  return { handler, prisma, llm, tasks, tx, drafts, summaryWrite };
+  return { handler, prisma, llm, tasks, tx, drafts, summaryWrite, analysisWrite };
 }
 
 describe('ContentDraftTasksHandler (F05-11, F06-3)', () => {
@@ -170,10 +176,23 @@ describe('ContentDraftTasksHandler (F05-11, F06-3)', () => {
   });
 
   // Л1 `F07-1a`: строящийся ход анализа не уходит задачей заготовки (она отбила бы строку чужого
-  // вида `DRAFT_INPUT_MISSING`); «Continue» хода анализа - `F07-1b`, до него - пусто (409).
-  it('a building analysis run is not resumed as a draft task; cancel fails it like any row', async () => {
-    const { handler } = setup(draftRow({ kind: 'analysis_write' }));
+  // вида `DRAFT_INPUT_MISSING`); «Continue» хода анализа (`F07-1b`) ставит задачу `analysis_write`.
+  it('«Continue» of a building analysis run enqueues the analysis_write task, not a draft task; cancel fails it like any row', async () => {
+    const { handler, prisma } = setup(draftRow({ kind: 'analysis_write' }));
+    await expect(handler.resumeTasks({ id: 'op1' } as never)).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'analysis_write',
+        operationId: 'op1',
+        pairKey: 'op1:d1',
+        payload: { draftId: 'd1' },
+      }),
+    ]);
+    // Ход не строится (ready, failed, discarded) - продолжать нечего.
+    prisma.contentDraft.findUnique.mockResolvedValue(
+      draftRow({ kind: 'analysis_write', status: 'ready' }),
+    );
     await expect(handler.resumeTasks({ id: 'op1' } as never)).resolves.toEqual([]);
+    prisma.contentDraft.findUnique.mockResolvedValue(draftRow({ kind: 'analysis_write' }));
     const tx = { contentDraft: { updateMany: jest.fn() } };
     await handler.onCancelled({ id: 'op1' } as never, tx as unknown as Prisma.TransactionClient);
     expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
@@ -405,5 +424,27 @@ describe('ContentDraftTasksHandler: операция автозапуска (F06
     await handler.onCancelled(regenOp, tx());
     expect(summaryWrite.regenResume).toHaveBeenCalledTimes(1);
     expect(summaryWrite.onRegenCancelled).toHaveBeenCalledTimes(1);
+  });
+
+  it('перегенерация блока хода анализа (F07-1b): Continue ищет блок у хода анализа, если пересказ не нашёл; отмена снимает отметки у обоих видов', async () => {
+    const { handler, summaryWrite, analysisWrite } = setup(null);
+    const input = {
+      kind: 'analysis_write',
+      operationId: 'op1',
+      payload: { draftId: 'd1', index: 2 },
+    };
+    analysisWrite.regenResume.mockResolvedValue([input]);
+    await expect(handler.resumeTasks(regenOp)).resolves.toEqual([input]);
+    expect(summaryWrite.regenResume).toHaveBeenCalledTimes(1);
+    // Пересказ нашёл свой текст - ход анализа не опрашивается.
+    summaryWrite.regenResume.mockResolvedValue([{ kind: 'summary_write' }]);
+    analysisWrite.regenResume.mockClear();
+    await handler.resumeTasks(regenOp);
+    expect(analysisWrite.regenResume).not.toHaveBeenCalled();
+    await handler.onCancelled(regenOp, tx());
+    expect(analysisWrite.onRegenCancelled).toHaveBeenCalledTimes(1);
+    expect(analysisWrite.onRegenCancelled).toHaveBeenCalledWith(regenOp, expect.anything());
+    expect(summaryWrite.onRegenCancelled).toHaveBeenCalledTimes(1);
+    expect(summaryWrite.onRegenCancelled).toHaveBeenCalledWith(regenOp, expect.anything());
   });
 });

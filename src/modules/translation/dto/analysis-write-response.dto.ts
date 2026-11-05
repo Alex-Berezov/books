@@ -1,6 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { ContentDraftStatus, Language } from '@prisma/client';
+import { ContentDraftStatus, Language, LlmOperationStatus, LlmPauseReason } from '@prisma/client';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
+import {
+  BookAnalysisCharacterDto,
+  BookAnalysisKeyQuoteDto,
+  BookAnalysisStyleDto,
+  BookAnalysisSymbolDto,
+  BookAnalysisThemeDto,
+} from '../../book-analysis/dto/book-analysis-blocks.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
 import {
   ANALYSIS_ITEM_OUTCOMES,
@@ -24,8 +31,9 @@ import { CompareContextLineDto, DossierContextLineDto } from './translation-comp
  * Ход анализа `F07-1a` (`features/F07-analysis-autofill/tech.md` §5): старт, оценка и чтение хода.
  * Свои DTO по образцу хода пересказа, замечание и проверяющая - тоже свои: коды замечаний
  * анализа (`ANALYSIS_REMARK_CODES`), проверяющая анализа со своими кодами. Содержимое блоков
- * хода в ответ не идёт: блок читается ручкой анализа, предложения и «Accept» - `F07-1b`. Response
- * DTO - только Swagger, без `class-validator` (`STYLE_GUIDE.md` §7).
+ * в ответ хода не идёт (Р1): записанный блок читается ручкой анализа, предложение -
+ * `GET content-drafts/:id/items/:index` (`AnalysisWriteValueDto`; решение арбитра `F07 | F07-1b`, А).
+ * Response DTO - только Swagger, без `class-validator` (`STYLE_GUIDE.md` §7).
  */
 
 export class AnalysisWriteEstimateDto {
@@ -180,6 +188,35 @@ export class AnalysisWriteStepDto {
   dropped!: AnalysisWriteFixDto[];
 }
 
+/**
+ * Содержимое предложения хода (`GET content-drafts/:id/items/:index`, `F07-1b`; форма показа для
+ * `F07-3`): ровно одно поле заполнено - по блоку единицы записи; остальные `null`. Формы
+ * элементов - те же, что у тела импорта и ответа анализа версии (`PUT versions/:id/analysis`).
+ */
+export class AnalysisWriteValueDto {
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'A facts subfield (facts.<name>), mainIdea, titleMeaning, endingMeaning',
+  })
+  text!: string | null;
+
+  @ApiProperty({ type: [BookAnalysisCharacterDto], nullable: true })
+  characters!: BookAnalysisCharacterDto[] | null;
+
+  @ApiProperty({ type: [BookAnalysisKeyQuoteDto], nullable: true })
+  keyQuotes!: BookAnalysisKeyQuoteDto[] | null;
+
+  @ApiProperty({ type: [BookAnalysisStyleDto], nullable: true })
+  style!: BookAnalysisStyleDto[] | null;
+
+  @ApiProperty({ type: [BookAnalysisThemeDto], nullable: true })
+  themes!: BookAnalysisThemeDto[] | null;
+
+  @ApiProperty({ type: [BookAnalysisSymbolDto], nullable: true })
+  symbols!: BookAnalysisSymbolDto[] | null;
+}
+
 export class AnalysisWriteItemDto {
   @ApiProperty({ type: Number, description: 'Index of the block in the run' })
   index!: number;
@@ -218,6 +255,40 @@ export class AnalysisWriteItemDto {
     description: 'themeKeys of step 3 in the characters or key quotations of steps 1-2',
   })
   links!: boolean;
+
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'The last regeneration gave no text: the previous content stays, this is why',
+  })
+  regenFailedReason!: string | null;
+
+  @ApiProperty({ type: Boolean, description: 'A regeneration of this block is running' })
+  regenerating!: boolean;
+
+  @ApiProperty({
+    type: String,
+    format: 'uuid',
+    nullable: true,
+    description: 'Operation of the running regeneration',
+  })
+  regenOperationId!: string | null;
+
+  @ApiProperty({
+    enum: LlmOperationStatus,
+    enumName: 'LlmOperationStatus',
+    nullable: true,
+    description: 'Status of the regeneration operation; null - no regeneration is running',
+  })
+  regenOperationStatus!: LlmOperationStatus | null;
+
+  @ApiProperty({
+    enum: LlmPauseReason,
+    enumName: 'LlmPauseReason',
+    nullable: true,
+    description: 'Why the regeneration operation is paused; null - not paused',
+  })
+  regenPauseReason!: LlmPauseReason | null;
 }
 
 export class AnalysisWriteDto {

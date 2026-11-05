@@ -32,6 +32,25 @@ export const ANALYSIS_TARGETS = [
 ] as const;
 export type AnalysisTarget = (typeof ANALYSIS_TARGETS)[number];
 
+/** Подполе `facts` единицы записи `facts.<подполе>`; блок целиком - `null`. */
+export const factField = (target: AnalysisTarget): FillableFact | null =>
+  target.startsWith('facts.') ? (target.slice('facts.'.length) as FillableFact) : null;
+
+/** Блок анализа единицы записи: `facts.<подполе>` - блок `facts`. */
+export const blockOfTarget = (target: AnalysisTarget): string =>
+  target.startsWith('facts.') ? 'facts' : target;
+
+/**
+ * Путь поля (`keyQuotes.2`, `facts.settingTime`, `characters[key=anna]`) лежит в единице записи:
+ * совпадает с ней или продолжает её через границу сегмента - `facts.setting` не держит
+ * `facts.settingTime`.
+ */
+export function pathInTarget(path: string, target: AnalysisTarget): boolean {
+  // Путь блока `facts` целиком относится и к каждому его подполю.
+  if (factField(target) !== null && path === 'facts') return true;
+  return path === target || ['.', '[', ':'].some((edge) => path.startsWith(`${target}${edge}`));
+}
+
 export type AnalysisStepNumber = 1 | 2 | 3;
 
 /** Блоки, которые пишет шаг (`product.md` §2); `themeKeys` шага 3 - отдельными элементами. */
@@ -172,8 +191,33 @@ export interface AnalysisItem {
   failedReason: string | null;
   /** `themeKeys` шага 3 в блоке шагов 1-2 (`characters`, `keyQuotes`), а не текст шага. */
   links: boolean;
+  /** Идёт перегенерация блока своей операцией (`F07-1b`); `null` - нет. */
+  regen: AnalysisRegen | null;
+  /** Почему последняя перегенерация не дала текста; `null` - не было или удалась. */
+  regenFailedReason: string | null;
+  /**
+   * Выброшенные цитаты итога перегенерации, пока он не в анализе: итог входит в `merged` и
+   * `droppedQuotes` хода только записью или «Accept» (`withRegenTaken`); отброшенный - не входит.
+   * Нет (`null`/нет поля) - блок не из перегенерации или итог уже взят.
+   */
+  pendingDropped?: DroppedQuote[] | null;
   /** Элемент не той формы - сохранён как был, место в `items` не сдвигается. */
   broken?: unknown;
+}
+
+/**
+ * Перегенерация блока хода `ready` (`F07-1b`, образец `WriteItem.regen` пересказа): своя операция,
+ * замечание редактора в промпт автора, оплаченный текст до итога (`pending`, как у шага хода).
+ */
+export interface AnalysisRegen {
+  operationId: string;
+  remark: string | null;
+  pending: PendingStep | null;
+  /**
+   * Блок до итога перегенерации: итог ждёт решения (`waiting`), а отмена или сбой между записью
+   * итога и решением возвращают блок как был, а не оставляют его ждущим навсегда.
+   */
+  previous: AnalysisItem | null;
 }
 
 /** Оплаченный текст шага до итога (как `PendingText` хода пересказа, решение `F06 | F06-2`, Р3). */
@@ -236,21 +280,22 @@ export function stableJson(value: unknown): string {
 export const blockPrint = (value: unknown): string =>
   createHash('sha256').update(stableJson(value)).digest('hex');
 
+/** Шаг, который пишет темы и их связи с героями и цитатами (`themeLinks`). */
+export const THEMES_STEP = (Object.keys(STEP_TARGETS).map(Number) as AnalysisStepNumber[]).find(
+  (step) => STEP_TARGETS[step].includes('themes'),
+) as AnalysisStepNumber;
+
 /** Содержимое единицы записи в сохранённом анализе: блок или подполе `facts`. */
 export function targetValue(stored: StoredBookAnalysis, target: AnalysisTarget): unknown {
-  if (target.startsWith('facts.')) {
-    const field = target.slice('facts.'.length) as FillableFact;
-    return stored.facts?.[field] ?? null;
-  }
+  const field = factField(target);
+  if (field) return stored.facts?.[field] ?? null;
   return stored[target as Exclude<AnalysisTarget, `facts.${string}`>] ?? null;
 }
 
 /** Содержимое единицы записи в итоге шага: блок или подполе `facts`; нет - `undefined`. */
 export function blocksValue(blocks: StepBlocks, target: AnalysisTarget): unknown {
-  if (target.startsWith('facts.')) {
-    const field = target.slice('facts.'.length) as FillableFact;
-    return blocks.facts?.[field] ?? undefined;
-  }
+  const field = factField(target);
+  if (field) return blocks.facts?.[field] ?? undefined;
   return blocks[target as keyof StepBlocks];
 }
 
@@ -419,6 +464,8 @@ function brokenItem(v: unknown): AnalysisItem {
     value: null,
     failedReason: DRAFT_DATA_INVALID,
     links: false,
+    regen: null,
+    regenFailedReason: null,
     broken: v ?? null,
   };
 }
@@ -441,6 +488,157 @@ function itemOf(v: unknown): AnalysisItem {
     value: v.value ?? null,
     failedReason: str(v.failedReason),
     links: v.links === true,
+    regen: regenOf(v.regen),
+    regenFailedReason: str(v.regenFailedReason),
+    pendingDropped: Array.isArray(v.pendingDropped) ? droppedQuotesOf(v.pendingDropped) : null,
+  };
+}
+
+function regenOf(v: unknown): AnalysisRegen | null {
+  if (!isRecord(v)) return null;
+  const operationId = str(v.operationId);
+  if (operationId === null) return null;
+  const previous = isRecord(v.previous) ? itemOf(v.previous) : null;
+  return {
+    operationId,
+    remark: str(v.remark),
+    pending: pendingOf(v.pending),
+    previous: previous && !('broken' in previous) ? { ...previous, regen: null } : null,
+  };
+}
+
+/** Блоки шага из одной единицы записи: блок или подполе `facts`; нет значения - пусто. */
+export function targetBlocks(target: AnalysisTarget, value: unknown): StepBlocks {
+  if (value === undefined) return {};
+  const field = factField(target);
+  return (field ? { facts: { [field]: value } } : { [target]: value }) as StepBlocks;
+}
+
+/** Блоки шага без единицы записи `target` (у `facts` - без подполя). */
+export function withoutTarget(blocks: StepBlocks, target: AnalysisTarget): StepBlocks {
+  const field = factField(target);
+  const out: Record<string, unknown> = { ...blocks };
+  if (!field) {
+    delete out[target];
+    return out as StepBlocks;
+  }
+  if (!blocks.facts) return blocks;
+  const facts: Record<string, unknown> = { ...blocks.facts };
+  delete facts[field];
+  if (Object.keys(facts).length > 0) out.facts = facts;
+  else delete out.facts;
+  return out as StepBlocks;
+}
+
+/** Итоги шага поверх итогов прошлых шагов; `facts` - по подполям. */
+export function mergeSteps(merged: StepBlocks, blocks: StepBlocks): StepBlocks {
+  const out: StepBlocks = { ...merged, ...blocks };
+  if (merged.facts && blocks.facts) out.facts = { ...merged.facts, ...blocks.facts };
+  return out;
+}
+
+/**
+ * Основа перегенерации в промпт (`tech.md` §2:42): у блока в анализе (записан ходом или принят) -
+ * сохранённое содержимое, с ключами, которые мог добавить редактор; у предложения и не записанного -
+ * содержимое хода, а нет его - сохранённое.
+ */
+export function regenBase(item: AnalysisItem, stored: StoredBookAnalysis): unknown {
+  const saved = targetValue(stored, item.target);
+  if (item.outcome === 'written' || item.outcome === 'accepted') return saved;
+  return item.value ?? saved;
+}
+
+/** Итог перегенерации блока: содержимое, флаги блока и выброшенные цитаты. */
+export interface RegenResult {
+  value: unknown;
+  verdict: AnalysisVerdict;
+  remarks: DraftRemark[];
+  review: ReviewState | null;
+  droppedQuotes: DroppedQuote[];
+}
+
+/**
+ * Итог перегенерации в данных хода: блок ждёт решения о записи (`settleStep` с `only`), прежний
+ * блок - в `regen.previous` (отмена до решения его вернёт, `withoutRegen`). `merged` и
+ * `droppedQuotes` хода итог не меняет, пока он не в анализе (`withRegenTaken`): отброшенный итог не
+ * уходит в промпты и проверки следующих перегенераций. Запись шага (`steps[]`) не меняется: она -
+ * итог шага хода, флаги перегенерации - у блока.
+ */
+export function withRegenerated(
+  data: AnalysisWriteData,
+  index: number,
+  result: RegenResult,
+): AnalysisWriteData {
+  const current = data.items[index];
+  return withItem(data, index, {
+    verdict: result.verdict,
+    remarks: result.remarks,
+    review: result.review,
+    outcome: 'waiting',
+    hash: null,
+    value: result.value,
+    failedReason: null,
+    regenFailedReason: null,
+    pendingDropped: result.droppedQuotes,
+    regen: current.regen
+      ? { ...current.regen, pending: null, previous: { ...current, regen: null } }
+      : null,
+  });
+}
+
+/**
+ * Блок без отметки перегенерации: ждущий итог (`waiting`) не решён - блок как до неё
+ * (`previous`); `failedReason` - причина, почему перегенерация не дала текста.
+ */
+export function withoutRegen(
+  data: AnalysisWriteData,
+  index: number,
+  failedReason: string | null,
+): AnalysisWriteData {
+  const current = data.items[index];
+  const restored =
+    current.outcome === 'waiting' && current.regen?.previous ? current.regen.previous : current;
+  return withItem(data, index, {
+    ...restored,
+    regen: null,
+    pendingDropped: restored.pendingDropped ?? null,
+    regenFailedReason: failedReason ?? restored.regenFailedReason,
+  });
+}
+
+/**
+ * Итог перегенерации в анализе (записан или принят «Accept»): в `merged` хода - значение, которое
+ * фактически записано в анализ (`written`, с влитыми `themeKeys`), выброшенные цитаты этой единицы
+ * записи и шага - итога. Блок не из перегенерации - данные как есть.
+ */
+export function withRegenTaken(
+  data: AnalysisWriteData,
+  index: number,
+  written: unknown,
+): AnalysisWriteData {
+  const item = data.items[index];
+  if (!item?.pendingDropped) return data;
+  return {
+    ...withItem(data, index, { pendingDropped: null }),
+    merged: mergeSteps(data.merged, targetBlocks(item.target, written)),
+    droppedQuotes: [
+      ...data.droppedQuotes.filter(
+        (d) => !(d.step === item.step && pathInTarget(d.path, item.target)),
+      ),
+      ...item.pendingDropped,
+    ],
+  };
+}
+
+/** Данные хода с заменённым элементом `index` (правка полей, остальное - как есть). */
+export function withItem(
+  data: AnalysisWriteData,
+  index: number,
+  patch: Partial<AnalysisItem>,
+): AnalysisWriteData {
+  return {
+    ...data,
+    items: data.items.map((item, i) => (i === index ? { ...item, ...patch } : item)),
   };
 }
 

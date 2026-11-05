@@ -1,9 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-  NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ContentDraft, Language, LlmOperation, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { uniqueViolationFields } from '../../../shared/prisma/prisma-error.util';
@@ -34,6 +29,13 @@ import {
   DraftContext,
 } from '../content-draft/content-draft.service';
 import { htmlToParagraphs } from '../content-draft/content-draft.text';
+import {
+  acceptInTurn,
+  regenFieldsOf,
+  regenOperationIds,
+  RegenOperationState,
+  regenOperationStates,
+} from '../draft-quality/run-regen';
 import {
   SummaryWriteDto,
   SummaryWriteEstimateDto,
@@ -375,24 +377,11 @@ export class SummaryWriteService {
           TARGET_ORDER[a.item.target] - TARGET_ORDER[b.item.target] ||
           (a.item.number ?? 0) - (b.item.number ?? 0),
       );
-    const accepted: number[] = [];
-    for (const { index } of order) {
-      try {
-        await this.fields.accept(row, index, false);
-      } catch (error) {
-        // По одному (`tech.md` §5): отказ - 409 с тем, что уже записано, и пустым списком тоже:
-        // клиент отличает «ничего не записано» от «неизвестно» (ревью `F06-3`, перенесено в `F06-5`).
-        if (error instanceof ConflictException) {
-          const body = error.getResponse();
-          throw new ConflictException({
-            ...(typeof body === 'object' ? body : { message: body }),
-            acceptedIndexes: accepted,
-          });
-        }
-        throw error;
-      }
-      accepted.push(index);
-    }
+    // По одному (`tech.md` §5): отказ - с тем, что уже записано (ревью `F06-3`, перенесено в `F06-5`).
+    await acceptInTurn(
+      (accepted) => order[accepted.length]?.index ?? null,
+      (index) => this.fields.accept(row, index, false),
+    );
     return this.get(id);
   }
 
@@ -587,17 +576,7 @@ export class SummaryWriteService {
       waitingFor = glossary ? 'glossary' : 'dossier';
     }
     // Статус и причина паузы перегенераций (F06-5c): одним запросом по идущим операциям.
-    const regenIds = regenOperations(row.data);
-    const regenOps = new Map(
-      regenIds.length === 0
-        ? []
-        : (
-            await this.prisma.llmOperation.findMany({
-              where: { id: { in: regenIds } },
-              select: { id: true, status: true, pauseReason: true },
-            })
-          ).map((op) => [op.id, op] as const),
-    );
+    const regenOps = await regenOperationStates(this.prisma, regenOperations(row.data));
     return {
       id: row.id,
       bookVersionId: row.bookVersionId,
@@ -652,18 +631,13 @@ async function assertNoLiveRun(tx: Prisma.TransactionClient, versionId: string):
 }
 
 /** Операции перегенераций, идущих у текстов хода. */
-function regenOperations(data: unknown): string[] {
-  return readWriteData(data).items.flatMap((i) => (i.regen ? [i.regen.operationId] : []));
-}
-
-type RegenOperationState = Pick<LlmOperation, 'id' | 'status' | 'pauseReason'>;
+const regenOperations = (data: unknown): string[] => regenOperationIds(readWriteData(data).items);
 
 function itemDto(
   item: WriteItem,
   index: number,
   regenOps: ReadonlyMap<string, RegenOperationState>,
 ): SummaryWriteItemDto {
-  const regenOp = item.regen ? regenOps.get(item.regen.operationId) : undefined;
   return {
     index,
     target: item.target,
@@ -684,9 +658,6 @@ function itemDto(
     failedReason: item.failedReason,
     authorModel: item.authorModel,
     regenFailedReason: item.regenFailedReason,
-    regenerating: item.regen !== null,
-    regenOperationId: item.regen?.operationId ?? null,
-    regenOperationStatus: regenOp?.status ?? null,
-    regenPauseReason: regenOp?.pauseReason ?? null,
+    ...regenFieldsOf(item.regen, regenOps),
   };
 }

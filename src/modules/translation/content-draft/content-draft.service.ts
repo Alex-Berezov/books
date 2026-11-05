@@ -47,6 +47,7 @@ import {
 } from './content-draft.constants';
 import { AnalysisDraftJson, draftBlocksOf, DroppedQuote } from './content-draft.analysis';
 import { analysisDraftRequest } from './content-draft.prompts';
+import type { RunKind } from '../draft-quality/run-regen';
 import { chaptersText, htmlToParagraphs } from './content-draft.text';
 
 /** Данные заготовки Analysis в `ContentDraft.data`. */
@@ -290,6 +291,21 @@ export class ContentDraftService implements OnApplicationBootstrap {
     if (!row || !isDraftKind(row.kind)) throw new NotFoundException('Content draft not found');
     await this.dropRow(id, row.operationId, row.status === 'building');
     return this.get(id);
+  }
+
+  /**
+   * Вид хода для общих ручек `content-drafts/:id/*` (`F07-1b`, решение арбитра `F07 | F07-1`, В6):
+   * одна выборка строки; нет строки или вид не ход (заготовка, снятый вид) - 404.
+   */
+  async runKindOf(id: string): Promise<RunKind> {
+    const row = await this.prisma.contentDraft.findUnique({
+      where: { id },
+      select: { kind: true },
+    });
+    if (row?.kind !== 'summary_write' && row?.kind !== 'analysis_write') {
+      throw new NotFoundException('Run not found');
+    }
+    return row.kind;
   }
 
   /** Строящаяся - отмена операции и `discarded` одной транзакцией (В10), иначе только статус. */

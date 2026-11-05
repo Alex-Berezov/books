@@ -10,6 +10,12 @@ import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-wor
 import { chapterPages } from '../chapter-pages';
 import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { runQualityLoop } from '../draft-quality/quality-loop';
+import {
+  clearRegenMarkOf,
+  regenResumeOf,
+  runTaskInput,
+  runTaskPayload,
+} from '../draft-quality/run-regen';
 import { ChapterIndex, indexChapters } from '../draft-quality/quote-check';
 import { PAUSE_BY_FAILURE } from '../pause-by-failure';
 import { runStageModels } from '../run/run-models';
@@ -56,32 +62,11 @@ import {
 } from './summary-write.parts';
 
 /** Задача хода (`index` нет) или перегенерации текста `index` (`tech.md` §4, Р2). */
-export function summaryWriteTaskInput(
+export const summaryWriteTaskInput = (
   row: Pick<ContentDraft, 'id' | 'bookVersionId' | 'language'>,
   operationId: string,
   index: number | null = null,
-): EnqueueTaskInput {
-  return {
-    kind: SUMMARY_WRITE_TASK_KIND,
-    operationId,
-    bookVersionId: row.bookVersionId,
-    language: row.language,
-    payload: index === null ? { draftId: row.id } : { draftId: row.id, index },
-    pairKey: index === null ? `${operationId}:${row.id}` : `${operationId}:${row.id}:${index}`,
-  };
-}
-
-function payloadOf(task: LlmTask): { draftId: string | null; index: number | null } {
-  const p = (task.payload ?? {}) as Record<string, unknown>;
-  return {
-    draftId: typeof p.draftId === 'string' ? p.draftId : null,
-    index: Number.isInteger(p.index) ? (p.index as number) : null,
-  };
-}
-
-/** Запрос `data @>`: строка хода, у текста которой идёт перегенерация операцией `operationId` (Р2). */
-const regenProbe = (operationId: string): string =>
-  JSON.stringify({ items: [{ regen: { operationId } }] });
+): EnqueueTaskInput => runTaskInput(SUMMARY_WRITE_TASK_KIND, row, operationId, index);
 
 /** Как сохраняется оплаченный текст до итога части: ход - в данных хода, перегенерация - в своём тексте. */
 type PendingSlot = {
@@ -132,17 +117,8 @@ export class SummaryWriteHandler {
    * «Continue» операции перегенерации (Р2): её строку `findUnique` по `operationId` не находит -
    * строка ищется по `data @> regen.operationId`; задача - только пока перегенерация её.
    */
-  async regenResume(op: LlmOperation): Promise<EnqueueTaskInput[]> {
-    const rows = await this.prisma.$queryRaw<Array<{ id: string }>>`
-      SELECT "id" FROM "ContentDraft"
-      WHERE "kind" = 'summary_write' AND "status" = 'ready'
-        AND "data" @> ${regenProbe(op.id)}::jsonb
-      LIMIT 1`;
-    if (rows.length === 0) return [];
-    const row = await this.prisma.contentDraft.findUnique({ where: { id: rows[0].id } });
-    if (!row) return [];
-    const index = readWriteData(row.data).items.findIndex((i) => i.regen?.operationId === op.id);
-    return index < 0 ? [] : [summaryWriteTaskInput(row, op.id, index)];
+  regenResume(op: LlmOperation): Promise<EnqueueTaskInput[]> {
+    return regenResumeOf(this.prisma, 'summary_write', op, (data) => readWriteData(data).items);
   }
 
   /** Отмена операции перегенерации: снимается отметка у её текста, ход остаётся `ready` (Р2). */
@@ -151,26 +127,16 @@ export class SummaryWriteHandler {
   }
 
   /** Отметка перегенерации `operationId` снимается у её текста в транзакции отмены. */
-  async clearRegenMark(operationId: string, tx: Prisma.TransactionClient): Promise<void> {
-    const rows = await tx.$queryRaw<Array<{ id: string; bookVersionId: string }>>`
-      SELECT "id", "bookVersionId" FROM "ContentDraft"
-      WHERE "kind" = 'summary_write' AND "data" @> ${regenProbe(operationId)}::jsonb
-      LIMIT 1`;
-    if (rows.length === 0) return;
-    await lockSummary(tx, rows[0].bookVersionId);
-    const row = await tx.contentDraft.findUnique({ where: { id: rows[0].id } });
-    if (!row) return;
-    const data = readWriteData(row.data);
-    const index = data.items.findIndex((i) => i.regen?.operationId === operationId);
-    if (index < 0) return;
-    await tx.contentDraft.update({
-      where: { id: row.id },
-      data: { data: toJson(withItem(data, index, { regen: null })) },
+  clearRegenMark(operationId: string, tx: Prisma.TransactionClient): Promise<void> {
+    return clearRegenMarkOf(tx, 'summary_write', operationId, {
+      lock: lockSummary,
+      read: readWriteData,
+      clear: (data, index) => toJson(withItem(data, index, { regen: null })),
     });
   }
 
   private async run(task: LlmTask, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
-    const { draftId, index } = payloadOf(task);
+    const { draftId, index } = runTaskPayload(task);
     const row = draftId
       ? await this.prisma.contentDraft.findUnique({ where: { id: draftId } })
       : null;

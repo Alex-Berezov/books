@@ -16,12 +16,14 @@ import {
   ApiBadRequestResponse,
   ApiBearerAuth,
   ApiConflictResponse,
+  ApiExtraModels,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiParam,
   ApiServiceUnavailableResponse,
   ApiTags,
+  getSchemaPath,
 } from '@nestjs/swagger';
 import { Prisma } from '@prisma/client';
 import { Role, Roles } from '../../../common/decorators/roles.decorator';
@@ -44,6 +46,7 @@ import {
   AnalysisWriteDto,
   AnalysisWriteEstimateDto,
   AnalysisWriteStateDto,
+  AnalysisWriteValueDto,
 } from '../dto/analysis-write-response.dto';
 import { AnalysisWriteService } from '../analysis-write/analysis-write.service';
 import { CONTENT_DRAFT_KINDS, DraftKind } from './content-draft.constants';
@@ -102,8 +105,18 @@ const ANALYSIS_ESTIMATE_CONFLICTS = [
   STAGE_CONFLICTS,
 ].join('; ');
 
+/** Ответ общих ручек решений по ходу: форма зависит от вида строки (`F07-1b`, В6). */
+const RUN_RESPONSE = {
+  schema: {
+    oneOf: [{ $ref: getSchemaPath(SummaryWriteDto) }, { $ref: getSchemaPath(AnalysisWriteDto) }],
+  },
+};
+
 const ITEM_CONFLICTS =
   'SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated';
+
+const ANALYSIS_ITEM_CONFLICTS =
+  'ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated';
 
 const START_CONFLICTS =
   'DRAFT_IN_PROGRESS: a draft of this kind is being built; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model; LLM_NO_PRICE; LLM_STAGE_DISABLED';
@@ -117,6 +130,7 @@ const START_CONFLICTS =
  */
 @ApiTags('admin')
 @ApiBearerAuth()
+@ApiExtraModels(SummaryWriteDto, AnalysisWriteDto)
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin)
 @Controller('admin')
@@ -127,9 +141,24 @@ export class ContentDraftController {
     private readonly analysisWrite: AnalysisWriteService,
   ) {}
 
+  /**
+   * Развилка общих ручек `content-drafts/:id/*` по виду строки хода (`F07-1b`, решение арбитра
+   * `F07 | F07-1`, В6): одна выборка вида, дальше - сервис своего вида; иной вид или нет строки -
+   * 404 (`runKindOf`).
+   */
+  private async byKind<S, A>(
+    id: string,
+    summary: () => Promise<S>,
+    analysis: () => Promise<A>,
+  ): Promise<S | A> {
+    return (await this.drafts.runKindOf(id)) === 'analysis_write' ? analysis() : summary();
+  }
+
   // Ход анализа «Write Analysis» (`F07-1a`, `features/F07-analysis-autofill/tech.md` §5-§6):
   // литеральные маршруты выше `:kind` (решение арбитра `F07 | F07-1`, В6); `CONTENT_DRAFT_KINDS`
-  // не расширяется. Предложения, «Accept» и «Continue» хода - `F07-1b`.
+  // не расширяется. Предложения, «Accept», «Regenerate» и отмена хода - общие ручки
+  // `content-drafts/:id/*` ниже, вид строки выбирает `byKind`; содержимое предложения хода
+  // анализа - `GET content-drafts/:id/items/:index`.
 
   @Get('versions/:id/drafts/analysis_write/estimate')
   @ApiOperation({
@@ -234,97 +263,155 @@ export class ContentDraftController {
     );
   }
 
+  @Get('content-drafts/:id/items/:index')
+  @ApiOperation({
+    summary:
+      'The content of a proposal of a ready analysis run: one field by the kind of the block, the others null; the run answer does not carry it',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiParam({ name: 'index', type: Number })
+  @ApiOkResponse({ type: AnalysisWriteValueDto })
+  @ApiBadRequestResponse({ description: 'ANALYSIS_ITEM_UNKNOWN: the run has no such block' })
+  @ApiNotFoundResponse({
+    description: 'Analysis run not found (a summary run and a draft of another kind too)',
+  })
+  @ApiConflictResponse({
+    description:
+      'ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED: the block is not a proposal',
+  })
+  async proposal(
+    @Param('id') id: string,
+    @Param('index', ParseIntPipe) index: number,
+  ): Promise<AnalysisWriteValueDto> {
+    // Одна выборка строки - в сервисе анализа: ход пересказа (его текст - в его ответе), заготовка и
+    // иной вид - 404 там же.
+    return this.analysisWrite.proposal(id, index);
+  }
+
   @Post('content-drafts/:id/items/:index/regenerate')
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary:
-      'Regenerate one text of a ready summary run under its own operation, with the editor remark in the author prompt; the first text of a section also builds the full and the very short summary',
+      'Regenerate one text of a ready summary run (the first text of a section also builds the full and the very short summary) or one block of steps 1-2 of a ready analysis run, under its own operation, with the editor remark in the author prompt; the kind of the run is taken from its row',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiParam({ name: 'index', type: Number })
-  @ApiAcceptedResponse({ type: SummaryWriteDto })
-  @ApiBadRequestResponse({ description: 'SUMMARY_ITEM_UNKNOWN: the run has no such text' })
-  @ApiNotFoundResponse({ description: 'Summary run not found' })
+  @ApiAcceptedResponse(RUN_RESPONSE)
+  @ApiBadRequestResponse({
+    description: 'SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block',
+  })
+  @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
   @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); LLM_CEILING_REACHED`,
+    description: `${ITEM_CONFLICTS}; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_REGENERABLE: only the blocks of steps 1-2 are regenerated; LLM_CEILING_REACHED`,
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
-  regenerate(
+  async regenerate(
     @Param('id') id: string,
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: RegenerateSummaryItemDto,
     @Req() req: { user: RequestUser },
-  ): Promise<SummaryWriteDto> {
-    return this.summaryWrite.regenerate(id, index, dto.remark || null, req.user.userId);
+  ): Promise<SummaryWriteDto | AnalysisWriteDto> {
+    return this.byKind(
+      id,
+      () => this.summaryWrite.regenerate(id, index, dto.remark || null, req.user.userId),
+      () => this.analysisWrite.regenerate(id, index, dto.remark || null, req.user.userId),
+    );
   }
 
   @Post('content-drafts/:id/items/:index/accept')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Accept a proposal of the summary run into its field when the field has not changed since; a section replaces the section of the same number, numbering never changes; beyond the last section - added at the end',
+      'Accept a proposal of the summary run into its field when the field has not changed since (a section replaces the section of the same number, numbering never changes; beyond the last section - added at the end), or a proposal of the analysis run into its block when the content of the block has not changed since; the kind of the run is taken from its row',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiParam({ name: 'index', type: Number })
-  @ApiOkResponse({ type: SummaryWriteDto })
-  @ApiBadRequestResponse({ description: 'SUMMARY_ITEM_UNKNOWN: the run has no such text' })
-  @ApiNotFoundResponse({ description: 'Summary run not found' })
-  @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange`,
+  @ApiOkResponse(RUN_RESPONSE)
+  @ApiBadRequestResponse({
+    description: 'SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block',
   })
-  accept(
+  @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
+  @ApiConflictResponse({
+    description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors)`,
+  })
+  async accept(
     @Param('id') id: string,
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: AcceptSummaryItemDto,
-  ): Promise<SummaryWriteDto> {
-    return this.summaryWrite.accept(id, index, dto.confirmChapterChange === true);
+  ): Promise<SummaryWriteDto | AnalysisWriteDto> {
+    return this.byKind(
+      id,
+      () => this.summaryWrite.accept(id, index, dto.confirmChapterChange === true),
+      () => this.analysisWrite.accept(id, index),
+    );
   }
 
   @Post('content-drafts/:id/items/:index/discard')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Discard a proposal of the summary run: the field is not touched' })
+  @ApiOperation({
+    summary:
+      'Discard a proposal of a summary or analysis run: the field or the block is not touched',
+  })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiParam({ name: 'index', type: Number })
-  @ApiOkResponse({ type: SummaryWriteDto })
-  @ApiBadRequestResponse({ description: 'SUMMARY_ITEM_UNKNOWN: the run has no such text' })
-  @ApiNotFoundResponse({ description: 'Summary run not found' })
-  @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal`,
+  @ApiOkResponse(RUN_RESPONSE)
+  @ApiBadRequestResponse({
+    description: 'SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block',
   })
-  discardItem(
+  @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
+  @ApiConflictResponse({
+    description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal`,
+  })
+  async discardItem(
     @Param('id') id: string,
     @Param('index', ParseIntPipe) index: number,
-  ): Promise<SummaryWriteDto> {
-    return this.summaryWrite.discardItem(id, index);
+  ): Promise<SummaryWriteDto | AnalysisWriteDto> {
+    return this.byKind(
+      id,
+      () => this.summaryWrite.discardItem(id, index),
+      () => this.analysisWrite.discardItem(id, index),
+    );
   }
 
   @Post('content-drafts/:id/discard-run')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Discard a summary run: one being built cancels its operation; the regenerations of its texts are cancelled; the fields are not touched',
+      'Discard a summary or analysis run: one being built cancels its operation; the regenerations of its texts or blocks are cancelled; the fields and the blocks are not touched',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: SummaryWriteDto })
-  @ApiNotFoundResponse({ description: 'Summary run not found (a draft of another kind too)' })
-  discardRun(@Param('id') id: string): Promise<SummaryWriteDto> {
-    return this.summaryWrite.discard(id);
+  @ApiOkResponse(RUN_RESPONSE)
+  @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
+  @ApiConflictResponse({
+    description:
+      'ANALYSIS_REGEN_IN_PROGRESS: an analysis run - a regeneration of its blocks keeps starting while the run is discarded, discard again',
+  })
+  async discardRun(@Param('id') id: string): Promise<SummaryWriteDto | AnalysisWriteDto> {
+    return this.byKind(
+      id,
+      () => this.summaryWrite.discard(id),
+      () => this.analysisWrite.discard(id),
+    );
   }
 
   @Post('content-drafts/:id/accept-all')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
     summary:
-      'Accept all proposals of the summary run one by one: sections by number, then the full and the very short summary',
+      'Accept all proposals of the run one by one: a summary run - sections by number, then the full and the very short summary; an analysis run - interpretations, characters, key quotations, then the theme links',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: SummaryWriteDto })
-  @ApiNotFoundResponse({ description: 'Summary run not found' })
+  @ApiOkResponse(RUN_RESPONSE)
+  @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
   @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal`,
+    description: `${ITEM_CONFLICTS}; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (acceptedIndexes - what is written already). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal and the answer is 200`,
   })
-  acceptAll(@Param('id') id: string): Promise<SummaryWriteDto> {
-    return this.summaryWrite.acceptAll(id);
+  async acceptAll(@Param('id') id: string): Promise<SummaryWriteDto | AnalysisWriteDto> {
+    return this.byKind(
+      id,
+      () => this.summaryWrite.acceptAll(id),
+      () => this.analysisWrite.acceptAll(id),
+    );
   }
 
   @Get('versions/:id/drafts/:kind/estimate')

@@ -1137,6 +1137,39 @@
             ],
             "type": "string"
           },
+          "regenFailedReason": {
+            "description": "The last regeneration gave no text: the previous content stays, this is why",
+            "nullable": true,
+            "type": "string"
+          },
+          "regenOperationId": {
+            "description": "Operation of the running regeneration",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "regenOperationStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationStatus"
+              }
+            ],
+            "description": "Status of the regeneration operation; null - no regeneration is running",
+            "nullable": true
+          },
+          "regenPauseReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmPauseReason"
+              }
+            ],
+            "description": "Why the regeneration operation is paused; null - not paused",
+            "nullable": true
+          },
+          "regenerating": {
+            "description": "A regeneration of this block is running",
+            "type": "boolean"
+          },
           "remarks": {
             "items": {
               "$ref": "#/components/schemas/AnalysisWriteRemarkDto"
@@ -1196,7 +1229,12 @@
           "review",
           "outcome",
           "failedReason",
-          "links"
+          "links",
+          "regenFailedReason",
+          "regenerating",
+          "regenOperationId",
+          "regenOperationStatus",
+          "regenPauseReason"
         ],
         "type": "object"
       },
@@ -1374,6 +1412,59 @@
           "review",
           "source",
           "dropped"
+        ],
+        "type": "object"
+      },
+      "AnalysisWriteValueDto": {
+        "properties": {
+          "characters": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisCharacterDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "keyQuotes": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisKeyQuoteDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "style": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisStyleDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "symbols": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisSymbolDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "text": {
+            "description": "A facts subfield (facts.<name>), mainIdea, titleMeaning, endingMeaning",
+            "nullable": true,
+            "type": "string"
+          },
+          "themes": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisThemeDto"
+            },
+            "nullable": true,
+            "type": "array"
+          }
+        },
+        "required": [
+          "text",
+          "characters",
+          "keyQuotes",
+          "style",
+          "themes",
+          "symbols"
         ],
         "type": "object"
       },
@@ -32332,17 +32423,24 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SummaryWriteDto"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SummaryWriteDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnalysisWriteDto"
+                    }
+                  ]
                 }
               }
             },
             "description": ""
           },
           "404": {
-            "description": "Summary run not found"
+            "description": "Run not found (a draft of another kind too)"
           },
           "409": {
-            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal"
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (acceptedIndexes - what is written already). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal and the answer is 200"
           }
         },
         "security": [
@@ -32350,7 +32448,7 @@
             "bearer": []
           }
         ],
-        "summary": "Accept all proposals of the summary run one by one: sections by number, then the full and the very short summary",
+        "summary": "Accept all proposals of the run one by one: a summary run - sections by number, then the full and the very short summary; an analysis run - interpretations, characters, key quotations, then the theme links",
         "tags": [
           "admin"
         ]
@@ -32415,14 +32513,24 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SummaryWriteDto"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SummaryWriteDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnalysisWriteDto"
+                    }
+                  ]
                 }
               }
             },
             "description": ""
           },
           "404": {
-            "description": "Summary run not found (a draft of another kind too)"
+            "description": "Run not found (a draft of another kind too)"
+          },
+          "409": {
+            "description": "ANALYSIS_REGEN_IN_PROGRESS: an analysis run - a regeneration of its blocks keeps starting while the run is discarded, discard again"
           }
         },
         "security": [
@@ -32430,7 +32538,61 @@
             "bearer": []
           }
         ],
-        "summary": "Discard a summary run: one being built cancels its operation; the regenerations of its texts are cancelled; the fields are not touched",
+        "summary": "Discard a summary or analysis run: one being built cancels its operation; the regenerations of its texts or blocks are cancelled; the fields and the blocks are not touched",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/content-drafts/{id}/items/{index}": {
+      "get": {
+        "operationId": "ContentDraftController_proposal",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "index",
+            "required": true,
+            "schema": {
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisWriteValueDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "ANALYSIS_ITEM_UNKNOWN: the run has no such block"
+          },
+          "404": {
+            "description": "Analysis run not found (a summary run and a draft of another kind too)"
+          },
+          "409": {
+            "description": "ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED: the block is not a proposal"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The content of a proposal of a ready analysis run: one field by the kind of the block, the others null; the run answer does not carry it",
         "tags": [
           "admin"
         ]
@@ -32473,20 +32635,27 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SummaryWriteDto"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SummaryWriteDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnalysisWriteDto"
+                    }
+                  ]
                 }
               }
             },
             "description": ""
           },
           "400": {
-            "description": "SUMMARY_ITEM_UNKNOWN: the run has no such text"
+            "description": "SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block"
           },
           "404": {
-            "description": "Summary run not found"
+            "description": "Run not found (a draft of another kind too)"
           },
           "409": {
-            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange"
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors)"
           }
         },
         "security": [
@@ -32494,7 +32663,7 @@
             "bearer": []
           }
         ],
-        "summary": "Accept a proposal of the summary run into its field when the field has not changed since; a section replaces the section of the same number, numbering never changes; beyond the last section - added at the end",
+        "summary": "Accept a proposal of the summary run into its field when the field has not changed since (a section replaces the section of the same number, numbering never changes; beyond the last section - added at the end), or a proposal of the analysis run into its block when the content of the block has not changed since; the kind of the run is taken from its row",
         "tags": [
           "admin"
         ]
@@ -32527,20 +32696,27 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SummaryWriteDto"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SummaryWriteDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnalysisWriteDto"
+                    }
+                  ]
                 }
               }
             },
             "description": ""
           },
           "400": {
-            "description": "SUMMARY_ITEM_UNKNOWN: the run has no such text"
+            "description": "SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block"
           },
           "404": {
-            "description": "Summary run not found"
+            "description": "Run not found (a draft of another kind too)"
           },
           "409": {
-            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal"
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal"
           }
         },
         "security": [
@@ -32548,7 +32724,7 @@
             "bearer": []
           }
         ],
-        "summary": "Discard a proposal of the summary run: the field is not touched",
+        "summary": "Discard a proposal of a summary or analysis run: the field or the block is not touched",
         "tags": [
           "admin"
         ]
@@ -32591,20 +32767,27 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SummaryWriteDto"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/SummaryWriteDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/AnalysisWriteDto"
+                    }
+                  ]
                 }
               }
             },
             "description": ""
           },
           "400": {
-            "description": "SUMMARY_ITEM_UNKNOWN: the run has no such text"
+            "description": "SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block"
           },
           "404": {
-            "description": "Summary run not found"
+            "description": "Run not found (a draft of another kind too)"
           },
           "409": {
-            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); LLM_CEILING_REACHED"
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_REGENERABLE: only the blocks of steps 1-2 are regenerated; LLM_CEILING_REACHED"
           },
           "503": {
             "description": "LLM_DISABLED: no OpenRouter key"
@@ -32615,7 +32798,7 @@
             "bearer": []
           }
         ],
-        "summary": "Regenerate one text of a ready summary run under its own operation, with the editor remark in the author prompt; the first text of a section also builds the full and the very short summary",
+        "summary": "Regenerate one text of a ready summary run (the first text of a section also builds the full and the very short summary) or one block of steps 1-2 of a ready analysis run, under its own operation, with the editor remark in the author prompt; the kind of the run is taken from its row",
         "tags": [
           "admin"
         ]

@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { ContentDraft, Language, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
@@ -12,10 +12,17 @@ import { BookAnalysisService } from '../../book-analysis/book-analysis.service';
 import { BOOK_ANALYSIS_LIMITS } from '../../book-analysis/dto/book-analysis-blocks.dto';
 import type { UpdateBookAnalysisDto } from '../../book-analysis/dto/update-book-analysis.dto';
 import { compactBlock } from '../../author/author-page-data';
-import { FillableFact } from '../content-draft/content-draft.analysis';
+import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
+import { analysisImportErrors } from '../content-draft/content-draft.analysis';
 import { codeRemark } from '../draft-quality/text-checks';
 import { blockOfPath, coreRemark } from './analysis-checks';
-import { ANALYSIS_STEPS } from './analysis-write.constants';
+import {
+  ANALYSIS_BLOCK_CHANGED,
+  ANALYSIS_ITEM_NOT_PROPOSED,
+  ANALYSIS_REGEN_IN_PROGRESS,
+  ANALYSIS_STEPS,
+  ANALYSIS_WRITE_REFUSED,
+} from './analysis-write.constants';
 import {
   ANALYSIS_TARGETS,
   analysisDataJson,
@@ -23,32 +30,71 @@ import {
   AnalysisStepNumber,
   AnalysisTarget,
   AnalysisWriteData,
+  blockOfTarget,
   blockPrint,
+  factField,
   readAnalysisData,
   stableJson,
   StepFix,
   targetValue,
+  THEMES_STEP,
+  ThemeLinks,
+  withItem,
+  withRegenTaken,
 } from './analysis-write.data';
 import { quotePrint } from './analysis-write.steps';
 
 type Db = Prisma.TransactionClient;
 
 /**
- * Чья запись идёт: ход `building` своей операции. Не совпало - ход отбросили, отменили или он
- * кончился: ничего не пишется (`L-019`). Под замком строка хода берётся `FOR UPDATE`, а данные
- * пишутся условием `status = 'building'` той же операции: отмена со страницы операций
+ * Чья запись идёт: ход `building` своей операции, перегенерация блока своей операцией у хода
+ * `ready` или решение редактора по ходу `ready` (`F07-1b`). Не совпало - ход отбросили, отменили
+ * или он кончился: ничего не пишется (`L-019`). Под замком строка хода берётся `FOR UPDATE`, а
+ * данные пишутся условием статуса (и операции хода): отмена со страницы операций
  * (`onCancelled`) ждёт коммита записи шага и не проскакивает между проверкой и записью.
- * Решения редактора по ходу `ready` - `F07-1b`.
  */
 export interface AnalysisGate {
-  operationId: string;
-  allows: (row: ContentDraft) => boolean;
+  /** Статус строки, в котором пишутся данные; `building` - ещё и операция хода. */
+  status: 'building' | 'ready';
+  operationId: string | null;
+  allows: (row: ContentDraft, data: AnalysisWriteData) => boolean;
 }
 
 export const analysisRunGate = (operationId: string): AnalysisGate => ({
+  status: 'building',
   operationId,
   allows: (row) => row.status === 'building' && row.operationId === operationId,
 });
+
+/** Перегенерация блока `index` операцией `operationId`: пока отметка на блоке её. */
+export const analysisRegenGate = (operationId: string, index: number): AnalysisGate => ({
+  status: 'ready',
+  operationId,
+  allows: (row, data) =>
+    row.status === 'ready' && data.items[index]?.regen?.operationId === operationId,
+});
+
+/** Решения редактора по блокам хода `ready` (`tech.md` §5). */
+export const analysisReadyGate: AnalysisGate = {
+  status: 'ready',
+  operationId: null,
+  allows: (row) => row.status === 'ready',
+};
+
+const notProposed = () =>
+  llmTaskConflict(ANALYSIS_ITEM_NOT_PROPOSED, 'The block is not a proposal');
+const regenInProgress = () =>
+  llmTaskConflict(ANALYSIS_REGEN_IN_PROGRESS, 'This block is being regenerated');
+
+function blockChanged(current: unknown) {
+  return new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: ANALYSIS_BLOCK_CHANGED,
+    message: 'The block was changed after the proposal: reload it',
+    current: current ?? null,
+  });
+}
 
 /** Строка хода больше не принимает запись этой операции: транзакция откатывается. */
 class AnalysisRunGone extends Error {
@@ -94,13 +140,6 @@ interface StepPlan {
   /** `themeKeys` сверх предела импорта после слияния - отрезаны (`LIMIT_OUT`). */
   cut: StepFix[];
 }
-
-const factField = (target: AnalysisTarget): FillableFact | null =>
-  target.startsWith('facts.') ? (target.slice('facts.'.length) as FillableFact) : null;
-
-/** Блок анализа единицы записи: `facts.<подполе>` - блок `facts`. */
-const blockOfTarget = (target: AnalysisTarget): string =>
-  target.startsWith('facts.') ? 'facts' : target;
 
 /**
  * Ход вправе писать блок (`tech.md` §5): право на старте, версия не опубликована, и блок с
@@ -153,6 +192,68 @@ function linkThemes<T extends { themeKeys?: string[] | null }>(
   return changed ? out : null;
 }
 
+/** Блоки, в которые вливаются связи тем шага 3 (`themeKeys`). */
+const LINK_BLOCKS = ['characters', 'keyQuotes'] as const;
+type LinkBlock = (typeof LINK_BLOCKS)[number];
+
+const isLinkBlock = (target: string): target is LinkBlock =>
+  (LINK_BLOCKS as readonly string[]).includes(target);
+
+/**
+ * Список героев или цитат со связями тем - одна развилка ключа связи: герой - по `key`, цитата - по
+ * отпечатку текста. Ничего не добавилось - `null`.
+ */
+function linkBlock(
+  block: LinkBlock,
+  list: readonly unknown[],
+  links: ThemeLinks,
+  themeKeys: ReadonlySet<string>,
+  cut: StepFix[],
+): unknown[] | null {
+  return block === 'characters'
+    ? linkThemes(
+        list as Array<{ key: string; themeKeys?: string[] | null }>,
+        (c) => c.key,
+        links.characters,
+        themeKeys,
+        block,
+        cut,
+      )
+    : linkThemes(
+        list as Array<{ text: string; themeKeys?: string[] | null }>,
+        (q) => quotePrint(q.text),
+        links.keyQuotes,
+        themeKeys,
+        block,
+        cut,
+      );
+}
+
+/** Сохранённый блок героев или цитат со связями тем; ничего не добавилось - `null`. */
+const relinked = (
+  block: LinkBlock,
+  stored: StoredBookAnalysis,
+  links: ThemeLinks,
+  themeKeys: ReadonlySet<string>,
+  cut: StepFix[],
+): unknown[] | null => linkBlock(block, stored[block] ?? [], links, themeKeys, cut);
+
+/**
+ * Герои или цитаты шагов 1-2 с `themeKeys` из связей тем шага 3 хода по ключу героя и отпечатку
+ * цитаты (`tech.md` §2; решение арбитра `F07 | F07-1a`, А3): только ключи тем, которые есть в
+ * анализе (`themeKeys`), без повторов, в предел импорта. Связей нет - значение как есть.
+ */
+export function withThemeLinks(
+  target: AnalysisTarget,
+  value: unknown,
+  links: ThemeLinks | null,
+  themeKeys: ReadonlySet<string>,
+  cut: StepFix[],
+): unknown {
+  if (!links || !Array.isArray(value) || !isLinkBlock(target)) return value;
+  return linkBlock(target, value, links, themeKeys, cut) ?? value;
+}
+
 /**
  * Решение по ждущим блокам шага (`tech.md` §5): блок, который ход вправе писать, - в тело импорта;
  * остальное - предложение. `themeKeys` шага 3 (`tech.md` §2) вливаются в сохранённые `characters`
@@ -166,6 +267,7 @@ export function planStep(
   state: BlockState,
   language: Language,
   refusal: Refusal | null = null,
+  only?: number,
 ): StepPlan {
   const plan: StepPlan = {
     dto: null,
@@ -178,11 +280,18 @@ export function planStep(
   };
   const waiting = data.items
     .map((item, index) => ({ item, index }))
-    .filter(({ item }) => item.step === step && item.outcome === 'waiting');
+    .filter(
+      ({ item, index }) =>
+        item.outcome === 'waiting' && (only === undefined ? item.step === step : index === only),
+    );
   const refusedBlock = (target: AnalysisTarget): boolean =>
     refusal !== null && refusal.blocks.has(blockOfTarget(target));
+  // Перегенерация (`F07-1b`, как у пересказа): записанный блок она меняет только предложением,
+  // пустой (прошлый ответ не прошёл импорт) - пишет.
   const canWrite = (target: AnalysisTarget): boolean =>
-    writable(data, target, state) && !refusedBlock(target);
+    writable(data, target, state) &&
+    !refusedBlock(target) &&
+    (only === undefined || compactBlock(targetValue(state.stored, target)) === null);
   const themesItem = waiting.find(({ item }) => !item.links && item.target === 'themes');
   const themeKeys = new Set(
     (themesItem !== undefined && canWrite('themes')
@@ -193,25 +302,12 @@ export function planStep(
   const links = data.themeLinks ?? { characters: {}, keyQuotes: {} };
   for (const { item, index } of waiting) {
     let value: unknown = item.value;
+    // Перегенерация героев или цитат (`F07-1b`): связи тем шага 3 вливаются заново по ключам.
+    if (only !== undefined && !item.links) {
+      value = withThemeLinks(item.target, value, data.themeLinks, themeKeys, plan.cut);
+    }
     if (item.links) {
-      value =
-        item.target === 'characters'
-          ? linkThemes(
-              state.stored.characters ?? [],
-              (character) => character.key,
-              links.characters,
-              themeKeys,
-              'characters',
-              plan.cut,
-            )
-          : linkThemes(
-              state.stored.keyQuotes ?? [],
-              (quote) => quotePrint(quote.text),
-              links.keyQuotes,
-              themeKeys,
-              'keyQuotes',
-              plan.cut,
-            );
+      value = relinked(item.target as LinkBlock, state.stored, links, themeKeys, plan.cut);
       if (value === null) {
         plan.empty.push(index);
         continue;
@@ -223,12 +319,21 @@ export function planStep(
       continue;
     }
     plan.proposals.push(index);
+    // Перегенерация (`F07-1b`, `tech.md` §2): предложение несёт ошибки ссылок слитого объекта -
+    // элемент, на который остались ссылки, пропал из нового ответа - `IMPORT_INVALID` с путём поля.
+    if (only !== undefined && !(refusal !== null && refusedBlock(item.target))) {
+      const errors = analysisImportErrors(
+        state.stored,
+        importBodyOf(item.target, value, state.stored, language),
+      );
+      if (errors.length > 0) plan.refused.set(index, errors);
+    }
     if (refusal !== null && refusedBlock(item.target)) {
       const block = blockOfTarget(item.target);
-      plan.refused.set(
-        index,
-        refusal.errors.filter((error) => blockOfPath(error) === block),
-      );
+      const own = refusal.errors.filter((error) => blockOfPath(error) === block);
+      // Перегенерация (`F07-1b`): ссылка повисла в чужом блоке (герой пропал из ответа, а цитаты на
+      // него остались) - предложение несёт путь этой ссылки, а не молчит; шаг хода (К4) - прежний.
+      plan.refused.set(index, only !== undefined && own.length === 0 ? [...refusal.errors] : own);
     }
   }
   if (plan.writes.length === 0) return plan;
@@ -264,6 +369,203 @@ function samePlan(a: StepPlan, b: StepPlan): boolean {
       cut: plan.cut,
     });
   return form(a) === form(b);
+}
+
+/** Решение «Accept»: тело записи и блоки связей, которые ход пишет вместе с принятой темой. */
+interface AcceptPlan {
+  dto: UpdateBookAnalysisDto;
+  /** Блоки героев и цитат, которыми ход владеет: ключ принятой темы вливается записью (Б). */
+  linked: LinkBlock[];
+  /** `themeKeys`, отрезанные этой записью по пределу импорта, - `LIMIT_OUT` шага тем (В3). */
+  cut: StepFix[];
+}
+
+/**
+ * Тело записи принятого предложения: блок или подполе `facts` (остальные подполя - сохранённые:
+ * импорт заменяет `facts` целиком). Героям и цитатам - `themeKeys` из связей тем хода по тем
+ * темам, что есть в анализе сейчас (А3); блок связей (`links`) уже собран из сохранённого.
+ * Принятая тема (решение арбитра `F07 | F07-1b`, Б; `tech.md` §2:35-36) вливает свои ключи в
+ * героев и цитаты, которыми ход ещё владеет, той же записью; в прочие - предложениями
+ * (`applyAccept`).
+ */
+function acceptPlan(
+  data: AnalysisWriteData,
+  item: AnalysisItem,
+  state: BlockState,
+  language: Language,
+): AcceptPlan {
+  const cut: StepFix[] = [];
+  const value = item.links
+    ? item.value
+    : withThemeLinks(
+        item.target,
+        item.value,
+        data.themeLinks,
+        new Set((state.stored.themes ?? []).map((theme) => theme.key)),
+        cut,
+      );
+  const dto = importBodyOf(item.target, value, state.stored, language) as unknown as Record<
+    string,
+    unknown
+  >;
+  const linked: LinkBlock[] = [];
+  if (item.target === 'themes' && !item.links && Array.isArray(value) && data.themeLinks) {
+    const keys = new Set((value as Array<{ key: string }>).map((theme) => theme.key));
+    for (const block of LINK_BLOCKS) {
+      if (!writable(data, block, state)) continue;
+      const next = relinked(block, state.stored, data.themeLinks, keys, cut);
+      if (next !== null) {
+        dto[block] = next;
+        linked.push(block);
+      }
+    }
+  }
+  return { dto: dto as unknown as UpdateBookAnalysisDto, linked, cut };
+}
+
+/**
+ * Данные хода после записи «Accept» (`saved` - перечитанные блоки): предложение принято; блоки
+ * связей, записанные вместе с темой, - в `written`; предложения связей тронутых блоков
+ * пересобраны на записанном блоке (`syncLinks`): иначе их хэш, снятый с прежнего блока, отбил бы
+ * следующий «Accept» и «Accept all» своим же ходом. Принятая тема рождает предложения связей у
+ * блоков, которыми ход не владеет (Б).
+ */
+function applyAccept(
+  data: AnalysisWriteData,
+  index: number,
+  plan: AcceptPlan,
+  saved: StoredBookAnalysis,
+): AnalysisWriteData {
+  const item = data.items[index];
+  const accepted = withRegenTaken(
+    withItem(data, index, { outcome: 'accepted' }),
+    index,
+    targetValue(saved, item.target),
+  );
+  const written = { ...accepted.written };
+  for (const block of plan.linked) written[block] = blockPrint(targetValue(saved, block));
+  let next: AnalysisWriteData = {
+    ...accepted,
+    written,
+    steps: withStepFixes(accepted.steps, THEMES_STEP, plan.cut),
+  };
+  const links = data.themeLinks;
+  if (!links) return next;
+  const themeKeys = new Set((saved.themes ?? []).map((theme) => theme.key));
+  const theme = item.target === 'themes' && !item.links;
+  for (const block of LINK_BLOCKS) {
+    if (plan.linked.includes(block)) next = afterOwnWrite(next, block, saved, index);
+    else if (item.target === block || theme) {
+      next = syncLinks(next, block, saved, links, themeKeys, index, theme);
+    }
+  }
+  return next;
+}
+
+/**
+ * Ход записал владеемый блок (тема влила ключи; итог перегенерации - в пустой блок): все
+ * предложения этой единицы записи - на записанном содержимом. Обычные получают его хэш (иначе
+ * «Accept» отбил бы их 409 навсегда - блок менял сам ход), предложения связей пересобираются
+ * (`syncLinks`).
+ */
+function afterOwnWrite(
+  data: AnalysisWriteData,
+  target: AnalysisTarget,
+  saved: StoredBookAnalysis,
+  skip: number,
+): AnalysisWriteData {
+  const hash = blockPrint(targetValue(saved, target));
+  const next = {
+    ...data,
+    items: data.items.map((other, i) =>
+      i !== skip && !other.links && other.target === target && other.outcome === 'proposed'
+        ? { ...other, hash }
+        : other,
+    ),
+  };
+  if (!data.themeLinks || !isLinkBlock(target)) return next;
+  const themeKeys = new Set((saved.themes ?? []).map((theme) => theme.key));
+  return syncLinks(next, target, saved, data.themeLinks, themeKeys, skip, false);
+}
+
+/** Правки кода шага `step` (`steps[].dropped`): новые заменяют прежние с тем же кодом и путём. */
+function withStepFixes(
+  steps: AnalysisWriteData['steps'],
+  step: AnalysisStepNumber,
+  fixes: readonly StepFix[],
+): AnalysisWriteData['steps'] {
+  if (fixes.length === 0) return steps;
+  const key = (fix: StepFix) => `${fix.code}\u0000${fix.path}`;
+  const fresh = new Set(fixes.map(key));
+  return steps.map((s) =>
+    s.step === step
+      ? { ...s, dropped: [...s.dropped.filter((f) => !fresh.has(key(f))), ...fixes] }
+      : s,
+  );
+}
+
+/**
+ * Предложения связей тем блока `block` на записанном блоке: добавлять нечего - предложение
+ * снимается (`none`); иначе - новое содержимое и хэш записанного блока.
+ * `create` - нет предложения, а ключи есть: новое предложение связей (на месте снятого `none`).
+ */
+function syncLinks(
+  data: AnalysisWriteData,
+  block: LinkBlock,
+  saved: StoredBookAnalysis,
+  links: ThemeLinks,
+  themeKeys: ReadonlySet<string>,
+  skip: number,
+  create: boolean,
+): AnalysisWriteData {
+  const value = relinked(block, saved, links, themeKeys, []);
+  const hash = blockPrint(targetValue(saved, block));
+  const items = [...data.items];
+  let found = false;
+  items.forEach((link, i) => {
+    if (i === skip || !link.links || link.target !== block || link.outcome !== 'proposed') return;
+    found = true;
+    // Добавлять нечего (ключи уже в блоке или темы ещё нет): предложение снимается (`none`); тема,
+    // принятая позже, родит его заново на этом месте (`create`).
+    items[i] =
+      value === null ? { ...link, outcome: 'none', value: null } : { ...link, value, hash };
+  });
+  if (!found && create && value !== null) {
+    const proposal: AnalysisItem = {
+      target: block,
+      step: THEMES_STEP,
+      verdict: 'ok',
+      remarks: [],
+      review: null,
+      outcome: 'proposed',
+      hash,
+      value,
+      failedReason: null,
+      links: true,
+      regen: null,
+      regenFailedReason: null,
+    };
+    const spare = items.findIndex(
+      (link) => link.links && link.target === block && link.outcome === 'none',
+    );
+    if (spare >= 0) items[spare] = { ...items[spare], ...proposal };
+    else items.push(proposal);
+  }
+  return { ...data, items };
+}
+
+/** Тело импорта с одним блоком: подполе `facts` - в сохранённые подполя (импорт заменяет блок целиком). */
+function importBodyOf(
+  target: AnalysisTarget,
+  value: unknown,
+  stored: StoredBookAnalysis,
+  language: Language,
+): UpdateBookAnalysisDto {
+  const body: Record<string, unknown> = { language };
+  const field = factField(target);
+  if (field) body.facts = { ...(stored.facts ?? {}), [field]: value };
+  else body[target] = value;
+  return body as unknown as UpdateBookAnalysisDto;
 }
 
 /** Сколько раз решение пересобирается, если блоки поменялись между чтением и замком. */
@@ -327,8 +629,9 @@ export class AnalysisWriteFields {
   /** Данные хода без замка - только для чтения перед решением под замком. */
   async read(row: Pick<ContentDraft, 'id'>, gate: AnalysisGate): Promise<AnalysisWriteData | null> {
     const found = await this.prisma.contentDraft.findUnique({ where: { id: row.id } });
-    if (!found || found.kind !== 'analysis_write' || !gate.allows(found)) return null;
-    return readAnalysisData(found.data);
+    if (!found || found.kind !== 'analysis_write') return null;
+    const data = readAnalysisData(found.data);
+    return gate.allows(found, data) ? data : null;
   }
 
   /**
@@ -387,6 +690,106 @@ export class AnalysisWriteFields {
   }
 
   /**
+   * «Accept» предложения хода `ready` (`tech.md` §5): блок пишется тем же телом, что импорт, если
+   * его содержимое с момента предложения никто не менял - сверяется хэш блока (подполя `facts`), а
+   * не `updatedAt` анализа: ход пишет другие блоки, и это «Accept» не мешает. Не совпало - 409
+   * `ANALYSIS_BLOCK_CHANGED` с текущим содержимым. Героям и цитатам вливаются `themeKeys` из связей
+   * тем хода (А3). Ссылки не сошлись на слитом объекте - 409 `ANALYSIS_WRITE_REFUSED`.
+   */
+  async accept(
+    row: Pick<ContentDraft, 'id' | 'bookVersionId' | 'language'>,
+    index: number,
+  ): Promise<void> {
+    const gate = analysisReadyGate;
+    for (let attempt = 0; attempt < PLAN_ATTEMPTS; attempt++) {
+      const data = await this.read(row, gate);
+      const item = data?.items[index];
+      if (!data || !item || item.outcome !== 'proposed' || item.hash === null) throw notProposed();
+      if (item.regen) throw regenInProgress();
+      const state = await this.state(this.prisma, row.bookVersionId);
+      if (blockPrint(targetValue(state.stored, item.target)) !== item.hash) {
+        throw blockChanged(targetValue(state.stored, item.target));
+      }
+      const plan = acceptPlan(data, item, state, row.language);
+      const dto = plan.dto;
+      const again = { retry: false };
+      try {
+        const written = await this.analyses.saveGuarded(row.bookVersionId, dto, {
+          allow: async (tx, before) => {
+            const current = await this.locked(tx, row.id, gate);
+            const proposal = current?.items[index];
+            if (
+              !current ||
+              !proposal ||
+              proposal.outcome !== 'proposed' ||
+              proposal.hash !== item.hash
+            ) {
+              throw notProposed();
+            }
+            if (proposal.regen) throw regenInProgress();
+            if (blockPrint(targetValue(before, item.target)) !== item.hash) {
+              throw blockChanged(targetValue(before, item.target));
+            }
+            // Тело зависит от прочих блоков (подполя `facts`, темы, право хода на блоки связей):
+            // изменились - пересобрать.
+            const published = (await this.state(tx, row.bookVersionId, true)).published;
+            const replanned = acceptPlan(
+              current,
+              proposal,
+              { stored: before, published },
+              row.language,
+            );
+            if (stableJson(replanned.dto) !== stableJson(dto)) {
+              again.retry = true;
+              return false;
+            }
+            return true;
+          },
+          done: async (tx, saved) => {
+            const current = await this.locked(tx, row.id, gate);
+            if (!current) throw notProposed();
+            await this.save(tx, row.id, gate, applyAccept(current, index, plan, saved));
+          },
+        });
+        if (written) return;
+      } catch (error) {
+        if (error instanceof AnalysisRunGone) throw notProposed();
+        if (error instanceof BadRequestException) {
+          const errors = refusalErrors(error);
+          throw new ConflictException({
+            statusCode: 409,
+            error: 'Conflict',
+            code: ANALYSIS_WRITE_REFUSED,
+            message: `The analysis refused this block: ${errors.join('; ')}`,
+            errors,
+          });
+        }
+        throw error;
+      }
+      if (!again.retry) break;
+    }
+    // Тело пересобиралось дольше, чем блоки успокаивались: решение редактора не принято вслепую;
+    // в ответе - содержимое блока сейчас.
+    const fresh = await this.read(row, gate);
+    const target = fresh?.items[index]?.target;
+    const now = await this.state(this.prisma, row.bookVersionId);
+    throw blockChanged(target ? targetValue(now.stored, target) : null);
+  }
+
+  /** «Discard» предложения хода `ready`: блок анализа не трогается. */
+  async discardItem(row: Pick<ContentDraft, 'id' | 'bookVersionId'>, index: number): Promise<void> {
+    const saved = await this.mutate(row, analysisReadyGate, (data) => {
+      const item = data.items[index];
+      // Идёт перегенерация - её итог вернул бы предложение после «Discard» (как у «Accept»).
+      if (item?.regen) throw regenInProgress();
+      if (!item || item.outcome !== 'proposed') return null;
+      return withItem(data, index, { outcome: 'discarded' });
+    });
+    // `written: false` - блок уже не предложение (в том числе уже отброшен): повтор - 409, не успех.
+    if (!saved?.written) throw notProposed();
+  }
+
+  /**
    * Ждущие блоки шага - в анализ или в предложения (`tech.md` §5). Решение собирается по чтению
    * без замка и под замком сверяется заново вместе со значениями: разошлось - пересборка. Отказ
    * проверки ссылок (К4): блоки путей ошибок - предложения с `IMPORT_INVALID`, остальные -
@@ -397,6 +800,7 @@ export class AnalysisWriteFields {
     row: Pick<ContentDraft, 'id' | 'bookVersionId' | 'language'>,
     gate: AnalysisGate,
     step: AnalysisStepNumber,
+    only?: number,
   ): Promise<SettleOutcome> {
     let refusal: Refusal | null = null;
     for (let attempt = 0; attempt < PLAN_ATTEMPTS; attempt++) {
@@ -408,9 +812,10 @@ export class AnalysisWriteFields {
         await this.state(this.prisma, row.bookVersionId),
         row.language,
         refusal,
+        only,
       );
       if (plan.dto === null) {
-        const done = await this.settleWithout(row, gate, step, 'plain', refusal);
+        const done = await this.settleWithout(row, gate, step, 'plain', refusal, only);
         if (done !== 'replan') return done;
         continue;
       }
@@ -437,6 +842,7 @@ export class AnalysisWriteFields {
               { stored: before, published },
               row.language,
               attemptRefusal,
+              only,
             );
             return samePlan(plan, again);
           },
@@ -456,7 +862,7 @@ export class AnalysisWriteFields {
         const blocks = new Set(errors.map(blockOfPath));
         const outside = [...blocks].some((block) => !written.has(block));
         if (refusal !== null || outside) {
-          return this.finalWithout(row, gate, step, { blocks: written, errors });
+          return this.finalWithout(row, gate, step, { blocks: written, errors }, only);
         }
         refusal = { blocks, errors };
         continue;
@@ -464,7 +870,7 @@ export class AnalysisWriteFields {
       if (result.outcome !== 'replan') return result.outcome;
     }
     // Блоки меняют быстрее, чем ход решает: всё ждущее - предложением, без записи.
-    return this.finalWithout(row, gate, step, refusal);
+    return this.finalWithout(row, gate, step, refusal, only);
   }
 
   private async finalWithout(
@@ -472,8 +878,9 @@ export class AnalysisWriteFields {
     gate: AnalysisGate,
     step: AnalysisStepNumber,
     refusal: Refusal | null,
+    only?: number,
   ): Promise<SettleOutcome> {
-    const done = await this.settleWithout(row, gate, step, 'force', refusal);
+    const done = await this.settleWithout(row, gate, step, 'force', refusal, only);
     return done === 'replan' ? 'settled' : done;
   }
 
@@ -488,6 +895,7 @@ export class AnalysisWriteFields {
     step: AnalysisStepNumber,
     kind: 'plain' | 'force',
     refusal: Refusal | null,
+    only?: number,
   ): Promise<SettleOutcome | 'replan'> {
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -495,11 +903,11 @@ export class AnalysisWriteFields {
         const current = await this.locked(tx, row.id, gate);
         if (!current) return 'gone';
         const state = await this.state(tx, row.bookVersionId, true);
-        const real = planStep(current, step, state, row.language, refusal);
+        const real = planStep(current, step, state, row.language, refusal, only);
         if (kind === 'plain' && real.dto !== null) return 'replan';
         const all =
           kind === 'force'
-            ? planStep(current, step, { ...state, published: true }, row.language, refusal)
+            ? planStep(current, step, { ...state, published: true }, row.language, refusal, only)
             : real;
         if (kind === 'force' && refusal !== null) {
           for (const index of real.writes) all.refused.set(index, [...refusal.errors]);
@@ -517,14 +925,18 @@ export class AnalysisWriteFields {
   private async locked(tx: Db, id: string, gate: AnalysisGate): Promise<AnalysisWriteData | null> {
     await tx.$queryRaw`SELECT "id" FROM "ContentDraft" WHERE "id" = ${id} FOR UPDATE`;
     const row = await tx.contentDraft.findUnique({ where: { id } });
-    if (!row || row.kind !== 'analysis_write' || !gate.allows(row)) return null;
-    return readAnalysisData(row.data);
+    if (!row || row.kind !== 'analysis_write') return null;
+    const data = readAnalysisData(row.data);
+    return gate.allows(row, data) ? data : null;
   }
 
   /** Данные хода - условием своей операции и `building`: не совпало - откат транзакции. */
   private async save(tx: Db, id: string, gate: AnalysisGate, data: AnalysisWriteData) {
     const { count } = await tx.contentDraft.updateMany({
-      where: { id, status: 'building', operationId: gate.operationId },
+      where:
+        gate.status === 'building'
+          ? { id, status: 'building', operationId: gate.operationId ?? undefined }
+          : { id, status: 'ready' },
       data: { data: analysisDataJson(data) },
     });
     if (count !== 1) throw new AnalysisRunGone();
@@ -579,11 +991,16 @@ export function applyPlan(
     });
   }
   for (const index of plan.empty) patch(index, { outcome: 'none', value: null });
-  const steps =
-    plan.cut.length === 0
-      ? data.steps
-      : data.steps.map((s) =>
-          s.step === step ? { ...s, dropped: [...s.dropped, ...plan.cut] } : s,
-        );
-  return { ...data, steps, items, written };
+  const steps = withStepFixes(data.steps, step, plan.cut);
+  // Записанный итог перегенерации - в `merged` и `droppedQuotes` хода записанным значением
+  // (`withRegenTaken`); предложения записанной единицы - на записанном блоке (`afterOwnWrite`).
+  return plan.writes.reduce(
+    (next, index) => {
+      const target = next.items[index].target;
+      const value = saved ? targetValue(saved, target) : plan.values.get(index);
+      const taken = withRegenTaken(next, index, value);
+      return saved ? afterOwnWrite(taken, target, saved, index) : taken;
+    },
+    { ...data, steps, items, written } as AnalysisWriteData,
+  );
 }
