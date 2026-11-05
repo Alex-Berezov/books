@@ -269,6 +269,16 @@ export interface AnalysisItem {
    * Нет (`null`/нет поля) - блок не из перегенерации или итог уже взят.
    */
   pendingDropped?: DroppedQuote[] | null;
+  /**
+   * Связи тем ответа перегенерации тем (`F07-2b`): в `themeLinks` хода - только записью или «Accept»
+   * (решение арбитра `F07 | F07-2b`, п.3); нет - блок не тем или итог уже взят.
+   */
+  pendingLinks?: ThemeLinks | null;
+  /**
+   * Проверенные источники перегенерации блока шага 5 (`F07-2b`): пишутся той же записью, что блок,
+   * объединением с сохранёнными по адресу (решение арбитра `F07 | F07-2b`, п.1).
+   */
+  pendingSources?: AnalysisSource[] | null;
   /** Элемент не той формы - сохранён как был, место в `items` не сдвигается. */
   broken?: unknown;
 }
@@ -620,7 +630,57 @@ function itemOf(v: unknown): AnalysisItem {
     regen: regenOf(v.regen),
     regenFailedReason: str(v.regenFailedReason),
     pendingDropped: Array.isArray(v.pendingDropped) ? droppedQuotesOf(v.pendingDropped) : null,
+    pendingLinks: linksOf(v.pendingLinks),
+    pendingSources: sourceListOf(v.pendingSources),
   };
+}
+
+/** Источник анализа (`title`, `url`): элемент блока `sources`. */
+export type AnalysisSource = NonNullable<StoredBookAnalysis['sources']>[number];
+
+/** Список источников из данных хода: элементы без строк `title` и `url` не берутся. */
+function sourceListOf(v: unknown): AnalysisSource[] | null {
+  if (!Array.isArray(v)) return null;
+  return v.flatMap((source) =>
+    isRecord(source) && typeof source.title === 'string' && typeof source.url === 'string'
+      ? [{ title: source.title, url: source.url } as AnalysisSource]
+      : [],
+  );
+}
+
+/**
+ * Сохранённые источники и новые без повторов по адресу (решение арбитра `F07 | F07-2b`, п.1):
+ * старые не удаляются, порядок - сохранённые, затем новые.
+ */
+export function withSources(
+  stored: readonly AnalysisSource[] | null | undefined,
+  added: readonly AnalysisSource[],
+): AnalysisSource[] {
+  const out = [...(stored ?? [])];
+  const keys = new Set(out.map((source) => sourceKey(source.url)));
+  for (const source of added) {
+    const key = sourceKey(source.url);
+    if (keys.has(key)) continue;
+    keys.add(key);
+    out.push(source);
+  }
+  return out;
+}
+
+/**
+ * Один адрес источника в разных записях: без схемы и якоря, хост без регистра и без `www.`, путь
+ * без конечной косой черты (`http://www.En.wikipedia.org/wiki/X/` = `https://en.wikipedia.org/wiki/X`);
+ * порт - часть адреса. Не адрес - строка как есть.
+ */
+export function sourceKey(url: string): string {
+  try {
+    const parsed = new URL(url.trim());
+    const path = parsed.pathname.replace(/\/+$/, '');
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    return `${host}${parsed.port ? `:${parsed.port}` : ''}${path}${parsed.search}`;
+  } catch {
+    return url.trim();
+  }
 }
 
 function regenOf(v: unknown): AnalysisRegen | null {
@@ -684,6 +744,10 @@ export interface RegenResult {
   remarks: DraftRemark[];
   review: ReviewState | null;
   droppedQuotes: DroppedQuote[];
+  /** Связи тем ответа (перегенерация тем), иначе `null`. */
+  links?: ThemeLinks | null;
+  /** Проверенные источники блока шага 5, иначе `null`. */
+  sources?: AnalysisSource[] | null;
 }
 
 /**
@@ -709,6 +773,8 @@ export function withRegenerated(
     failedReason: null,
     regenFailedReason: null,
     pendingDropped: result.droppedQuotes,
+    pendingLinks: result.links ?? null,
+    pendingSources: result.sources ?? null,
     regen: current.regen
       ? { ...current.regen, pending: null, previous: { ...current, regen: null } }
       : null,
@@ -748,7 +814,17 @@ export function withRegenTaken(
   const item = data.items[index];
   if (!item?.pendingDropped) return data;
   return {
-    ...withItem(data, index, { pendingDropped: null }),
+    ...withItem(data, index, {
+      pendingDropped: null,
+      pendingLinks: null,
+      pendingSources: null,
+    }),
+    // Связи новых тем входят в связи хода только взятым итогом (решение арбитра `F07 | F07-2b`,
+    // п.3) - слиянием по герою и цитате: пустой ответ о связях не стирает связи, на которых стоят
+    // ещё не принятые предложения героев и цитат.
+    themeLinks: item.pendingLinks
+      ? mergedLinks(data.themeLinks, item.pendingLinks)
+      : data.themeLinks,
     merged: mergeSteps(data.merged, targetBlocks(item.target, written)),
     droppedQuotes: [
       ...data.droppedQuotes.filter(
@@ -756,6 +832,78 @@ export function withRegenTaken(
       ),
       ...item.pendingDropped,
     ],
+  };
+}
+
+/** Правки кода шага `step` (`steps[].dropped`): новые заменяют прежние с тем же кодом и путём. */
+export function withStepFixes(
+  steps: AnalysisWriteData['steps'],
+  step: AnalysisStepNumber,
+  fixes: readonly StepFix[],
+): AnalysisWriteData['steps'] {
+  if (fixes.length === 0) return steps;
+  const key = (fix: StepFix) => `${fix.code}\u0000${fix.path}`;
+  const fresh = new Set(fixes.map(key));
+  return steps.map((s) =>
+    s.step === step
+      ? { ...s, dropped: [...s.dropped.filter((f) => !fresh.has(key(f))), ...fixes] }
+      : s,
+  );
+}
+
+/**
+ * Причины, по которым перегенерация сняла источники и утверждения (решение арбитра `F07 | F07-2b`,
+ * круг 3, Q2): сразу при итоге, что бы с ним ни стало, - в правки шага блока (замена по коду и пути)
+ * и в отброшенные источники хода (без повторов). Контракт не меняется: поля те же, что у шага.
+ */
+export function withRegenDropped(
+  data: AnalysisWriteData,
+  step: AnalysisStepNumber,
+  fixes: readonly StepFix[],
+  dropped: readonly DroppedSource[],
+): AnalysisWriteData {
+  const key = (source: DroppedSource) =>
+    `${source.title}\u0000${source.host}\u0000${source.reason}`;
+  const known = new Set(data.droppedSources.map(key));
+  // Пути `sources.N` перегенерации - по её собственному списку источников, а не по списку шага:
+  // замена по коду и пути затёрла бы причину хода о другом источнике. Такие причины добавляются,
+  // совпавшая целиком не повторяется (решение арбитра `F07 | F07-2b`, круг 4).
+  const bySource = (fix: StepFix) => /^sources(\.|$)/.test(fix.path);
+  const full = (fix: StepFix) => `${fix.code}\u0000${fix.path}\u0000${fix.note}`;
+  const present = new Set(
+    data.steps.filter((s) => s.step === step).flatMap((s) => s.dropped.map(full)),
+  );
+  const added = fixes.filter((fix) => bySource(fix) && !present.has(full(fix)));
+  const replaced = withStepFixes(
+    data.steps,
+    step,
+    fixes.filter((fix) => !bySource(fix)),
+  );
+  return {
+    ...data,
+    steps:
+      added.length === 0
+        ? replaced
+        : replaced.map((s) => (s.step === step ? { ...s, dropped: [...s.dropped, ...added] } : s)),
+    droppedSources: [
+      ...data.droppedSources,
+      ...dropped.filter((source) => !known.has(key(source))),
+    ],
+  };
+}
+
+/** Связи тем `added` поверх `base`: ключи тем героя или цитаты объединяются, порядок - прежние, затем новые. */
+export function mergedLinks(base: ThemeLinks | null, added: ThemeLinks): ThemeLinks {
+  const merge = (prior: Record<string, string[]>, extra: Record<string, string[]>) => {
+    const out: Record<string, string[]> = { ...prior };
+    for (const [id, keys] of Object.entries(extra)) {
+      out[id] = [...new Set([...(out[id] ?? []), ...keys])];
+    }
+    return out;
+  };
+  return {
+    characters: merge(base?.characters ?? {}, added.characters),
+    keyQuotes: merge(base?.keyQuotes ?? {}, added.keyQuotes),
   };
 }
 

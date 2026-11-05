@@ -6,8 +6,9 @@ import {
   INPUT_CHARS_PER_TOKEN,
 } from '../../llm/openrouter.client';
 import { indexChapters } from '../draft-quality/quote-check';
+import { regenRemarks } from './analysis-checks';
 import { EXAMPLE_ANALYSES } from './examples';
-import { EMPTY_DRAFT } from './analysis-write.data';
+import { EMPTY_DRAFT, StepDraft } from './analysis-write.data';
 import {
   exampleSlice,
   fitStepInput,
@@ -434,5 +435,175 @@ describe('the reviewer of a regeneration (/fix 3, blocker 5)', () => {
     });
     expect(reviewText(fact)).not.toContain('Old town');
     expect(reviewText(fact)).toContain('First person');
+  });
+});
+
+describe('F07-2b: regeneration of the blocks of steps 3-5', () => {
+  const source = (n: number) => ({ title: `Source ${n}`, url: `https://example.org/${n}` });
+  const external = {
+    ...EMPTY_DRAFT,
+    blocks: {
+      timeline: [
+        { year: 1860, event: 'A' },
+        { year: 1866, event: 'B' },
+      ],
+      context: 'First.\n\nSecond.',
+      facts: { genre: 'Novel' },
+      sources: [source(0), source(1), source(2), source(3)],
+    },
+    refs: {
+      facts: { genre: [0] },
+      context: [[0], [1]],
+      reception: [],
+      timeline: [[3], [2, 3]],
+      adaptations: [],
+    },
+  } as unknown as StepDraft;
+
+  it('a step 5 block keeps its own sources with the refs renumbered, the others are gone', () => {
+    const cut = onlyTarget(external, 'timeline');
+    expect(cut.blocks.sources).toEqual([source(2), source(3)]);
+    expect(cut.refs?.timeline).toEqual([[1], [0, 1]]);
+    expect(cut.refs?.context).toEqual([]);
+    expect(cut.refs?.facts).toEqual({});
+    expect(cut.blocks.context).toBeUndefined();
+    const fact = onlyTarget(external, 'facts.genre');
+    expect(fact.blocks).toEqual({ facts: { genre: 'Novel' }, sources: [source(0)] });
+    expect(fact.refs?.facts).toEqual({ genre: [0] });
+  });
+
+  it('a block of the text steps keeps no refs and no sources: only the external step has them', () => {
+    const cut = onlyTarget({ ...EMPTY_DRAFT, blocks: { mainIdea: 'Idea' } }, 'mainIdea');
+    expect(cut.refs).toBeNull();
+    expect(cut.blocks).toEqual({ mainIdea: 'Idea' });
+  });
+
+  it('themes keep the theme links of the answer, cut to the themes of the answer (decision F07 | F07-2b, 3)', () => {
+    const draft = {
+      ...EMPTY_DRAFT,
+      blocks: { themes: [{ key: 'guilt', title: 'Guilt' }], mainIdea: 'Idea' },
+      themeLinks: {
+        characters: { anna: ['guilt', 'stored-only'] },
+        keyQuotes: { q1: ['stored-only'] },
+      },
+    } as unknown as StepDraft;
+    expect(onlyTarget(draft, 'themes').themeLinks).toEqual({
+      characters: { anna: ['guilt'] },
+      keyQuotes: {},
+    });
+    expect(onlyTarget(draft, 'mainIdea').themeLinks).toBeNull();
+  });
+
+  it('an answer without the target block is a code remark - a redo, not a silent empty result', () => {
+    expect(regenRemarks({ ...EMPTY_DRAFT, blocks: {} }, 'faq', EMPTY_BOOK_ANALYSIS)).toEqual([
+      expect.objectContaining({ code: 'IMPORT_INVALID', where: expect.stringMatching(/^faq/) }),
+    ]);
+    expect(
+      regenRemarks(
+        { ...EMPTY_DRAFT, blocks: { faq: [] } } as unknown as StepDraft,
+        'faq',
+        EMPTY_BOOK_ANALYSIS,
+      ),
+    ).toEqual([]);
+    const ctx = context();
+    const input = stepInput(4, ctx, versionBook(ctx), quotes, {
+      target: 'faq',
+      current: null,
+      remark: null,
+    });
+    expect(input.codeCheck({ ...EMPTY_DRAFT, blocks: {} }).map((r) => r.code)).toContain(
+      'IMPORT_INVALID',
+    );
+    expect(
+      stepInput(4, ctx, versionBook(ctx), quotes).codeCheck({ ...EMPTY_DRAFT, blocks: {} }),
+    ).toEqual([]);
+  });
+
+  it('new themes without the key of a theme the characters or quotations link to - a code remark; kept keys - none', () => {
+    const stored = {
+      ...EMPTY_BOOK_ANALYSIS,
+      themes: [
+        { key: 'guilt', title: 'Guilt' },
+        { key: 'free', title: 'Free' },
+      ],
+      characters: [{ key: 'anna', name: 'Anna', themeKeys: ['guilt'] }],
+    } as unknown as typeof EMPTY_BOOK_ANALYSIS;
+    const renamed = {
+      ...EMPTY_DRAFT,
+      blocks: { themes: [{ key: 'sin', title: 'Sin' }] },
+    } as unknown as StepDraft;
+    const [remark] = regenRemarks(renamed, 'themes', stored);
+    expect(remark.code).toBe('IMPORT_INVALID');
+    expect(remark.note).toContain('"guilt"');
+    expect(remark.note).not.toContain('"free"');
+    // Путь - ссылка героя: по пути `themes` код снял бы сам блок тем.
+    expect(remark.where).toMatch(/^characters\.anna\.themeKeys/);
+    const kept = {
+      ...EMPTY_DRAFT,
+      blocks: { themes: [{ key: 'guilt', title: 'Guilt' }] },
+    } as unknown as StepDraft;
+    expect(regenRemarks(kept, 'themes', stored)).toEqual([]);
+  });
+
+  it('the reviewer of a regeneration is told that only one block was rewritten', () => {
+    const ctx = context();
+    const regen = { target: 'mainIdea' as const, current: 'Old', remark: null };
+    const reviewText = (input: StepInput) => textOf(input.review(EMPTY_DRAFT));
+    expect(reviewText(stepInput(3, ctx, versionBook(ctx), quotes, regen))).toContain(
+      'Only the block "mainIdea" was rewritten',
+    );
+    expect(reviewText(stepInput(3, ctx, versionBook(ctx), quotes))).not.toContain('was rewritten');
+  });
+
+  it('the author of a step 5 block is asked for its sources; the author of themes - for their links', () => {
+    const ctx = context();
+    const author = (step: 3 | 5, target: 'themes' | 'timeline') =>
+      textOf(
+        stepInput(step, ctx, versionBook(ctx), quotes, {
+          target,
+          current: null,
+          remark: null,
+        }).author(null),
+      );
+    expect(author(5, 'timeline')).toContain('Give in sources the sources this block refers to');
+    // Внешнему шагу тоже даны прежний блок и замечание редактора - правило на них ссылается.
+    const ctx5 = context();
+    const external = textOf(
+      stepInput(5, ctx5, versionBook(ctx5), quotes, {
+        target: 'timeline',
+        current: [{ year: '1866', event: 'Old' }],
+        remark: 'Name the epoch',
+      }).author(null),
+    );
+    expect(external).toContain('CURRENT_BLOCK');
+    expect(external).toContain('"event":"Old"');
+    expect(external).toContain('Name the epoch');
+    expect(author(3, 'themes')).toContain('Give themeLinks for the themes of your answer');
+    expect(author(3, 'themes')).not.toContain('Give in sources');
+  });
+});
+
+describe('regenRemarks: the theme a key quotation links to (F07-2b, round 4)', () => {
+  it('a quotation link is protected too; when a hero and a quotation link to one theme, the hero is the path', () => {
+    const stored = {
+      ...EMPTY_BOOK_ANALYSIS,
+      themes: [
+        { key: 'guilt', title: 'Guilt' },
+        { key: 'home', title: 'Home' },
+      ],
+      characters: [{ key: 'anna', name: 'Anna', themeKeys: ['guilt'] }],
+      keyQuotes: [
+        { text: 'One.', themeKeys: ['home'] },
+        { text: 'Two.', themeKeys: ['guilt'] },
+      ],
+    } as unknown as typeof EMPTY_BOOK_ANALYSIS;
+    const none = {
+      ...EMPTY_DRAFT,
+      blocks: { themes: [{ key: 'sin', title: 'Sin' }] },
+    } as unknown as StepDraft;
+    expect(regenRemarks(none, 'themes', stored).map((r) => r.where)).toEqual([
+      'characters.anna.themeKeys',
+      'keyQuotes.0.themeKeys',
+    ]);
   });
 });

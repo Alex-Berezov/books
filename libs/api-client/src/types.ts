@@ -385,7 +385,7 @@ export interface paths {
     };
     get?: never;
     put?: never;
-    /** Regenerate one text of a ready summary run (the first text of a section also builds the full and the very short summary) or one block of steps 1-2 of a ready analysis run, under its own operation, with the editor remark in the author prompt; the kind of the run is taken from its row */
+    /** Regenerate one text of a ready summary run (the first text of a section also builds the full and the very short summary) or one block of a ready analysis run (sources of a step 5 block are opened again and added to the sources), under its own operation, with the editor remark in the author prompt; the kind of the run is taken from its row */
     post: operations['ContentDraftController_regenerate'];
     delete?: never;
     options?: never;
@@ -5730,6 +5730,7 @@ export interface components {
       faq: components['schemas']['BookAnalysisFaqDto'][] | null;
       keyQuotes: components['schemas']['BookAnalysisKeyQuoteDto'][] | null;
       misreadings: components['schemas']['BookAnalysisMisreadingDto'][] | null;
+      /** @description The sources block; for a regenerated step 5 block - its verified sources: those not saved yet (by url) are added to the saved ones by its Accept */
       sources: components['schemas']['BookAnalysisSourceDto'][] | null;
       style: components['schemas']['BookAnalysisStyleDto'][] | null;
       symbols: components['schemas']['BookAnalysisSymbolDto'][] | null;
@@ -16724,7 +16725,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_REGENERABLE: only the blocks of steps 1-2 are regenerated; LLM_CEILING_REACHED */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_REGENERABLE: theme links and sources are not regenerated on their own; LLM_CEILING_REACHED */
       409: {
         headers: {
           [name: string]: unknown;

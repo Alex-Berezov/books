@@ -66,7 +66,7 @@ function settle(
 ) {
   const plan = planStep(data, step, { stored, published }, 'en');
   const saved = plan.dto ? ({ ...stored, ...plan.dto } as StoredBookAnalysis) : null;
-  return { plan, data: applyPlan(data, step, plan, stored, saved), saved: saved ?? stored };
+  return { plan, data: applyPlan(data, plan, stored, saved), saved: saved ?? stored };
 }
 
 describe('AnalysisWriteFields.ownership', () => {

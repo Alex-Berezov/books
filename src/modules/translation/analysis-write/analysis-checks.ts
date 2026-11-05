@@ -16,7 +16,14 @@ import {
   codeRemark,
   DraftRemark,
 } from '../draft-quality/text-checks';
-import { DroppedQuote, StepBlocks, StepDraft, StepFix } from './analysis-write.data';
+import {
+  AnalysisTarget,
+  blocksValue,
+  DroppedQuote,
+  StepBlocks,
+  StepDraft,
+  StepFix,
+} from './analysis-write.data';
 
 /**
  * Код-проверки хода анализа (`features/F07-analysis-autofill/tech.md` §3, `product.md` §3.2;
@@ -393,3 +400,47 @@ export const stepDroppedQuotes = (
   step: DroppedQuote['step'],
   dropped: StepDraft['droppedQuotes'],
 ): DroppedQuote[] => dropped.map((d) => ({ step, ...d }));
+
+/**
+ * Код-проверка ответа перегенерации блока (`F07-2b`): ответ без целевого блока - замечание и
+ * переделка, а не пустой итог без замечаний; новые темы без ключа прежней темы, на которую
+ * ссылаются записанные герои или цитаты, - замечание и переделка (решение арбитра `F07 | F07-2b`,
+ * п.3). Путь замечания о теме - ссылка героя или цитаты, а не `themes`: `IMPORT_INVALID` по пути
+ * блока снимает сам блок (`withoutInvalid`), и перегенерация ушла бы ни с чем вместо предложения
+ * с флагом.
+ */
+export function regenRemarks(
+  draft: StepDraft,
+  target: AnalysisTarget,
+  stored: StoredBookAnalysis,
+): DraftRemark[] {
+  if (blocksValue(draft.blocks, target) === undefined) {
+    return [
+      codeRemark(
+        'IMPORT_INVALID',
+        target,
+        `The answer has no block "${target}" - the block to rewrite. Give it.`,
+      ),
+    ];
+  }
+  if (target !== 'themes') return [];
+  const kept = new Set((draft.blocks.themes ?? []).map((theme) => theme.key));
+  const known = new Set((stored.themes ?? []).map((theme) => theme.key));
+  // Ключ темы → первая ссылка на него (герой по ключу, цитата по номеру в сохранённом блоке).
+  const firstRef = new Map<string, string>();
+  const note = (path: string, keys: readonly string[] | null | undefined) =>
+    (keys ?? []).forEach((key) => firstRef.has(key) || firstRef.set(key, path));
+  (stored.characters ?? []).forEach((hero) =>
+    note(`characters.${hero.key}.themeKeys`, hero.themeKeys),
+  );
+  (stored.keyQuotes ?? []).forEach((quote, i) => note(`keyQuotes.${i}.themeKeys`, quote.themeKeys));
+  return [...firstRef]
+    .filter(([key]) => known.has(key) && !kept.has(key))
+    .map(([key, path]) =>
+      codeRemark(
+        'IMPORT_INVALID',
+        path,
+        `The theme "${key}" is linked from the characters or the key quotations: keep this theme with the same key.`,
+      ),
+    );
+}

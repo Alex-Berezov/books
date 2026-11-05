@@ -55,6 +55,7 @@ import {
   ANALYSIS_REGEN_IN_PROGRESS,
   ANALYSIS_REVIEW_STAGE,
   ANALYSIS_WRITE_NOT_READY,
+  NOT_REGENERABLE,
   REGENERABLE_STEPS,
 } from './analysis-write.constants';
 import {
@@ -295,7 +296,7 @@ export class AnalysisWriteService {
   }
 
   /**
-   * «Regenerate» блока шагов 1-2 хода `ready` (`tech.md` §2): своя операция и задача, замечание
+   * «Regenerate» блока хода `ready` (`tech.md` §2): своя операция и задача, замечание
    * редактора в промпт автора. Вторая перегенерация того же блока до конца первой - 409.
    */
   async regenerate(
@@ -311,11 +312,15 @@ export class AnalysisWriteService {
       throw llmTaskConflict(ANALYSIS_REGEN_IN_PROGRESS, 'This block is being regenerated');
     }
     // Перегенерируются блоки шагов из разрешающего списка; связи тем - не блок ответа: герои и
-    // цитаты получают ключи тем при записи.
-    if (!REGENERABLE_STEPS.includes(item.step) || item.links) {
+    // цитаты получают ключи тем при записи; источники - вместе с блоком шага 5 (`F07-2b`).
+    if (
+      !REGENERABLE_STEPS.includes(item.step) ||
+      item.links ||
+      NOT_REGENERABLE.includes(item.target)
+    ) {
       throw llmTaskConflict(
         ANALYSIS_ITEM_NOT_REGENERABLE,
-        'Only the blocks of steps 1-2 are regenerated',
+        'Theme links and sources are not regenerated on their own',
       );
     }
     this.llm.assertEnabled();
@@ -613,9 +618,11 @@ function valueDto(item: AnalysisItem): AnalysisWriteValueDto | null {
     adaptations: null,
     sources: null,
   };
+  // Перегенерированный блок шага 5 показывает и источники, которые его «Accept» добавит (`F07-2b`).
+  const base = item.pendingSources?.length ? { ...empty, sources: item.pendingSources } : empty;
   const list = LIST_VALUE_TARGETS.find((target) => target === item.target);
-  if (list) return Array.isArray(value) ? { ...empty, [list]: value } : null;
-  return typeof value === 'string' ? { ...empty, text: value } : null;
+  if (list) return Array.isArray(value) ? { ...base, [list]: value } : null;
+  return typeof value === 'string' ? { ...base, text: value } : null;
 }
 
 function itemDto(

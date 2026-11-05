@@ -292,7 +292,7 @@ export class ContentDraftController {
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary:
-      'Regenerate one text of a ready summary run (the first text of a section also builds the full and the very short summary) or one block of steps 1-2 of a ready analysis run, under its own operation, with the editor remark in the author prompt; the kind of the run is taken from its row',
+      'Regenerate one text of a ready summary run (the first text of a section also builds the full and the very short summary) or one block of a ready analysis run (sources of a step 5 block are opened again and added to the sources), under its own operation, with the editor remark in the author prompt; the kind of the run is taken from its row',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiParam({ name: 'index', type: Number })
@@ -302,7 +302,7 @@ export class ContentDraftController {
   })
   @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
   @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_REGENERABLE: only the blocks of steps 1-2 are regenerated; LLM_CEILING_REACHED`,
+    description: `${ITEM_CONFLICTS}; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_REGENERABLE: theme links and sources are not regenerated on their own; LLM_CEILING_REACHED`,
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
   async regenerate(

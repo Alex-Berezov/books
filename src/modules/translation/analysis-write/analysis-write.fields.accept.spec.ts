@@ -21,6 +21,7 @@ import {
 import {
   analysisReadyGate,
   analysisRegenGate,
+  analysisRunGate,
   AnalysisWriteFields,
   planStep,
   withThemeLinks,
@@ -828,5 +829,471 @@ describe('a write of the run into an owned block and the cut themeKeys (/fix 3, 
     h.db.stored = { ...h.db.stored, characters: EDITED };
     await h.fields.accept(ROW, 1);
     expect(dropped()).toHaveLength(1);
+  });
+});
+
+describe('F07-2b: regeneration of the blocks of steps 3-5 in the decision and Accept', () => {
+  const regen = { operationId: 'op2', remark: null, pending: null, previous: null };
+  const SRC = (n: number) => ({ title: `Source ${n}`, url: `https://s.example/${n}` });
+  const stepOf = (n: 1 | 2 | 3 | 4 | 5) => ({
+    step: n,
+    verdict: 'ok' as const,
+    remarks: [],
+    attempt: 1 as const,
+    outcome: 'done' as const,
+    failedReason: null,
+    authorModel: 'm',
+    review: null,
+    source: 'text' as const,
+    dropped: [],
+  });
+  const steps = (data: AnalysisWriteData): AnalysisWriteData => ({
+    ...data,
+    steps: ([1, 2, 3, 4, 5] as const).map(stepOf),
+  });
+  const dropped = (data: AnalysisWriteData, n: number) =>
+    data.steps.find((s) => s.step === n)?.dropped ?? [];
+
+  it('themeKeys cut at a regeneration that is written go to the themes step, not to the step of the block', async () => {
+    const max = BOOK_ANALYSIS_LIMITS.themeKeys;
+    const keys = Array.from({ length: max + 1 }, (_, i) => `t${i}`);
+    const stored = { ...EMPTY_BOOK_ANALYSIS, themes: keys.map(theme) };
+    const data = steps(
+      runData(
+        [item('characters', { outcome: 'waiting', value: [ANNA], regen, pendingDropped: [] })],
+        { characters: { anna: keys }, keyQuotes: {} },
+        { characters: true },
+        { characters: blockPrint(null) },
+      ),
+    );
+    const h = harness(data, stored);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 1, 0);
+    expect(h.run().items[0].outcome).toBe('written');
+    expect(dropped(h.run(), 3)).toEqual([
+      expect.objectContaining({ code: 'LIMIT_OUT', path: 'characters.anna.themeKeys' }),
+    ]);
+    expect(dropped(h.run(), 1)).toEqual([]);
+  });
+
+  it('a regenerated proposal records no LIMIT_OUT - the cut is recorded by its Accept', async () => {
+    const max = BOOK_ANALYSIS_LIMITS.themeKeys;
+    const keys = Array.from({ length: max + 1 }, (_, i) => `t${i}`);
+    const stored = { ...EMPTY_BOOK_ANALYSIS, characters: EDITED, themes: keys.map(theme) };
+    const data = steps(
+      runData(
+        [item('characters', { outcome: 'waiting', value: [ANNA], regen, pendingDropped: [] })],
+        { characters: { anna: keys }, keyQuotes: {} },
+      ),
+    );
+    const h = harness(data, stored);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 1, 0);
+    expect(h.run().items[0].outcome).toBe('proposed');
+    expect(dropped(h.run(), 3)).toEqual([]);
+    expect(dropped(h.run(), 1)).toEqual([]);
+  });
+
+  it('regenerated themes written into an empty owned block: their links go into the owned characters by the same write and join the links of the run', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, characters: [ANNA] };
+    const newLinks = { characters: { anna: ['sin'] }, keyQuotes: {} };
+    const data = runData(
+      [
+        item('themes', {
+          step: 3,
+          outcome: 'waiting',
+          value: [theme('sin')],
+          regen,
+          pendingDropped: [],
+          pendingLinks: newLinks,
+        }),
+      ],
+      { characters: { anna: ['old'] }, keyQuotes: {} },
+      { themes: true, characters: true },
+      { themes: blockPrint(null), characters: blockPrint([ANNA]) },
+    );
+    const h = harness(data, stored);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 3, 0);
+    expect(h.saveGuarded).toHaveBeenCalledTimes(1);
+    expect(h.db.stored.themes).toEqual([theme('sin')]);
+    expect(h.db.stored.characters).toEqual([{ ...ANNA, themeKeys: ['sin'] }]);
+    expect(h.run().themeLinks).toEqual({ characters: { anna: ['old', 'sin'] }, keyQuotes: {} });
+    expect(h.run().written.characters).toBe(blockPrint(h.db.stored.characters));
+    expect(h.run().items[0]).toMatchObject({ outcome: 'written', pendingLinks: null });
+  });
+
+  it('regenerated themes as a proposal keep the links of the run until Accept; Accept pours the new links and joins them to the links of the run', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, characters: [ANNA], themes: [theme('old')] };
+    const newLinks = { characters: { anna: ['sin'] }, keyQuotes: {} };
+    const oldLinks = { characters: { anna: ['old'] }, keyQuotes: {} };
+    const data = runData(
+      [
+        item('themes', {
+          step: 3,
+          outcome: 'waiting',
+          value: [theme('sin')],
+          regen,
+          pendingDropped: [],
+          pendingLinks: newLinks,
+        }),
+      ],
+      oldLinks,
+      { characters: true },
+      { characters: blockPrint([ANNA]) },
+    );
+    const h = harness(data, stored);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 3, 0);
+    expect(h.run().items[0].outcome).toBe('proposed');
+    expect(h.run().themeLinks).toEqual(oldLinks);
+    expect(h.saveGuarded).not.toHaveBeenCalled();
+    await h.fields.mutate(ROW, analysisReadyGate, (d) => ({
+      ...d,
+      items: [{ ...d.items[0], regen: null }],
+    }));
+    await h.fields.accept(ROW, 0);
+    expect(h.db.stored.themes).toEqual([theme('sin')]);
+    expect(h.db.stored.characters).toEqual([{ ...ANNA, themeKeys: ['sin'] }]);
+    expect(h.run().themeLinks).toEqual({ characters: { anna: ['old', 'sin'] }, keyQuotes: {} });
+  });
+
+  it('a regenerated step 5 block written into an empty owned block: its sources are added to the saved ones by url in the same write', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, sources: [SRC(0)] };
+    const data = runData(
+      [
+        item('context', {
+          step: 5,
+          outcome: 'waiting',
+          value: 'New paragraph.',
+          regen,
+          pendingDropped: [],
+          pendingSources: [SRC(0), SRC(1)],
+        }),
+      ],
+      null,
+      { context: true, sources: true },
+      { context: blockPrint(null), sources: blockPrint([SRC(0)]) },
+    );
+    const h = harness(data, stored);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 5, 0);
+    expect(h.saveGuarded).toHaveBeenCalledTimes(1);
+    expect(h.written[0]).toMatchObject({ context: 'New paragraph.', sources: [SRC(0), SRC(1)] });
+    expect(h.run().written.sources).toBe(blockPrint([SRC(0), SRC(1)]));
+    expect(h.run().items[0]).toMatchObject({ outcome: 'written', pendingSources: null });
+  });
+
+  it('the run may write the block but not the sources (the editor changed them): the block and its sources go as one proposal', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, sources: [SRC(9)] };
+    const data = runData(
+      [
+        item('context', {
+          step: 5,
+          outcome: 'waiting',
+          value: 'New paragraph.',
+          regen,
+          pendingDropped: [],
+          pendingSources: [SRC(1)],
+        }),
+      ],
+      null,
+      { context: true, sources: true },
+      { context: blockPrint(null), sources: blockPrint([SRC(0)]) },
+    );
+    const h = harness(data, stored);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 5, 0);
+    expect(h.saveGuarded).not.toHaveBeenCalled();
+    expect(h.run().items[0]).toMatchObject({
+      outcome: 'proposed',
+    });
+  });
+
+  it('Accept of a step 5 proposal writes the sources with it; the editor changed the sources - their edit is kept and the new one added; a neighbour proposal is not broken by the first Accept', async () => {
+    const stored = {
+      ...EMPTY_BOOK_ANALYSIS,
+      context: 'Old.',
+      reception: 'Old.',
+      sources: [SRC(0)],
+    };
+    const proposal = (target: 'context' | 'reception', n: number) =>
+      item(target, {
+        step: 5,
+        hash: blockPrint('Old.'),
+        value: `New ${target}.`,
+        pendingDropped: [],
+        pendingSources: [SRC(n)],
+      });
+    const h = harness(runData([proposal('context', 1), proposal('reception', 2)], null), stored);
+    await h.fields.accept(ROW, 0);
+    expect(h.db.stored.sources).toEqual([SRC(0), SRC(1)]);
+    expect(h.db.stored.context).toBe('New context.');
+    // Соседнее предложение: источники дополнил «Accept» хода, а не редактор - не 409.
+    await h.fields.accept(ROW, 1);
+    expect(h.db.stored.sources).toEqual([SRC(0), SRC(1), SRC(2)]);
+
+    // Источники правил редактор: объединение только добавляет - его правка остаётся (круг 3, B).
+    const edited = harness(runData([proposal('context', 1)], null), {
+      ...stored,
+      sources: [SRC(7)],
+    });
+    await edited.fields.accept(ROW, 0);
+    expect(edited.db.stored.sources).toEqual([SRC(7), SRC(1)]);
+  });
+});
+
+describe('F07-2b, /fix 1: links, sources and their prints after a write', () => {
+  const regen = { operationId: 'op2', remark: null, pending: null, previous: null };
+  const SRC = (n: number) => ({ title: `Source ${n}`, url: `https://s.example/${n}` });
+
+  it('regenerated themes with empty links of the answer do not wipe the links of the run (merge, not replace)', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, themes: [theme('loss')] };
+    const data = runData(
+      [
+        item('themes', {
+          step: 3,
+          outcome: 'waiting',
+          value: [theme('loss')],
+          regen,
+          pendingDropped: [],
+          pendingLinks: { characters: {}, keyQuotes: {} },
+        }),
+      ],
+      LINKS,
+      { themes: true },
+      { themes: blockPrint(null) },
+    );
+    const h = harness(data, { ...stored, themes: undefined } as unknown as StoredBookAnalysis);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 3, 0);
+    expect(h.run().items[0].outcome).toBe('written');
+    expect(h.run().themeLinks).toEqual(LINKS);
+  });
+
+  it('two waiting step 5 blocks decided together (a break before the decision): the sources of both are written, not the last only', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, sources: [SRC(0)] };
+    const waiting = (target: 'context' | 'reception', n: number) =>
+      item(target, {
+        step: 5,
+        outcome: 'waiting',
+        value: `New ${target}.`,
+        pendingDropped: [],
+        pendingSources: [SRC(n)],
+      });
+    const data = runData(
+      [waiting('context', 1), waiting('reception', 2)],
+      null,
+      { context: true, reception: true, sources: true },
+      {
+        context: blockPrint(null),
+        reception: blockPrint(null),
+        sources: blockPrint([SRC(0)]),
+      },
+    );
+    const h = harness(data, stored, () => undefined, 'building');
+    await h.fields.settleStep(ROW, analysisRunGate('op1'), 5);
+    expect(h.db.stored.sources).toEqual([SRC(0), SRC(1), SRC(2)]);
+  });
+
+  it('Accept of a step 5 proposal while the run owns the sources: the run keeps them (written), a sources proposal follows the written block', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, context: 'Old.', sources: [SRC(0)] };
+    const data = runData(
+      [
+        item('context', {
+          step: 5,
+          hash: blockPrint('Old.'),
+          value: 'New.',
+          pendingDropped: [],
+          pendingSources: [SRC(1)],
+        }),
+        item('sources', { step: 5, hash: blockPrint([SRC(0)]), value: [SRC(0), SRC(3)] }),
+      ],
+      null,
+      { sources: true },
+      { sources: blockPrint([SRC(0)]) },
+    );
+    const h = harness(data, stored);
+    await h.fields.accept(ROW, 0);
+    expect(h.run().written.sources).toBe(blockPrint([SRC(0), SRC(1)]));
+    expect(h.run().items[1].hash).toBe(blockPrint([SRC(0), SRC(1)]));
+    await h.fields.accept(ROW, 1);
+    expect(h.run().items[1].outcome).toBe('accepted');
+  });
+
+  it('Accept of the sources proposal: a regenerated step 5 proposal compares the sources with the written block, not 409 forever', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, context: 'Old.', sources: [SRC(0)] };
+    const data = runData(
+      [
+        item('sources', { step: 5, hash: blockPrint([SRC(0)]), value: [SRC(0), SRC(3)] }),
+        item('context', {
+          step: 5,
+          hash: blockPrint('Old.'),
+          value: 'New.',
+          pendingDropped: [],
+          pendingSources: [SRC(1)],
+        }),
+      ],
+      null,
+    );
+    const h = harness(data, stored);
+    await h.fields.accept(ROW, 0);
+    await h.fields.accept(ROW, 1);
+    expect(h.db.stored.sources).toEqual([SRC(0), SRC(3), SRC(1)]);
+  });
+});
+
+describe('F07-2b, /fix 3: the limit of the sources by the fact and one source of the theme links', () => {
+  const regen = { operationId: 'op2', remark: null, pending: null, previous: null };
+  const SRC = (n: number) => ({ title: `Source ${n}`, url: `https://s.example/${n}` });
+  const full = (count: number) => Array.from({ length: count }, (_, i) => SRC(100 + i));
+  const waiting = (pendingSources: Array<{ title: string; url: string }>) =>
+    item('context', {
+      step: 5,
+      outcome: 'waiting',
+      value: 'New.',
+      regen,
+      pendingDropped: [],
+      pendingSources,
+    });
+
+  it('no saved sources at all (null): the regenerated block and its sources are written', async () => {
+    const data = runData(
+      [waiting([SRC(1)])],
+      null,
+      { context: true, sources: true },
+      {
+        context: blockPrint(null),
+        sources: blockPrint(null),
+      },
+    );
+    const h = harness(data, EMPTY_BOOK_ANALYSIS);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 5, 0);
+    expect(h.saveGuarded).toHaveBeenCalledTimes(1);
+    expect(h.db.stored).toMatchObject({ context: 'New.', sources: [SRC(1)] });
+    expect(h.run().items[0].outcome).toBe('written');
+  });
+
+  it('every source of the block is already saved: the block is written though the run does not own the sources, the sources stay', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, sources: [SRC(7), SRC(1)] };
+    const data = runData(
+      [waiting([SRC(1)])],
+      null,
+      { context: true },
+      {
+        context: blockPrint(null),
+      },
+    );
+    const h = harness(data, stored);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 5, 0);
+    expect(h.written[0]).toEqual({ language: 'en', context: 'New.' });
+    expect(h.db.stored.sources).toEqual([SRC(7), SRC(1)]);
+  });
+
+  it('the union does not fit the limit: the block is a proposal flagged LIMIT_OUT on the sources, its Accept is 409 ANALYSIS_WRITE_REFUSED', async () => {
+    const saved = full(BOOK_ANALYSIS_LIMITS.sources);
+    const stored = { ...EMPTY_BOOK_ANALYSIS, sources: saved };
+    const data = runData(
+      [waiting([SRC(1)])],
+      null,
+      { context: true, sources: true },
+      {
+        context: blockPrint(null),
+        sources: blockPrint(saved),
+      },
+    );
+    const h = harness(data, stored);
+    await h.fields.settleStep(ROW, analysisRegenGate('op2', 0), 5, 0);
+    expect(h.saveGuarded).not.toHaveBeenCalled();
+    const proposal = h.run().items[0];
+    expect(proposal).toMatchObject({ outcome: 'proposed', verdict: 'flags' });
+    expect(proposal.remarks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'LIMIT_OUT', where: expect.stringMatching(/^sources/) }),
+      ]),
+    );
+    await h.fields.mutate(ROW, analysisReadyGate, (d) => ({
+      ...d,
+      items: [{ ...d.items[0], regen: null }],
+    }));
+    expect((await h.codeOf(h.fields.accept(ROW, 0))).code).toBe('ANALYSIS_WRITE_REFUSED');
+    expect(h.saveGuarded).not.toHaveBeenCalled();
+  });
+
+  it('another write of the sources before the Accept, the union still fits: Accept passes (no stale print)', async () => {
+    const stored = {
+      ...EMPTY_BOOK_ANALYSIS,
+      context: 'Old.',
+      reception: 'Old.',
+      sources: [SRC(0)],
+    };
+    const proposal = (target: 'context' | 'reception', n: number) =>
+      item(target, {
+        step: 5,
+        hash: blockPrint('Old.'),
+        value: `New ${target}.`,
+        pendingDropped: [],
+        pendingSources: [SRC(n)],
+      });
+    const h = harness(runData([proposal('context', 1), proposal('reception', 2)], null), stored);
+    // Редактор дописал источник руками между предложениями и «Accept».
+    h.db.stored = { ...h.db.stored, sources: [SRC(0), SRC(9)] };
+    await h.fields.accept(ROW, 1);
+    expect(h.db.stored.sources).toEqual([SRC(0), SRC(9), SRC(2)]);
+  });
+
+  it('the sources fill up between the read and the lock: the body is rebuilt and the Accept is 409 ANALYSIS_WRITE_REFUSED, nothing is written', async () => {
+    const saved = full(BOOK_ANALYSIS_LIMITS.sources - 1);
+    const stored = { ...EMPTY_BOOK_ANALYSIS, context: 'Old.', sources: saved };
+    const proposal = item('context', {
+      step: 5,
+      hash: blockPrint('Old.'),
+      value: 'New.',
+      pendingDropped: [],
+      pendingSources: [SRC(1)],
+    });
+    const h = harness(runData([proposal], null), stored, (db, call) => {
+      // Редактор занял последнее место, пока «Accept» шёл к замку.
+      if (call === 1) db.stored = { ...db.stored, sources: [...saved, SRC(50)] };
+    });
+    expect((await h.codeOf(h.fields.accept(ROW, 0))).code).toBe('ANALYSIS_WRITE_REFUSED');
+    expect(h.written).toEqual([]);
+    expect(h.db.stored.context).toBe('Old.');
+  });
+
+  it('a neighbour proposal whose union no longer fits after an Accept: its Accept is 409 ANALYSIS_WRITE_REFUSED, nothing is written', async () => {
+    const saved = full(BOOK_ANALYSIS_LIMITS.sources - 1);
+    const stored = { ...EMPTY_BOOK_ANALYSIS, context: 'Old.', reception: 'Old.', sources: saved };
+    const proposal = (target: 'context' | 'reception', n: number) =>
+      item(target, {
+        step: 5,
+        hash: blockPrint('Old.'),
+        value: `New ${target}.`,
+        pendingDropped: [],
+        pendingSources: [SRC(n)],
+      });
+    const h = harness(runData([proposal('context', 1), proposal('reception', 2)], null), stored);
+    await h.fields.accept(ROW, 0);
+    expect(h.db.stored.sources).toHaveLength(BOOK_ANALYSIS_LIMITS.sources);
+    expect((await h.codeOf(h.fields.accept(ROW, 1))).code).toBe('ANALYSIS_WRITE_REFUSED');
+    expect(h.db.stored.reception).toBe('Old.');
+  });
+
+  it('Accept of regenerated themes pours the links of the run too, not only those of the answer, into the characters the run owns', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, characters: [ANNA, BORIS], themes: [theme('love')] };
+    const data = runData(
+      [
+        item('themes', {
+          step: 3,
+          hash: blockPrint([theme('love')]),
+          value: [theme('love'), theme('war')],
+          pendingDropped: [],
+          // Ответ связал только Бориса; связь Анны с «love» - у хода.
+          pendingLinks: { characters: { boris: ['war'] }, keyQuotes: {} },
+        }),
+      ],
+      { characters: { anna: ['love'] }, keyQuotes: {} },
+      { characters: true },
+      { characters: blockPrint([ANNA, BORIS]) },
+    );
+    const h = harness(data, stored);
+    await h.fields.accept(ROW, 0);
+    expect(h.db.stored.characters).toEqual([
+      { ...ANNA, themeKeys: ['love'] },
+      { ...BORIS, themeKeys: ['war'] },
+    ]);
   });
 });

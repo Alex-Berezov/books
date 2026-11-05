@@ -27,6 +27,7 @@ import {
   ANALYSIS_TARGETS,
   analysisDataJson,
   AnalysisItem,
+  AnalysisSource,
   AnalysisStepNumber,
   AnalysisTarget,
   AnalysisWriteData,
@@ -40,7 +41,10 @@ import {
   THEMES_STEP,
   ThemeLinks,
   withItem,
+  mergedLinks,
   withRegenTaken,
+  withSources,
+  withStepFixes,
 } from './analysis-write.data';
 import { quotePrint } from './analysis-write.steps';
 
@@ -86,14 +90,55 @@ const notProposed = () =>
 const regenInProgress = () =>
   llmTaskConflict(ANALYSIS_REGEN_IN_PROGRESS, 'This block is being regenerated');
 
-function blockChanged(current: unknown) {
+function blockChanged(
+  current: unknown,
+  message = 'The block was changed after the proposal: reload it',
+) {
   return new ConflictException({
     statusCode: 409,
     error: 'Conflict',
     code: ANALYSIS_BLOCK_CHANGED,
-    message: 'The block was changed after the proposal: reload it',
+    message,
     current: current ?? null,
   });
+}
+
+/**
+ * Источники блока шага 5 из перегенерации (решение арбитра `F07 | F07-2b`, круг 3, B): что они
+ * добавляют к сохранённым по адресу и влезает ли объединение в предел импорта. Проверка по факту -
+ * по блокам, прочитанным под замком записи; объединение только добавляет, правки редактора в
+ * `sources` не затираются, отпечаток для сохранности не нужен.
+ */
+function sourcesOf(
+  item: AnalysisItem,
+  stored: StoredBookAnalysis,
+): { adds: boolean; fits: boolean; merged: AnalysisSource[] } {
+  const merged = withSources(stored.sources, item.pendingSources ?? []);
+  return {
+    adds: merged.length > (stored.sources ?? []).length,
+    fits: merged.length <= BOOK_ANALYSIS_LIMITS.sources,
+    merged,
+  };
+}
+
+/** «Accept» блока шага 5, источники которого не влезают в сохранённые: 409, тело не пишется. */
+function sourcesFull() {
+  return new ConflictException({
+    statusCode: 409,
+    error: 'Conflict',
+    code: ANALYSIS_WRITE_REFUSED,
+    message: `The list of sources is full (at most ${BOOK_ANALYSIS_LIMITS.sources}): free some room or regenerate the block`,
+    errors: [`sources: at most ${BOOK_ANALYSIS_LIMITS.sources} sources`],
+  });
+}
+
+/**
+ * Связи тем, по которым ход вливает ключи в героев и цитаты: у тем из перегенерации - связи хода,
+ * слитые со связями ответа (`mergedLinks`, как в `withRegenTaken`), у прочих - связи хода. Одно
+ * правило у записи хода, у «Accept» и у предложений связей после них.
+ */
+function linksOfItem(data: AnalysisWriteData, item: AnalysisItem): ThemeLinks | null {
+  return item.pendingLinks ? mergedLinks(data.themeLinks, item.pendingLinks) : data.themeLinks;
 }
 
 /** Строка хода больше не принимает запись этой операции: транзакция откатывается. */
@@ -139,6 +184,8 @@ interface StepPlan {
   refused: Map<number, string[]>;
   /** `themeKeys` сверх предела импорта после слияния - отрезаны (`LIMIT_OUT`). */
   cut: StepFix[];
+  /** Блоки героев и цитат, в которые записанные новые темы перегенерации вливают связи (`F07-2b`). */
+  linked: LinkBlock[];
 }
 
 /**
@@ -277,6 +324,7 @@ export function planStep(
     empty: [],
     refused: new Map(),
     cut: [],
+    linked: [],
   };
   const waiting = data.items
     .map((item, index) => ({ item, index }))
@@ -292,6 +340,15 @@ export function planStep(
     writable(data, target, state) &&
     !refusedBlock(target) &&
     (only === undefined || compactBlock(targetValue(state.stored, target)) === null);
+  // Блок шага 5 с новыми источниками пишется вместе с `sources` (решение арбитра `F07 | F07-2b`,
+  // п.1): `sources` ход тоже должен быть вправе писать, а объединение - влезать в предел (круг 3, B);
+  // иначе - предложение. Все источники блока уже сохранены - `sources` не меняется, право на них
+  // не нужно.
+  const canWriteItem = (item: AnalysisItem): boolean => {
+    if (!canWrite(item.target)) return false;
+    const own = sourcesOf(item, state.stored);
+    return !own.adds || (own.fits && writable(data, 'sources', state) && !refusedBlock('sources'));
+  };
   const themesItem = waiting.find(({ item }) => !item.links && item.target === 'themes');
   const themeKeys = new Set(
     (themesItem !== undefined && canWrite('themes')
@@ -302,9 +359,12 @@ export function planStep(
   const links = data.themeLinks ?? { characters: {}, keyQuotes: {} };
   for (const { item, index } of waiting) {
     let value: unknown = item.value;
+    // Отрезанные `themeKeys` перегенерации - в шаг тем, и только если итог записан (`F07-2b`,
+    // хвост г): у предложения их отрежет и запишет «Accept».
+    const cut: StepFix[] = only !== undefined ? [] : plan.cut;
     // Перегенерация героев или цитат (`F07-1b`): связи тем шага 3 вливаются заново по ключам.
     if (only !== undefined && !item.links) {
-      value = withThemeLinks(item.target, value, data.themeLinks, themeKeys, plan.cut);
+      value = withThemeLinks(item.target, value, data.themeLinks, themeKeys, cut);
     }
     if (item.links) {
       value = relinked(item.target as LinkBlock, state.stored, links, themeKeys, plan.cut);
@@ -314,8 +374,9 @@ export function planStep(
       }
     }
     plan.values.set(index, value);
-    if (canWrite(item.target)) {
+    if (canWriteItem(item)) {
       plan.writes.push(index);
+      if (cut !== plan.cut) plan.cut.push(...cut);
       continue;
     }
     plan.proposals.push(index);
@@ -349,6 +410,27 @@ export function planStep(
       body[target] = plan.values.get(index);
     }
   }
+  for (const index of plan.writes) {
+    const item = data.items[index];
+    // Несколько записываемых блоков с источниками в одном решении копят их, а не затирают: сейчас
+    // перегенерация решает один блок (`only`), правило держит и решение шага целиком.
+    if (item.pendingSources?.length && sourcesOf(item, state.stored).adds) {
+      body.sources = withSources(
+        (body.sources as AnalysisSource[] | undefined) ?? state.stored.sources,
+        item.pendingSources,
+      );
+    }
+    // Записанные новые темы перегенерации (`F07-2b`): их связи вливаются в героев и цитаты, которыми
+    // ход владеет, той же записью; в прочие - предложениями (`applyPlan`), как у «Accept» темы.
+    if (only !== undefined && item.target === 'themes' && !item.links) {
+      const themes = plan.values.get(index) as Array<{ key: string }>;
+      const links = linksOfItem(data, item);
+      if (!links) continue;
+      const own = themeLinkWrites(data, links, themes, state, plan.cut, refusedBlock);
+      Object.assign(body, own.bodies);
+      plan.linked.push(...own.linked);
+    }
+  }
   plan.dto = body as unknown as UpdateBookAnalysisDto;
   return plan;
 }
@@ -367,6 +449,7 @@ function samePlan(a: StepPlan, b: StepPlan): boolean {
       empty: plan.empty,
       refused: [...plan.refused],
       cut: plan.cut,
+      linked: plan.linked,
     });
   return form(a) === form(b);
 }
@@ -378,6 +461,8 @@ interface AcceptPlan {
   linked: LinkBlock[];
   /** `themeKeys`, отрезанные этой записью по пределу импорта, - `LIMIT_OUT` шага тем (В3). */
   cut: StepFix[];
+  /** Запись несёт новые `sources` (блок шага 5 из перегенерации), и ход владеет ими. */
+  sourcesOwned: boolean;
 }
 
 /**
@@ -408,19 +493,88 @@ function acceptPlan(
     string,
     unknown
   >;
+  // Источники блока шага 5 из перегенерации - той же записью (решение арбитра `F07 | F07-2b`, п.1).
+  const own = sourcesOf(item, state.stored);
+  if (own.adds) dto.sources = own.merged;
+  let linked: LinkBlock[] = [];
+  // Темы из перегенерации несут свои связи (`pendingLinks`); темы шага - связи хода.
+  const themeLinks = linksOfItem(data, item);
+  if (item.target === 'themes' && !item.links && Array.isArray(value) && themeLinks) {
+    const own = themeLinkWrites(data, themeLinks, value as Array<{ key: string }>, state, cut);
+    Object.assign(dto, own.bodies);
+    linked = own.linked;
+  }
+  return {
+    dto: dto as unknown as UpdateBookAnalysisDto,
+    linked,
+    cut,
+    sourcesOwned: own.adds && writable(data, 'sources', state),
+  };
+}
+
+/**
+ * Связи записываемых тем в героев и цитаты, которыми ход вправе писать (решение арбитра
+ * `F07 | F07-1b`, Б): тела блоков в ту же запись. Одно правило у записи хода (`planStep`) и у
+ * «Accept» (`acceptPlan`); `refused` - блоки, которым анализ отказал (К4), в запись не идут.
+ */
+function themeLinkWrites(
+  data: AnalysisWriteData,
+  links: ThemeLinks,
+  themes: ReadonlyArray<{ key: string }>,
+  state: BlockState,
+  cut: StepFix[],
+  refused: (block: LinkBlock) => boolean = () => false,
+): { bodies: Partial<Record<LinkBlock, unknown[]>>; linked: LinkBlock[] } {
+  const keys = new Set(themes.map((theme) => theme.key));
+  const bodies: Partial<Record<LinkBlock, unknown[]>> = {};
   const linked: LinkBlock[] = [];
-  if (item.target === 'themes' && !item.links && Array.isArray(value) && data.themeLinks) {
-    const keys = new Set((value as Array<{ key: string }>).map((theme) => theme.key));
-    for (const block of LINK_BLOCKS) {
-      if (!writable(data, block, state)) continue;
-      const next = relinked(block, state.stored, data.themeLinks, keys, cut);
-      if (next !== null) {
-        dto[block] = next;
-        linked.push(block);
-      }
+  for (const block of LINK_BLOCKS) {
+    if (!writable(data, block, state) || refused(block)) continue;
+    const next = relinked(block, state.stored, links, keys, cut);
+    if (next !== null) {
+      bodies[block] = next;
+      linked.push(block);
     }
   }
-  return { dto: dto as unknown as UpdateBookAnalysisDto, linked, cut };
+  return { bodies, linked };
+}
+
+/**
+ * После записи тем (ходом или «Accept»): блоки связей, записанные вместе с ними, - на записанном
+ * содержимом; прочие получают предложение связей (Б). Одно правило у `applyPlan` и `applyAccept`.
+ */
+function afterThemesWrite(
+  data: AnalysisWriteData,
+  links: ThemeLinks,
+  saved: StoredBookAnalysis,
+  linked: readonly LinkBlock[],
+  skip: number,
+): AnalysisWriteData {
+  const keys = new Set((saved.themes ?? []).map((theme) => theme.key));
+  let next = data;
+  for (const block of LINK_BLOCKS) {
+    next = linked.includes(block)
+      ? afterOwnWrite(next, block, saved, skip)
+      : syncLinks(next, block, saved, links, keys, skip, true);
+  }
+  return next;
+}
+
+/**
+ * После записи `sources` ходом или «Accept» блока шага 5: ход владел блоком - он и дальше его
+ * (`written`), предложения `sources` - на записанном.
+ */
+function afterSourcesWrite(
+  data: AnalysisWriteData,
+  saved: StoredBookAnalysis,
+  skip: number,
+): AnalysisWriteData {
+  return afterOwnWrite(
+    { ...data, written: { ...data.written, sources: blockPrint(targetValue(saved, 'sources')) } },
+    'sources',
+    saved,
+    skip,
+  );
 }
 
 /**
@@ -449,15 +603,17 @@ function applyAccept(
     written,
     steps: withStepFixes(accepted.steps, THEMES_STEP, plan.cut),
   };
-  const links = data.themeLinks;
+  // `sources` записаны «Accept» блока шага 5 или самого `sources`: соседи сверяют записанное.
+  if (plan.sourcesOwned) next = afterSourcesWrite(next, saved, index);
+  // Принятые темы перегенерации уже вошли в связи хода (`withRegenTaken`).
+  const links = next.themeLinks;
   if (!links) return next;
-  const themeKeys = new Set((saved.themes ?? []).map((theme) => theme.key));
-  const theme = item.target === 'themes' && !item.links;
-  for (const block of LINK_BLOCKS) {
-    if (plan.linked.includes(block)) next = afterOwnWrite(next, block, saved, index);
-    else if (item.target === block || theme) {
-      next = syncLinks(next, block, saved, links, themeKeys, index, theme);
-    }
+  if (item.target === 'themes' && !item.links) {
+    return afterThemesWrite(next, links, saved, plan.linked, index);
+  }
+  if (isLinkBlock(item.target) && !plan.linked.includes(item.target)) {
+    const themeKeys = new Set((saved.themes ?? []).map((theme) => theme.key));
+    next = syncLinks(next, item.target, saved, links, themeKeys, index, false);
   }
   return next;
 }
@@ -486,22 +642,6 @@ function afterOwnWrite(
   if (!data.themeLinks || !isLinkBlock(target)) return next;
   const themeKeys = new Set((saved.themes ?? []).map((theme) => theme.key));
   return syncLinks(next, target, saved, data.themeLinks, themeKeys, skip, false);
-}
-
-/** Правки кода шага `step` (`steps[].dropped`): новые заменяют прежние с тем же кодом и путём. */
-function withStepFixes(
-  steps: AnalysisWriteData['steps'],
-  step: AnalysisStepNumber,
-  fixes: readonly StepFix[],
-): AnalysisWriteData['steps'] {
-  if (fixes.length === 0) return steps;
-  const key = (fix: StepFix) => `${fix.code}\u0000${fix.path}`;
-  const fresh = new Set(fixes.map(key));
-  return steps.map((s) =>
-    s.step === step
-      ? { ...s, dropped: [...s.dropped.filter((f) => !fresh.has(key(f))), ...fixes] }
-      : s,
-  );
 }
 
 /**
@@ -710,6 +850,9 @@ export class AnalysisWriteFields {
       if (blockPrint(targetValue(state.stored, item.target)) !== item.hash) {
         throw blockChanged(targetValue(state.stored, item.target));
       }
+      // Предел по факту (решение арбитра `F07 | F07-2b`, круг 3, B): источники изменились до замка -
+      // тело (`dto.sources`) разошлось, решение пересобирается и снова приходит сюда.
+      if (!sourcesOf(item, state.stored).fits) throw sourcesFull();
       const plan = acceptPlan(data, item, state, row.language);
       const dto = plan.dto;
       const again = { retry: false };
@@ -849,7 +992,7 @@ export class AnalysisWriteFields {
           done: async (tx, saved) => {
             const current = await this.locked(tx, row.id, gate);
             if (!current) throw new AnalysisRunGone();
-            const next = applyPlan(current, step, plan, result.existing, saved);
+            const next = applyPlan(current, plan, result.existing, saved);
             await this.save(tx, row.id, gate, next);
             result.outcome = 'settled';
           },
@@ -912,7 +1055,7 @@ export class AnalysisWriteFields {
         if (kind === 'force' && refusal !== null) {
           for (const index of real.writes) all.refused.set(index, [...refusal.errors]);
         }
-        await this.save(tx, row.id, gate, applyPlan(current, step, all, state.stored, null));
+        await this.save(tx, row.id, gate, applyPlan(current, all, state.stored, null));
         return 'settled';
       }, BOOK_ANALYSIS_TX_OPTIONS);
     } catch (error) {
@@ -951,7 +1094,6 @@ export class AnalysisWriteFields {
  */
 export function applyPlan(
   data: AnalysisWriteData,
-  step: AnalysisStepNumber,
   plan: StepPlan,
   before: StoredBookAnalysis,
   saved: StoredBookAnalysis | null,
@@ -970,36 +1112,61 @@ export function applyPlan(
   for (const index of plan.proposals) {
     const item = items[index];
     const errors = plan.refused.get(index);
-    const remarks = errors
-      ? [
-          ...item.remarks,
-          ...errors.map((error) =>
+    // Источники блока не влезают в сохранённые: флаг `LIMIT_OUT` на `sources`, «Accept» - 409.
+    const full = !!item.pendingSources?.length && !sourcesOf(item, before).fits;
+    const remarks = [
+      ...item.remarks,
+      ...(errors ?? []).map((error) =>
+        codeRemark(
+          'IMPORT_INVALID',
+          error.split(':', 1)[0],
+          `The analysis refused this write: ${error}`,
+        ),
+      ),
+      ...(full
+        ? [
             codeRemark(
-              'IMPORT_INVALID',
-              error.split(':', 1)[0],
-              `The analysis refused this write: ${error}`,
+              'LIMIT_OUT',
+              'sources',
+              `The list of sources is full (at most ${BOOK_ANALYSIS_LIMITS.sources}): free some room or regenerate the block.`,
             ),
-          ),
-        ]
-      : item.remarks;
+          ]
+        : []),
+    ];
     patch(index, {
       outcome: 'proposed',
       hash: blockPrint(targetValue(before, item.target)),
       value: plan.values.get(index) ?? null,
       remarks,
-      verdict: errors ? 'flags' : item.verdict,
+      verdict: errors || full ? 'flags' : item.verdict,
     });
   }
   for (const index of plan.empty) patch(index, { outcome: 'none', value: null });
-  const steps = withStepFixes(data.steps, step, plan.cut);
+  // Отрезанные `themeKeys` - всегда ключи тем: правка шага тем, а не шага блока (`F07-2b`, хвост г).
+  const steps = withStepFixes(data.steps, THEMES_STEP, plan.cut);
+  if (saved) {
+    for (const block of plan.linked) written[block] = blockPrint(targetValue(saved, block));
+  }
   // Записанный итог перегенерации - в `merged` и `droppedQuotes` хода записанным значением
   // (`withRegenTaken`); предложения записанной единицы - на записанном блоке (`afterOwnWrite`).
   return plan.writes.reduce(
     (next, index) => {
-      const target = next.items[index].target;
+      const item = next.items[index];
+      const target = item.target;
       const value = saved ? targetValue(saved, target) : plan.values.get(index);
-      const taken = withRegenTaken(next, index, value);
-      return saved ? afterOwnWrite(taken, target, saved, index) : taken;
+      let taken = withRegenTaken(next, index, value);
+      if (!saved) return taken;
+      taken = afterOwnWrite(taken, target, saved, index);
+      // Источники блока шага 5 записаны вместе с ним: `sources` - запись хода (`F07-2b`).
+      if (item.pendingSources?.length && sourcesOf(item, before).adds) {
+        taken = afterSourcesWrite(taken, saved, index);
+      }
+      // Записанные новые темы - как после «Accept» темы.
+      const links = taken.themeLinks;
+      if (target === 'themes' && !item.links && links) {
+        taken = afterThemesWrite(taken, links, saved, plan.linked, index);
+      }
+      return taken;
     },
     { ...data, steps, items, written } as AnalysisWriteData,
   );

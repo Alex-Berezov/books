@@ -24,8 +24,9 @@ import { QualityLoopSpec } from '../draft-quality/quality-loop';
 import { ChapterIndex, normalizeQuote } from '../draft-quality/quote-check';
 import { StageModels } from '../run/run-models';
 import { glossaryNames, glossaryText, PartContext } from '../summary-write/summary-write.parts';
-import { fixDraft, stepRemarks } from './analysis-checks';
+import { fixDraft, regenRemarks, stepRemarks } from './analysis-checks';
 import { ANALYSIS_REVIEW_STAGE, EXTERNAL_STEP, READER_STEP } from './analysis-write.constants';
+import { ownSources } from './analysis-write.external';
 import { EXAMPLE_ANALYSES } from './examples';
 import {
   AnalysisStepNumber,
@@ -445,20 +446,39 @@ export function readStepAnswer(
 }
 
 /**
- * Ответ шага, сведённый к одному блоку перегенерации (`F07-1b`): прочие блоки отброшены, как их
- * выброшенные цитаты и правки кода; связи тем - только у шага 3, перегенерации его блоков нет.
+ * Ответ шага, сведённый к одному блоку перегенерации (`F07-1b`, `F07-2b`): прочие блоки отброшены,
+ * как их выброшенные цитаты и правки кода. Темы (шаг 3) держат связи ответа, урезанные до своих
+ * тем; блок внешнего шага (шаг 5) - свои источники с пересчётом ссылок (решение арбитра
+ * `F07 | F07-2b`): без них проверка источников сняла бы все утверждения.
  */
 export function onlyTarget(draft: StepDraft, target: AnalysisTarget): StepDraft {
   const blocks = targetBlocks(target, blocksValue(draft.blocks, target));
   // Путь блока `facts` целиком относится и к его подполю (правило одно - `pathInTarget`).
   const own = (path: string) => pathInTarget(path, target);
+  const sourced = draft.refs ? ownSources(draft, target, blocks) : null;
   return {
-    blocks,
-    themeLinks: null,
-    refs: null,
+    blocks: sourced?.blocks ?? blocks,
+    themeLinks: target === 'themes' ? linksOfThemes(draft.themeLinks, blocks.themes ?? []) : null,
+    refs: sourced?.refs ?? null,
     droppedQuotes: draft.droppedQuotes.filter((d) => own(d.path)),
     fixes: draft.fixes.filter((f) => own(f.path)),
   };
+}
+
+/** Связи тем только на темы ответа: ключ прежней темы, которой в ответе нет, повис бы. */
+function linksOfThemes(
+  links: ThemeLinks | null | undefined,
+  themes: readonly BookAnalysisThemeDto[],
+): ThemeLinks | null {
+  if (!links) return null;
+  const keys = new Set(themes.map((theme) => theme.key));
+  const trim = (map: Record<string, string[]>) =>
+    Object.fromEntries(
+      Object.entries(map)
+        .map(([id, own]) => [id, own.filter((key) => keys.has(key))] as const)
+        .filter(([, own]) => own.length > 0),
+    );
+  return { characters: trim(links.characters), keyQuotes: trim(links.keyQuotes) };
 }
 
 /** Книга шага: весь текст версии или краткое содержание глав досье (`tech.md` §2). */
@@ -936,19 +956,22 @@ export function stepInput(
           regen ? withoutTarget(context.merged, regen.target) : context.merged,
         ),
         answer: draft,
+        regenTarget: regen?.target ?? null,
       }),
     read: (value) => {
       const draft = readStepAnswer(step, value, quotes, targets);
       return regen ? onlyTarget(draft, regen.target) : draft;
     },
-    codeCheck: (draft) =>
-      stepRemarks({
+    codeCheck: (draft) => [
+      ...(regen ? regenRemarks(draft, regen.target, context.stored) : []),
+      ...stepRemarks({
         language: context.language,
         stored: context.stored,
         merged: context.merged,
         draft,
         glossary: names,
       }),
+    ],
   };
 }
 

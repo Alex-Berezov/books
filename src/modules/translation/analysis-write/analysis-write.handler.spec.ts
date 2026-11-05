@@ -531,13 +531,30 @@ describe('AnalysisWriteHandler: regeneration of a block (F07-1b)', () => {
       record({ draft: { blocks: {}, themeLinks: null, droppedQuotes: [], fixes: [] } }),
       'DRAFT_INVALID_RESPONSE',
     ],
+    [
+      'the check of the sources dropped every statement of the block (F07-2b)',
+      record({
+        draft: { blocks: {}, themeLinks: null, droppedQuotes: [], fixes: [] },
+        unverified: new Set(['characters']),
+      }),
+      'EXTERNAL_UNVERIFIED',
+    ],
   ])(
     '%s: the block stays, the reason is kept in regenFailedReason, nothing is decided',
     async (_name, outcome, reason) => {
       const s = regenSetup([item({ regen })]);
       s.produce.mockResolvedValue(outcome);
+      s.fields.mutate.mockImplementation(savedBy(() => dataOf({ items: [item({ regen })] })));
       await s.handler.handler.run(regenTask, ctx);
-      expect(s.fields.mutate).not.toHaveBeenCalled();
+      // Шаг упал целиком - записывать нечего; иначе пишутся только причины снятия (F07-2b, Q2):
+      // блок тот же, итога нет.
+      if (outcome.step.outcome !== 'failed') {
+        expect(s.fields.mutate).toHaveBeenCalledTimes(1);
+        const kept = (await s.fields.mutate.mock.results[0].value) as { data: AnalysisWriteData };
+        expect(kept.data.items[0]).toEqual(item({ regen }));
+      } else {
+        expect(s.fields.mutate).not.toHaveBeenCalled();
+      }
       expect(s.fields.settleStep).not.toHaveBeenCalled();
       // Причина уходит в снятие отметки той же транзакцией, что закрывает операцию.
       const clear = s.tasks.completeOperation.mock.calls[0][1] as (t: typeof s.tx) => Promise<void>;
@@ -620,5 +637,371 @@ describe('the gate of a regeneration', () => {
     ).toBe(true);
     expect(gate.allows(row, dataOf({ items: [item()] }))).toBe(false);
     expect(gate.allows(rowOf({ status: 'building' }), dataOf())).toBe(false);
+  });
+});
+
+describe('AnalysisWriteHandler: F07-2b', () => {
+  const REGEN_OP = 'op2';
+  const ready = rowOf({ status: 'ready' });
+  const regenTask = task({ draftId: 'd1', index: 0 }, REGEN_OP);
+
+  it('the result of a regeneration is already decided but the operation is open (a break before its end) - only closed, nothing is paid again', async () => {
+    const s = setup(ready);
+    const previous = item();
+    const regen = { operationId: REGEN_OP, remark: null, pending: null, previous };
+    s.fields.read.mockResolvedValue(dataOf({ items: [item({ outcome: 'proposed', regen })] }));
+    const produce = jest.spyOn(
+      s.handler as unknown as { produceStep: () => Promise<StepRecord | null> },
+      'produceStep',
+    );
+    await expect(s.handler.handler.run(regenTask, ctx)).resolves.toEqual({ kind: 'done' });
+    expect(produce).not.toHaveBeenCalled();
+    expect(runQualityLoop).not.toHaveBeenCalled();
+    expect(s.fields.settleStep).not.toHaveBeenCalled();
+    expect(s.tasks.completeOperation).toHaveBeenCalledTimes(1);
+    expect(s.tasks.completeOperation).toHaveBeenCalledWith(REGEN_OP, expect.any(Function));
+  });
+
+  it('no source opened by the channel - the task fails, the operation pauses STEP_FAILED, «Continue» resumes the paid text without a second call of the author', async () => {
+    const s = setup();
+    const fetcher = (s.handler as unknown as { fetcher: { fetchMany: jest.Mock } }).fetcher;
+    fetcher.fetchMany.mockResolvedValue([
+      { ok: false, reason: 'NETWORK', host: 'a.example', url: 'https://a.example/1' },
+    ]);
+    const external = {
+      ...LOOP_OK,
+      draft: {
+        blocks: {
+          context: 'Paragraph.',
+          sources: [{ title: 'A', url: 'https://a.example/1' }],
+        },
+        themeLinks: null,
+        refs: { facts: {}, context: [[0]], reception: [], timeline: [], adaptations: [] },
+        droppedQuotes: [],
+        fixes: [],
+      },
+    };
+    mocked(runQualityLoop).mockResolvedValue(external);
+    const steps = [stepRow(1), stepRow(2), stepRow(3), stepRow(4)];
+    s.fields.read.mockResolvedValue(dataOf({ steps, stepsTotal: 5 }));
+    await expect(s.handler.handler.run(task(), ctx)).rejects.toThrow(/network of the worker/);
+    // Повтор задачи - тоже один раз: адрес не больше двух запросов за проход.
+    expect(fetcher.fetchMany).toHaveBeenCalledTimes(2);
+    expect(s.fields.mutate).not.toHaveBeenCalled();
+    await s.handler.handler.onFailed?.(task(), 'No source of the external step could be reached');
+    expect(s.tasks.pauseOperation).toHaveBeenCalledTimes(1);
+    expect(s.tasks.pauseOperation).toHaveBeenCalledWith(OP, 'STEP_FAILED');
+    // «Continue»: оплаченный текст шага 5 лежит в данных хода - цикл получает его, автор не зовётся.
+    const resume = { draft: external.draft, attempt: 1, authorModel: 'm' };
+    s.fields.read.mockResolvedValue(
+      dataOf({
+        steps,
+        stepsTotal: 5,
+        pending: { key: 'step:5', operationId: OP, resume } as never,
+      }),
+    );
+    // Сеть всё ещё лежит: шаг снова не решается - и снова без записи.
+    await expect(s.handler.handler.run(task(), ctx)).rejects.toThrow(/network of the worker/);
+    expect(s.fields.mutate).not.toHaveBeenCalled();
+    // Цикл получил оплаченный текст: с `resume` первого прохода автор не зовётся - это держит
+    // `quality-loop.spec.ts` («resume after a break»).
+    expect(runQualityLoop).toHaveBeenCalledTimes(2);
+    const spec = mocked(runQualityLoop).mock.calls[1][3] as { resume?: unknown };
+    expect(spec.resume).toBe(resume);
+  });
+
+  it('a regeneration of a step 5 block with no source opened by the channel: the task fails, the mark stays, the paid text is resumed from the block', async () => {
+    const s = setup(ready);
+    const fetcher = (s.handler as unknown as { fetcher: { fetchMany: jest.Mock } }).fetcher;
+    fetcher.fetchMany.mockResolvedValue([
+      { ok: false, reason: 'NETWORK', host: 'a.example', url: 'https://a.example/1' },
+    ]);
+    mocked(runQualityLoop).mockResolvedValue({
+      ...LOOP_OK,
+      draft: {
+        blocks: { context: 'Paragraph.', sources: [{ title: 'A', url: 'https://a.example/1' }] },
+        themeLinks: null,
+        refs: { facts: {}, context: [[0]], reception: [], timeline: [], adaptations: [] },
+        droppedQuotes: [],
+        fixes: [],
+      },
+    });
+    const resume = { draft: LOOP_OK.draft, attempt: 1, authorModel: 'm' };
+    const regen = {
+      operationId: REGEN_OP,
+      remark: null,
+      pending: { key: 'regen:0', operationId: REGEN_OP, resume } as never,
+      previous: null,
+    };
+    s.fields.read.mockResolvedValue(
+      dataOf({ items: [item({ target: 'context', step: 5, regen })] }),
+    );
+    await expect(s.handler.handler.run(regenTask, ctx)).rejects.toThrow(/network of the worker/);
+    // Отметка не снята и операция не закрыта: «Continue» повторит перегенерацию.
+    expect(s.tasks.completeOperation).not.toHaveBeenCalled();
+    expect(s.fields.mutate).not.toHaveBeenCalled();
+    expect(runQualityLoop).toHaveBeenCalledTimes(1);
+    expect((mocked(runQualityLoop).mock.calls[0][3] as { resume?: unknown }).resume).toBe(resume);
+  });
+
+  it('the paths of the other remarks of step 5 follow the kept elements after the check of the sources', async () => {
+    const s = setup();
+    jest.spyOn(s.handler, 'contextOf').mockResolvedValue({
+      chapters: [],
+      stored: EMPTY_BOOK_ANALYSIS,
+      bookTitle: 'Book',
+      author: 'Ann Author',
+    } as never);
+    const fetcher = (s.handler as unknown as { fetcher: { fetchMany: jest.Mock } }).fetcher;
+    fetcher.fetchMany.mockResolvedValue([
+      {
+        ok: false,
+        reason: 'HTTP_STATUS',
+        status: 404,
+        host: 'a.example',
+        url: 'https://a.example/1',
+      },
+      { ok: true, text: 'Book by Ann Author', host: 'b.example', url: 'https://b.example/2' },
+    ]);
+    mocked(runQualityLoop).mockResolvedValue({
+      ...LOOP_OK,
+      verdict: 'flags',
+      remarks: [{ code: 'STYLE_POOR', where: 'timeline.1', note: 'n', by: 'review' }],
+      draft: {
+        blocks: {
+          timeline: [
+            { year: 1860, event: 'A', kind: 'book' },
+            { year: 1866, event: 'B', kind: 'book' },
+          ],
+          sources: [
+            { title: 'A', url: 'https://a.example/1' },
+            { title: 'B', url: 'https://b.example/2' },
+          ],
+        },
+        themeLinks: null,
+        refs: { facts: {}, context: [], reception: [], timeline: [[0], [1]], adaptations: [] },
+        droppedQuotes: [],
+        fixes: [],
+      },
+    } as never);
+    const steps = [stepRow(1), stepRow(2), stepRow(3), stepRow(4)];
+    s.fields.read.mockResolvedValue(dataOf({ steps, stepsTotal: 5 }));
+    s.fields.mutate.mockImplementation(savedBy(() => dataOf({ steps, stepsTotal: 5 })));
+    await s.handler.handler.run(task(), ctx);
+    const saved = (await s.fields.mutate.mock.results[0].value) as { data: AnalysisWriteData };
+    const step5 = saved.data.steps.find((x) => x.step === 5);
+    // Элемент 0 снят вместе с источником: замечание элемента 1 теперь на `timeline.0`.
+    expect(step5?.remarks.filter((r) => r.code === 'STYLE_POOR').map((r) => r.where)).toEqual([
+      'timeline.0',
+    ]);
+  });
+});
+
+describe('AnalysisWriteHandler: the limit of the saved sources at a regeneration (F07-2b, /fix 2)', () => {
+  const REGEN_OP = 'op2';
+  const ready = rowOf({ status: 'ready' });
+  const regenTask = task({ draftId: 'd1', index: 0 }, REGEN_OP);
+  const src = (n: number) => ({ title: `S${n}`, url: `https://s${n}.example/page` });
+
+  function run(saved: Array<{ title: string; url: string }>) {
+    const s = setup(ready);
+    jest.spyOn(s.handler, 'contextOf').mockResolvedValue({
+      chapters: [],
+      stored: { ...EMPTY_BOOK_ANALYSIS, sources: saved },
+      bookTitle: 'Book',
+      author: 'Ann Author',
+    } as never);
+    const fetcher = (s.handler as unknown as { fetcher: { fetchMany: jest.Mock } }).fetcher;
+    fetcher.fetchMany.mockResolvedValue([
+      { ok: true, text: 'Book by Ann Author', host: 's1.example', url: src(1).url },
+    ]);
+    mocked(runQualityLoop).mockResolvedValue({
+      ...LOOP_OK,
+      draft: {
+        blocks: { context: 'Paragraph.', sources: [src(1)] },
+        themeLinks: null,
+        refs: { facts: {}, context: [[0]], reception: [], timeline: [], adaptations: [] },
+        droppedQuotes: [],
+        fixes: [],
+      },
+    } as never);
+    const regen = { operationId: REGEN_OP, remark: null, pending: null, previous: null };
+    const data = () =>
+      dataOf({
+        steps: [stepRow(1), stepRow(2), stepRow(3), stepRow(4), stepRow(5)],
+        items: [item({ target: 'context', step: 5, regen })],
+      });
+    s.fields.read.mockResolvedValue(data());
+    s.fields.mutate.mockImplementation(savedBy(data));
+    return s;
+  }
+
+  it('room in the saved sources: the new source is kept with the result', async () => {
+    const saved = [src(100)];
+    const s = run(saved);
+    await s.handler.handler.run(regenTask, ctx);
+    const result = (await s.fields.mutate.mock.results[0].value) as { data: AnalysisWriteData };
+    expect(result.data.items[0]).toMatchObject({
+      outcome: 'waiting',
+      value: 'Paragraph.',
+      pendingSources: [src(1)],
+    });
+  });
+
+  it('the saved sources are full: the new source does not fit, the block stays, the reason is the limit and it is recorded', async () => {
+    const saved = Array.from({ length: 15 }, (_, i) => src(100 + i));
+    const s = run(saved);
+    await s.handler.handler.run(regenTask, ctx);
+    expect(s.fields.mutate).toHaveBeenCalledTimes(1);
+    const kept = (await s.fields.mutate.mock.results[0].value) as { data: AnalysisWriteData };
+    expect(kept.data.items[0]).toEqual(
+      item({
+        target: 'context',
+        step: 5,
+        regen: { operationId: REGEN_OP, remark: null, pending: null, previous: null },
+      }),
+    );
+    expect(kept.data.steps.find((x) => x.step === 5)?.dropped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'LIMIT_OUT', path: 'sources.0' }),
+        expect.objectContaining({ code: 'LIMIT_OUT', path: 'context.0' }),
+      ]),
+    );
+    expect(s.fields.settleStep).not.toHaveBeenCalled();
+    // Причина - предел, а не «не подтвердилось»: место освобождают, а не перегенерируют.
+    const clear = s.tasks.completeOperation.mock.calls[0][1] as (t: typeof s.tx) => Promise<void>;
+    s.tx.$queryRaw.mockResolvedValue([{ id: 'd1', bookVersionId: 'v1' }]);
+    s.tx.contentDraft.findUnique.mockResolvedValue({
+      ...ready,
+      data: analysisDataJson(
+        dataOf({
+          items: [
+            item({
+              target: 'context',
+              step: 5,
+              regen: { operationId: REGEN_OP, remark: null, pending: null, previous: null },
+            }),
+          ],
+        }),
+      ),
+    });
+    await clear(s.tx);
+    const written = s.tx.contentDraft.update.mock.calls[0][0] as {
+      data: { data: { items: AnalysisItem[] } };
+    };
+    expect(written.data.data.items[0]).toMatchObject({
+      regen: null,
+      regenFailedReason: 'LIMIT_OUT',
+    });
+    expect(s.tasks.completeOperation).toHaveBeenCalledTimes(1);
+    expect(s.tasks.completeOperation).toHaveBeenCalledWith(REGEN_OP, expect.any(Function));
+  });
+});
+
+describe('AnalysisWriteHandler: the reasons of a regeneration are recorded at once (F07-2b, /fix 3, Q2)', () => {
+  const REGEN_OP = 'op2';
+  const ready = rowOf({ status: 'ready' });
+  const regenTask = task({ draftId: 'd1', index: 0 }, REGEN_OP);
+
+  it('a source that did not open and its statement: the reason is in steps[].dropped and droppedSources together with the result', async () => {
+    const s = setup(ready);
+    jest.spyOn(s.handler, 'contextOf').mockResolvedValue({
+      chapters: [],
+      stored: EMPTY_BOOK_ANALYSIS,
+      bookTitle: 'Book',
+      author: 'Ann Author',
+    } as never);
+    const fetcher = (s.handler as unknown as { fetcher: { fetchMany: jest.Mock } }).fetcher;
+    fetcher.fetchMany.mockResolvedValue([
+      { ok: true, text: 'Book by Ann Author', host: 'a.example', url: 'https://a.example/1' },
+      {
+        ok: false,
+        reason: 'HTTP_STATUS',
+        status: 404,
+        host: 'b.example',
+        url: 'https://b.example/2',
+      },
+    ]);
+    mocked(runQualityLoop).mockResolvedValue({
+      ...LOOP_OK,
+      draft: {
+        blocks: {
+          context: 'Kept.\n\nDropped.',
+          sources: [
+            { title: 'A', url: 'https://a.example/1' },
+            { title: 'B', url: 'https://b.example/2' },
+          ],
+        },
+        themeLinks: null,
+        refs: { facts: {}, context: [[0], [1]], reception: [], timeline: [], adaptations: [] },
+        droppedQuotes: [],
+        fixes: [],
+      },
+    } as never);
+    const regen = { operationId: REGEN_OP, remark: null, pending: null, previous: null };
+    const data = () =>
+      dataOf({
+        steps: [stepRow(1), stepRow(2), stepRow(3), stepRow(4), stepRow(5)],
+        items: [item({ target: 'context', step: 5, regen })],
+      });
+    s.fields.read.mockResolvedValue(data());
+    s.fields.mutate.mockImplementation(savedBy(data));
+    await s.handler.handler.run(regenTask, ctx);
+    const result = (await s.fields.mutate.mock.results[0].value) as { data: AnalysisWriteData };
+    expect(result.data.items[0]).toMatchObject({ outcome: 'waiting', value: 'Kept.' });
+    expect(result.data.steps.find((x) => x.step === 5)?.dropped).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'SOURCE_UNREACHABLE', path: 'sources.1' }),
+        expect.objectContaining({ code: 'SOURCE_UNVERIFIED', path: 'context.1' }),
+      ]),
+    );
+    expect(result.data.droppedSources).toEqual([
+      { title: 'B', host: 'b.example', reason: 'SOURCE_UNREACHABLE' },
+    ]);
+  });
+});
+
+describe('AnalysisWriteHandler: the remark of a linked theme reaches the regenerated themes (F07-2b, /fix 3)', () => {
+  const REGEN_OP = 'op2';
+  const ready = rowOf({ status: 'ready' });
+  const regenTask = task({ draftId: 'd1', index: 0 }, REGEN_OP);
+
+  it('the code remark on the link of a hero is kept with the themes; a remark of another block is not', async () => {
+    const s = setup(ready);
+    const regen = { operationId: REGEN_OP, remark: null, pending: null, previous: null };
+    const data = () => dataOf({ items: [item({ target: 'themes', step: 3, regen })] });
+    s.fields.read.mockResolvedValue(data());
+    s.fields.mutate.mockImplementation(savedBy(data));
+    jest
+      .spyOn(
+        s.handler as unknown as { produceStep: () => Promise<StepRecord | null> },
+        'produceStep',
+      )
+      .mockResolvedValue({
+        step: {
+          ...stepRow(3),
+          remarks: [
+            {
+              code: 'IMPORT_INVALID',
+              where: 'characters.anna.themeKeys',
+              note: 'keep',
+              by: 'code',
+            },
+            { code: 'STYLE_POOR', where: 'mainIdea', note: 'other', by: 'review' },
+          ],
+        } as never,
+        draft: {
+          blocks: { themes: [{ key: 'sin', title: 'Sin' }] } as never,
+          themeLinks: null,
+          droppedQuotes: [],
+          fixes: [],
+        },
+        invalid: new Set(),
+        review: { kind: 'answered', model: 'r' },
+      });
+    await s.handler.handler.run(regenTask, ctx);
+    const result = (await s.fields.mutate.mock.results[0].value) as { data: AnalysisWriteData };
+    expect(result.data.items[0].remarks.map((r) => r.where)).toEqual(['characters.anna.themeKeys']);
+    expect(result.data.items[0].verdict).toBe('flags');
   });
 });

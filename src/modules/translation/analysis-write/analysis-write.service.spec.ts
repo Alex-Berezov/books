@@ -439,18 +439,24 @@ describe('AnalysisWriteService: the item routes (F07-1b)', () => {
 });
 
 describe('AnalysisWriteService.regenerate (F07-1b)', () => {
-  it('only the blocks of steps 1-2 are regenerated: step 3 and the links are 409', async () => {
-    const themes = setup(rowOf([item('themes')]));
-    const error = await themes.service.regenerate('d1', 0, null, 'u1').catch((e: unknown) => e);
-    expect(codeOf(error)).toBe('ANALYSIS_ITEM_NOT_REGENERABLE');
+  it('theme links and sources are not regenerated on their own - 409 (F07-2b)', async () => {
     const links = setup(rowOf([item('characters', { links: true })]));
     expect(
       codeOf(await links.service.regenerate('d1', 0, null, 'u1').catch((e: unknown) => e)),
     ).toBe('ANALYSIS_ITEM_NOT_REGENERABLE');
+    const sources = setup(rowOf([item('sources', { step: 5 })]));
+    expect(
+      codeOf(await sources.service.regenerate('d1', 0, null, 'u1').catch((e: unknown) => e)),
+    ).toBe('ANALYSIS_ITEM_NOT_REGENERABLE');
   });
 
-  it('F07-2a: every block of steps 4-5 is 409 until F07-2b (decision F07 | F07-2)', async () => {
-    const later: Array<[AnalysisTarget, 4 | 5]> = [
+  it('every block of steps 3-5 passes the gate of regeneration (decision F07 | F07-1b)', async () => {
+    const later: Array<[AnalysisTarget, 3 | 4 | 5]> = [
+      ['mainIdea', 3],
+      ['themes', 3],
+      ['symbols', 3],
+      ['titleMeaning', 3],
+      ['endingMeaning', 3],
       ['misreadings', 4],
       ['discussionQuestions', 4],
       ['faq', 4],
@@ -461,12 +467,14 @@ describe('AnalysisWriteService.regenerate (F07-1b)', () => {
       ['timeline', 5],
       ['reception', 5],
       ['adaptations', 5],
-      ['sources', 5],
     ];
     for (const [target, step] of later) {
       const run = setup(rowOf([item(target, { step })]));
+      jest.spyOn(run.internals, 'regenUsd').mockResolvedValue(new Prisma.Decimal('0.1'));
+      // Потолок трат - первая проверка после допуска блока: дошли до неё - блок допущен.
+      run.budget.ceilingReached.mockResolvedValue(true);
       const error = await run.service.regenerate('d1', 0, null, 'u1').catch((e: unknown) => e);
-      expect([target, codeOf(error)]).toEqual([target, 'ANALYSIS_ITEM_NOT_REGENERABLE']);
+      expect([target, codeOf(error)]).toEqual([target, 'LLM_CEILING_REACHED']);
     }
   });
 
@@ -492,42 +500,52 @@ describe('AnalysisWriteService.regenerate (F07-1b)', () => {
     expect(fields.mutate).not.toHaveBeenCalled();
   });
 
-  it('own operation and task with the index and the remark of the editor; the mark sits on the block', async () => {
-    const { service, internals, fields, tx, tasks, llm } = setup(rowOf([item('characters')]));
-    jest.spyOn(internals, 'regenUsd').mockResolvedValue(new Prisma.Decimal('0.1'));
-    fields.mutate.mockImplementation(
-      async (
-        _row: unknown,
-        _gate: unknown,
-        fn: (data: unknown, client: typeof tx) => Promise<{ items: AnalysisItem[] }>,
-      ) => {
-        const data = { ...emptyAnalysisData({}, {}), items: [item('characters')] };
-        return { data: await fn(data, tx), written: true };
-      },
-    );
-    await service.regenerate('d1', 0, 'shorter', 'u1');
-    expect(llm.operationData).toHaveBeenCalledTimes(1);
-    expect(tasks.enqueue).toHaveBeenCalledTimes(1);
-    expect(llm.operationData).toHaveBeenCalledWith(
-      expect.objectContaining({ kind: 'draft', bookVersionId: 'v1', createdById: 'u1' }),
-    );
-    expect(tasks.enqueue).toHaveBeenCalledWith(
-      expect.objectContaining({
-        kind: 'analysis_write',
+  it.each([
+    ['characters', 1],
+    ['themes', 3],
+    ['faq', 4],
+    ['context', 5],
+  ] as Array<[AnalysisTarget, 1 | 3 | 4 | 5]>)(
+    '%s (step %s): own operation and task with the index and the remark of the editor; the mark sits on the block',
+    async (target, step) => {
+      const { service, internals, fields, tx, tasks, llm } = setup(rowOf([item(target, { step })]));
+      jest.spyOn(internals, 'regenUsd').mockResolvedValue(new Prisma.Decimal('0.1'));
+      fields.mutate.mockImplementation(
+        async (
+          _row: unknown,
+          _gate: unknown,
+          fn: (data: unknown, client: typeof tx) => Promise<{ items: AnalysisItem[] }>,
+        ) => {
+          const data = { ...emptyAnalysisData({}, {}), items: [item(target, { step })] };
+          return { data: await fn(data, tx), written: true };
+        },
+      );
+      await service.regenerate('d1', 0, 'shorter', 'u1');
+      expect(llm.operationData).toHaveBeenCalledTimes(1);
+      expect(tasks.enqueue).toHaveBeenCalledTimes(1);
+      expect(llm.operationData).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: 'draft', bookVersionId: 'v1', createdById: 'u1' }),
+      );
+      expect(tasks.enqueue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kind: 'analysis_write',
+          operationId: 'op-new',
+          payload: { draftId: 'd1', index: 0 },
+          pairKey: 'op-new:d1:0',
+        }),
+        tx,
+      );
+      const next = (await fields.mutate.mock.results[0].value) as {
+        data: { items: AnalysisItem[] };
+      };
+      expect(next.data.items[0].regen).toEqual({
         operationId: 'op-new',
-        payload: { draftId: 'd1', index: 0 },
-        pairKey: 'op-new:d1:0',
-      }),
-      tx,
-    );
-    const next = (await fields.mutate.mock.results[0].value) as { data: { items: AnalysisItem[] } };
-    expect(next.data.items[0].regen).toEqual({
-      operationId: 'op-new',
-      remark: 'shorter',
-      pending: null,
-      previous: null,
-    });
-  });
+        remark: 'shorter',
+        pending: null,
+        previous: null,
+      });
+    },
+  );
 
   it('the run changed under the lock (the mark was set by a parallel call): 409, no second operation', async () => {
     const { service, internals, fields, tx } = setup(rowOf([item('characters')]));

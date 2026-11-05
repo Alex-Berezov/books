@@ -1116,6 +1116,8 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     characters: Array<{ key: string; description: string; themeKeys?: string[] }> | null;
     keyQuotes: unknown[] | null;
     themes: unknown[] | null;
+    faq: unknown[] | null;
+    sources: Array<{ title: string; url: string }> | null;
   }
   const proposalOf = async (run: Run, item: Item, status = 200) =>
     (await auth(http().get(`/admin/content-drafts/${run.id}/items/${item.index}`)).expect(status))
@@ -1379,17 +1381,15 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     expect(written[0].description).toContain('Rewritten.');
   });
 
-  it('Regenerate: the blocks of step 3 and the theme links are refused 409; an unknown block 400', async () => {
+  it('Regenerate: the theme links and the sources are refused 409; an unknown block 400', async () => {
     const versionId = await sourceWithDossier();
     await start(versionId).expect(202);
     await drain();
     const run = await runOf(versionId);
     for (const [target, links] of [
-      ['themes', false],
       ['characters', true],
-      // Шаги 4-5 перегенерируются в `F07-2b`: до него - отказ (решение арбитра `F07 | F07-2`).
-      ['faq', false],
-      ['context', false],
+      // Источники переписываются вместе с блоком шага 5 (решение арбитра `F07 | F07-2b`).
+      ['sources', false],
     ] as const) {
       const refused = await decide(run, target, 'regenerate', links).expect(409);
       expect(refused.body.code).toBe('ANALYSIS_ITEM_NOT_REGENERABLE');
@@ -1397,6 +1397,209 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     await auth(http().post(`/admin/content-drafts/${run.id}/items/99/regenerate`))
       .send({})
       .expect(400);
+  });
+
+  it('F07-2b: Regenerate of the themes keeps their keys; the characters and quotations keep no dangling theme key; Accept pours the new links', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    const before = await analysisOf(versionId);
+    calls.length = 0;
+    answer = (name, body) =>
+      name === 'analysis_meaning_write' && textOf(body).includes('CURRENT_BLOCK')
+        ? {
+            ...MEANING,
+            themes: MEANING.themes.map((t) => ({
+              ...t,
+              interpretation: `${t.interpretation} Rewritten.`,
+            })),
+            themeLinks: {
+              characters: [{ key: 'boris', themeKeys: ['loss'] }],
+              keyQuotes: [],
+            },
+          }
+        : defaultAnswer(name);
+    await auth(http().post(itemUrl(run, itemOf(run, 'themes'), 'regenerate')))
+      .send({ remark: 'Deeper' })
+      .expect(202);
+    await drain();
+    const meaning = callsOf('analysis_meaning_write');
+    expect(meaning).toHaveLength(1);
+    expect(textOf(meaning[0].body)).toContain('"key":"loss"');
+    // Замечание редактора доходит до автора и на шаге 3.
+    expect(textOf(meaning[0].body)).toContain('Deeper');
+    // Проверяющей сказано, что переписан один блок.
+    expect(
+      callsOf('analysis_review').some((c) =>
+        textOf(c.body).includes('Only the block "themes" was rewritten'),
+      ),
+    ).toBe(true);
+    const after = await runOf(versionId);
+    const themes = itemOf(after, 'themes');
+    expect(themes).toMatchObject({ outcome: 'proposed', regenerating: false });
+    const proposal = (await proposalOf(after, themes)).themes as Array<{ key: string }>;
+    expect(proposal.map((t) => t.key)).toEqual(['loss', 'home']);
+    // До «Accept» анализ не тронут: другие блоки не меняются.
+    expect(await analysisOf(versionId)).toMatchObject({
+      themes: before?.themes,
+      characters: before?.characters,
+      keyQuotes: before?.keyQuotes,
+    });
+    await decide(after, 'themes', 'accept').expect(200);
+    const saved = await analysisOf(versionId);
+    const keys = new Set((saved?.themes as Array<{ key: string }>).map((t) => t.key));
+    const linked = [
+      ...(saved?.characters as Array<{ key: string; themeKeys?: string[] }>),
+      ...(saved?.keyQuotes as Array<{ themeKeys?: string[] }>),
+    ].flatMap((e) => e.themeKeys ?? []);
+    expect(linked.filter((k) => !keys.has(k))).toEqual([]);
+    // Новые связи влиты в героев, которыми ход владеет: Борис получил «loss».
+    const boris = (saved?.characters as Array<{ key: string; themeKeys?: string[] }>).find(
+      (c) => c.key === 'boris',
+    );
+    expect(boris?.themeKeys).toEqual(['home', 'loss']);
+  });
+
+  it('F07-2b: Regenerate of the themes that renames a linked theme: a redo by the code remark, then a proposal flagged IMPORT_INVALID; Accept is refused', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    const before = await analysisOf(versionId);
+    calls.length = 0;
+    answer = (name, body) =>
+      name === 'analysis_meaning_write' && textOf(body).includes('CURRENT_BLOCK')
+        ? { ...MEANING, themes: [theme('grief', 'Grief'), theme('home', 'Home')] }
+        : defaultAnswer(name);
+    await auth(http().post(itemUrl(run, itemOf(run, 'themes'), 'regenerate')))
+      .send({})
+      .expect(202);
+    await drain();
+    const meaning = callsOf('analysis_meaning_write');
+    expect(meaning).toHaveLength(2);
+    expect(textOf(meaning[1].body)).toContain('"loss"');
+    const themes = itemOf(await runOf(versionId), 'themes');
+    expect(themes).toMatchObject({ outcome: 'proposed', verdict: 'flags' });
+    expect(themes.remarks.map((r) => r.code)).toContain('IMPORT_INVALID');
+    expect((await decide(await runOf(versionId), 'themes', 'accept').expect(409)).body.code).toBe(
+      'ANALYSIS_WRITE_REFUSED',
+    );
+    expect((await analysisOf(versionId))?.themes).toEqual(before?.themes);
+  });
+
+  it('F07-2b: Regenerate of a step 4 block: the new block is a proposal, the other blocks of the step stay', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    const before = await analysisOf(versionId);
+    answer = (name, body) =>
+      name === 'analysis_reader_write' && textOf(body).includes('CURRENT_BLOCK')
+        ? {
+            ...READER,
+            faq: [{ question: 'Why does Anna leave?', answer: 'She leaves to stay herself.' }],
+          }
+        : defaultAnswer(name);
+    calls.length = 0;
+    await auth(http().post(itemUrl(run, itemOf(run, 'faq'), 'regenerate')))
+      .send({ remark: 'Ask about the ending' })
+      .expect(202);
+    await drain();
+    expect(textOf(callsOf('analysis_reader_write')[0].body)).toContain('Ask about the ending');
+    const after = await runOf(versionId);
+    const faq = itemOf(after, 'faq');
+    expect(faq.outcome).toBe('proposed');
+    expect((await proposalOf(after, faq)).faq).toEqual([
+      { question: 'Why does Anna leave?', answer: 'She leaves to stay herself.' },
+    ]);
+    expect(await analysisOf(versionId)).toMatchObject({
+      faq: before?.faq,
+      misreadings: before?.misreadings,
+      discussionQuestions: before?.discussionQuestions,
+    });
+    await decide(after, 'faq', 'accept').expect(200);
+    expect((await analysisOf(versionId))?.faq).toEqual([
+      { question: 'Why does Anna leave?', answer: 'She leaves to stay herself.' },
+    ]);
+  });
+
+  it('F07-2b: Regenerate of a step 5 block opens its sources again; Accept adds the new verified source to the saved ones by url, the unrelated one is dropped with its statement', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    const before = await analysisOf(versionId);
+    expect(before?.sources).toEqual([{ title: 'Source about.test', url: sourceUrl('about.test') }]);
+    const second = `https://about.test:${sourcePort}/second`;
+    answer = (name, body) =>
+      name === 'analysis_external_write' && textOf(body).includes('CURRENT_BLOCK')
+        ? {
+            ...external(['about.test', 'other.test']),
+            sources: [
+              { title: 'Source about.test', url: sourceUrl('about.test') },
+              { title: 'Unrelated', url: sourceUrl('other.test') },
+              { title: 'Second', url: second },
+            ],
+            context: [
+              { text: 'The epoch asked who may leave home, and answered no.', refs: [0, 2] },
+              { text: 'A paragraph on the unrelated page only.', refs: [1] },
+            ],
+          }
+        : defaultAnswer(name);
+    calls.length = 0;
+    await auth(http().post(itemUrl(run, itemOf(run, 'context'), 'regenerate')))
+      .send({ remark: 'Name the epoch' })
+      .expect(202);
+    await drain();
+    // Замечание редактора доходит до автора внешнего шага.
+    expect(textOf(callsOf('analysis_external_write')[0].body)).toContain('Name the epoch');
+    const after = await runOf(versionId);
+    const context = itemOf(after, 'context');
+    expect(context.outcome).toBe('proposed');
+    // Перегенерированный внешний блок несёт флаг «сверить факты», как записанный ходом.
+    expect(context.verdict).toBe('flags');
+    expect(context.remarks.map((r) => r.code)).toContain('EXTERNAL_CHECK');
+    const shown = await proposalOf(after, context);
+    expect(shown.text).toBe('The epoch asked who may leave home, and answered no.');
+    expect((shown.sources ?? []).map((s) => s.url)).toEqual([sourceUrl('about.test'), second]);
+    expect((await analysisOf(versionId))?.sources).toEqual(before?.sources);
+    await decide(after, 'context', 'accept').expect(200);
+    const saved = await analysisOf(versionId);
+    expect(saved?.context).toBe('The epoch asked who may leave home, and answered no.');
+    expect((saved?.sources as Array<{ url: string }>).map((s) => s.url)).toEqual([
+      sourceUrl('about.test'),
+      second,
+    ]);
+    // Другие внешние блоки не меняются.
+    expect(saved?.timeline).toEqual(before?.timeline);
+    expect(saved?.reception).toEqual(before?.reception);
+  });
+
+  it('F07-2b: Regenerate of a step 5 block whose every statement lost its source: the block stays, the reason is shown', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    const before = await analysisOf(versionId);
+    answer = (name, body) =>
+      name === 'analysis_external_write' && textOf(body).includes('CURRENT_BLOCK')
+        ? { ...external(['missing.test']) }
+        : defaultAnswer(name);
+    await auth(http().post(itemUrl(run, itemOf(run, 'context'), 'regenerate')))
+      .send({})
+      .expect(202);
+    await drain();
+    const context = itemOf(await runOf(versionId), 'context');
+    expect(context).toMatchObject({
+      outcome: 'written',
+      regenerating: false,
+      regenFailedReason: 'EXTERNAL_UNVERIFIED',
+    });
+    expect(await analysisOf(versionId)).toMatchObject({
+      context: before?.context,
+      sources: before?.sources,
+    });
   });
 
   it('Regenerate drops a character the saved quotations still point at: the result is a proposal flagged IMPORT_INVALID with the path, the saved characters stay, the keys of the rest are kept', async () => {

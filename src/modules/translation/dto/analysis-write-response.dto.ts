@@ -254,7 +254,12 @@ export class AnalysisWriteValueDto {
   @ApiProperty({ type: [BookAnalysisAdaptationDto], nullable: true })
   adaptations!: BookAnalysisAdaptationDto[] | null;
 
-  @ApiProperty({ type: [BookAnalysisSourceDto], nullable: true })
+  @ApiProperty({
+    type: [BookAnalysisSourceDto],
+    nullable: true,
+    description:
+      'The sources block; for a regenerated step 5 block - its verified sources: those not saved yet (by url) are added to the saved ones by its Accept',
+  })
   sources!: BookAnalysisSourceDto[] | null;
 }
 

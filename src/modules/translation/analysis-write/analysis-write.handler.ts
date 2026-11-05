@@ -41,6 +41,9 @@ import {
   hostOf,
   PageCheck,
   sourcesOffline,
+  composeKept,
+  overLimit,
+  remapRemarks,
   verifyExternal,
   withoutDoubted,
   withoutInvalidSources,
@@ -59,6 +62,8 @@ import {
   regenBase,
   RegenResult,
   withoutRegen,
+  pathInTarget,
+  withRegenDropped,
   withRegenerated,
   readAnalysisData,
   withItem,
@@ -315,6 +320,9 @@ export class AnalysisWriteHandler {
       await this.fields.settleStep(row, gate, item.step, index);
       return this.finishRegen(task.operationId);
     }
+    // Итог уже решён, а операция не закрылась (обрыв между `settleStep` и `finishRegen`): повтор
+    // задачи или «Continue» только закрывают её - новый платный вызов не нужен (`F07-2b`, хвост а).
+    if (item.regen.previous !== null) return this.finishRegen(task.operationId);
     const dossier = row.dossierId
       ? await this.prisma.bookDossier.findUnique({ where: { id: row.dossierId } })
       : null;
@@ -346,15 +354,17 @@ export class AnalysisWriteHandler {
         );
       }
       const value = blocksValue(record.draft?.blocks ?? {}, item.target);
+      // Причины снятия - в ход сразу, что бы ни стало с итогом (решение арбитра `F07 | F07-2b`, Q2).
+      const withReasons = (current: AnalysisWriteData) =>
+        withRegenDropped(current, item.step, record.step.dropped, record.droppedSources ?? []);
       if (value === undefined) {
-        return await this.finishRegen(
-          task.operationId,
-          isInvalidTarget(record.invalid, item.target) ? 'IMPORT_INVALID' : DRAFT_INVALID_RESPONSE,
-        );
+        await ctx.renewLease();
+        await this.fields.mutate(row, gate, withReasons);
+        return await this.finishRegen(task.operationId, regenFailure(record, item.target));
       }
       await ctx.renewLease();
       const saved = await this.fields.mutate(row, gate, (current) =>
-        withRegenerated(current, index, regenResult(record, item, value)),
+        withRegenerated(withReasons(current), index, regenResult(record, item, value)),
       );
       if (!saved) return await this.finishRegen(task.operationId);
       await this.fields.settleStep(row, gate, item.step, index);
@@ -510,18 +520,33 @@ export class AnalysisWriteHandler {
     const doubted =
       result.attempt === 2
         ? withoutDoubted({ ...sourced.draft, blocks: valid }, sourced.remarks)
-        : { draft: { ...sourced.draft, blocks: valid }, fixes: [] as StepFix[], applied: [] };
+        : {
+            draft: { ...sourced.draft, blocks: valid },
+            fixes: [] as StepFix[],
+            applied: [],
+            kept: {},
+          };
     const checks = await openSources(this.fetcher, doubted.draft);
     if (sourcesOffline(checks)) throw new SourcesOffline();
-    const verdict = verifyExternal(
-      doubted.draft,
-      checks,
-      context.names?.titles ?? [context.bookTitle],
-      context.names?.authors ?? [context.author],
-    );
+    const titles = context.names?.titles ?? [context.bookTitle];
+    const authors = context.names?.authors ?? [context.author];
+    let verdict = verifyExternal(doubted.draft, checks, titles, authors);
+    // Перегенерация: новые источники - только в пределах сохранённого списка (решение арбитра
+    // `F07 | F07-2b`, предел) - первичный отбор; окончательно предел проверяют запись и «Accept».
+    const stored = context.stored.sources ?? [];
+    if (regen) {
+      const limited = overLimit(doubted.draft, verdict, stored);
+      if (limited.size > 0) {
+        verdict = verifyExternal(doubted.draft, checks, titles, authors, limited);
+      }
+    }
     // Снятое сомнением утверждение уходит из флагов: причина - в `dropped`, а путь замечания
     // указывал бы уже на соседний элемент. Сомнение, которое ничего не сняло, остаётся флагом.
-    const remarks = sourced.remarks.filter((r) => !doubted.applied.includes(r));
+    // Прочие замечания - на номера итога: снятые абзацы и элементы сдвигают соседей (`F07-2b`).
+    const remarks = remapRemarks(
+      sourced.remarks.filter((r) => !doubted.applied.includes(r)),
+      composeKept(composeKept(sourced.kept, doubted.kept), verdict.kept),
+    );
     return doneRecord(step, { ...result, remarks, draft: verdict.draft }, fit.source, {
       ...verdict,
       fixes: [...sourced.fixes, ...doubted.fixes, ...verdict.fixes],
@@ -779,9 +804,33 @@ export function withStep(data: AnalysisWriteData, record: StepRecord): AnalysisW
   };
 }
 
+/**
+ * Почему перегенерация не дала блока: импорт, предел источников (все утверждения держались на не
+ * влезших - освободить место, а не перегенерировать снова), проверка источников, иное.
+ */
+function regenFailure(record: StepRecord, target: AnalysisTarget): string {
+  if (isInvalidTarget(record.invalid, target)) return 'IMPORT_INVALID';
+  if (!record.unverified?.has(target)) return DRAFT_INVALID_RESPONSE;
+  const own = record.step.dropped.filter((fix) => pathInTarget(fix.path, target));
+  return own.length > 0 && own.every((fix) => fix.code === 'LIMIT_OUT')
+    ? 'LIMIT_OUT'
+    : EXTERNAL_UNVERIFIED;
+}
+
+/**
+ * Замечание кода о прежней теме, на которую ссылаются герои или цитаты (`regenRemarks`): путь - у
+ * ссылки, а не у `themes`, и по блоку оно не узнаётся; итогу тем оно своё.
+ */
+const isThemeKeyRemark = (remark: DraftRemark): boolean =>
+  remark.code === 'IMPORT_INVALID' &&
+  /^(characters|keyQuotes)\.[^.\s:]+\.themeKeys/.test(remark.where);
+
 /** Итог перегенерации блока из итога шага: флаги своего блока, выброшенные цитаты с номером шага. */
 function regenResult(record: StepRecord, target: AnalysisItem, value: unknown): RegenResult {
-  const remarks = remarksOfTarget(record.step.remarks, target.target);
+  const remarks = [
+    ...remarksOfTarget(record.step.remarks, target.target),
+    ...(target.target === 'themes' ? record.step.remarks.filter(isThemeKeyRemark) : []),
+  ];
   const answered = record.review?.kind === 'answered';
   return {
     value,
@@ -789,6 +838,9 @@ function regenResult(record: StepRecord, target: AnalysisItem, value: unknown): 
     remarks,
     review: record.review,
     droppedQuotes: stepDroppedQuotes(target.step, record.draft?.droppedQuotes ?? []),
+    // Связи новых тем и проверенные источники блока шага 5 - вместе с итогом (`F07-2b`).
+    links: target.target === 'themes' ? (record.draft?.themeLinks ?? null) : null,
+    sources: target.step === EXTERNAL_STEP ? (record.draft?.blocks.sources ?? null) : null,
   };
 }
 

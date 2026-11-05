@@ -34,10 +34,17 @@ export const EXTERNAL_STEP = 5;
 export const CORE_STEP = 3;
 
 /**
- * Шаги, блоки которых перегенерируются (`tech.md` §2:42, «Regenerate» блока шагов 1-2): разрешающий
- * список, а не запрет прочих - шаги, которые добавит `F07-2`, без решения сюда не попадают.
+ * Шаги, блоки которых перегенерируются (`tech.md` §2:42): шаги 1-2 с `F07-1b`, шаг 3 и шаги 4-5 с
+ * `F07-2b` (решение арбитра `F07 | F07-1b`). Разрешающий список, а не запрет прочих: новый шаг без
+ * решения сюда не попадает. `sources` и связи тем отдельно не перегенерируются (`NOT_REGENERABLE`).
  */
-export const REGENERABLE_STEPS: readonly number[] = [1, 2];
+export const REGENERABLE_STEPS: readonly number[] = [1, 2, 3, 4, 5];
+
+/**
+ * Единицы записи, которые не перегенерируются сами (решение арбитра `F07 | F07-2b`, п.1): источники
+ * переписываются вместе с блоком шага 5, который на них ссылается.
+ */
+export const NOT_REGENERABLE: readonly string[] = ['sources'];
 
 /** Таймаут вызова шага 1: 24 000 токенов ответа (`tech.md` §2). */
 const CAST_CALL_TIMEOUT_MS = 600_000;
@@ -140,7 +147,7 @@ export function registerAnalysisWriteStages(stages: LlmStageRegistry): void {
  * блок не предложение; `ANALYSIS_BLOCK_CHANGED` - блок изменили после предложения (в теле `current`);
  * `ANALYSIS_WRITE_REFUSED` - анализ отказал в записи (ссылки не сошлись на слитом объекте);
  * `ANALYSIS_REGEN_IN_PROGRESS` - этот блок уже перегенерируется; `ANALYSIS_ITEM_NOT_REGENERABLE` -
- * перегенерируются блоки шагов 1-2, не связи тем и не шаг 3.
+ * связи тем и источники сами не перегенерируются (`NOT_REGENERABLE`).
  */
 export const ANALYSIS_WRITE_NOT_READY = 'ANALYSIS_WRITE_NOT_READY';
 export const ANALYSIS_ITEM_UNKNOWN = 'ANALYSIS_ITEM_UNKNOWN';

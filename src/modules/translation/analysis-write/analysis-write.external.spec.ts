@@ -1,9 +1,13 @@
 import { SourceRefs, StepDraft } from './analysis-write.data';
 import { codeRemark } from '../draft-quality/text-checks';
 import {
+  composeKept,
   hostOf,
+  overLimit,
+  ownSources,
   PageCheck,
   pageIsAbout,
+  remapRemarks,
   sourcesOffline,
   surname,
   verifyExternal,
@@ -296,5 +300,147 @@ describe('verifyExternal', () => {
     expect(verdict.fixes).toEqual([
       expect.objectContaining({ code: 'SOURCE_UNVERIFIED', path: 'context.1' }),
     ]);
+  });
+});
+
+describe('the paths of the other remarks of step 5 after drops (F07-2b; review of F07-2a)', () => {
+  it('verifyExternal reports the kept indexes of a block it cut; a block it kept whole is absent', () => {
+    const verdict = verifyExternal(
+      draft(
+        {
+          timeline: [
+            { year: 1860, event: 'A' },
+            { year: 1865, event: 'B' },
+            { year: 1866, event: 'C' },
+          ],
+          context: 'One.\n\nTwo.',
+          sources: SOURCES,
+        } as unknown as StepDraft['blocks'],
+        refs({ timeline: [[0], [1], [0]], context: [[0], [0]] }),
+      ),
+      [page(ABOUT), page('', false)],
+      TITLES,
+      AUTHORS,
+    );
+    // Источник 1 не открылся и снят: номера источников тоже сдвигаются.
+    expect(verdict.kept).toEqual({ timeline: [0, 2], sources: [0] });
+  });
+
+  it('a remark of a kept element follows it to its new index; a remark of a dropped element goes; others stay', () => {
+    const remarks = [
+      codeRemark('STYLE_POOR', 'timeline.2.event', 'n'),
+      codeRemark('STYLE_POOR', 'timeline.1: fragment', 'n'),
+      codeRemark('STYLE_POOR', 'context.1', 'n'),
+      codeRemark('STYLE_POOR', 'facts.genre', 'n'),
+    ];
+    const out = remapRemarks(remarks, { timeline: [0, 2] });
+    expect(out.map((r) => r.where)).toEqual(['timeline.1.event', 'context.1', 'facts.genre']);
+  });
+
+  it('two drops in a row compose: the second numbers are the indexes in the result of the first', () => {
+    // Сомнение сняло элемент 1 из [0,1,2,3] → [0,2,3]; проверка сняла второй из оставшихся → [0,3].
+    expect(composeKept({ timeline: [0, 2, 3] }, { timeline: [0, 2] })).toEqual({
+      timeline: [0, 3],
+    });
+    expect(composeKept({ context: [1] }, {})).toEqual({ context: [1] });
+    expect(composeKept({}, { reception: [0] })).toEqual({ reception: [0] });
+  });
+
+  it('withoutDoubted reports what it kept', () => {
+    const doubted = withoutDoubted(
+      draft(
+        {
+          adaptations: [
+            { title: 'A', year: 1970 },
+            { title: 'B', year: 1980 },
+          ],
+          sources: SOURCES,
+        } as unknown as StepDraft['blocks'],
+        refs({ adaptations: [[0], [0]] }),
+      ),
+      [codeRemark('EXTERNAL_DOUBT', 'adaptations.0', 'n')],
+    );
+    expect(doubted.kept).toEqual({ adaptations: [1] });
+  });
+});
+
+describe('the paths of the sources after drops (F07-2b, /fix 1)', () => {
+  it('a remark on a source follows it after a source before it is dropped by the import', () => {
+    const sourced = withoutInvalidSources(
+      draft({ sources: [...SOURCES, { title: 'Three', url: 'https://c.example/3' }] }, refs()),
+      [codeRemark('IMPORT_INVALID', 'sources.0.url', 'n')],
+    );
+    expect(sourced.kept).toEqual({ sources: [1, 2] });
+    const out = remapRemarks([codeRemark('STYLE_POOR', 'sources.2.title', 'n')], sourced.kept);
+    expect(out.map((r) => r.where)).toEqual(['sources.1.title']);
+  });
+
+  it('a block keeps its own sources renumbered; refs of the other blocks are gone', () => {
+    const own = ownSources(
+      draft(
+        { context: 'One.', sources: [...SOURCES, { title: 'Three', url: 'https://c.example/3' }] },
+        refs({ context: [[2]], timeline: [[0]] }),
+      ),
+      'context',
+      { context: 'One.' },
+    );
+    expect(own.blocks.sources?.map((x) => x.title)).toEqual(['Three']);
+    expect(own.refs).toEqual(refs({ context: [[0]] }));
+  });
+});
+
+describe('the limit of the saved sources at a regeneration (decision F07 | F07-2b, the limit)', () => {
+  const src = (n: number) => ({ title: `S${n}`, url: `https://s${n}.example/page` });
+  const saved = (count: number) => Array.from({ length: count }, (_, i) => src(100 + i));
+  /** Ответ перегенерации `context`: абзац i держится на источнике i, все страницы про книгу. */
+  const answer = (sources: Array<{ title: string; url: string }>) =>
+    draft(
+      {
+        context: sources.map((_, i) => `Paragraph ${i}.`).join('\n\n'),
+        sources,
+      } as unknown as StepDraft['blocks'],
+      refs({ context: sources.map((_, i) => [i]) }),
+    );
+  const verify = (d: StepDraft, stored: Array<{ title: string; url: string }>) => {
+    const checks = (d.blocks.sources ?? []).map(() => page(ABOUT));
+    const first = verifyExternal(d, checks, TITLES, AUTHORS);
+    const limited = overLimit(d, first, stored);
+    return { limited, verdict: verifyExternal(d, checks, TITLES, AUTHORS, limited) };
+  };
+
+  it('13 saved + 3 new: the third new source does not fit, its statement is dropped with LIMIT_OUT, the rest is kept', () => {
+    const { limited, verdict } = verify(answer([src(1), src(2), src(3)]), saved(13));
+    expect([...limited]).toEqual([2]);
+    expect(verdict.draft.blocks.context).toBe('Paragraph 0.\n\nParagraph 1.');
+    expect(verdict.draft.blocks.sources).toEqual([src(1), src(2)]);
+    expect(verdict.fixes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'LIMIT_OUT', path: 'sources.2' }),
+        expect.objectContaining({ code: 'LIMIT_OUT', path: 'context.2' }),
+      ]),
+    );
+    // Не влезший источник - не отказ источника: в отброшенных его нет.
+    expect(verdict.droppedSources).toEqual([]);
+  });
+
+  it('15 saved + new ones: nothing new fits, the block is unverified as a whole', () => {
+    const { verdict } = verify(answer([src(1), src(2)]), saved(15));
+    expect(verdict.draft.blocks).toEqual({});
+    expect(verdict.unverified).toContain('context');
+  });
+
+  it('a source whose address is already saved takes no room, in any form of the address', () => {
+    const stored = saved(15);
+    const same = { title: 'Again', url: 'http://S100.example/page/' };
+    const { limited, verdict } = verify(answer([same]), stored);
+    expect(limited.size).toBe(0);
+    expect(verdict.draft.blocks.context).toBe('Paragraph 0.');
+  });
+
+  it('one new address twice in the answer takes one place', () => {
+    const twice = [src(1), { title: 'Again', url: 'https://s1.example/page/' }, src(2)];
+    const { limited } = verify(answer(twice), saved(14));
+    // Места одно: s1 влез (оба его вхождения), s2 - нет.
+    expect([...limited]).toEqual([2]);
   });
 });
