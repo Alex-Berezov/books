@@ -14,10 +14,11 @@ import { LlmService } from '../../llm/llm.service';
 import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { httpCode, llmTaskConflict } from '../../llm-worker/llm-worker.errors';
+import { AutostartLink, assertNoLiveRun } from '../autostart/content-autostart.start';
+import { startConflict } from '../content-draft/start-conflict';
 import { allChapters } from '../chapter-pages';
 import {
   DRAFT_DOSSIER_MISSING,
-  DRAFT_IN_PROGRESS,
   DRAFT_LIMIT_FACTOR,
   DRAFT_LIMIT_TOO_LOW,
 } from '../content-draft/content-draft.constants';
@@ -44,20 +45,13 @@ import {
   AnalysisRemarkCode,
   DraftRemark,
 } from '../draft-quality/text-checks';
-import { stageEstimatorFor } from '../llm-model-checks';
 import { contextUpperChars } from '../translate/translate-estimate';
 import {
   ACCEPT_ALL_SKIP_CODES,
-  ANALYSIS_CAST_WRITE_STAGE,
-  ANALYSIS_EXTERNAL_WRITE_STAGE,
-  ANALYSIS_READER_WRITE_STAGE,
   ANALYSIS_ITEM_NOT_PROPOSED,
   ANALYSIS_ITEM_NOT_REGENERABLE,
   ANALYSIS_ITEM_UNKNOWN,
-  ANALYSIS_MEANING_WRITE_STAGE,
-  ANALYSIS_QUOTES_WRITE_STAGE,
   ANALYSIS_REGEN_IN_PROGRESS,
-  ANALYSIS_REVIEW_STAGE,
   ANALYSIS_WRITE_NOT_READY,
   NOT_REGENERABLE,
   REGENERABLE_STEPS,
@@ -73,10 +67,10 @@ import {
   THEMES_STEP,
   withItem,
 } from './analysis-write.data';
+import { analysisEstimators } from './analysis-estimate';
 import { analysisReadyGate, AnalysisWriteFields } from './analysis-write.fields';
 import { AnalysisWriteHandler, analysisWriteTaskInput } from './analysis-write.handler';
 import {
-  AnalysisEstimators,
   analysisPipelineUsd,
   stepAuthors,
   stepInput,
@@ -99,19 +93,6 @@ const PREVIOUS_BATCH = 100;
 function acceptRank(item: AnalysisItem): number {
   if (item.links) return Number.MAX_SAFE_INTEGER;
   return item.step === THEMES_STEP ? 0 : item.step;
-}
-
-/** Оценщики этапов хода анализа - общие у оценки ручного старта и будущей оценки запуска. */
-async function analysisEstimators(llm: LlmService): Promise<AnalysisEstimators> {
-  const [cast, quotes, meaning, reader, external, review] = await Promise.all([
-    stageEstimatorFor(llm, ANALYSIS_CAST_WRITE_STAGE),
-    stageEstimatorFor(llm, ANALYSIS_QUOTES_WRITE_STAGE),
-    stageEstimatorFor(llm, ANALYSIS_MEANING_WRITE_STAGE),
-    stageEstimatorFor(llm, ANALYSIS_READER_WRITE_STAGE),
-    stageEstimatorFor(llm, ANALYSIS_EXTERNAL_WRITE_STAGE),
-    stageEstimatorFor(llm, ANALYSIS_REVIEW_STAGE),
-  ]);
-  return { cast, quotes, meaning, reader, external, review };
 }
 
 /**
@@ -144,12 +125,21 @@ export class AnalysisWriteService {
    * Ручной старт: прежний готовый или упавший ход отбрасывается; право хода на блоки - под замком
    * анализа в одной транзакции со строкой хода (`tech.md` §5). Один строящийся ход вида на версию -
    * частичным уникальным индексом (`DRAFT_IN_PROGRESS`).
+   *
+   * Автозапуск (`autostart`, `F07-3b`; `tech.md` §6 - как `F06-5`): прежние не отбрасываются;
+   * неотброшенный ход вида под замком - 409 `AUTOSTART_SKIPPED_EXISTING` (`ready`) или
+   * `AUTOSTART_SKIPPED_IN_PROGRESS` (`building`), второй автозапуск того же языка - 409
+   * `AUTOSTART_DUPLICATE` уникальным индексом (`L-019`).
    */
   async start(
     versionId: string,
     limitUsd: Prisma.Decimal | undefined,
     createdById: string | null,
+    autostart: AutostartLink | null = null,
   ): Promise<AnalysisWriteDto> {
+    // Живой ход вида главнее отказов старта (Р9 `F06 | F06-5`): чтение до отказов выбирает исход,
+    // под замком транзакции та же проверка повторяется (L-019).
+    if (autostart) await assertNoLiveRun(this.prisma, versionId, KIND);
     this.llm.assertEnabled();
     const estimate = await this.estimateOf(versionId);
     if (estimate.dto.dossier?.refusedTooLong) {
@@ -175,7 +165,8 @@ export class AnalysisWriteService {
       bookVersionId: versionId,
       limitUsd: limit,
       createdById,
-      translationRunId: null,
+      translationRunId: autostart?.translationRunId ?? null,
+      contentKind: KIND,
     });
     let id: string;
     const stale: string[] = [];
@@ -184,26 +175,8 @@ export class AnalysisWriteService {
       // писателей под этим замком, а не короткие сроки строки заготовки.
       id = await this.prisma.$transaction(async (tx) => {
         await lockBookAnalysis(tx, versionId);
-        // Все прежние ready/failed - отброшены; их перегенерации читаются порциями (выборка в
-        // память - с пределом строк), отменяются после коммита.
-        const where: Prisma.ContentDraftWhereInput = {
-          bookVersionId: versionId,
-          kind: KIND,
-          status: { in: ['ready', 'failed'] },
-        };
-        for (let after: string | null = null; ; ) {
-          const page: Array<{ id: string; data: Prisma.JsonValue }> =
-            await tx.contentDraft.findMany({
-              where: { ...where, ...(after === null ? {} : { id: { gt: after } }) },
-              select: { id: true, data: true },
-              orderBy: { id: 'asc' },
-              take: PREVIOUS_BATCH,
-            });
-          stale.push(...page.flatMap((p) => regenOperationIds(readAnalysisData(p.data).items)));
-          if (page.length < PREVIOUS_BATCH) break;
-          after = page[page.length - 1].id;
-        }
-        await tx.contentDraft.updateMany({ where, data: { status: 'discarded' } });
+        if (autostart) await assertNoLiveRun(tx, versionId, KIND);
+        else stale.push(...(await discardPrevious(tx, versionId)));
         const { owns, written } = await this.fields.ownership(tx, versionId);
         const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
         const row = await tx.contentDraft.create({
@@ -214,6 +187,7 @@ export class AnalysisWriteService {
             operationId: op.id,
             dossierId: estimate.run?.dossierId ?? null,
             glossaryId: estimate.run?.glossaryId ?? null,
+            translationRunLanguageId: autostart?.translationRunLanguageId ?? null,
             data: analysisDataJson(emptyAnalysisData(owns, written)),
           },
         });
@@ -221,10 +195,7 @@ export class AnalysisWriteService {
         return row.id;
       }, BOOK_ANALYSIS_TX_OPTIONS);
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
-        throw llmTaskConflict(DRAFT_IN_PROGRESS, 'An analysis run is already being built');
-      }
-      throw error;
+      throw startConflict(error, autostart !== null, KIND);
     }
     // Перегенерации отброшенных ходов - после коммита нового хода, как у пересказа: старт не удался -
     // их оплаченная работа не снята; операция раньше замка анализа (`clearRegenMark`).
@@ -339,6 +310,7 @@ export class AnalysisWriteService {
       bookVersionId: row.bookVersionId,
       limitUsd: usd.mul(DRAFT_LIMIT_FACTOR),
       createdById,
+      contentKind: KIND,
     });
     const saved = await this.fields.mutate(row, analysisReadyGate, async (current, tx) => {
       const fresh = current.items[index];
@@ -660,4 +632,30 @@ function itemDto(
     regenFailedReason: item.regenFailedReason,
     ...regenFieldsOf(item.regen, regenOps),
   };
+}
+
+/**
+ * Ручной старт отбрасывает все прежние `ready`/`failed` ходы версии; их перегенерации читаются
+ * порциями (выборка в память - с пределом строк) и отменяются после коммита - отдаются наружу.
+ */
+async function discardPrevious(tx: Prisma.TransactionClient, versionId: string): Promise<string[]> {
+  const stale: string[] = [];
+  const where: Prisma.ContentDraftWhereInput = {
+    bookVersionId: versionId,
+    kind: KIND,
+    status: { in: ['ready', 'failed'] },
+  };
+  for (let after: string | null = null; ; ) {
+    const page: Array<{ id: string; data: Prisma.JsonValue }> = await tx.contentDraft.findMany({
+      where: { ...where, ...(after === null ? {} : { id: { gt: after } }) },
+      select: { id: true, data: true },
+      orderBy: { id: 'asc' },
+      take: PREVIOUS_BATCH,
+    });
+    stale.push(...page.flatMap((p) => regenOperationIds(readAnalysisData(p.data).items)));
+    if (page.length < PREVIOUS_BATCH) break;
+    after = page[page.length - 1].id;
+  }
+  await tx.contentDraft.updateMany({ where, data: { status: 'discarded' } });
+  return stale;
 }

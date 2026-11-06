@@ -4098,6 +4098,9 @@ model LlmOperation {
   /// Причина, по которой операция автозапуска раздела закрыта без хода (`F06-5`,
   /// `AUTOSTART_SKIPPED_*`); у прочих операций пусто.
   skipReason       String?
+  /// Вид хода раздела, ради которого заведена операция `draft` (`F07-3b`, решение арбитра
+  /// `F07 | F07-3`): автозапуск и ход раздела различаются по нему; `null` не толкуется.
+  contentKind      ContentDraftKind?
   createdById      String?
   createdBy        User?              @relation("LlmOperationCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
   /// Снимок настроек этапов и цен на момент создания.
@@ -4464,6 +4467,8 @@ model TranslationRun {
   stageModels        Json                     @default("{}")
   /// «Write Summary» окна запуска (`F06-5`): по `done` языка ход раздела стартует сам.
   writeSummary       Boolean                  @default(false)
+  /// «Write Analysis» окна запуска (`F07-3b`): по `done` языка ход анализа стартует сам.
+  writeAnalysis      Boolean                  @default(false)
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
   languages          TranslationRunLanguage[]

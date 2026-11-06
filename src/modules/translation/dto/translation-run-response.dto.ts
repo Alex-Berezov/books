@@ -4,6 +4,7 @@ import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
 import { CompareContextLineDto, DossierContextLineDto } from './translation-compare-response.dto';
 import { TranslationRunStageModelsDto } from './translation-run-request.dto';
+import { TranslationRunAnalysisDto } from './translation-run-analysis.dto';
 import { TranslationRunSummaryDto } from './translation-run-summary.dto';
 
 /**
@@ -115,6 +116,14 @@ export class TranslationRunLanguageDto {
       'Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done',
   })
   summary!: TranslationRunSummaryDto | null;
+
+  @ApiProperty({
+    type: () => TranslationRunAnalysisDto,
+    nullable: true,
+    description:
+      'Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done',
+  })
+  analysis!: TranslationRunAnalysisDto | null;
 }
 
 export class TranslationRunDto {
@@ -142,6 +151,13 @@ export class TranslationRunDto {
       'Write Summary (F06-5): the summary run of a language starts by itself when it is done',
   })
   writeSummary!: boolean;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'Write Analysis (F07-3b): the analysis run of a language starts by itself when it is done',
+  })
+  writeAnalysis!: boolean;
 
   @ApiProperty({
     type: () => LlmOperationDto,
@@ -225,6 +241,14 @@ export class TranslationRunLanguageResultDto {
       'Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done',
   })
   summary!: TranslationRunSummaryDto | null;
+
+  @ApiProperty({
+    type: () => TranslationRunAnalysisDto,
+    nullable: true,
+    description:
+      'Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done',
+  })
+  analysis!: TranslationRunAnalysisDto | null;
 }
 
 /**
@@ -258,6 +282,13 @@ export class TranslationRunListItemDto {
   writeSummary!: boolean;
 
   @ApiProperty({
+    type: Boolean,
+    description:
+      'Write Analysis (F07-3b): the analysis run of a language starts by itself when it is done',
+  })
+  writeAnalysis!: boolean;
+
+  @ApiProperty({
     type: () => LlmOperationDto,
     description: 'Status, pause reason, spent and limit of the run',
   })
@@ -283,7 +314,7 @@ export class TranslationRunListItemDto {
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'Spent by all operations of the run (dossier, glossaries, retries, Write Summary of its languages): totalUsd of its report',
+      'Spent by all operations of the run (dossier, glossaries, retries, Write Summary and Write Analysis of its languages): totalUsd of its report',
   })
   costUsd!: string;
 
@@ -340,8 +371,16 @@ export class TranslationRunLanguageEstimateDto {
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
+    nullable: true,
     description:
-      'Split, translate, check, final check and metadata of this language, plus summaryUsd when it is set',
+      'Write Analysis (F07-3b), upper estimate by the source chapters: five steps over empty blocks, author and check twice each - the function of the manual start. Its own operation and limit - not in minLimitUsd; null without writeAnalysis',
+  })
+  analysisUsd!: string | null;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Split, translate, check, final check and metadata of this language, plus summaryUsd and analysisUsd when they are set',
   })
   totalUsd!: string;
 }
@@ -387,7 +426,16 @@ export class TranslationRunEstimateDto {
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
-    description: 'Translations plus the dossier and glossaries built first, plus summaryUsd',
+    nullable: true,
+    description:
+      'All languages: Write Analysis (F07-3b), shown apart - its own operations and limits, not in minLimitUsd; null without writeAnalysis',
+  })
+  analysisUsd!: string | null;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Translations plus the dossier and glossaries built first, plus summaryUsd and analysisUsd',
   })
   totalUsd!: string;
 

@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language, TranslationChapterStatus, TranslationRunLanguageStatus } from '@prisma/client';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
+import { TranslationRunAnalysisDto } from './translation-run-analysis.dto';
 import { TranslationRunSummaryDto } from './translation-run-summary.dto';
 
 /**
@@ -224,6 +225,14 @@ export class TranslationReportLanguageDto {
       'Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done',
   })
   summary!: TranslationRunSummaryDto | null;
+
+  @ApiProperty({
+    type: () => TranslationRunAnalysisDto,
+    nullable: true,
+    description:
+      'Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done',
+  })
+  analysis!: TranslationRunAnalysisDto | null;
 }
 
 export class TranslationReportCostDto {
@@ -265,7 +274,7 @@ export class TranslationRunReportDto {
   @ApiProperty({
     type: () => [TranslationReportCostDto],
     description:
-      'Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary - its spending is summary.spentUsd of each language; totalUsd covers both',
+      'Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary and Write Analysis - their spending is summary.spentUsd and analysis.spentUsd of each language; totalUsd covers all',
   })
   costs!: TranslationReportCostDto[];
 

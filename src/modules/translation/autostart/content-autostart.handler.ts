@@ -7,12 +7,15 @@ import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-wor
 import { httpCode, LlmTaskLeaseLostError } from '../../llm-worker/llm-worker.errors';
 import { DRAFT_IN_PROGRESS } from '../content-draft/content-draft.constants';
 import { runLanguageIdOf } from '../run/run-step-support.service';
+import { AnalysisWriteService } from '../analysis-write/analysis-write.service';
 import { SummaryWriteService } from '../summary-write/summary-write.service';
 import {
   AUTOSTART_DUPLICATE,
   AUTOSTART_SKIP_REASONS,
   AUTOSTART_SKIPPED_IN_PROGRESS,
   AUTOSTART_SKIPPED_LLM_DISABLED,
+  AutostartKind,
+  autostartKindOfTask,
   AutostartSkipReason,
 } from './content-autostart.constants';
 
@@ -61,10 +64,11 @@ export function autostartOutcome(code: string): AutostartOutcome {
 }
 
 /**
- * Задача `content_autostart` (`F06-5`; `features/F06-summary-autofill/tech.md` §4): после коммита
- * `done` языка зовёт старт хода раздела без отбрасывания прежних и закрывает свою операцию сама
- * (решение арбитра `F06 | F06-5`, Р4). LLM не зовёт, резерв бюджета не проходит; повторов на
- * окончательных отказах старта нет.
+ * Задачи `content_autostart` и `content_autostart_analysis` (`F06-5`, `F07-3b`;
+ * `features/F06-summary-autofill/tech.md` §4): после коммита `done` языка зовут старт хода раздела
+ * по виду задачи без отбрасывания прежних и закрывают свою операцию сами (решение арбитра
+ * `F06 | F06-5`, Р4; вид задачи - `F07 | F07-3b`, /qa круг 1). LLM не зовёт, резерв бюджета
+ * не проходит; повторов на окончательных отказах старта нет.
  */
 @Injectable()
 export class ContentAutostartHandler {
@@ -74,6 +78,7 @@ export class ContentAutostartHandler {
     private readonly prisma: PrismaService,
     private readonly tasks: LlmTaskService,
     private readonly summaryWrite: SummaryWriteService,
+    private readonly analysisWrite: AnalysisWriteService,
   ) {}
 
   readonly handler: LlmTaskHandler = {
@@ -86,6 +91,7 @@ export class ContentAutostartHandler {
 
   private async run(task: LlmTask, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
     const runLanguageId = runLanguageIdOf(task);
+    const kind = autostartKindOfTask(task.kind);
     const lang = runLanguageId
       ? await this.prisma.translationRunLanguage.findUnique({
           where: { id: runLanguageId },
@@ -101,7 +107,7 @@ export class ContentAutostartHandler {
     // ход языка уже есть - закрыть без причины, а не записать «ход строится» (L-019: единственность
     // держит индекс, это чтение только выбирает исход).
     const started = await this.prisma.contentDraft.findFirst({
-      where: { translationRunLanguageId: lang.id, kind: 'summary_write' },
+      where: { translationRunLanguageId: lang.id, kind },
       select: { id: true },
     });
     if (started) {
@@ -118,10 +124,9 @@ export class ContentAutostartHandler {
     let outcome: AutostartOutcome = { kind: 'quiet' };
     let code = 'STEP_ERROR';
     try {
-      await this.summaryWrite.start(lang.bookVersionId, undefined, op.createdById, {
-        translationRunLanguageId: lang.id,
-        translationRunId: lang.runId,
-      });
+      const link = { translationRunLanguageId: lang.id, translationRunId: lang.runId };
+      const writer = kind === 'analysis_write' ? this.analysisWrite : this.summaryWrite;
+      await writer.start(lang.bookVersionId, undefined, op.createdById, link);
     } catch (error) {
       // Аренда ушла, отказ модуля LLM, остановка процесса - разбирает воркер.
       if (
@@ -141,7 +146,7 @@ export class ContentAutostartHandler {
     }
     if (outcome.kind === 'retry') return this.retry(task.operationId, op.createdAt, code);
     if (outcome.kind === 'fail') {
-      await this.fail(task.operationId, lang.id, lang.bookVersionId, outcome.reason);
+      await this.fail(task.operationId, lang.id, lang.bookVersionId, kind, outcome.reason);
     } else {
       await this.close(task.operationId, outcome.kind === 'skip' ? outcome.reason : null);
     }
@@ -186,6 +191,7 @@ export class ContentAutostartHandler {
     operationId: string,
     translationRunLanguageId: string,
     versionId: string,
+    kind: AutostartKind,
     reason: string,
   ): Promise<void> {
     const version = await this.prisma.bookVersion.findUnique({
@@ -198,7 +204,7 @@ export class ContentAutostartHandler {
         await tx.contentDraft.create({
           data: {
             bookVersionId: versionId,
-            kind: 'summary_write',
+            kind,
             status: 'failed',
             failedReason: reason,
             language: version.language,

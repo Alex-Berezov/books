@@ -5,9 +5,14 @@ import { LlmError, llmDisabled, llmModelsUnavailable } from '../../llm/llm.error
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext } from '../../llm-worker/llm-task.types';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
+import { AnalysisWriteService } from '../analysis-write/analysis-write.service';
 import { SummaryWriteService } from '../summary-write/summary-write.service';
 import {
+  ANALYSIS_AUTOSTART_TASK_KIND,
   AUTOSTART_DUPLICATE,
+  AUTOSTART_TASK_KINDS,
+  autostartKindOfTask,
+  CONTENT_AUTOSTART_TASK_KIND,
   AUTOSTART_SKIPPED_EXISTING,
   AUTOSTART_SKIPPED_IN_PROGRESS,
   AUTOSTART_SKIPPED_LLM_DISABLED,
@@ -27,6 +32,7 @@ import {
 
 const task = {
   id: 't1',
+  kind: 'content_autostart',
   operationId: 'auto1',
   payload: { runLanguageId: 'l1' },
 } as unknown as LlmTask;
@@ -55,12 +61,14 @@ function setup(lang: unknown = { id: 'l1', runId: 'r1', status: 'done', bookVers
     failOperation: jest.fn().mockResolvedValue(true),
   };
   const summaryWrite = { start: jest.fn().mockResolvedValue({}) };
+  const analysisWrite = { start: jest.fn().mockResolvedValue({}) };
   const handler = new ContentAutostartHandler(
     prisma as unknown as PrismaService,
     tasks as unknown as LlmTaskService,
     summaryWrite as unknown as SummaryWriteService,
+    analysisWrite as unknown as AnalysisWriteService,
   );
-  return { handler, prisma, tasks, summaryWrite, tx };
+  return { handler, prisma, tasks, summaryWrite, analysisWrite, tx };
 }
 
 describe('autostartOutcome', () => {
@@ -109,6 +117,67 @@ describe('ContentAutostartHandler', () => {
     expect(tasks.completeOperation).toHaveBeenCalledTimes(1);
     expect(tx.llmOperation.update).toHaveBeenCalledTimes(0);
     expect(tx.contentDraft.create).toHaveBeenCalledTimes(0);
+  });
+
+  describe('вид хода по виду задачи (F07-3b; решения арбитра F07 | F07-3b)', () => {
+    const analysisTask = { ...task, kind: ANALYSIS_AUTOSTART_TASK_KIND } as LlmTask;
+
+    it('analysis_write - стартует ход анализа, а не пересказа', async () => {
+      const { handler, summaryWrite, analysisWrite } = setup();
+      await expect(handler.handler.run(analysisTask, ctx)).resolves.toEqual({ kind: 'done' });
+      expect(analysisWrite.start).toHaveBeenCalledTimes(1);
+      expect(analysisWrite.start).toHaveBeenCalledWith('v-fr', undefined, 'u1', {
+        translationRunLanguageId: 'l1',
+        translationRunId: 'r1',
+      });
+      expect(summaryWrite.start).toHaveBeenCalledTimes(0);
+    });
+
+    it('повтор ищет уже записанный ход своего вида: ход пересказа языка анализ не закрывает', async () => {
+      const { handler, prisma, analysisWrite } = setup();
+      await handler.handler.run(analysisTask, ctx);
+      expect(prisma.contentDraft.findFirst).toHaveBeenCalledTimes(1);
+      expect(prisma.contentDraft.findFirst).toHaveBeenCalledWith({
+        where: { translationRunLanguageId: 'l1', kind: 'analysis_write' },
+        select: { id: true },
+      });
+      expect(analysisWrite.start).toHaveBeenCalledTimes(1);
+    });
+
+    it('отказ старта анализа - строка failed вида analysis_write', async () => {
+      const { handler, analysisWrite, tx } = setup();
+      analysisWrite.start.mockRejectedValueOnce(llmTaskConflict('LLM_CEILING_REACHED', 'x'));
+      await handler.handler.run(analysisTask, ctx);
+      expect(tx.contentDraft.create).toHaveBeenCalledTimes(1);
+      expect(tx.contentDraft.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          kind: 'analysis_write',
+          failedReason: 'LLM_CEILING_REACHED',
+        }),
+      });
+    });
+
+    it('content_autostart (и задача прежнего образа) - пересказ; payload.kind не читается', async () => {
+      const { handler, summaryWrite, analysisWrite } = setup();
+      await handler.handler.run(task, ctx);
+      await handler.handler.run(
+        { ...task, payload: { runLanguageId: 'l1', kind: 'analysis_write' } } as LlmTask,
+        ctx,
+      );
+      expect(summaryWrite.start).toHaveBeenCalledTimes(2);
+      expect(analysisWrite.start).toHaveBeenCalledTimes(0);
+    });
+
+    it('вид задачи по виду хода и обратно', () => {
+      expect(AUTOSTART_TASK_KINDS).toEqual({
+        summary_write: CONTENT_AUTOSTART_TASK_KIND,
+        analysis_write: ANALYSIS_AUTOSTART_TASK_KIND,
+      });
+      expect(autostartKindOfTask(ANALYSIS_AUTOSTART_TASK_KIND)).toBe('analysis_write');
+      expect(autostartKindOfTask(CONTENT_AUTOSTART_TASK_KIND)).toBe('summary_write');
+      // Чужой вид - ошибка регистрации, а не молчаливый старт пересказа.
+      expect(() => autostartKindOfTask('content_draft')).toThrow('content_draft');
+    });
   });
 
   it('повтор после старта, успевшего записать ход, - закрыть без причины, старт не зовётся', async () => {

@@ -3,7 +3,7 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmService } from '../../llm/llm.service';
 import { allChapters } from '../chapter-pages';
 import { stageEstimatorFor } from '../llm-model-checks';
-import { contextUpperChars } from '../translate/translate-estimate';
+import { SectionUpperSource } from '../run/section-upper-source';
 import {
   SUMMARY_BRIEF_WRITE_STAGE,
   SUMMARY_FULL_WRITE_STAGE,
@@ -60,20 +60,16 @@ export async function chapterSources(
  * Строки «Summary» оценки запуска перевода по языкам (`F06-5`; `tech.md` §7): досье на старте
  * запуска обычно ещё нет - сверху, по главам исходника, на языке перевода; вход - плюс потолок
  * досье и глоссария. Та же формула, что у оценки ручного старта без плана
- * (`SummaryWriteService.estimate`). Главы, оценщики этапов и потолок входа читаются один раз на
- * оценку, а не на язык: от языка зависят только названия разделов.
+ * (`SummaryWriteService.estimate`). Главы и потолок входа - общий вход разделов оценки
+ * (`SectionUpperSource`, один раз на оценку); от языка зависят только названия разделов.
  */
 export async function summaryUpperUsd(
   llm: LlmService,
-  db: PrismaService,
-  sourceVersionId: string,
+  source: SectionUpperSource,
   languages: readonly Language[],
 ): Promise<Map<Language, Prisma.Decimal>> {
-  const [calls, chapters, extra] = await Promise.all([
-    writeEstimators(llm),
-    versionChapters(db, sourceVersionId),
-    contextUpperChars(llm),
-  ]);
+  const calls = await writeEstimators(llm);
+  const { chapters, extra } = source;
   return new Map(
     languages.map((language) => [
       language,

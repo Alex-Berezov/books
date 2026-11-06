@@ -5,7 +5,13 @@ import {
   NotFoundException,
   OnModuleInit,
 } from '@nestjs/common';
-import { LlmBudget, LlmOperationKind, LlmStageSetting, Prisma } from '@prisma/client';
+import {
+  ContentDraftKind,
+  LlmBudget,
+  LlmOperationKind,
+  LlmStageSetting,
+  Prisma,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   LlmBudgetResponseDto,
@@ -52,6 +58,8 @@ export interface CreateOperationInput {
   models?: readonly string[];
   /** Запуск перевода, ради которого заведена операция (`F05-4`): отчёт и история запуска. */
   translationRunId?: string | null;
+  /** Вид хода раздела у операции `draft` (`F07-3b`): отчёт и история запуска различают по нему. */
+  contentKind?: ContentDraftKind | null;
 }
 
 /**
@@ -375,6 +383,7 @@ export class LlmService implements OnModuleInit {
       limitUsd,
       createdById: input.createdById ?? null,
       translationRunId: input.translationRunId ?? null,
+      contentKind: input.contentKind ?? null,
       settingsSnapshot: snapshot as unknown as Prisma.InputJsonValue,
     };
   }

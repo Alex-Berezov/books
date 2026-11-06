@@ -6,6 +6,7 @@ import { llmDisabled } from '../../llm/llm.errors';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import {
+  ANALYSIS_AUTOSTART_TASK_KIND,
   AUTOSTART_SKIPPED_LLM_DISABLED,
   CONTENT_AUTOSTART_TASK_KIND,
 } from '../autostart/content-autostart.constants';
@@ -145,7 +146,7 @@ describe('RunStepSupportService: автозапуск раздела', () => {
     expect(llm.operationData).toHaveBeenCalledWith(opInput);
     expect(tx.llmOperation.create).toHaveBeenCalledTimes(1);
     expect(tx.llmOperation.create).toHaveBeenCalledWith({
-      data: { ...opInput, settingsSnapshot: {} },
+      data: { ...opInput, settingsSnapshot: {}, contentKind: 'summary_write' },
       select: { id: true },
     });
     expect(tasks.enqueue).toHaveBeenCalledTimes(1);
@@ -163,6 +164,55 @@ describe('RunStepSupportService: автозапуск раздела', () => {
     // Операция запуска закрывается после коммита - своя операция автозапуска нет.
     expect(tasks.completeOperation).toHaveBeenCalledTimes(1);
     expect(tasks.completeOperation).toHaveBeenCalledWith('op1');
+  });
+
+  // `F07-3b` (`product.md` §8 п.12): свои операция и задача на каждый включённый раздел.
+  const withRun = (patch: Record<string, boolean>) =>
+    ({ ...summaryLang, run: { ...summaryLang.run, ...patch } }) as unknown as LanguageRow;
+
+  it('только Write Analysis - одна операция вида analysis_write и задача своим ключом', async () => {
+    const { support, tx, tasks, llm } = setup(0);
+    await support.finishLanguage(withRun({ writeSummary: false, writeAnalysis: true }));
+    expect(llm.operationData).toHaveBeenCalledTimes(1);
+    expect(tx.llmOperation.create).toHaveBeenCalledTimes(1);
+    expect(tx.llmOperation.create).toHaveBeenCalledWith({
+      data: { ...opInput, settingsSnapshot: {}, contentKind: 'analysis_write' },
+      select: { id: true },
+    });
+    expect(tasks.enqueue).toHaveBeenCalledTimes(1);
+    expect(tasks.enqueue).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: ANALYSIS_AUTOSTART_TASK_KIND,
+        payload: { runLanguageId: 'l1' },
+        pairKey: 'autostart:l1:analysis_write',
+      }),
+      tx,
+    );
+  });
+
+  it('оба раздела - две операции и две задачи, снимок настроек один', async () => {
+    const { support, tx, tasks, llm } = setup(0);
+    await support.finishLanguage(withRun({ writeSummary: true, writeAnalysis: true }));
+    expect(llm.operationData).toHaveBeenCalledTimes(1);
+    expect(tx.llmOperation.create).toHaveBeenCalledTimes(2);
+    expect(tasks.enqueue).toHaveBeenCalledTimes(2);
+    expect(
+      tasks.enqueue.mock.calls.map((c) => {
+        const input = c[0] as { kind: string; pairKey: string };
+        return [input.kind, input.pairKey];
+      }),
+    ).toEqual([
+      [CONTENT_AUTOSTART_TASK_KIND, 'autostart:l1:summary_write'],
+      [ANALYSIS_AUTOSTART_TASK_KIND, 'autostart:l1:analysis_write'],
+    ]);
+  });
+
+  it('ни одного раздела - ни операции, ни задачи', async () => {
+    const { support, tx, tasks, llm } = setup(0);
+    await support.finishLanguage(withRun({ writeSummary: false, writeAnalysis: false }));
+    expect(llm.operationData).toHaveBeenCalledTimes(0);
+    expect(tx.llmOperation.create).toHaveBeenCalledTimes(0);
+    expect(tasks.enqueue).toHaveBeenCalledTimes(0);
   });
 
   it('done уже был записан (повтор шага) - второго автозапуска нет', async () => {
@@ -184,7 +234,12 @@ describe('RunStepSupportService: автозапуск раздела', () => {
     });
     expect(tx.llmOperation.create).toHaveBeenCalledTimes(1);
     expect(tx.llmOperation.create).toHaveBeenCalledWith({
-      data: { ...opInput, status: 'done', skipReason: AUTOSTART_SKIPPED_LLM_DISABLED },
+      data: {
+        ...opInput,
+        status: 'done',
+        skipReason: AUTOSTART_SKIPPED_LLM_DISABLED,
+        contentKind: 'summary_write',
+      },
       select: { id: true },
     });
     expect(tasks.enqueue).not.toHaveBeenCalled();

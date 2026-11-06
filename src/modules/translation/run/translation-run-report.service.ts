@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, TranslationRunLanguageStatus } from '@prisma/client';
-import { runSummaries } from './run-summary';
+import { runSections } from './run-sections';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 import { moneyUsd } from '../../llm/dto/llm-money';
@@ -96,8 +96,9 @@ export class TranslationRunReportService {
       select: { id: true, bookVersionId: true },
     });
     if (!run) throw new NotFoundException('Translation run not found');
-    // Перевод - без операций раздела (`F06-5`, решение арбитра `F06 | F06-5`, Р5): их траты - строка
-    // «Summary» языка; итог `totalUsd` - все операции запуска, каждая один раз.
+    // Перевод - без операций разделов (`F06-5`, `F07-3b`; решение арбитра `F06 | F06-5`, Р5): их
+    // траты - строки «Summary» и «Analysis» языка; итог `totalUsd` - все операции запуска, каждая
+    // один раз.
     const ofRun = { operation: { translationRunId: id, kind: { not: 'draft' as const } } };
     const [languages, chunks, chapters, calls, inFlight, spent] = await Promise.all([
       this.prisma.translationRunLanguage.findMany({
@@ -159,7 +160,7 @@ export class TranslationRunReportService {
         _sum: { spentUsd: true },
       }),
     ]);
-    const summaries = await runSummaries(
+    const sections = await runSections(
       this.prisma,
       languages.map((l) => ({ id: l.id, runId: id, bookVersionId: l.bookVersionId })),
     );
@@ -227,7 +228,8 @@ export class TranslationRunReportService {
             missingChapters: final?.code?.missing ?? [],
             chaptersChecked: final?.chapters.filter((c) => c.model !== '').length ?? 0,
           },
-          summary: summaries.get(l.id) ?? null,
+          summary: sections.get(l.id)?.summary ?? null,
+          analysis: sections.get(l.id)?.analysis ?? null,
         };
       }),
       costs,

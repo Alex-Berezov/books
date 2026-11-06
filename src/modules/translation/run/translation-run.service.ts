@@ -5,9 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Language, LlmOperation, Prisma, TranslationRunLanguage } from '@prisma/client';
-import { runSummaries } from './run-summary';
-import { TranslationRunSummaryDto } from '../dto/translation-run-summary.dto';
+import { RunSections, runSections } from './run-sections';
+import { analysisUpperUsd } from '../analysis-write/analysis-estimate';
 import { summaryUpperUsd } from '../summary-write/summary-estimate';
+import { loadSectionUpperSource } from './section-upper-source';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../../shared/dto/paginated-response.dto';
 import { sanitizeRichHtml } from '../../../shared/sanitize/rich-html';
@@ -189,6 +190,7 @@ export class TranslationRunService {
             sourceLanguage: estimate.sourceLanguage,
             stageModels: dto.translateModel ? { [TRANSLATE_STAGE]: dto.translateModel } : {},
             writeSummary: dto.writeSummary === true,
+            writeAnalysis: dto.writeAnalysis === true,
             languages: { create: [...dto.languages].sort().map((language) => ({ language })) },
           },
           include: { languages: true },
@@ -269,7 +271,7 @@ export class TranslationRunService {
         })
       : [];
     const spentByRun = new Map(spent.map((g) => [g.translationRunId, g._sum.spentUsd]));
-    const summaries = await runSummaries(
+    const sections = await runSections(
       this.prisma,
       rows.flatMap((r) => r.languages.map((l) => ({ ...l, runId: r.id }))),
     );
@@ -281,6 +283,7 @@ export class TranslationRunService {
         languages: run.languages.map((l) => l.language),
         stageModels: (run.stageModels ?? {}) as TranslationRunStageModelsDto,
         writeSummary: run.writeSummary,
+        writeAnalysis: run.writeAnalysis,
         operation: toOperationDto(operation),
         createdAt: run.createdAt.toISOString(),
         createdBy,
@@ -292,7 +295,7 @@ export class TranslationRunService {
           reason: l.reason,
           reasonText: l.reasonText,
           draftVersionId: l.bookVersionId,
-          summary: summaries.get(l.id) ?? null,
+          ...sectionsOf(sections, l.id),
         })),
       })),
       { page, limit, total },
@@ -340,7 +343,7 @@ export class TranslationRunService {
         ? this.prisma.llmOperation.findMany({ where: { id: { in: blockers } } })
         : Promise.resolve<LlmOperation[]>([]),
     ]);
-    const summaries = await runSummaries(
+    const sections = await runSections(
       this.prisma,
       run.languages.map((l) => ({ id: l.id, runId: run.id, bookVersionId: l.bookVersionId })),
     );
@@ -356,6 +359,7 @@ export class TranslationRunService {
       dossierId: run.dossierId,
       stageModels: (run.stageModels ?? {}) as TranslationRunStageModelsDto,
       writeSummary: run.writeSummary,
+      writeAnalysis: run.writeAnalysis,
       operation: toOperationDto(run.operation),
       operations: operations.map(toOperationDto),
       createdAt: run.createdAt.toISOString(),
@@ -365,7 +369,7 @@ export class TranslationRunService {
           run.dossierId !== null,
           numbers,
           chunks.filter((c) => c.runLanguageId === l.id && c.chapterNumber === l.chapterNumber),
-          summaries.get(l.id) ?? null,
+          sectionsOf(sections, l.id),
         ),
       ),
     };
@@ -511,9 +515,21 @@ export class TranslationRunService {
     let translationsUsd = zero();
     // «Write Summary» (`F06-5`; `tech.md` §7): своя операция и лимит - в итог только для показа.
     let summaryTotalUsd = zero();
-    const summaries = query.writeSummary
-      ? await summaryUpperUsd(this.llm, this.prisma, versionId, query.languages)
-      : null;
+    // Вход строк разделов - один раз на оценку (решение арбитра `F07 | F07-3b`, В1).
+    const upperSource =
+      query.writeSummary || query.writeAnalysis
+        ? await loadSectionUpperSource(this.llm, this.prisma, versionId)
+        : null;
+    const summaries =
+      query.writeSummary && upperSource
+        ? await summaryUpperUsd(this.llm, upperSource, query.languages)
+        : null;
+    // «Write Analysis» (`F07-3b`; `tech.md` §6) - так же: своя операция и лимит, в итог для показа.
+    let analysisTotalUsd = zero();
+    const analyses =
+      query.writeAnalysis && upperSource
+        ? await analysisUpperUsd(this.llm, upperSource, query.languages)
+        : null;
     let minLimitUsd = context.dossier?.suggestedLimitUsd ?? zero();
     let contextUsd = context.dossier?.estimateUsd ?? zero();
     // Вход сверх промпта, пока контекст не готов: от языка не зависит - один раз на оценку.
@@ -581,6 +597,8 @@ export class TranslationRunService {
       translationsUsd = translationsUsd.add(totalUsd);
       const summaryUsd = summaries?.get(language) ?? null;
       if (summaryUsd) summaryTotalUsd = summaryTotalUsd.add(summaryUsd);
+      const analysisUsd = analyses?.get(language) ?? null;
+      if (analysisUsd) analysisTotalUsd = analysisTotalUsd.add(analysisUsd);
       if (glossary) {
         minLimitUsd = minLimitUsd.add(glossary.suggestedLimitUsd);
         contextUsd = contextUsd.add(glossary.estimateUsd);
@@ -594,7 +612,8 @@ export class TranslationRunService {
         finalCheckUsd: moneyUsd(finalCheckUsd),
         metadataUsd: moneyUsd(languageMetadataUsd),
         summaryUsd: summaryUsd && moneyUsd(summaryUsd),
-        totalUsd: moneyUsd(summaryUsd ? totalUsd.add(summaryUsd) : totalUsd),
+        analysisUsd: analysisUsd && moneyUsd(analysisUsd),
+        totalUsd: moneyUsd(totalUsd.add(summaryUsd ?? zero()).add(analysisUsd ?? zero())),
       });
     }
     const budget = await this.budget.getBudget();
@@ -613,7 +632,10 @@ export class TranslationRunService {
         upperBound,
         translationsUsd: moneyUsd(translationsUsd),
         summaryUsd: query.writeSummary ? moneyUsd(summaryTotalUsd) : null,
-        totalUsd: moneyUsd(translationsUsd.add(contextUsd).add(summaryTotalUsd)),
+        analysisUsd: query.writeAnalysis ? moneyUsd(analysisTotalUsd) : null,
+        totalUsd: moneyUsd(
+          translationsUsd.add(contextUsd).add(summaryTotalUsd).add(analysisTotalUsd),
+        ),
         minLimitUsd: moneyUsd(minLimitUsd),
         defaultLimitUsd: moneyUsd(budget?.defaultRunLimitUsd ?? zero()),
         nearLimitChapters,
@@ -760,7 +782,7 @@ function languageDto(
   hasDossier: boolean,
   chapters: readonly number[],
   chunks: Array<{ status: string; _count: { _all: number } }>,
-  summary: TranslationRunSummaryDto | null,
+  sections: RunSections,
 ): TranslationRunLanguageDto {
   const total = chunks.reduce((sum, c) => sum + c._count._all, 0);
   const done = chunks
@@ -786,7 +808,7 @@ function languageDto(
     glossaryId: l.glossaryId,
     blockedByOperationId: l.blockedByOperationId,
     draftVersionId: l.bookVersionId,
-    summary,
+    ...sections,
   };
 }
 
@@ -817,3 +839,7 @@ function stageOf(
     l.reason === CHECK_NO_COMPLIANT_PROVIDER || chunks.some((c) => CHECKING.includes(c.status));
   return checking ? 'check' : 'translate';
 }
+
+/** Строки «Summary» и «Analysis» языка: нет ни операции, ни хода вида - `null` (`runSections`). */
+const sectionsOf = (sections: ReadonlyMap<string, RunSections>, id: string): RunSections =>
+  sections.get(id) ?? { summary: null, analysis: null };

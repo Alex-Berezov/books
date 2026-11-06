@@ -1994,6 +1994,66 @@ describe('Translation run (e2e)', () => {
     ).expect(400);
   });
 
+  it('the estimate with Write Analysis: an Analysis line per language and its own total, independent of Write Summary; the translation and the minimal limit do not change (F07-3b)', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    type Estimate = {
+      languages: Array<{
+        language: string;
+        summaryUsd: string | null;
+        analysisUsd: string | null;
+        totalUsd: string;
+      }>;
+      translationsUsd: string;
+      summaryUsd: string | null;
+      analysisUsd: string | null;
+      totalUsd: string;
+      minLimitUsd: string;
+    };
+    const estimate = async (query: Record<string, string> = {}) =>
+      (
+        await auth(
+          http()
+            .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+            .query({ languages: 'es,fr', ...query }),
+        ).expect(200)
+      ).body as Estimate;
+    const dec = (v: string) => new Prisma.Decimal(v);
+    const off = await estimate();
+    const on = await estimate({ writeAnalysis: 'true' });
+    expect(off.analysisUsd).toBeNull();
+    expect(off.languages.map((l) => l.analysisUsd)).toEqual([null, null]);
+    expect(await estimate({ writeAnalysis: 'false' })).toEqual(off);
+    // Только анализ: строки пересказа нет.
+    expect(on.summaryUsd).toBeNull();
+    let sum = new Prisma.Decimal(0);
+    for (const [i, l] of on.languages.entries()) {
+      const analysis = dec(l.analysisUsd as string);
+      expect(analysis.gt(0)).toBe(true);
+      expect(l.summaryUsd).toBeNull();
+      expect(dec(l.totalUsd).sub(dec(off.languages[i].totalUsd)).eq(analysis)).toBe(true);
+      sum = sum.add(analysis);
+    }
+    expect(dec(on.analysisUsd as string).eq(sum)).toBe(true);
+    expect(dec(on.totalUsd).sub(dec(off.totalUsd)).eq(sum)).toBe(true);
+    expect(on.translationsUsd).toBe(off.translationsUsd);
+    expect(on.minLimitUsd).toBe(off.minLimitUsd);
+    // Оба раздела: каждая строка - своя, итог - обе суммы.
+    const both = await estimate({ writeAnalysis: 'true', writeSummary: 'true' });
+    const summaryOnly = await estimate({ writeSummary: 'true' });
+    expect(both.analysisUsd).toBe(on.analysisUsd);
+    expect(both.summaryUsd).toBe(summaryOnly.summaryUsd);
+    expect(
+      dec(both.totalUsd)
+        .sub(dec(off.totalUsd))
+        .eq(dec(on.analysisUsd as string).add(dec(summaryOnly.summaryUsd as string))),
+    ).toBe(true);
+    await auth(
+      http()
+        .get(`/admin/versions/${versionId}/translation-runs/estimate`)
+        .query({ languages: 'es', writeAnalysis: 'yes' }),
+    ).expect(400);
+  });
+
   it('a stop found while the pause button already stopped the run still sets its reason', async () => {
     // Одна модель перевода: её отказ - последний, пауза не обрывает переход на запасную.
     await withStages([{ stage: 'translate', model: TRANSLATOR, fallbacks: [] }], async () => {
@@ -2577,6 +2637,7 @@ describe('Translation run (e2e)', () => {
     ]);
     expect(await runsOf(bookId)).toBe(1);
     expect(res.body.writeSummary).toBe(false);
+    expect(res.body.writeAnalysis).toBe(false);
 
     await drain();
 
@@ -2595,6 +2656,30 @@ describe('Translation run (e2e)', () => {
     expect(run.writeSummary).toBe(true);
     expect(run.operation.limitUsd.toString()).toBe('10');
     await auth(http().post(`/admin/translation-runs/${run.id}/cancel`)).expect(200);
+  });
+
+  it('start with Write Analysis keeps it apart from Write Summary in both directions, the run limit is the same (F07-3b)', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    for (const [writeSummary, writeAnalysis] of [
+      [false, true],
+      [true, false],
+    ]) {
+      const res = await startRun(versionId, {
+        languages: ['es'],
+        writeSummary,
+        writeAnalysis,
+      }).expect(202);
+      expect(res.body).toMatchObject({ writeSummary, writeAnalysis });
+      const run = await prisma.translationRun.findUniqueOrThrow({
+        where: { id: res.body.id as string },
+        include: { operation: true },
+      });
+      expect([run.writeSummary, run.writeAnalysis]).toEqual([writeSummary, writeAnalysis]);
+      expect(run.operation.limitUsd.toString()).toBe('10');
+      await auth(http().post(`/admin/translation-runs/${run.id}/cancel`)).expect(200);
+    }
+    // Не булево в теле - 400, а не молча включённый или выключенный флаг.
+    await startRun(versionId, { languages: ['es'], writeAnalysis: 'yes' }).expect(400);
   });
 
   it('start refuses the whole request: a language closed by its reason, not a source, unknown model, low limit, no key', async () => {

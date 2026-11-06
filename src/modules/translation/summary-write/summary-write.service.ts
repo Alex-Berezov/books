@@ -1,7 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ContentDraft, Language, LlmOperation, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { uniqueViolationFields } from '../../../shared/prisma/prisma-error.util';
 import { lockSummary } from '../../book-summary/book-summary-lock';
 import { moneyUsd } from '../../llm/dto/llm-money';
 import { LlmBudgetService } from '../../llm/llm-budget.service';
@@ -9,16 +8,12 @@ import { LlmService } from '../../llm/llm.service';
 import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
-import {
-  AUTOSTART_DUPLICATE,
-  AUTOSTART_SKIPPED_EXISTING,
-  AUTOSTART_SKIPPED_IN_PROGRESS,
-} from '../autostart/content-autostart.constants';
+import { AutostartLink, assertNoLiveRun } from '../autostart/content-autostart.start';
+import { startConflict } from '../content-draft/start-conflict';
 import { chapterPages } from '../chapter-pages';
 import { DOSSIER_TOO_LONG } from '../dossier/dossier.constants';
 import { contextUpperChars } from '../translate/translate-estimate';
 import {
-  DRAFT_IN_PROGRESS,
   DRAFT_LIMIT_FACTOR,
   DRAFT_LIMIT_TOO_LOW,
   DRAFT_TX_OPTIONS,
@@ -85,15 +80,6 @@ const KIND = 'summary_write' as const;
 /** Порядок «Accept all»: разделы по номеру, затем полный и «Очень кратко» (`tech.md` §5). */
 const TARGET_ORDER = { section: 0, full: 1, brief: 2 } as const;
 
-/**
- * Старт автозапуском по `done` языка запуска (`F06-5`; `tech.md` §4 п.2-п.4): прежние ходы не
- * отбрасываются, ход и его операция несут ссылки на язык и запуск (решение арбитра `F06 | F06-5`, Р5).
- */
-export interface SummaryAutostartLink {
-  translationRunLanguageId: string;
-  translationRunId: string;
-}
-
 interface Estimate {
   dto: SummaryWriteEstimateDto;
   suggestedLimitUsd: Prisma.Decimal;
@@ -136,12 +122,12 @@ export class SummaryWriteService {
     versionId: string,
     limitUsd: Prisma.Decimal | undefined,
     createdById: string | null,
-    autostart: SummaryAutostartLink | null = null,
+    autostart: AutostartLink | null = null,
   ): Promise<SummaryWriteDto> {
     // Живой ход вида главнее отказов старта (`tech.md` §4 п.4, Р9): иначе потолок или устаревшее
     // досье завели бы строку `failed` рядом с `ready`. Чтение до отказов выбирает исход, под замком
     // транзакции та же проверка повторяется (L-019).
-    if (autostart) await assertNoLiveRun(this.prisma, versionId);
+    if (autostart) await assertNoLiveRun(this.prisma, versionId, KIND);
     this.llm.assertEnabled();
     const estimate = await this.estimateOf(versionId);
     if (estimate.dto.dossier?.refusedTooLong) {
@@ -168,6 +154,7 @@ export class SummaryWriteService {
       limitUsd: limit,
       createdById,
       translationRunId: autostart?.translationRunId ?? null,
+      contentKind: KIND,
     });
     let id: string;
     let stale: string[] = [];
@@ -175,7 +162,7 @@ export class SummaryWriteService {
       id = await this.prisma.$transaction(async (tx) => {
         await lockSummary(tx, versionId);
         if (autostart) {
-          await assertNoLiveRun(tx, versionId);
+          await assertNoLiveRun(tx, versionId, KIND);
         } else {
           const previous = await tx.contentDraft.findMany({
             where: { bookVersionId: versionId, kind: KIND, status: { in: ['ready', 'failed'] } },
@@ -206,7 +193,7 @@ export class SummaryWriteService {
         return row.id;
       }, DRAFT_TX_OPTIONS);
     } catch (error) {
-      throw startConflict(error, autostart !== null);
+      throw startConflict(error, autostart !== null, KIND);
     }
     // Перегенерации отброшенных ходов - после коммита нового хода: старт не удался - их оплаченная
     // работа не снята. Обрыв здесь оставляет операцию, которая сама кончится на условии строки
@@ -289,6 +276,7 @@ export class SummaryWriteService {
       bookVersionId: row.bookVersionId,
       limitUsd: usd.mul(DRAFT_LIMIT_FACTOR),
       createdById,
+      contentKind: KIND,
     });
     await this.prisma.$transaction(async (tx) => {
       await lockSummary(tx, row.bookVersionId);
@@ -594,39 +582,6 @@ export class SummaryWriteService {
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
-  }
-}
-
-/**
- * Отказ записи старта (`tech.md` §4 п.3): один строящийся ход на версию - частичным уникальным
- * индексом, а не чтением (L-019). P2002 по индексу автозапуска (язык, вид) - `AUTOSTART_DUPLICATE`,
- * тихий выход; прочее (частичный индекс строящегося, пустой разбор под адаптером) -
- * `DRAFT_IN_PROGRESS`. Не P2002 - как есть.
- */
-export function startConflict(error: unknown, autostart: boolean): unknown {
-  if (!(error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')) {
-    return error;
-  }
-  if (autostart && uniqueViolationFields(error).includes('translationRunLanguageId')) {
-    return llmTaskConflict(AUTOSTART_DUPLICATE, 'This language has already started a run');
-  }
-  return llmTaskConflict(DRAFT_IN_PROGRESS, 'A summary run is already being built');
-}
-
-/**
- * Автозапуск рядом с живым ходом вида не заводится (решение арбитра `F06 | F06-5`, Р9): чтение под
- * замком пересказа - ручной старт берёт тот же замок до своей строки.
- */
-async function assertNoLiveRun(tx: Prisma.TransactionClient, versionId: string): Promise<void> {
-  const live = await tx.contentDraft.findFirst({
-    where: { bookVersionId: versionId, kind: KIND, status: { in: ['building', 'ready'] } },
-    select: { status: true },
-  });
-  if (live?.status === 'building') {
-    throw llmTaskConflict(AUTOSTART_SKIPPED_IN_PROGRESS, 'A summary run is already being built');
-  }
-  if (live) {
-    throw llmTaskConflict(AUTOSTART_SKIPPED_EXISTING, 'The version already has a summary run');
   }
 }
 

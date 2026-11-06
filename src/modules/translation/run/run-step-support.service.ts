@@ -17,8 +17,9 @@ import { DRAFT_DELETED } from '../draft/draft.constants';
 import {
   autostartPairKey,
   AUTOSTART_SKIPPED_LLM_DISABLED,
+  AutostartKind,
   AutostartSkipReason,
-  CONTENT_AUTOSTART_TASK_KIND,
+  AUTOSTART_TASK_KINDS,
 } from '../autostart/content-autostart.constants';
 import { httpCode } from '../../llm-worker/llm-worker.errors';
 import { sourceFingerprint } from '../source-fingerprint';
@@ -211,15 +212,21 @@ export class RunStepSupportService {
    * закончивших одновременно, тот, кто считает позже, видит оба и закрывает операцию.
    */
   async finishLanguage(lang: LanguageRow): Promise<LlmTaskStepResult> {
-    // Данные операции автозапуска - до транзакции (`L-020`): их отказ не держит `done` языка.
-    const autostart = lang.run.writeSummary ? await this.autostartData(lang) : null;
+    // Данные операций автозапуска - до транзакции (`L-020`): их отказ не держит `done` языка.
+    // Своя операция и задача на каждый включённый раздел (`F07-3b`, `product.md` §8 п.12).
+    const kinds: AutostartKind[] = [
+      ...(lang.run.writeSummary ? (['summary_write'] as const) : []),
+      ...(lang.run.writeAnalysis ? (['analysis_write'] as const) : []),
+    ];
+    const autostarts = kinds.length > 0 ? await this.autostartData(lang, kinds) : [];
     await this.prisma.$transaction(async (tx) => {
       const done = await tx.translationRunLanguage.updateMany({
         where: { id: lang.id, status: { in: [...RUN_LANGUAGE_UNFINISHED] } },
         data: { status: 'done', reason: null },
       });
       // `done` записан этим вызовом - и только тогда автозапуск: повтор шага второго не заводит.
-      if (done.count === 1 && autostart) await this.startAutostart(tx, lang, autostart);
+      if (done.count !== 1) return;
+      for (const autostart of autostarts) await this.startAutostart(tx, lang, autostart);
     }, RUN_TX_OPTIONS);
     // После коммита: операция запуска закрывается, своя операция автозапуска - нет (`tech.md` §4 п.1).
     await this.completeIfFinished(lang.run);
@@ -227,13 +234,17 @@ export class RunStepSupportService {
   }
 
   /**
-   * Строка операции автозапуска (`F06-5`; `tech.md` §4 п.1): вид `draft`, лимит 0 (задача LLM не
-   * зовёт), `translationRunId` запуска, автор - автор запуска. LLM выключен (`LLM_DISABLED`) -
+   * Строки операций автозапуска (`F06-5`, `F07-3b`; `F06/tech.md` §4 п.1) - по одной на включённый
+   * раздел, с видом хода в `contentKind`: вид `draft`, лимит 0 (задача LLM не зовёт),
+   * `translationRunId` запуска, автор - автор запуска. LLM выключен (`LLM_DISABLED`) -
    * операция без снимка, закрытая сразу с причиной: язык не застревает, пропуск виден в истории.
    * Иной отказ (база, настройки этапов) - не «LLM выключен»: шаг языка падает до `done` и
    * повторяется (L-013).
    */
-  private async autostartData(lang: LanguageRow): Promise<AutostartData> {
+  private async autostartData(
+    lang: LanguageRow,
+    kinds: readonly AutostartKind[],
+  ): Promise<AutostartData[]> {
     const base = {
       kind: 'draft' as const,
       bookVersionId: lang.bookVersionId,
@@ -241,15 +252,17 @@ export class RunStepSupportService {
       createdById: lang.run.operation.createdById,
       translationRunId: lang.run.id,
     };
+    // Снимок настроек один на язык: вид раздела - поле строки операции (решение `F07 | F07-3`).
+    let data: Prisma.LlmOperationUncheckedCreateInput;
+    let skipReason: AutostartSkipReason | null = null;
     try {
-      return { data: await this.llm.operationData(base), skipReason: null };
+      data = await this.llm.operationData(base);
     } catch (error) {
       if (!(error instanceof HttpException && httpCode(error) === 'LLM_DISABLED')) throw error;
-      return {
-        data: { ...base, status: 'done', skipReason: AUTOSTART_SKIPPED_LLM_DISABLED },
-        skipReason: AUTOSTART_SKIPPED_LLM_DISABLED,
-      };
+      skipReason = AUTOSTART_SKIPPED_LLM_DISABLED;
+      data = { ...base, status: 'done', skipReason };
     }
+    return kinds.map((kind) => ({ kind, data: { ...data, contentKind: kind }, skipReason }));
   }
 
   private async startAutostart(
@@ -261,12 +274,12 @@ export class RunStepSupportService {
     if (autostart.skipReason) return;
     const queued = await this.tasks.enqueue(
       {
-        kind: CONTENT_AUTOSTART_TASK_KIND,
+        kind: AUTOSTART_TASK_KINDS[autostart.kind],
         operationId: op.id,
         bookVersionId: lang.bookVersionId,
         language: lang.language,
         payload: { runLanguageId: lang.id },
-        pairKey: autostartPairKey(lang.id, 'summary_write'),
+        pairKey: autostartPairKey(lang.id, autostart.kind),
       },
       tx,
     );
@@ -308,6 +321,7 @@ export class RunStepSupportService {
 }
 
 interface AutostartData {
+  kind: AutostartKind;
   data: Prisma.LlmOperationUncheckedCreateInput;
   skipReason: AutostartSkipReason | null;
 }

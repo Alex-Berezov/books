@@ -65,6 +65,17 @@ export class TranslationRunEstimateQueryDto {
   @Transform(toQueryBoolean)
   @IsBoolean()
   writeSummary?: boolean;
+
+  @ApiPropertyOptional({
+    type: Boolean,
+    default: false,
+    description:
+      'Write Analysis (F07-3b): the analysis run of a language starts by itself when the language is done, independent of writeSummary; the estimate gets analysisUsd per language. Its money is its own operation and limit, not the run limit',
+  })
+  @IsOptional()
+  @Transform(toQueryBoolean)
+  @IsBoolean()
+  writeAnalysis?: boolean;
 }
 
 export class StartTranslationRunDto extends TranslationRunEstimateQueryDto {

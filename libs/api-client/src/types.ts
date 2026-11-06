@@ -13476,6 +13476,11 @@ export interface components {
        */
       translateModel?: string;
       /**
+       * @description Write Analysis (F07-3b): the analysis run of a language starts by itself when the language is done, independent of writeSummary; the estimate gets analysisUsd per language. Its money is its own operation and limit, not the run limit
+       * @default false
+       */
+      writeAnalysis: boolean;
+      /**
        * @description Write Summary (F06-5): the summary run of a language starts by itself when the language is done; the estimate gets summaryUsd per language. Its money is its own operation and limit, not the run limit
        * @default false
        */
@@ -14395,6 +14400,8 @@ export interface components {
       reservedUsd: string;
     };
     TranslationReportLanguageDto: {
+      /** @description Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done */
+      analysis: components['schemas']['TranslationRunAnalysisDto'] | null;
       /** @description The author name is the glossary spelling; null - the metadata stage gave no answer, or neither the source nor the answer has an author */
       authorFromGlossary: boolean | null;
       chapters: components['schemas']['TranslationReportChapterDto'][];
@@ -14422,6 +14429,36 @@ export interface components {
       /** @description Chapters the run wrote to the draft; 0 with a draft - a draft without chapters of the run */
       writtenChapters: number;
     };
+    TranslationRunAnalysisDto: {
+      /** @description The analysis of the draft version has its core now (BookAnalysis.hasCore, not the step flag CORE_MISSING): «Done» needs it and no failed blocks */
+      coreReady: boolean;
+      /**
+       * Format: uuid
+       * @description Analysis run of the draft version: GET /admin/versions/:id/drafts/analysis_write of draftVersionId
+       */
+      draftId: string | null;
+      /** @description Blocks of the run that failed: a ready run with failed blocks is not «Done» */
+      failedItems: number;
+      /** @description Blocks of the run with model flags (verdict flags) - blocks, not remarks; the step flag CORE_MISSING is not counted */
+      flaggedItems: number;
+      /** @description Status of the operation of the analysis run: paused - Continue on the Analysis tab of the draft version */
+      operationStatus: components['schemas']['LlmOperationStatus'] | null;
+      pauseReason: components['schemas']['LlmPauseReason'] | null;
+      /** @description Always set for skipped and failed - the same reasons as the summary line: AUTOSTART_SKIPPED_* | AUTOSTART_NOTHING_TO_START or the refusal of the start (skipped), failedReason of the run or AUTOSTART_FAILED | AUTOSTART_CANCELLED (failed) */
+      reason: string | null;
+      /**
+       * Format: decimal
+       * @description Spent by the analysis operations of this language: the Analysis line of the run
+       * @example 100.00000000
+       */
+      spentUsd: string;
+      /** @enum {string} */
+      status: 'pending' | 'skipped' | 'building' | 'ready' | 'failed' | 'discarded';
+      /** @description Steps of the run that are over: «step N of M» */
+      stepsDone: number;
+      /** @description Steps of the run (5; runs of F07-1 - 3); null - the run has not started */
+      stepsTotal: number | null;
+    };
     TranslationRunAuthorDto: {
       email: string;
       /** Format: uuid */
@@ -14448,10 +14485,18 @@ export interface components {
       sourceLanguage: components['schemas']['Language'];
       /** @description Stage models of this run over its snapshot */
       stageModels: components['schemas']['TranslationRunStageModelsDto'];
+      /** @description Write Analysis (F07-3b): the analysis run of a language starts by itself when it is done */
+      writeAnalysis: boolean;
       /** @description Write Summary (F06-5): the summary run of a language starts by itself when it is done */
       writeSummary: boolean;
     };
     TranslationRunEstimateDto: {
+      /**
+       * Format: decimal
+       * @description All languages: Write Analysis (F07-3b), shown apart - its own operations and limits, not in minLimitUsd; null without writeAnalysis
+       * @example 100.00000000
+       */
+      analysisUsd: string | null;
       /** @description Source chapters with text to translate */
       chapters: number;
       /** @description Pieces by code boundaries, per language */
@@ -14481,7 +14526,7 @@ export interface components {
       summaryUsd: string | null;
       /**
        * Format: decimal
-       * @description Translations plus the dossier and glossaries built first, plus summaryUsd
+       * @description Translations plus the dossier and glossaries built first, plus summaryUsd and analysisUsd
        * @example 100.00000000
        */
       totalUsd: string;
@@ -14497,6 +14542,8 @@ export interface components {
       upperBound: boolean;
     };
     TranslationRunLanguageDto: {
+      /** @description Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done */
+      analysis: components['schemas']['TranslationRunAnalysisDto'] | null;
       /**
        * Format: uuid
        * @description Paused dossier or glossary operation this language waits for (DOSSIER_PAUSED)
@@ -14552,6 +14599,12 @@ export interface components {
     TranslationRunLanguageEstimateDto: {
       /**
        * Format: decimal
+       * @description Write Analysis (F07-3b), upper estimate by the source chapters: five steps over empty blocks, author and check twice each - the function of the manual start. Its own operation and limit - not in minLimitUsd; null without writeAnalysis
+       * @example 100.00000000
+       */
+      analysisUsd: string | null;
+      /**
+       * Format: decimal
        * @description Upper estimate: one meaning check per piece and one per joint of pieces by a model of another family than the translator (no such model - 409 CHECK_MODEL_SAME_FAMILY), plus one Jev call per piece while the stage is on and priced
        * @example 100.00000000
        */
@@ -14585,7 +14638,7 @@ export interface components {
       summaryUsd: string | null;
       /**
        * Format: decimal
-       * @description Split, translate, check, final check and metadata of this language, plus summaryUsd when it is set
+       * @description Split, translate, check, final check and metadata of this language, plus summaryUsd and analysisUsd when they are set
        * @example 100.00000000
        */
       totalUsd: string;
@@ -14597,6 +14650,8 @@ export interface components {
       translateUsd: string;
     };
     TranslationRunLanguageResultDto: {
+      /** @description Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done */
+      analysis: components['schemas']['TranslationRunAnalysisDto'] | null;
       /**
        * Format: uuid
        * @description Draft version of this language; empty before its creation or after its deletion
@@ -14621,7 +14676,7 @@ export interface components {
       bookVersionId: string;
       /**
        * Format: decimal
-       * @description Spent by all operations of the run (dossier, glossaries, retries, Write Summary of its languages): totalUsd of its report
+       * @description Spent by all operations of the run (dossier, glossaries, retries, Write Summary and Write Analysis of its languages): totalUsd of its report
        * @example 100.00000000
        */
       costUsd: string;
@@ -14640,13 +14695,15 @@ export interface components {
       sourceLanguage: components['schemas']['Language'];
       /** @description Stage models of this run over its snapshot */
       stageModels: components['schemas']['TranslationRunStageModelsDto'];
+      /** @description Write Analysis (F07-3b): the analysis run of a language starts by itself when it is done */
+      writeAnalysis: boolean;
       /** @description Write Summary (F06-5): the summary run of a language starts by itself when it is done */
       writeSummary: boolean;
     };
     TranslationRunReportDto: {
       /** Format: uuid */
       bookVersionId: string;
-      /** @description Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary - its spending is summary.spentUsd of each language; totalUsd covers both */
+      /** @description Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary and Write Analysis - their spending is summary.spentUsd and analysis.spentUsd of each language; totalUsd covers all */
       costs: components['schemas']['TranslationReportCostDto'][];
       /** Format: uuid */
       id: string;
@@ -21774,6 +21831,8 @@ export interface operations {
         translateModel?: string;
         /** @description Write Summary (F06-5): the summary run of a language starts by itself when the language is done; the estimate gets summaryUsd per language. Its money is its own operation and limit, not the run limit */
         writeSummary?: boolean;
+        /** @description Write Analysis (F07-3b): the analysis run of a language starts by itself when the language is done, independent of writeSummary; the estimate gets analysisUsd per language. Its money is its own operation and limit, not the run limit */
+        writeAnalysis?: boolean;
       };
       header?: never;
       path: {
