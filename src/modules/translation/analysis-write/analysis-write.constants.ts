@@ -156,3 +156,15 @@ export const ANALYSIS_BLOCK_CHANGED = 'ANALYSIS_BLOCK_CHANGED';
 export const ANALYSIS_WRITE_REFUSED = 'ANALYSIS_WRITE_REFUSED';
 export const ANALYSIS_REGEN_IN_PROGRESS = 'ANALYSIS_REGEN_IN_PROGRESS';
 export const ANALYSIS_ITEM_NOT_REGENERABLE = 'ANALYSIS_ITEM_NOT_REGENERABLE';
+
+/**
+ * Почему «Accept all» оставил пункт предложением (решение арбитра `F07 | F07-3`, п.7): 409 самого
+ * пункта - запись отказала (повисшая ссылка, список источников полон), блок изменил редактор,
+ * блок перегенерируется. Пункт с идущей перегенерацией до попытки не доходит и сюда не попадает.
+ */
+export const ACCEPT_ALL_SKIP_CODES = [
+  ANALYSIS_WRITE_REFUSED,
+  ANALYSIS_BLOCK_CHANGED,
+  ANALYSIS_REGEN_IN_PROGRESS,
+] as const;
+export type AcceptAllSkipCode = (typeof ACCEPT_ALL_SKIP_CODES)[number];

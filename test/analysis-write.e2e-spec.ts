@@ -1209,7 +1209,7 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
       .expect(400);
   });
 
-  it('Accept all: interpretations, characters and quotations in the order that keeps the references; a block the editor changed is skipped and stays a proposal, the answer is 200', async () => {
+  it('Accept all: interpretations, characters and quotations in the order that keeps the references; a block the editor changed is skipped and stays a proposal, the answer is 200 and names it in skipped', async () => {
     const { versionId, run } = await proposedRun();
     await prisma.bookAnalysis.create({
       data: { bookVersionId: versionId, style: [{ device: 'Repetition', explanation: 'x' }] },
@@ -1218,8 +1218,11 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
       .send({})
       .expect(200);
     const left = (done.body as Run).items.filter((i) => i.outcome === 'proposed');
-    // Пропущен только блок, который трогал редактор: он - его решением.
+    // Пропущен только блок, который трогал редактор: он - его решением, с причиной в ответе
+    // (решение арбитра `F07 | F07-3`, п.7).
     expect(left.map((i) => i.target)).toEqual(['style']);
+    const styleIndex = (done.body as Run).items.findIndex((i) => i.target === 'style');
+    expect(done.body.skipped).toEqual([{ index: styleIndex, code: 'ANALYSIS_BLOCK_CHANGED' }]);
     expect(itemOf(done.body as Run, 'characters').outcome).toBe('accepted');
     expect((await analysisOf(versionId))?.style).toEqual([
       { device: 'Repetition', explanation: 'x' },

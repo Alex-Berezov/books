@@ -29,6 +29,10 @@ import {
   StepFixCode,
   StepSource,
 } from '../analysis-write/analysis-write.data';
+import {
+  ACCEPT_ALL_SKIP_CODES,
+  AcceptAllSkipCode,
+} from '../analysis-write/analysis-write.constants';
 import { QUOTE_CHECK_REASONS, QuoteCheckReason } from '../draft-quality/quote-check';
 import { ANALYSIS_REMARK_CODES, AnalysisRemarkCode } from '../draft-quality/text-checks';
 import { CompareContextLineDto, DossierContextLineDto } from './translation-compare-response.dto';
@@ -61,7 +65,7 @@ export class AnalysisWriteEstimateDto {
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'Upper estimate of steps 1-3: each step reads the whole version text, plus the reviewer of each step, each step × 2 passes',
+      'Upper estimate of steps 1-5: each step reads the whole version text, plus the reviewer of each step, each step × 2 passes',
   })
   stageUsd!: string;
 
@@ -392,6 +396,29 @@ export class AnalysisWriteDto {
 
   @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: string;
+}
+
+/** Пункт, который «Accept all» оставил предложением, и почему (решение арбитра `F07 | F07-3`, п.7). */
+export class AnalysisAcceptAllSkippedDto {
+  @ApiProperty({ type: Number, description: 'Index of the item in items' })
+  index!: number;
+
+  @ApiProperty({
+    enum: ACCEPT_ALL_SKIP_CODES,
+    description:
+      'ANALYSIS_WRITE_REFUSED: the analysis refused the write (a dangling reference, the list of sources is full - flag LIMIT_OUT); ANALYSIS_BLOCK_CHANGED: the editor changed the block after the proposal; ANALYSIS_REGEN_IN_PROGRESS: the block is being regenerated',
+  })
+  code!: AcceptAllSkipCode;
+}
+
+/** Ответ «Accept all» хода анализа: ход и пункты, оставшиеся предложениями, с причиной. */
+export class AnalysisAcceptAllDto extends AnalysisWriteDto {
+  @ApiProperty({
+    type: [AnalysisAcceptAllSkippedDto],
+    description:
+      'Proposals this pass tried and left as proposals, in the order of the tries; a block being regenerated before the pass is not tried and not listed',
+  })
+  skipped!: AnalysisAcceptAllSkippedDto[];
 }
 
 export class AnalysisWriteStateDto {

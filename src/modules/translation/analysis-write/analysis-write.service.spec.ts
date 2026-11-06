@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   HttpException,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -379,13 +380,14 @@ describe('AnalysisWriteService.acceptAll (F07-1b)', () => {
   });
 
   it.each(['ANALYSIS_WRITE_REFUSED', 'ANALYSIS_BLOCK_CHANGED', 'ANALYSIS_REGEN_IN_PROGRESS'])(
-    'a 409 %s of the proposal itself skips it, the rest of the pass goes on (/fix 2 blocker 5, /fix 3 blocker 2)',
+    'a 409 %s of the proposal itself skips it, the rest of the pass goes on; the answer names it in skipped (/fix 2 blocker 5, /fix 3 blocker 2; F07-3a)',
     async (code) => {
       const s = setup(rowOf([item('themes'), item('characters'), item('keyQuotes')]));
       s.fields.accept.mockImplementation((_row: unknown, index: number) =>
         index === 1 ? Promise.reject(llmTaskConflict(code, 'refused')) : Promise.resolve(),
       );
-      await s.service.acceptAll('d1');
+      const answer = await s.service.acceptAll('d1');
+      expect(answer.skipped).toEqual([{ index: 1, code }]);
       expect(s.fields.accept).toHaveBeenCalledTimes(3);
       expect((s.fields.accept.mock.calls as Array<[unknown, number]>).map(([, i]) => i)).toEqual([
         0, 1, 2,
@@ -393,13 +395,67 @@ describe('AnalysisWriteService.acceptAll (F07-1b)', () => {
     },
   );
 
+  it('several refused proposals are all named in skipped in the order of the tries; the accepted ones are not (F07-3a)', async () => {
+    const s = setup(
+      rowOf([item('themes'), item('characters'), item('keyQuotes'), item('style', { step: 2 })]),
+    );
+    s.fields.accept.mockImplementation((_row: unknown, index: number) =>
+      index === 0
+        ? Promise.reject(llmTaskConflict('ANALYSIS_BLOCK_CHANGED', 'changed'))
+        : index === 2
+          ? Promise.reject(llmTaskConflict('ANALYSIS_WRITE_REFUSED', 'refused'))
+          : Promise.resolve(),
+    );
+    const answer = await s.service.acceptAll('d1');
+    expect(s.fields.accept).toHaveBeenCalledTimes(4);
+    expect(answer.skipped).toEqual([
+      { index: 0, code: 'ANALYSIS_BLOCK_CHANGED' },
+      { index: 2, code: 'ANALYSIS_WRITE_REFUSED' },
+    ]);
+  });
+
+  it('a 409 of the proposal outside the closed list or with a text body is skipped without a reason and logged, not a 500 (F07-3a)', async () => {
+    const s = setup(rowOf([item('themes'), item('characters')]));
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    s.fields.accept.mockImplementation((_row: unknown, index: number) =>
+      Promise.reject(
+        index === 0
+          ? llmTaskConflict('SOMETHING_NEW', 'new')
+          : new ConflictException('a plain text body'),
+      ),
+    );
+    const answer = await s.service.acceptAll('d1');
+    expect(s.fields.accept).toHaveBeenCalledTimes(2);
+    expect(answer.skipped).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(2);
+    expect(warn.mock.calls.map(([m]) => String(m))).toEqual([
+      expect.stringContaining('item 0 skipped with SOMETHING_NEW'),
+      expect.stringContaining('item 1 skipped with HTTP_409'),
+    ]);
+    warn.mockRestore();
+  });
+
+  it('a proposal that is no longer a proposal (accepted by another request) is passed by without a reason (F07-3a)', async () => {
+    const s = setup(rowOf([item('themes'), item('characters')]));
+    s.fields.accept.mockImplementation((_row: unknown, index: number) =>
+      index === 0
+        ? Promise.reject(llmTaskConflict('ANALYSIS_ITEM_NOT_PROPOSED', 'gone'))
+        : Promise.resolve(),
+    );
+    const answer = await s.service.acceptAll('d1');
+    expect(s.fields.accept).toHaveBeenCalledTimes(2);
+    expect(answer.skipped).toEqual([]);
+  });
+
   it('a regenerating block is skipped; a run that is not ready - 409 ANALYSIS_WRITE_NOT_READY', async () => {
     const regen = { operationId: 'op2', remark: null, pending: null, previous: null };
     const { service, fields } = setup(rowOf([item('themes', { regen }), item('characters')]));
-    await service.acceptAll('d1');
+    const answer = await service.acceptAll('d1');
     expect(
       (fields.accept.mock.calls as Array<[unknown, number]>).map(([, index]) => index),
     ).toEqual([1]);
+    // Перегенерация видна у пункта (`regenerating`): в пропущенных его нет.
+    expect(answer.skipped).toEqual([]);
     const building = setup(rowOf([item('themes')], 'building'));
     const error = await building.service.acceptAll('d1').catch((e: unknown) => e);
     expect(codeOf(error)).toBe('ANALYSIS_WRITE_NOT_READY');

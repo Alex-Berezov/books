@@ -1,4 +1,3 @@
-import { CONTENT_DRAFT_STAGE_DEFINITIONS } from '../content-draft/content-draft.constants';
 import { DOSSIER_STAGE_DEFINITIONS } from '../dossier/dossier.constants';
 import {
   FINAL_CHECK_STAGE,
@@ -36,7 +35,6 @@ const all = [
   ...CHECK_STAGE_DEFINITIONS,
   ...METADATA_STAGE_DEFINITIONS,
   ...FINAL_CHECK_STAGE_DEFINITIONS,
-  ...CONTENT_DRAFT_STAGE_DEFINITIONS,
   ...SUMMARY_WRITE_STAGE_DEFINITIONS,
   ...ANALYSIS_WRITE_STAGE_DEFINITIONS,
 ];

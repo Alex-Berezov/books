@@ -291,23 +291,6 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
-  '/admin/content-drafts/{id}/discard': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    get?: never;
-    put?: never;
-    /** Discard a draft: a draft being built cancels its operation; the dossier and glossary are not cancelled; a summary run is discarded by discard-run */
-    post: operations['ContentDraftController_discard'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
   '/admin/content-drafts/{id}/discard-run': {
     parameters: {
       query?: never;
@@ -2791,7 +2774,7 @@ export interface paths {
     /** The latest analysis run that is not discarded, in any status: its steps, flags, dropped quotations, what is written and what is proposed; null - none */
     get: operations['ContentDraftController_analysisLatest'];
     put?: never;
-    /** «Write Analysis»: steps 1-3 (card and characters, key quotations and style, interpretations) in the background under its own operation; blocks empty at the start of an unpublished version are written through the import, the rest become proposals; the previous ready or failed run is discarded */
+    /** «Write Analysis»: steps 1-5 (card and characters, key quotations and style, interpretations, blocks for the reader, external blocks with checked sources) in the background under its own operation; blocks empty at the start of an unpublished version are written through the import, the rest become proposals; the previous ready or failed run is discarded */
     post: operations['ContentDraftController_analysisStart'];
     delete?: never;
     options?: never;
@@ -2806,7 +2789,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Upper cost estimate of the analysis run: steps 1-3, each reads the whole version text, plus the reviewer of each step, each step × 2 passes of the author and the reviewer */
+    /** Upper cost estimate of the analysis run: steps 1-5, each reads the whole version text, plus the reviewer of each step, each step × 2 passes of the author and the reviewer */
     get: operations['ContentDraftController_analysisEstimate'];
     put?: never;
     post?: never;
@@ -2843,41 +2826,6 @@ export interface paths {
     };
     /** Upper cost estimate of the summary run: every section of the dossier plan, the full and the very short summary, each text × 2 passes of the author and the reviewer */
     get: operations['ContentDraftController_writeEstimate'];
-    put?: never;
-    post?: never;
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/admin/versions/{id}/drafts/{kind}': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** The latest analysis draft that is not discarded, in any status (building, ready, failed); null - none */
-    get: operations['ContentDraftController_latest'];
-    put?: never;
-    /** Build an analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded */
-    post: operations['ContentDraftController_start'];
-    delete?: never;
-    options?: never;
-    head?: never;
-    patch?: never;
-    trace?: never;
-  };
-  '/admin/versions/{id}/drafts/{kind}/estimate': {
-    parameters: {
-      query?: never;
-      header?: never;
-      path?: never;
-      cookie?: never;
-    };
-    /** Upper cost estimate of an analysis draft from the dossier */
-    get: operations['ContentDraftController_estimate'];
     put?: never;
     post?: never;
     delete?: never;
@@ -5476,6 +5424,72 @@ export interface components {
       series: components['schemas']['AggregatePointDto'][];
       total: number;
     };
+    AnalysisAcceptAllDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      /** Format: date-time */
+      createdAt: string;
+      droppedQuotes: components['schemas']['AnalysisWriteDroppedQuoteDto'][];
+      /** @description Sources of step 5 the code dropped: did not open or not about this book */
+      droppedSources: components['schemas']['AnalysisWriteDroppedSourceDto'][];
+      /** @description Code of the final refusal (failed) */
+      failedReason: string | null;
+      /** Format: uuid */
+      id: string;
+      items: components['schemas']['AnalysisWriteItemDto'][];
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      operation: components['schemas']['LlmOperationDto'];
+      /** @description Blocks the run writes directly: empty at the start on an unpublished version */
+      owns: (
+        | 'facts.settingPlace'
+        | 'facts.settingTime'
+        | 'facts.narrator'
+        | 'facts.structure'
+        | 'characters'
+        | 'keyQuotes'
+        | 'style'
+        | 'mainIdea'
+        | 'themes'
+        | 'symbols'
+        | 'titleMeaning'
+        | 'endingMeaning'
+        | 'misreadings'
+        | 'discussionQuestions'
+        | 'faq'
+        | 'facts.genre'
+        | 'facts.movement'
+        | 'facts.writtenYears'
+        | 'context'
+        | 'timeline'
+        | 'reception'
+        | 'adaptations'
+        | 'sources'
+      )[];
+      /** @description Proposals this pass tried and left as proposals, in the order of the tries; a block being regenerated before the pass is not tried and not listed */
+      skipped: components['schemas']['AnalysisAcceptAllSkippedDto'][];
+      /**
+       * @description A paused operation keeps the run building: the reason is operation.pauseReason
+       * @enum {string}
+       */
+      status: 'building' | 'ready' | 'failed' | 'discarded';
+      steps: components['schemas']['AnalysisWriteStepDto'][];
+      /** @description Steps of the run in all (5; runs of F07-1 have 3) */
+      stepsTotal: number;
+      /** Format: date-time */
+      updatedAt: string;
+      /** @enum {string|null} */
+      waitingFor: 'dossier' | 'glossary' | null;
+    };
+    AnalysisAcceptAllSkippedDto: {
+      /**
+       * @description ANALYSIS_WRITE_REFUSED: the analysis refused the write (a dangling reference, the list of sources is full - flag LIMIT_OUT); ANALYSIS_BLOCK_CHANGED: the editor changed the block after the proposal; ANALYSIS_REGEN_IN_PROGRESS: the block is being regenerated
+       * @enum {string}
+       */
+      code: 'ANALYSIS_WRITE_REFUSED' | 'ANALYSIS_BLOCK_CHANGED' | 'ANALYSIS_REGEN_IN_PROGRESS';
+      /** @description Index of the item in items */
+      index: number;
+    };
     AnalysisWriteDroppedQuoteDto: {
       chapter: number | null;
       /** @description Where the quotation was: keyQuotes.2, style.0.example… */
@@ -5562,7 +5576,7 @@ export interface components {
       glossary: components['schemas']['CompareContextLineDto'] | null;
       /**
        * Format: decimal
-       * @description Upper estimate of steps 1-3: each step reads the whole version text, plus the reviewer of each step, each step × 2 passes
+       * @description Upper estimate of steps 1-5: each step reads the whole version text, plus the reviewer of each step, each step × 2 passes
        * @example 100.00000000
        */
       stageUsd: string;
@@ -7925,96 +7939,6 @@ export interface components {
       url: string;
       /** @description Width in px (images) */
       width?: number;
-    };
-    ContentDraftAnalysisDto: {
-      characters?: components['schemas']['BookAnalysisCharacterDto'][];
-      facts?: components['schemas']['BookAnalysisFactsDto'];
-      keyQuotes?: components['schemas']['BookAnalysisKeyQuoteDto'][];
-      /** @enum {string} */
-      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
-      style?: components['schemas']['BookAnalysisStyleDto'][];
-    };
-    ContentDraftDroppedQuoteDto: {
-      /** @description Chapter given by the model */
-      chapter: number | null;
-      /** @description keyQuotes, characters.<key>.quote or style.<index>.example */
-      path: string;
-      /**
-       * @description NOT_FOUND: not word for word within one paragraph of the chapter; NO_CHAPTER: no chapter given; CHAPTER_MISSING: the version has no such chapter; OVER_LIMIT: verified, but over the import limit together with the saved quotes
-       * @enum {string}
-       */
-      reason: 'NOT_FOUND' | 'NO_CHAPTER' | 'CHAPTER_MISSING' | 'OVER_LIMIT';
-      text: string;
-    };
-    ContentDraftDto: {
-      /** @description Analysis import JSON (analysis): language, facts, characters, keyQuotes, style only; built over the saved analysis */
-      analysis: components['schemas']['ContentDraftAnalysisDto'] | null;
-      /**
-       * Format: date-time
-       * @description updatedAt of the saved analysis the draft was built over; null - there was none (analysis)
-       */
-      analysisUpdatedAt: string | null;
-      /** Format: uuid */
-      bookVersionId: string;
-      /** Format: date-time */
-      createdAt: string;
-      /**
-       * @description Language of the dossier the analysis draft was built with
-       * @enum {string|null}
-       */
-      dossierLanguage: 'en' | 'es' | 'fr' | 'pt' | 'ru' | null;
-      /** @description Quotes thrown away by the word-for-word check */
-      droppedQuotes: components['schemas']['ContentDraftDroppedQuoteDto'][];
-      /** @description Code of the final refusal (failed) */
-      failedReason: string | null;
-      /** Format: uuid */
-      id: string;
-      /** @enum {string} */
-      kind: 'analysis';
-      /** @enum {string} */
-      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
-      model: string | null;
-      /** @description Recurring motifs of the dossier for the prompt inputs: chapters of this version only */
-      motifs: components['schemas']['DossierMotifDto'][];
-      operation: components['schemas']['LlmOperationDto'];
-      /**
-       * @description A paused operation keeps the draft building: the reason is operation.pauseReason
-       * @enum {string}
-       */
-      status: 'building' | 'ready' | 'failed' | 'discarded';
-      /** Format: date-time */
-      updatedAt: string;
-      /**
-       * @description What the draft waits for: the dossier or the glossary built by their own operation
-       * @enum {string|null}
-       */
-      waitingFor: 'dossier' | 'glossary' | null;
-    };
-    ContentDraftEstimateDto: {
-      /** @description The dossier is built first by its own operation; null - it is ready */
-      dossier: components['schemas']['DossierContextLineDto'] | null;
-      /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
-      glossary: components['schemas']['CompareContextLineDto'] | null;
-      /** @enum {string} */
-      kind: 'analysis';
-      /**
-       * Format: decimal
-       * @description Upper estimate of the draft stage calls
-       * @example 100.00000000
-       */
-      stageUsd: string;
-      /**
-       * Format: decimal
-       * @description Default operation limit: max(stage × 1.5, dossier and glossary limits)
-       * @example 100.00000000
-       */
-      suggestedLimitUsd: string;
-      /** @description The dossier is not ready: its size is assumed from the dossier and glossary stages */
-      upperBound: boolean;
-    };
-    ContentDraftStateDto: {
-      /** @description The latest draft of this kind that is not discarded, in any status; null - none */
-      draft: components['schemas']['ContentDraftDto'] | null;
     };
     ContributorLinkResponseDto: {
       birthYear: number | null;
@@ -16464,7 +16388,7 @@ export interface operations {
         content: {
           'application/json':
             | components['schemas']['SummaryWriteDto']
-            | components['schemas']['AnalysisWriteDto'];
+            | components['schemas']['AnalysisAcceptAllDto'];
         };
       };
       /** @description Run not found (a draft of another kind too) */
@@ -16474,36 +16398,8 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (acceptedIndexes - what is written already). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal and the answer is 200 */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (acceptedIndexes - what is written already). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code */
       409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  ContentDraftController_discard: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ContentDraftDto'];
-        };
-      };
-      /** @description Content draft not found */
-      404: {
         headers: {
           [name: string]: unknown;
         };
@@ -21377,118 +21273,6 @@ export interface operations {
         content?: never;
       };
       /** @description DRAFT_IN_PROGRESS: a summary run is being built; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  ContentDraftController_latest: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-        kind: 'analysis';
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ContentDraftStateDto'];
-        };
-      };
-    };
-  };
-  ContentDraftController_start: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-        kind: 'analysis';
-      };
-      cookie?: never;
-    };
-    requestBody: {
-      content: {
-        'application/json': components['schemas']['StartContentDraftDto'];
-      };
-    };
-    responses: {
-      202: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ContentDraftDto'];
-        };
-      };
-      /** @description DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first */
-      400: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description Book version not found */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description DRAFT_IN_PROGRESS: a draft of this kind is being built; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model; LLM_NO_PRICE; LLM_STAGE_DISABLED */
-      409: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description LLM_DISABLED: no OpenRouter key */
-      503: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-    };
-  };
-  ContentDraftController_estimate: {
-    parameters: {
-      query?: never;
-      header?: never;
-      path: {
-        id: string;
-        kind: 'analysis';
-      };
-      cookie?: never;
-    };
-    requestBody?: never;
-    responses: {
-      200: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content: {
-          'application/json': components['schemas']['ContentDraftEstimateDto'];
-        };
-      };
-      /** @description Book version not found */
-      404: {
-        headers: {
-          [name: string]: unknown;
-        };
-        content?: never;
-      };
-      /** @description DRAFT_IN_PROGRESS: a draft of this kind is being built; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model; LLM_NO_PRICE; LLM_STAGE_DISABLED */
       409: {
         headers: {
           [name: string]: unknown;

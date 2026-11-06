@@ -32,7 +32,7 @@ import { TranslationRunReportDto } from '../src/modules/translation/dto/translat
 import { sourceFingerprint } from '../src/modules/translation/source-fingerprint';
 import { corpusChunks, parallelChapters } from '../src/common/testing/language-corpus';
 import { sentencesOf } from '../src/modules/translation/check/language-detector';
-import { ANALYSIS_DRAFT_STAGE } from '../src/modules/translation/content-draft/content-draft.constants';
+import { ANALYSIS_WRITE_STAGE_DEFINITIONS } from '../src/modules/translation/analysis-write/analysis-write.constants';
 import {
   SUMMARY_BRIEF_WRITE_STAGE,
   SUMMARY_FULL_WRITE_STAGE,
@@ -688,7 +688,8 @@ describe('Translation run (e2e)', () => {
               SUMMARY_FULL_WRITE_STAGE,
               SUMMARY_BRIEF_WRITE_STAGE,
               SUMMARY_REVIEW_STAGE,
-              ANALYSIS_DRAFT_STAGE,
+              // Заготовка `analysis_draft` снята в `F07-3a`; ход анализа без `writeAnalysis` не идёт.
+              ...ANALYSIS_WRITE_STAGE_DEFINITIONS.map((d) => d.stage),
             ],
           },
         },

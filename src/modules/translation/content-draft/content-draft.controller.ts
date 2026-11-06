@@ -5,7 +5,6 @@ import {
   HttpCode,
   HttpStatus,
   Param,
-  ParseEnumPipe,
   ParseIntPipe,
   Post,
   Req,
@@ -29,11 +28,6 @@ import { Prisma } from '@prisma/client';
 import { Role, Roles } from '../../../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
-import {
-  ContentDraftDto,
-  ContentDraftEstimateDto,
-  ContentDraftStateDto,
-} from '../dto/content-draft-response.dto';
 import { StartContentDraftDto } from '../dto/content-draft-request.dto';
 import { AcceptSummaryItemDto, RegenerateSummaryItemDto } from '../dto/summary-write-request.dto';
 import {
@@ -43,26 +37,18 @@ import {
 } from '../dto/summary-write-response.dto';
 import { SummaryWriteService } from '../summary-write/summary-write.service';
 import {
+  AnalysisAcceptAllDto,
   AnalysisWriteDto,
   AnalysisWriteEstimateDto,
   AnalysisWriteStateDto,
   AnalysisWriteValueDto,
 } from '../dto/analysis-write-response.dto';
 import { AnalysisWriteService } from '../analysis-write/analysis-write.service';
-import { CONTENT_DRAFT_KINDS, DraftKind } from './content-draft.constants';
 import { ContentDraftService } from './content-draft.service';
 
 interface RequestUser {
   userId: string;
 }
-
-/**
- * Вид в адресе: `analysis` (`F05-11`); снятые виды Summary `F05-10` и иной - 400 (решение арбитра
- * `F06 | F06-3`, А2).
- */
-const KIND_PIPE = new ParseEnumPipe(
-  Object.fromEntries(CONTENT_DRAFT_KINDS.map((k) => [k, k])) as Record<DraftKind, DraftKind>,
-);
 
 /** Общие части описаний отказов: версия без текста, контекст досье и глоссария, цена этапов. */
 const NO_CHAPTERS_CONFLICT = 'SOURCE_HAS_NO_CHAPTERS: the version has no chapter text';
@@ -112,25 +98,31 @@ const RUN_RESPONSE = {
   },
 };
 
+/** Ответ «Accept all»: ход анализа - со списком пропущенных пунктов (решение арбитра `F07 | F07-3`, п.7). */
+const ACCEPT_ALL_RESPONSE = {
+  schema: {
+    oneOf: [
+      { $ref: getSchemaPath(SummaryWriteDto) },
+      { $ref: getSchemaPath(AnalysisAcceptAllDto) },
+    ],
+  },
+};
+
 const ITEM_CONFLICTS =
   'SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated';
 
 const ANALYSIS_ITEM_CONFLICTS =
   'ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated';
 
-const START_CONFLICTS =
-  'DRAFT_IN_PROGRESS: a draft of this kind is being built; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); SOURCE_HAS_NO_CHAPTERS; DRAFT_TOO_LONG: the version text does not fit the context of the analysis model; LLM_NO_PRICE; LLM_STAGE_DISABLED';
-
 /**
- * Заготовка Analysis (`F05-11`) из досье - только `admin` (U6): оценка, старт фоном под своей
- * операцией, последняя заготовка вида и «не нужна». В анализ версии не пишет - черновик сохраняет
- * редактор ручками Analysis. Пошаговые заготовки Summary `F05-10` сняты в `F06-3`. Здесь же ручки хода
- * пересказа «Write Summary» (`F06-2`): он пишет в пустые поля пересказа и принимает предложения
- * («Accept») - литеральные маршруты `summary_write` объявлены выше `:kind`.
+ * Ходы «Write Summary» (`F06-2`) и «Write Analysis» (`F07-1a`) - только `admin` (U6): оценка,
+ * старт, ход, предложения, «Accept», «Regenerate» и отмена. Заготовки из досье сняты все
+ * (Summary `F05-10` в `F06-3`, Analysis `F05-11` в `F07-3a`, решение арбитра `F07 | F07-3`):
+ * маршрутов `drafts/:kind` и `content-drafts/:id/discard` больше нет.
  */
 @ApiTags('admin')
 @ApiBearerAuth()
-@ApiExtraModels(SummaryWriteDto, AnalysisWriteDto)
+@ApiExtraModels(SummaryWriteDto, AnalysisWriteDto, AnalysisAcceptAllDto)
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin)
 @Controller('admin')
@@ -155,15 +147,14 @@ export class ContentDraftController {
   }
 
   // Ход анализа «Write Analysis» (`F07-1a`, `features/F07-analysis-autofill/tech.md` §5-§6):
-  // литеральные маршруты выше `:kind` (решение арбитра `F07 | F07-1`, В6); `CONTENT_DRAFT_KINDS`
-  // не расширяется. Предложения, «Accept», «Regenerate» и отмена хода - общие ручки
-  // `content-drafts/:id/*` ниже, вид строки выбирает `byKind`; содержимое предложения хода
-  // анализа - `GET content-drafts/:id/items/:index`.
+  // свои литеральные маршруты (решение арбитра `F07 | F07-1`, В6). Предложения, «Accept»,
+  // «Regenerate» и отмена хода - общие ручки `content-drafts/:id/*` ниже, вид строки выбирает
+  // `byKind`; содержимое предложения хода анализа - `GET content-drafts/:id/items/:index`.
 
   @Get('versions/:id/drafts/analysis_write/estimate')
   @ApiOperation({
     summary:
-      'Upper cost estimate of the analysis run: steps 1-3, each reads the whole version text, plus the reviewer of each step, each step × 2 passes of the author and the reviewer',
+      'Upper cost estimate of the analysis run: steps 1-5, each reads the whole version text, plus the reviewer of each step, each step × 2 passes of the author and the reviewer',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: AnalysisWriteEstimateDto })
@@ -188,7 +179,7 @@ export class ContentDraftController {
   @HttpCode(HttpStatus.ACCEPTED)
   @ApiOperation({
     summary:
-      '«Write Analysis»: steps 1-3 (card and characters, key quotations and style, interpretations) in the background under its own operation; blocks empty at the start of an unpublished version are written through the import, the rest become proposals; the previous ready or failed run is discarded',
+      '«Write Analysis»: steps 1-5 (card and characters, key quotations and style, interpretations, blocks for the reader, external blocks with checked sources) in the background under its own operation; blocks empty at the start of an unpublished version are written through the import, the rest become proposals; the previous ready or failed run is discarded',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiAcceptedResponse({ type: AnalysisWriteDto })
@@ -401,87 +392,16 @@ export class ContentDraftController {
       'Accept all proposals of the run one by one: a summary run - sections by number, then the full and the very short summary; an analysis run - interpretations, characters, key quotations, then the theme links',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse(RUN_RESPONSE)
+  @ApiOkResponse(ACCEPT_ALL_RESPONSE)
   @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
   @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (acceptedIndexes - what is written already). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal and the answer is 200`,
+    description: `${ITEM_CONFLICTS}; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (acceptedIndexes - what is written already). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code`,
   })
-  async acceptAll(@Param('id') id: string): Promise<SummaryWriteDto | AnalysisWriteDto> {
+  async acceptAll(@Param('id') id: string): Promise<SummaryWriteDto | AnalysisAcceptAllDto> {
     return this.byKind(
       id,
       () => this.summaryWrite.acceptAll(id),
       () => this.analysisWrite.acceptAll(id),
     );
-  }
-
-  @Get('versions/:id/drafts/:kind/estimate')
-  @ApiOperation({ summary: 'Upper cost estimate of an analysis draft from the dossier' })
-  @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiParam({ name: 'kind', enum: CONTENT_DRAFT_KINDS })
-  @ApiOkResponse({ type: ContentDraftEstimateDto })
-  @ApiNotFoundResponse({ description: 'Book version not found' })
-  @ApiConflictResponse({ description: START_CONFLICTS })
-  estimate(
-    @Param('id') id: string,
-    @Param('kind', KIND_PIPE) kind: DraftKind,
-  ): Promise<ContentDraftEstimateDto> {
-    return this.drafts.estimate(id, kind);
-  }
-
-  @Get('versions/:id/drafts/:kind')
-  @ApiOperation({
-    summary:
-      'The latest analysis draft that is not discarded, in any status (building, ready, failed); null - none',
-  })
-  @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiParam({ name: 'kind', enum: CONTENT_DRAFT_KINDS })
-  @ApiOkResponse({ type: ContentDraftStateDto })
-  latest(
-    @Param('id') id: string,
-    @Param('kind', KIND_PIPE) kind: DraftKind,
-  ): Promise<ContentDraftStateDto> {
-    return this.drafts.latest(id, kind);
-  }
-
-  @Post('versions/:id/drafts/:kind')
-  @HttpCode(HttpStatus.ACCEPTED)
-  @ApiOperation({
-    summary:
-      'Build an analysis draft in the background under its own operation; the dossier and glossary are built first when missing; the previous ready or failed draft of this kind is discarded',
-  })
-  @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiParam({ name: 'kind', enum: CONTENT_DRAFT_KINDS })
-  @ApiAcceptedResponse({ type: ContentDraftDto })
-  @ApiBadRequestResponse({
-    description: 'DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first',
-  })
-  @ApiNotFoundResponse({ description: 'Book version not found' })
-  @ApiConflictResponse({ description: START_CONFLICTS })
-  @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
-  start(
-    @Param('id') id: string,
-    @Param('kind', KIND_PIPE) kind: DraftKind,
-    @Body() dto: StartContentDraftDto,
-    @Req() req: { user: RequestUser },
-  ): Promise<ContentDraftDto> {
-    return this.drafts.start(
-      id,
-      kind,
-      dto.limitUsd != null ? new Prisma.Decimal(dto.limitUsd) : undefined,
-      req.user.userId,
-    );
-  }
-
-  @Post('content-drafts/:id/discard')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary:
-      'Discard a draft: a draft being built cancels its operation; the dossier and glossary are not cancelled; a summary run is discarded by discard-run',
-  })
-  @ApiParam({ name: 'id', format: 'uuid' })
-  @ApiOkResponse({ type: ContentDraftDto })
-  @ApiNotFoundResponse({ description: 'Content draft not found' })
-  discard(@Param('id') id: string): Promise<ContentDraftDto> {
-    return this.drafts.discard(id);
   }
 }

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { ContentDraft, LlmOperation, Prisma } from '@prisma/client';
@@ -12,7 +13,7 @@ import { LlmBudgetService } from '../../llm/llm-budget.service';
 import { LlmService } from '../../llm/llm.service';
 import { toOperationDto } from '../../llm-worker/llm-operation.mapper';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
-import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
+import { httpCode, llmTaskConflict } from '../../llm-worker/llm-worker.errors';
 import { allChapters } from '../chapter-pages';
 import {
   DRAFT_DOSSIER_MISSING,
@@ -24,6 +25,8 @@ import { ContentDraftService, contextLimits } from '../content-draft/content-dra
 import { htmlToParagraphs } from '../content-draft/content-draft.text';
 import { DOSSIER_TOO_LONG } from '../dossier/dossier.constants';
 import {
+  AnalysisAcceptAllDto,
+  AnalysisAcceptAllSkippedDto,
   AnalysisWriteDto,
   AnalysisWriteEstimateDto,
   AnalysisWriteStateDto,
@@ -44,6 +47,7 @@ import {
 import { stageEstimatorFor } from '../llm-model-checks';
 import { contextUpperChars } from '../translate/translate-estimate';
 import {
+  ACCEPT_ALL_SKIP_CODES,
   ANALYSIS_CAST_WRITE_STAGE,
   ANALYSIS_EXTERNAL_WRITE_STAGE,
   ANALYSIS_READER_WRITE_STAGE,
@@ -120,6 +124,8 @@ async function analysisEstimators(llm: LlmService): Promise<AnalysisEstimators> 
  */
 @Injectable()
 export class AnalysisWriteService {
+  private readonly logger = new Logger(AnalysisWriteService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly llm: LlmService,
@@ -391,14 +397,16 @@ export class AnalysisWriteService {
    * тот же проход. 409 самого пункта (`ANALYSIS_WRITE_REFUSED`, `ANALYSIS_BLOCK_CHANGED`,
    * `ANALYSIS_REGEN_IN_PROGRESS`) - пункт пропускается и остаётся предложением, проход идёт дальше;
    * обрывает его только 409 хода (ход больше не `ready`) и прочие отказы - с тем, что уже записано
-   * (`acceptedIndexes`).
+   * (`acceptedIndexes`). Пропущенные пункты с кодом своего 409 уходят в ответ (`skipped`, решение
+   * арбитра `F07 | F07-3`, п.7): иначе вкладка не знает, почему пункт остался предложением.
    */
-  async acceptAll(id: string): Promise<AnalysisWriteDto> {
+  async acceptAll(id: string): Promise<AnalysisAcceptAllDto> {
     const row = await this.row(id);
     if (row.status !== 'ready') {
       throw llmTaskConflict(ANALYSIS_WRITE_NOT_READY, 'The analysis run is not ready');
     }
     const skipped = new Set<number>();
+    const reasons: AnalysisAcceptAllSkippedDto[] = [];
     await acceptInTurn(
       async (accepted) => {
         const next = readAnalysisData((await this.row(id)).data)
@@ -424,12 +432,21 @@ export class AnalysisWriteService {
             throw llmTaskConflict(ANALYSIS_WRITE_NOT_READY, 'The analysis run is not ready');
           }
           skipped.add(index);
+          const code = httpCode(error);
+          const known = ACCEPT_ALL_SKIP_CODES.find((c) => c === code);
+          // Пункт уже не предложение (его принял другой запрос) - причины показывать нечего;
+          // иной 409 пункта - не из закрытого списка причин: в журнал, чтобы не потерять молча.
+          if (known) {
+            reasons.push({ index, code: known });
+          } else if (code !== ANALYSIS_ITEM_NOT_PROPOSED) {
+            this.logger.warn(`Accept all of run ${id}: item ${index} skipped with ${code}`);
+          }
           return false;
         }
       },
       { anyHttp: true },
     );
-    return this.get(id);
+    return { ...(await this.get(id)), skipped: reasons };
   }
 
   private async row(id: string): Promise<ContentDraft> {

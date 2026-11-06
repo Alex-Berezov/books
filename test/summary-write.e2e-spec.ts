@@ -416,7 +416,6 @@ describe('Summary run «Write Summary» (e2e)', () => {
       ['post', `/admin/content-drafts/${id}/items/0/discard`],
       ['post', `/admin/content-drafts/${id}/accept-all`],
       ['post', `/admin/content-drafts/${id}/discard-run`],
-      ['post', `/admin/content-drafts/${id}/discard`],
     ] as Array<['get' | 'post', string]>) {
       await http()[method](path).expect(401);
       await auth(http()[method](path), 'cm').expect(403);

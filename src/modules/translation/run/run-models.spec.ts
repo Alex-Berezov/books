@@ -1,4 +1,3 @@
-import { CONTENT_DRAFT_STAGE_DEFINITIONS } from '../content-draft/content-draft.constants';
 import { DOSSIER_STAGE_DEFINITIONS } from '../dossier/dossier.constants';
 import { METADATA_STAGE_DEFINITIONS } from '../metadata/metadata.constants';
 import { GPT_TERRA_MODEL } from '../translate/translate.constants';
@@ -87,15 +86,10 @@ describe('stage models of a translation run (F05-4a, В1)', () => {
 });
 
 describe('stage defaults on Claude (Р7 F05-R)', () => {
-  it('dossier, glossary, version fields and drafts fall back to the model checked in the catalog', () => {
-    const stages = [
-      ...DOSSIER_STAGE_DEFINITIONS,
-      ...METADATA_STAGE_DEFINITIONS,
-      ...CONTENT_DRAFT_STAGE_DEFINITIONS,
-    ];
-    expect(stages.map((d) => d.stage).sort()).toEqual(
-      ['analysis_draft', 'dossier', 'glossary', 'metadata'].sort(),
-    );
+  it('dossier, glossary and version fields fall back to the model checked in the catalog', () => {
+    // Этап заготовки `analysis_draft` снят в `F07-3a` вместе с заготовкой (решение арбитра `F07 | F07-3`).
+    const stages = [...DOSSIER_STAGE_DEFINITIONS, ...METADATA_STAGE_DEFINITIONS];
+    expect(stages.map((d) => d.stage).sort()).toEqual(['dossier', 'glossary', 'metadata'].sort());
     for (const d of stages) {
       expect(d).toMatchObject({
         model: 'anthropic/claude-sonnet-5.5',

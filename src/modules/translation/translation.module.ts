@@ -36,10 +36,7 @@ import { TRANSLATION_RUN_TASK_KIND } from './run/translation-run.constants';
 import { TranslationRunReportService } from './run/translation-run-report.service';
 import { TranslationRunService } from './run/translation-run.service';
 import { TranslationRunTasksHandler } from './run/translation-run-tasks.handler';
-import {
-  CONTENT_DRAFT_STAGE_DEFINITIONS,
-  CONTENT_DRAFT_TASK_KIND,
-} from './content-draft/content-draft.constants';
+import { CONTENT_DRAFT_TASK_KIND } from './content-draft/content-draft.constants';
 import { TranslationCompareController } from './compare/compare.controller';
 import { ContentDraftController } from './content-draft/content-draft.controller';
 import { DossierController } from './dossier/dossier.controller';
@@ -161,7 +158,6 @@ export class TranslationModule implements OnModuleInit {
     this.kinds.register('translation_run', this.runTasks);
     this.handlers.register(TRANSLATION_RETRY_KIND, this.retryTasks.handler);
     this.kinds.register('translation_retry', this.retryTasks);
-    for (const definition of CONTENT_DRAFT_STAGE_DEFINITIONS) this.stages.register(definition);
     this.handlers.register(CONTENT_DRAFT_TASK_KIND, this.draftTasks.handler);
     this.kinds.register('draft', this.draftTasks);
     registerSummaryWriteStages(this.stages);
