@@ -3247,6 +3247,8 @@ describe('Translation run (e2e)', () => {
         draftVersionId: draft.bookVersionId,
         // Без «Write Summary» раздела у языка нет (`F06-5`).
         summary: null,
+        // Без «Write Analysis» - тоже (`F07-3b`).
+        analysis: null,
       },
     ]);
     expect(draft.bookVersionId).not.toBeNull();
