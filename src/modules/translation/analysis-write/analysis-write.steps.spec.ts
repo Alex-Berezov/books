@@ -519,6 +519,40 @@ describe('F07-2b: regeneration of the blocks of steps 3-5', () => {
     ).toEqual([]);
   });
 
+  it('the run checks quotations inside interpretations against the chapters, not the titles of the book and its chapters (F07-5)', () => {
+    const base = context();
+    const ctx = {
+      ...base,
+      bookTitle: 'The Dark River',
+      names: { titles: ['The Dark River', 'El río oscuro'], authors: [] },
+      chapters: base.chapters.map((c) => (c.number === 2 ? { ...c, title: 'At Night' } : c)),
+    };
+    const index = indexChapters(new Map([[1, 'Anna walked along the cold river at dawn.']]));
+    const draft = {
+      ...EMPTY_DRAFT,
+      blocks: {
+        titleMeaning:
+          'The title «The Dark River» (original «El río oscuro»), the chapter «At Night», ' +
+          '«walked along the cold river» and «she burns the house».',
+      },
+    };
+    const flagged = stepInput(3, ctx, versionBook(ctx), index)
+      .codeCheck(draft)
+      .filter((r) => r.code === 'QUOTE_NOT_VERBATIM')
+      .map((r) => r.where);
+    expect(flagged).toEqual(['titleMeaning: she burns the house']);
+    // Без названий всех версий - название этой версии всё равно не цитата.
+    const bare = { ...ctx, names: undefined };
+    const bareFlagged = stepInput(3, bare, versionBook(bare), index)
+      .codeCheck(draft)
+      .filter((r) => r.code === 'QUOTE_NOT_VERBATIM')
+      .map((r) => r.where);
+    expect(bareFlagged).toEqual([
+      'titleMeaning: El río oscuro',
+      'titleMeaning: she burns the house',
+    ]);
+  });
+
   it('new themes without the key of a theme the characters or quotations link to - a code remark; kept keys - none', () => {
     const stored = {
       ...EMPTY_BOOK_ANALYSIS,

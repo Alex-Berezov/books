@@ -79,6 +79,7 @@ export const ANALYSIS_REMARK_CODES = [
   'IMPORT_INVALID',
   'CHAPTER_UNKNOWN',
   'LIMIT_OUT',
+  'QUOTE_NOT_VERBATIM',
   'CORE_MISSING',
   'NOT_IN_TEXT',
   'GENERIC',
@@ -147,17 +148,23 @@ function quotedFragments(text: string): string[] {
  * `QUOTE_NOT_VERBATIM` (§3): текст в кавычках от `QUOTE_MIN_WORDS` слов не нашёлся дословно
  * ни в одном абзаце `chapters` (у раздела - главы раздела, у полного и «Очень кратко» - вся
  * версия); номер главы не нужен. Отдаёт и цитаты, прошедшие сверку, - их не считает `DUPLICATE_TEXT`.
+ * Пересказ сверяет по `findVerbatim` с порогом `QUOTE_MIN_WORDS`; толкования анализа (`F07-5`)
+ * передают свой порог и сверку `matches` (`quotedInText` из `quote-check.ts`) - `chapters` тогда
+ * не читается.
  */
 export function checkQuotes(
   text: string,
   chapters: ChapterIndex,
+  options: { minWords?: number; matches?: (quote: string) => boolean } = {},
 ): { remarks: DraftRemark[]; verbatim: string[] } {
-  const paragraphs = [...chapters.values()].flat();
+  const minWords = options.minWords ?? QUOTE_MIN_WORDS;
+  const paragraphs = options.matches ? [] : [...chapters.values()].flat();
+  const found = options.matches ?? ((quote: string) => findVerbatim(quote, paragraphs) !== null);
   const remarks: DraftRemark[] = [];
   const verbatim: string[] = [];
   for (const quote of quotedFragments(text)) {
-    if (wordCount(quote) < QUOTE_MIN_WORDS) continue;
-    if (findVerbatim(quote, paragraphs) !== null) {
+    if (wordCount(quote) < minWords) continue;
+    if (found(quote)) {
       verbatim.push(quote);
       continue;
     }

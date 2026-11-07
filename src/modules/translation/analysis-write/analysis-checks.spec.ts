@@ -1,7 +1,14 @@
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
 import { indexChapters } from '../draft-quality/quote-check';
 import { ANALYSIS_REMARK_CODES, SUMMARY_REMARK_CODES } from '../draft-quality/text-checks';
-import { coreRemark, fixDraft, importRemarks, stepRemarks, textRemarks } from './analysis-checks';
+import {
+  coreRemark,
+  fixDraft,
+  importRemarks,
+  innerQuoteRemarks,
+  stepRemarks,
+  textRemarks,
+} from './analysis-checks';
 import { STEP_FIX_CODES } from './analysis-write.data';
 import { externalChecks } from './analysis-write.external';
 import { ANALYSIS_REVIEW_CODES } from './analysis-write.prompts';
@@ -199,6 +206,7 @@ describe('textRemarks', () => {
       stored: EMPTY_BOOK_ANALYSIS,
       merged: {},
       glossary: [],
+      chapters: CHAPTERS,
       draft: {
         blocks: {
           mainIdea:
@@ -212,6 +220,170 @@ describe('textRemarks', () => {
       },
     });
     expect(remarks.map((r) => r.code)).toContain('LANGUAGE_MIXED');
+  });
+});
+
+describe('innerQuoteRemarks (F07-5)', () => {
+  it('a quotation inside an interpretation not in any chapter - QUOTE_NOT_VERBATIM at the field path, the text is kept', () => {
+    const blocks = {
+      themes: [
+        {
+          key: 'home',
+          title: 'Home',
+          interpretation: 'Anna swears «she will burn the house» and leaves.',
+        },
+      ],
+    };
+    const remarks = innerQuoteRemarks(blocks, CHAPTERS);
+    expect(remarks.map((r) => [r.code, r.by, r.where.split(':')[0]])).toEqual([
+      ['QUOTE_NOT_VERBATIM', 'code', 'themes.home.interpretation'],
+    ]);
+    expect(blocks.themes[0].interpretation).toContain('«she will burn the house»');
+  });
+
+  it('a verbatim quotation of two words and more passes in a description; reader-step questions and answers are not checked at all', () => {
+    const blocks = {
+      characters: [
+        {
+          key: 'anna',
+          name: 'Anna',
+          role: 'main' as const,
+          description: 'She says «never come back».',
+        },
+      ],
+      discussionQuestions: ['Why does «the bell» ring «three times»?'],
+      faq: [{ question: 'q', answer: 'At dawn, by «the cold river».' }],
+    };
+    expect(innerQuoteRemarks(blocks, CHAPTERS)).toEqual([]);
+  });
+
+  it('a two-word quotation not in the text is a remark; one word in quotation marks is not a quotation', () => {
+    const remarks = innerQuoteRemarks(
+      { mainIdea: 'The river «will act» on its own; Anna is «free».' },
+      CHAPTERS,
+    );
+    expect(remarks.map((r) => r.where.split(':')[0])).toEqual(['mainIdea']);
+  });
+
+  it('the reader step (questions, misreadings, FAQ) is written from chapter summaries - its quotations are not checked against the book', () => {
+    const blocks = {
+      discussionQuestions: ['Who «sees nothing» here?'],
+      misreadings: [
+        { myth: 'It is «a sad story».', explanation: 'Calling it «a sad story» misses the dawn.' },
+      ],
+      faq: [{ question: 'q', answer: 'Because «the river burns».' }],
+    };
+    expect(innerQuoteRemarks(blocks, CHAPTERS)).toEqual([]);
+  });
+
+  it('marks at the edges of a quotation and an insertion in brackets are not compared', () => {
+    expect(
+      innerQuoteRemarks({ mainIdea: 'He calls it «walked along the cold river,» then.' }, CHAPTERS),
+    ).toEqual([]);
+    expect(
+      innerQuoteRemarks({ mainIdea: 'She «[Anna] walked along the cold river».' }, CHAPTERS),
+    ).toEqual([]);
+  });
+
+  it('pieces around an elision keep their order; an ellipsis of the book itself in an exact quotation passes', () => {
+    expect(innerQuoteRemarks({ mainIdea: 'She «at dawn … walked along».' }, CHAPTERS)).toHaveLength(
+      1,
+    );
+    const chapters = indexChapters(new Map([[1, 'Dijo: Bueno… ya veremos mañana.']]));
+    expect(innerQuoteRemarks({ mainIdea: 'Y él: «Bueno… ya veremos».' }, chapters)).toEqual([]);
+  });
+
+  it('a quotation after an elided article is found; a text in NFD is found', () => {
+    const chapters = indexChapters(
+      new Map([[1, "C'est l'homme qui rit, au café, à midi.".normalize('NFD')]]),
+    );
+    expect(innerQuoteRemarks({ mainIdea: 'Il est «homme qui rit» ici.' }, chapters)).toEqual([]);
+    expect(innerQuoteRemarks({ mainIdea: 'Il «rit, au café» ici.' }, chapters)).toEqual([]);
+    expect(innerQuoteRemarks({ mainIdea: 'Il «rit au bar» ici.' }, chapters)).toHaveLength(1);
+  });
+
+  it('the external step and names are not checked against the book; no chapters - no remarks', () => {
+    const external = {
+      context: 'Critics called it «a hymn to the river».',
+      reception: 'Reviewers wrote «a quiet masterpiece».',
+      timeline: [{ kind: 'book' as const, year: '1899', event: 'Printed as «a long tale».' }],
+      adaptations: [
+        {
+          kind: 'film' as const,
+          year: 1979,
+          title: '«Dark River» film',
+          differences: 'A «new war» frame.',
+        },
+      ],
+      sources: [{ url: 'https://example.org/a', title: '«River Book» page' }],
+    };
+    expect(innerQuoteRemarks(external, CHAPTERS)).toEqual([]);
+    expect(innerQuoteRemarks({ mainIdea: 'Anna «will burn it».' }, new Map())).toEqual([]);
+  });
+
+  it('a device, an arc, a relation label, a name and a title are short fields - not book quotations (the myth is a reader-step field)', () => {
+    const blocks = {
+      misreadings: [
+        { myth: 'Readers call it «a sad story».', explanation: 'At dawn, by the river.' },
+      ],
+      style: [{ device: '«stream of consciousness»', explanation: 'Short lines.' }],
+      characters: [
+        {
+          key: 'anna',
+          name: '«Little Anna» Grey',
+          role: 'main' as const,
+          description: 'Walks.',
+          arc: { from: 'a «lost girl»', to: 'a «free woman»' },
+          relations: [{ to: 'anna', label: '«old friend»' }],
+        },
+      ],
+      themes: [{ key: 'home', title: '«Home and road»', interpretation: 'The road.' }],
+    };
+    expect(innerQuoteRemarks(blocks, CHAPTERS)).toEqual([]);
+  });
+
+  it('whole words only: two words found inside longer words are not the quotation', () => {
+    const remarks = innerQuoteRemarks(
+      { mainIdea: 'Anna walks «the col» of the morning.' },
+      CHAPTERS,
+    );
+    expect(remarks.map((r) => r.code)).toEqual(['QUOTE_NOT_VERBATIM']);
+  });
+
+  it('an elided quotation passes when every piece stands in one paragraph; a changed piece is a remark', () => {
+    expect(
+      innerQuoteRemarks({ mainIdea: 'She «walked along… at dawn», alone.' }, CHAPTERS),
+    ).toEqual([]);
+    expect(
+      innerQuoteRemarks({ mainIdea: 'She «walked along [...] at night», alone.' }, CHAPTERS),
+    ).toHaveLength(1);
+    // Куски из разных абзацев - не одна цитата.
+    expect(
+      innerQuoteRemarks({ mainIdea: 'She «walked along … said Anna».' }, CHAPTERS),
+    ).toHaveLength(1);
+  });
+
+  it('the title of the book or of a chapter in quotation marks is not a quotation', () => {
+    const blocks = { titleMeaning: 'The title «The Dark River» and the chapter «At the Square».' };
+    expect(innerQuoteRemarks(blocks, CHAPTERS)).toHaveLength(2);
+    expect(innerQuoteRemarks(blocks, CHAPTERS, ['The Dark River', 'at the square'])).toEqual([]);
+  });
+
+  it('stepRemarks carries the quotation remark, so the step is redone', () => {
+    const remarks = stepRemarks({
+      language: 'en',
+      stored: EMPTY_BOOK_ANALYSIS,
+      merged: {},
+      glossary: [],
+      chapters: CHAPTERS,
+      draft: {
+        blocks: { titleMeaning: 'The title means «the dark heart of the river» itself.' },
+        themeLinks: null,
+        droppedQuotes: [],
+        fixes: [],
+      },
+    });
+    expect(remarks.map((r) => r.code)).toContain('QUOTE_NOT_VERBATIM');
   });
 });
 
@@ -253,10 +425,12 @@ describe('ANALYSIS_REMARK_CODES (А4)', () => {
         stored: EMPTY_BOOK_ANALYSIS,
         merged: {},
         glossary: [],
+        chapters: CHAPTERS,
         draft: {
           blocks: {
             characters: [{ key: 'Anna Bad', name: 'Anna', role: 'main' }],
             mainIdea: french,
+            titleMeaning: 'Anna swears «she will burn the house» at dawn.',
             facts: { settingPlace: '**Petersburg**' },
           },
           themeLinks: null,
@@ -282,6 +456,7 @@ describe('ANALYSIS_REMARK_CODES (А4)', () => {
         'LANGUAGE_MIXED',
         'JUNK',
         'NAME_MISMATCH',
+        'QUOTE_NOT_VERBATIM',
         'CORE_MISSING',
         'EXTERNAL_CHECK',
       ]),

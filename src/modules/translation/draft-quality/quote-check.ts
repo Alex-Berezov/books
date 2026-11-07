@@ -88,6 +88,61 @@ export function findVerbatim(text: string, paragraphs: Iterable<IndexedParagraph
   return null;
 }
 
+/** Вид для сверки без регистра: Р21, NFC (текст главы бывает в NFD), нижний регистр. */
+export const foldQuote = (text: string): string =>
+  normalizeQuote(text).normalize('NFC').toLowerCase();
+
+/** Абзацы версии для `quotedInText`: вид `foldQuote`, строится один раз на вызов сверки. */
+export function foldedParagraphs(chapters: ChapterIndex): string[] {
+  return [...chapters.values()].flat().map((p) => foldQuote(p.norm));
+}
+
+const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u;
+/** Пропуск или вставка внутри цитаты: «…», «...», «[…]», «(…)», «[Anna]». */
+const GAP = /\[[^\]]*\]|\(\s*(?:…|\.\.\.)\s*\)|…|\.\.\./u;
+/** Знаки по краям куска, которые цитата берёт себе («a man without a shadow,»). */
+const EDGE_MARKS = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}\p{M}]+$/gu;
+
+/** Символ абзаца у края куска продолжает слово. */
+function continuesWord(paragraph: string, at: number): boolean {
+  const ch = paragraph[at];
+  return ch !== undefined && WORD_CHAR.test(ch);
+}
+
+/** Первое вхождение куска целыми словами не раньше `from`: конец вхождения или -1. */
+function findWords(paragraph: string, piece: string, from: number): number {
+  for (let at = paragraph.indexOf(piece, from); at >= 0; at = paragraph.indexOf(piece, at + 1)) {
+    const end = at + piece.length;
+    if (!continuesWord(paragraph, at - 1) && !continuesWord(paragraph, end)) return end;
+  }
+  return -1;
+}
+
+/**
+ * Цитата внутри толкования анализа (`F07-5`, решения арбитра `F07 | F07-5`): нормализация Р21
+ * и NFC, без регистра (цитата внутри фразы начинается со строчной), целыми словами (короткая
+ * «la casa» не находится в «la casada»). Пропуск «…» и вставка «[…]» делят цитату на куски;
+ * куски стоят в одном абзаце в том же порядке. Знаки по краям куска не сверяются. Порог длины
+ * куска и апостроф/дефис как часть слова сняты кругом 4 `/qa` (решение арбитра `F07 | F07-5`):
+ * давали ложный флаг на дословной цитате с многоточием книги и на «l'homme». `folded` - из
+ * `foldedParagraphs`.
+ */
+export function quotedInText(text: string, folded: readonly string[]): boolean {
+  const pieces = foldQuote(text)
+    .split(GAP)
+    .map((piece) => piece.replace(EDGE_MARKS, ''))
+    .filter((piece) => piece !== '');
+  if (pieces.length === 0) return false;
+  return folded.some((paragraph) => {
+    let from = 0;
+    for (const piece of pieces) {
+      from = findWords(paragraph, piece, from);
+      if (from < 0) return false;
+    }
+    return true;
+  });
+}
+
 /** Почему цитата не прошла сверку по главе. */
 export const QUOTE_CHECK_REASONS = ['NOT_FOUND', 'NO_CHAPTER', 'CHAPTER_MISSING'] as const;
 export type QuoteCheckReason = (typeof QUOTE_CHECK_REASONS)[number];

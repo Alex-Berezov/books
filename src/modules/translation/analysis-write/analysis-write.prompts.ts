@@ -678,7 +678,11 @@ export function stepReviewRequest(input: StepReviewInput): ShapedRequest {
     '\nRemark codes:' +
     (external
       ? ''
-      : '\n- NOT_IN_TEXT: an interpretation rests on a scene or a detail that is not in the text.') +
+      : '\n- NOT_IN_TEXT: an interpretation rests on a scene or a detail that is not in the text. ' +
+        'Check every plot detail of every interpretation, description and explanation against ' +
+        'the text - who, where, what happened, who says it, in which order: a detail the text ' +
+        'does not have, or an event after the last chapter of the book given (chapter ' +
+        'summaries count), is NOT_IN_TEXT.') +
     '\n- GENERIC: the text is true for any book (replace the title - nothing changes).' +
     '\n- CONTRADICTION: blocks contradict each other or the previous steps (theme, character, ' +
     'symbol).' +

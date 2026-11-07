@@ -8,11 +8,17 @@ import {
 import type { UpdateBookAnalysisDto } from '../../book-analysis/dto/update-book-analysis.dto';
 import { NameEntry } from '../check/mechanical-check';
 import { analysisImportErrors, quoteCheck } from '../content-draft/content-draft.analysis';
-import { ChapterIndex } from '../draft-quality/quote-check';
+import {
+  ChapterIndex,
+  foldedParagraphs,
+  foldQuote,
+  quotedInText,
+} from '../draft-quality/quote-check';
 import {
   checkJunk,
   checkLanguage,
   checkNames,
+  checkQuotes,
   codeRemark,
   DraftRemark,
 } from '../draft-quality/text-checks';
@@ -20,10 +26,13 @@ import {
   AnalysisTarget,
   blocksValue,
   DroppedQuote,
+  pathInTarget,
   StepBlocks,
+  STEP_TARGETS,
   StepDraft,
   StepFix,
 } from './analysis-write.data';
+import { EXTERNAL_STEP, READER_STEP } from './analysis-write.constants';
 
 /**
  * Код-проверки хода анализа (`features/F07-analysis-autofill/tech.md` §3, `product.md` §3.2;
@@ -366,6 +375,60 @@ export function textRemarks(
   );
 }
 
+/**
+ * Цитата в кавычках внутри толкования - от стольких слов (`F07-5`, решение арбитра `F07 | F07-5`):
+ * ниже порога пересказа - на живом прогоне выдуманы «hará algo», «alumbra sin ver», «como una
+ * oración»; одно слово в кавычках - термин или ирония, а не цитата.
+ */
+export const INNER_QUOTE_MIN_WORDS = 2;
+
+/**
+ * Цели шагов, чьи кавычки с книгой не сверяются: внешний шаг пишет по источникам, шаг для
+ * читателя - по кратким содержаниям глав, текста книги его автор не видит (решение арбитра
+ * `F07 | F07-5`, круг 3 `/qa`). Исключение - по полному пути цели, а не по блоку: `facts.genre`
+ * шага 5 не снимает `facts.narrator` шага 1.
+ */
+const NOT_BOOK_TARGETS: readonly AnalysisTarget[] = [
+  ...STEP_TARGETS[READER_STEP],
+  ...STEP_TARGETS[EXTERNAL_STEP],
+];
+
+/**
+ * Поле сверяется с книгой: длинное поле `textFields` (толкование, описание, пояснение) шагов 1-3.
+ * Приём, подпись связи, дуга героя, имя и заголовок - нет: кавычки там - термин или ярлык.
+ */
+const quotesTheBook = (f: TextField): boolean =>
+  f.long && !NOT_BOOK_TARGETS.some((target) => pathInTarget(f.path, target));
+
+/**
+ * `QUOTE_NOT_VERBATIM` по цитатам в кавычках внутри текстов толкований (`F07-5`, решения арбитра
+ * `F07 | F07-5`): не нашлась ни в одном абзаце версии (`quotedInText`) - замечание с переделкой
+ * и флаг на месте; текст не режется и не выбрасывается (U5). Название книги (любой её версии)
+ * или главы в кавычках - не цитата. Поля `quote`/`text`/`example` сверяет `fixDraft`. Книга
+ * сворачивается для сверки только когда есть что сверять. Нет глав (оценка цены) - замечаний нет.
+ */
+export function innerQuoteRemarks(
+  blocks: StepBlocks,
+  chapters: ChapterIndex,
+  titles: readonly string[] = [],
+): DraftRemark[] {
+  if (chapters.size === 0) return [];
+  let folded: string[] | null = null;
+  const named = new Set(titles.map(foldQuote));
+  const matches = (quote: string) => {
+    if (named.has(foldQuote(quote))) return true;
+    folded ??= foldedParagraphs(chapters);
+    return quotedInText(quote, folded);
+  };
+  return textFields(blocks)
+    .filter(quotesTheBook)
+    .flatMap((f) =>
+      checkQuotes(f.text, chapters, { minWords: INNER_QUOTE_MIN_WORDS, matches }).remarks.map((r) =>
+        atPath(f.path, r),
+      ),
+    );
+}
+
 /** Замечания кода шага, которые зовут переделку (В3). */
 export function stepRemarks(input: {
   language: Language;
@@ -373,10 +436,14 @@ export function stepRemarks(input: {
   merged: StepBlocks;
   draft: StepDraft;
   glossary: readonly NameEntry[];
+  chapters: ChapterIndex;
+  /** Название книги и главы: в кавычках - не цитата. */
+  titles?: readonly string[];
 }): DraftRemark[] {
   return [
     ...importRemarks(input.language, input.stored, input.merged, input.draft.blocks),
     ...textRemarks(input.draft.blocks, input.language, input.glossary),
+    ...innerQuoteRemarks(input.draft.blocks, input.chapters, input.titles),
   ];
 }
 

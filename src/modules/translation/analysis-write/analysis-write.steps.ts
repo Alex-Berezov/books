@@ -970,6 +970,11 @@ export function stepInput(
         merged: context.merged,
         draft,
         glossary: names,
+        chapters: quotes,
+        titles: [
+          ...(context.names?.titles ?? [context.bookTitle]),
+          ...context.chapters.map((c) => c.title),
+        ],
       }),
     ],
   };

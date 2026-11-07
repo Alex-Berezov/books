@@ -295,6 +295,20 @@ describe('step 5: the external blocks and the refs of the statements', () => {
     );
     expect(three).toContain('Compare the answer with the book');
     expect(three).toContain('NOT_IN_TEXT: an interpretation');
+    // F07-5: проверяющая сверяет каждую деталь сюжета и границу глав (краткие содержания - тоже
+    // главы); кавычки сверяет код - у проверяющей «do not remark» на все цитаты. У шага 5 - нет.
+    expect(three).toContain('Check every plot detail');
+    expect(three).toContain('after the last chapter of the book given (chapter summaries count)');
+    expect(three).toContain('whether quotations are word for word');
+    expect(three).not.toContain('are yours to check');
+    expect(five).not.toContain('Check every plot detail');
+    for (const step of [1, 2, 4] as const) {
+      const review = textOf(
+        stepInput(step, context(), bookFor(step, context()), chapters).review(empty).messages,
+      );
+      expect(review).toContain('Check every plot detail');
+      expect(review).toContain('whether quotations are word for word');
+    }
   });
 
   it('the redo of step 5 shows the previous answer in the answer form, with the refs of every statement', () => {

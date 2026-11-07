@@ -39,6 +39,27 @@ describe('QUOTE_NOT_VERBATIM', () => {
     ]);
   });
 
+  it('by default the summary check keeps its rules: five words and case (F07-5 options are opt-in)', () => {
+    expect(checkQuotes('He said «rain did not stop».', CHAPTERS).remarks).toEqual([]);
+    expect(codes(checkQuotes('«THE RAIN DID NOT STOP for three days»', CHAPTERS).remarks)).toEqual([
+      'QUOTE_NOT_VERBATIM',
+    ]);
+  });
+
+  it('minWords and matches replace the threshold and the search', () => {
+    const seen: string[] = [];
+    const { remarks, verbatim } = checkQuotes('A «two words» and «three more words».', CHAPTERS, {
+      minWords: 2,
+      matches: (quote) => {
+        seen.push(quote);
+        return quote === 'two words';
+      },
+    });
+    expect(seen).toEqual(['two words', 'three more words']);
+    expect(verbatim).toEqual(['two words']);
+    expect(codes(remarks)).toEqual(['QUOTE_NOT_VERBATIM']);
+  });
+
   it('a changed word in a quotation of five words is a remark', () => {
     const { remarks } = checkQuotes('She says «I shall never come back here».', CHAPTERS);
     expect(codes(remarks)).toEqual(['QUOTE_NOT_VERBATIM']);
