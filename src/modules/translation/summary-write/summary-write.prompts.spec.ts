@@ -90,6 +90,29 @@ describe('summary write prompts', () => {
     expect(text).toContain('at least 3 when the text is under 600 words');
   });
 
+  it('the full and the very short summary ask for paragraphs split by "\\n\\n" inside text (F06-6)', () => {
+    const rule = 'separate them with an empty line, that is "\\n\\n" inside text';
+    const full = fullWriteRequest({
+      language: 'en',
+      dossier: '{}',
+      glossary: '',
+      sections: [{ title: 'S1', text: 'Text.' }],
+      sectionsWords: 2_000,
+      redo: null,
+      editorNote: null,
+    });
+    const brief = briefWriteRequest({
+      language: 'en',
+      glossary: '',
+      full: 'Full.',
+      fullWords: 2_000,
+      redo: null,
+      editorNote: null,
+    });
+    expect(contentOf(full)).toContain(rule);
+    expect(contentOf(brief)).toContain(rule);
+  });
+
   it('the redo and the editor note of the full and the very short summary reach the prompt', () => {
     const redo = { previous: 'Old.', remarks: [codeRemark('STRUCTURE_BROKEN', '3', 'more')] };
     const editorNote = 'Less about the war.';

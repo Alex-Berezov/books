@@ -169,6 +169,15 @@ function withEditorNote(
 const editorNoteLead = (names: string[], at: number, note: string | null): string =>
   note === null ? '' : ` The editor asks for this in ${names[at]}.`;
 
+/**
+ * Абзацы длинного текста внутри строки JSON: GLM-5.3 склеивал полный и «Очень кратко» в один блок,
+ * хотя общее правило абзацев есть в `commonRules` (живой прогон `F06-6`, решение арбитра
+ * `F06 | F06-6`).
+ */
+const PARAGRAPH_BREAKS_RULE =
+  '\n- Several paragraphs: separate them with an empty line, that is "\\n\\n" inside text. ' +
+  'One unbroken block is not accepted.';
+
 export interface FullWriteInput {
   language: Language;
   /** Герои и хронология из досье. */
@@ -200,7 +209,8 @@ export function fullWriteRequest(input: FullWriteInput): ShapedRequest {
     '\n- The whole plot with the outcome; every section is reflected; not one fact beyond the ' +
     'sections.' +
     '\n- Do not repeat the sections word for word: say it in other words.' +
-    `\n- ${quotesRule(QUOTES_MAX.full)}`;
+    `\n- ${quotesRule(QUOTES_MAX.full)}` +
+    PARAGRAPH_BREAKS_RULE;
   const items: Array<readonly [string, string]> = [
     ['DOSSIER', input.dossier],
     ['GLOSSARY', input.glossary],
@@ -244,7 +254,8 @@ export function briefWriteRequest(input: BriefWriteInput): ShapedRequest {
     'characters (it is the page description).' +
     '\n- The setup, the main conflict, the climax and the outcome; not one fact beyond the full ' +
     'retelling.' +
-    '\n- Do not repeat the full retelling word for word.';
+    '\n- Do not repeat the full retelling word for word.' +
+    PARAGRAPH_BREAKS_RULE;
   const items: Array<readonly [string, string]> = [
     ['GLOSSARY', input.glossary],
     ['FULL', input.full],

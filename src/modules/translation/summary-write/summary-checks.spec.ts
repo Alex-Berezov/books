@@ -102,6 +102,16 @@ describe('STRUCTURE_BROKEN', () => {
     ]);
   });
 
+  it('the full summary in one block has no introductory paragraph (F06-6, glued paragraphs)', () => {
+    const glued = `${short} Anna goes on. Anna comes back.`;
+    expect(codes(checkStructure(full(2), glued))).toEqual(['STRUCTURE_BROKEN']);
+    expect(checkStructure(full(2), glued)[0].where).toBe('1 paragraphs');
+    expect(checkStructure(full(2), `${short}\n\nAnna goes on. Anna comes back.`)).toEqual([]);
+    // Подзаголовки блоками текста не считаются: вводный абзац без текста под ними - тоже один блок.
+    const headingsOnly = `${short}\n\n${Array.from({ length: 4 }, (_, i) => `## Part ${i + 1}`).join('\n\n')}`;
+    expect(codes(checkStructure(full(8), headingsOnly))).toEqual(['STRUCTURE_BROKEN']);
+  });
+
   it('a section has no subheadings', () => {
     expect(codes(checkStructure({ target: 'section' }, `${short}\n\n## Part\n\nMore.`))).toEqual([
       'STRUCTURE_BROKEN',

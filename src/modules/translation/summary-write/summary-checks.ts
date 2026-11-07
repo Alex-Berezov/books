@@ -101,15 +101,19 @@ export function checkLength(target: SummaryTarget, text: string, source: number)
 /** Часть для проверки строя: полному нужно число разделов плана - без него строй не проверить. */
 export type StructurePart = { target: 'section' | 'brief' } | { target: 'full'; sections: number };
 
+/** Блоков текста у полного не меньше: вводный абзац и хотя бы один абзац сюжета (`F06-6`). */
+const FULL_MIN_BLOCKS = 2;
+
 /**
  * `STRUCTURE_BROKEN` (§3): первое предложение длиннее `FIRST_SENTENCE_MAX_CHARS`; у полного нет
  * вводного абзаца или подзаголовков не `FULL_SUBHEADINGS` (у книги из 1-3 разделов их быть
- * не должно); у «Очень кратко» есть подзаголовки.
+ * не должно), или он одним блоком без отдельного вводного абзаца; у «Очень кратко» есть подзаголовки.
  */
 export function checkStructure(part: StructurePart, text: string): DraftRemark[] {
   const remarks: DraftRemark[] = [];
   const paragraphs = blocksOf(text);
-  const opening = paragraphs.find((p) => !isSubheading(p)) ?? '';
+  const textBlocks = paragraphs.filter((p) => !isSubheading(p));
+  const opening = textBlocks[0] ?? '';
   const first = sentencesOf(opening)[0] ?? '';
   if (first.length > FIRST_SENTENCE_MAX_CHARS) {
     remarks.push(
@@ -120,7 +124,7 @@ export function checkStructure(part: StructurePart, text: string): DraftRemark[]
       ),
     );
   }
-  const subheadings = paragraphs.filter(isSubheading).length;
+  const subheadings = paragraphs.length - textBlocks.length;
   if (part.target === 'full') {
     if (paragraphs.length > 0 && isSubheading(paragraphs[0])) {
       remarks.push(
@@ -128,6 +132,17 @@ export function checkStructure(part: StructurePart, text: string): DraftRemark[]
           'STRUCTURE_BROKEN',
           paragraphs[0],
           'Open with an introductory paragraph before the first subheading.',
+        ),
+      );
+    }
+    // Один блок текста - нет отдельного вводного абзаца (§2.2, §3): модель склеила абзацы (`F06-6`).
+    if (textBlocks.length < FULL_MIN_BLOCKS) {
+      remarks.push(
+        codeRemark(
+          'STRUCTURE_BROKEN',
+          `${textBlocks.length} paragraphs`,
+          `The text has ${textBlocks.length} paragraphs besides subheadings: open with an ` +
+            'introductory paragraph and separate the paragraphs with an empty line.',
         ),
       );
     }
