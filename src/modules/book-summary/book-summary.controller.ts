@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   HttpCode,
   HttpStatus,
   Param,
@@ -28,7 +27,6 @@ import { BookSummaryService } from './book-summary.service';
 import { UpdateBookSummaryDto } from './dto/update-book-summary.dto';
 import { BookSummaryResponseDto } from './dto/book-summary-response.dto';
 import { UpdateBookSummaryBriefDto } from './dto/update-book-summary-brief.dto';
-import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
 import { BookSummarySectionsService } from './book-summary-sections.service';
 import { CreateBookSummarySectionDto } from './dto/create-book-summary-section.dto';
 import { UpdateBookSummarySectionDto } from './dto/update-book-summary-section.dto';
@@ -48,7 +46,6 @@ export class BookSummaryController {
   constructor(
     private readonly service: BookSummaryService,
     private readonly sections: BookSummarySectionsService,
-    private readonly geoIpCountryService: GeoIpCountryService,
   ) {}
 
   @Get('versions/:bookVersionId/summary')
@@ -173,7 +170,7 @@ export class BookSummaryController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Public summary section page by number (451 under a settled rights claim, checked before existence)',
+      'Public summary section page by number (451 under a worldwide block of a settled rights claim, checked before existence)',
   })
   @ApiOkResponse({ type: BookSummarySectionPageDto })
   @ApiParam({ name: 'bookVersionId' })
@@ -181,15 +178,9 @@ export class BookSummaryController {
   getSectionByNumber(
     @Param('bookVersionId') bookVersionId: string,
     @Param('number') number: string,
-    @Headers() headers?: GeoRequestHeaders,
     @Req() req?: { user?: { userId: string; email: string } },
   ): Promise<BookSummarySectionPageDto> {
-    return this.sections.getByNumber(
-      bookVersionId,
-      number,
-      req?.user,
-      this.geoIpCountryService.resolveCountry(headers ?? {}),
-    );
+    return this.sections.getByNumber(bookVersionId, number, req?.user);
   }
 
   @Get('summary-sections/:sectionId')

@@ -3274,7 +3274,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Where book text is closed by active blocks of settled rights claims — the analysis and the summary sections (slugs, language, country, expiry only) */
+    /** Where summary sections are closed by active worldwide blocks of settled rights claims (slugs, language, country — always null, expiry only) */
     get: operations['BookAnalysisController_listClaimClosures'];
     put?: never;
     post?: never;
@@ -4438,7 +4438,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Get book analysis for a version (drafts and analyses without a core are visible to editors only; closed only by active rights-claim blocks of claims whose dispute is over) */
+    /** Get book analysis for a version (drafts and analyses without a core are visible to editors only; rights-claim blocks do not close it) */
     get: operations['BookAnalysisController_get'];
     /** Create or merge analysis for a version (JSON import format); dryRun=true writes nothing */
     put: operations['BookAnalysisController_save'];
@@ -4597,7 +4597,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** Public summary section page by number (451 under a settled rights claim, checked before existence) */
+    /** Public summary section page by number (451 under a worldwide block of a settled rights claim, checked before existence) */
     get: operations['BookSummaryController_getSectionByNumber'];
     put?: never;
     post?: never;
@@ -6189,7 +6189,7 @@ export interface components {
       themeKeys?: string[];
     };
     BookAnalysisClaimClosureDto: {
-      /** @description ISO country; null — worldwide */
+      /** @description ISO country; null — worldwide. Only worldwide blocks are listed, so always null */
       countryCode: string | null;
       /** Format: date-time */
       expiresAt: string | null;

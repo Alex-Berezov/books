@@ -1,7 +1,7 @@
 import { RelatedTaxonomyService } from '../seo/related-taxonomy/related-taxonomy.service';
 import { BookService } from './book.service';
 import { translatorsSelect } from './book-translators';
-import { analysesWithCoreCount } from './book-card';
+import { ANALYSES_WITH_CORE_COUNT } from './book-card';
 import { BOOK_CARDS_MAX_LIMIT } from './dto/book-cards-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuthorService } from '../author/author.service';
@@ -167,25 +167,9 @@ const routeOldAddresses = (prisma: PrismaStub) => {
   );
 };
 
-/**
- * F03-2: счётчик анализа зависит от момента запроса (срок блока претензии). Момент берётся
- * из самого аргумента, форма сверяется с `analysesWithCoreCount` — её литерал прибит в `book-card.spec.ts`.
- */
+/** F03: счётчик анализа — один литерал на все выборки, прибит в `book-card.spec.ts`. */
 const expectAnalysesCount = (received: unknown) => {
-  const where = (
-    received as {
-      where: {
-        bookVersion: {
-          rightsClaimAccessBlocks: { none: { OR: Array<{ expiresAt: { gt: Date } | null }> } };
-        };
-      };
-    }
-  ).where;
-  const now = where.bookVersion.rightsClaimAccessBlocks.none.OR[1].expiresAt?.gt as Date;
-  expect(now).toBeInstanceOf(Date);
-  // Момент - текущий, а не застывший: иначе блоки с истёкшим сроком закрывали бы анализ вечно.
-  expect(Math.abs(now.getTime() - Date.now())).toBeLessThan(60_000);
-  expect(received).toEqual(analysesWithCoreCount(now));
+  expect(received).toEqual(ANALYSES_WITH_CORE_COUNT);
 };
 
 describe('BookService.getOverview', () => {

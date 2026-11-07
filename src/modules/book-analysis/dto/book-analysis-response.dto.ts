@@ -127,9 +127,11 @@ export class BookAnalysisSaveResponseDto {
 }
 
 /**
- * Закрытие анализа блоком окончённой претензии (решение арбитра `F03 | F03-2`). Только то, что
- * нужно middleware фронта, чтобы закрыть адрес `/{lang}/book/{slug}/analysis` в стране блока:
- * слаги, язык, страна и срок. Ни претензии, ни причины, ни заявителя.
+ * Закрытие разделов пересказа блоком окончённой претензии на весь мир (решения арбитра
+ * `F03 | F03-2`, `T163 | LEGACY-490`). Только то, что нужно middleware фронта, чтобы закрыть
+ * адреса `/{lang}/book/{slug}/summary/{n}`: слаги, язык, страна (всегда `null`) и срок. Ни
+ * претензии, ни причины, ни заявителя. Имя «анализ» историческое (решения арбитра `F04 | F04-3`,
+ * `T163 | LEGACY-490`): переименование — при пересъёмке снимка OpenAPI.
  */
 export class BookAnalysisClaimClosureDto {
   @ApiProperty({
@@ -146,7 +148,11 @@ export class BookAnalysisClaimClosureDto {
   })
   language!: Language | null;
 
-  @ApiProperty({ type: String, nullable: true, description: 'ISO country; null — worldwide' })
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'ISO country; null — worldwide. Only worldwide blocks are listed, so always null',
+  })
   countryCode!: string | null;
 
   @ApiProperty({ type: String, format: 'date-time', nullable: true })

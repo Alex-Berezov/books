@@ -1,6 +1,6 @@
 import { BookType, Prisma } from '@prisma/client';
 import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
-import { settledClaimBlockWhere } from '../rights-claims/settled-claim-block';
+import { worldwideSettledClaimBlockWhere } from '../rights-claims/settled-claim-block';
 import { BookCardDto } from './dto/book-card.dto';
 
 /**
@@ -16,53 +16,36 @@ export const SUMMARIES_WITH_TEXT_COUNT = {
 
 /**
  * Счётчик анализа для `_count` (F03): запись с заполненным ядром (`BookAnalysis.hasCore`,
- * пересчитывается при каждом сохранении) у версии, которую не закрывает блок окончённой
- * претензии **на весь мир** (`countryCode = null`) — ни на самой версии, ни на всей книге. Одна
- * функция на карточки, список книг (по нему карта сайта строит адреса анализа и hreflang) и обзор
- * книги (кнопка, переключатель языка) — решения арбитра А8, `F03 | F03-2` и `T161 | LEGACY-490`
- * (`decisions-log.md`).
+ * пересчитывается при каждом сохранении). Одна функция на карточки, список книг (по нему карта
+ * сайта строит адреса анализа и hreflang) и обзор книги (кнопка, переключатель языка) — решения
+ * арбитра А8 и `F03 | F03-2` (`decisions-log.md`).
  *
- * Блок по одной стране счётчик не обнуляет (F03 D8, ответ владельца 01.11.2026): анализ виден
- * читателю и поисковику везде, кроме страны блока, а там страницу закрывает 451 middleware фронта
- * по списку `GET analyses/claim-closures`. Ответ списка и обзора кэшируется публично и одинаков
- * для всех стран, поэтому страну счётчик не читает. Ручка анализа страну читает
- * (`assertSettledClaimAccess`): в стране блока — 451, без страны (запрос сервера фронта) — 451
- * только на блок на весь мир, то есть то же правило, что у счётчика.
- * `now` — потому что у блока есть срок (`expiresAt`), а константа застыла бы на старте процесса.
+ * Блок окончённой претензии анализ не закрывает ни по стране, ни на весь мир: анализ — собственный
+ * текст редакции (правило владельца 07.11.2026, `T163`, `LEGACY-490`).
  */
-export function analysesWithCoreCount(now: Date) {
-  return {
-    where: { hasCore: true, bookVersion: openForTextReaderWhere(now, { countryCode: null }) },
-  } satisfies Prisma.BookVersionCountOutputTypeCountAnalysesArgs;
-}
+export const ANALYSES_WITH_CORE_COUNT = {
+  where: { hasCore: true },
+} as const satisfies Prisma.BookVersionCountOutputTypeCountAnalysesArgs;
 
 /**
- * Версия не закрыта блоком окончённой претензии — ни на самой версии, ни на всей книге. Без
- * `blockFilter` закрывает блок по любой стране (разделы пересказа, F04 D4); счётчик анализа
- * передаёт `{ countryCode: null }` — только блок на весь мир (F03 D8, решение арбитра
- * `T161 | LEGACY-490`). Построитель один, чтобы правила разнились только фильтром блока.
+ * Разделы пересказа видны читателю (F04, решение арбитра `F04 | F04-1`): у полного пересказа есть
+ * текст и версию не закрывает блок окончённой претензии **на весь мир** (`countryCode = null`) —
+ * ни на самой версии, ни на всей книге. Блок по одной стране разделы не закрывает нигде, включая
+ * страну блока (правило владельца 07.11.2026, `T163`, `LEGACY-490`): краткий и полный пересказ
+ * претензия не закрывает вовсе, по главам — только блок на весь мир. Одно условие на счётчик
+ * `_count.summarySections` обзора, список разделов для читателя и ручку карты сайта: счётчик без
+ * `hasText` звал бы на оглавление, а список отвечал бы `[]`. Ответы публичные и одинаковы для всех
+ * стран — страну условие не читает и не должно.
+ * `now` — потому что у блока есть срок (`expiresAt`), а константа застыла бы на старте процесса.
  */
-function openForTextReaderWhere(now: Date, blockFilter: { countryCode?: null } = {}) {
-  const closing = { ...settledClaimBlockWhere(now, ClaimBlockScope.TEXT_READER), ...blockFilter };
+export function summarySectionsVisibleWhere(now: Date) {
+  const closing = worldwideSettledClaimBlockWhere(now, ClaimBlockScope.TEXT_READER);
   return {
+    summaries: { some: { hasText: true } },
     rightsClaimAccessBlocks: { none: closing },
     book: {
       rightsClaimAccessBlocks: { none: { ...closing, scope: ClaimBlockScope.ENTIRE_BOOK } },
     },
-  } satisfies Prisma.BookVersionWhereInput;
-}
-
-/**
- * Разделы пересказа видны читателю (F04, решение арбитра `F04 | F04-1`): у полного пересказа есть
- * текст и версию не закрывает окончённая претензия ни по какой стране (F04 D4). Анализ с F03 D8
- * закрывает только блок на весь мир; разделы на это правило не переведены — вопрос владельцу
- * (`LEGACY-490`). Одно условие на счётчик `_count.summarySections` обзора, список разделов для читателя и ручку карты
- * сайта: счётчик без `hasText` звал бы на оглавление, а список отвечал бы `[]`.
- */
-export function summarySectionsVisibleWhere(now: Date) {
-  return {
-    summaries: { some: { hasText: true } },
-    ...openForTextReaderWhere(now),
   } satisfies Prisma.BookVersionWhereInput;
 }
 
@@ -80,32 +63,30 @@ export function summarySectionsCount(now: Date) {
  * `AuthorModule`), а вторая копия преобразования разошлась бы с первой на первом же поле
  * (решение арбитра 14.10.2026, `decisions-log.md`, `F02 | F02-1`).
  */
-export function bookCardSelect(now: Date) {
-  return {
-    id: true,
-    bookId: true,
-    slug: true,
-    title: true,
-    author: true,
-    authorId: true,
-    coverImageUrl: true,
-    type: true,
-    publishedAt: true,
-    _count: {
-      select: {
-        chapters: true,
-        audioChapters: true,
-        summaries: SUMMARIES_WITH_TEXT_COUNT,
-        analyses: analysesWithCoreCount(now),
-      },
+export const BOOK_CARD_SELECT = {
+  id: true,
+  bookId: true,
+  slug: true,
+  title: true,
+  author: true,
+  authorId: true,
+  coverImageUrl: true,
+  type: true,
+  publishedAt: true,
+  _count: {
+    select: {
+      chapters: true,
+      audioChapters: true,
+      summaries: SUMMARIES_WITH_TEXT_COUNT,
+      analyses: ANALYSES_WITH_CORE_COUNT,
     },
-    categories: { select: { categoryId: true } },
-    book: { select: { slug: true } },
-  } as const satisfies Prisma.BookVersionSelect;
-}
+  },
+  categories: { select: { categoryId: true } },
+  book: { select: { slug: true } },
+} as const satisfies Prisma.BookVersionSelect;
 
 export type BookCardRow = Prisma.BookVersionGetPayload<{
-  select: ReturnType<typeof bookCardSelect>;
+  select: typeof BOOK_CARD_SELECT;
 }>;
 
 export type BookCardRating = { avg: number | null; count: number };

@@ -5,7 +5,7 @@ import { BookSummarySectionsService } from './book-summary-sections.service';
 import { BookSummaryController } from './book-summary.controller';
 
 @Module({
-  // `GeoBlockModule` — за `GeoBlockRuleService` (претензия на разделах) и `GeoIpCountryService`.
+  // `GeoBlockModule` — за `GeoBlockRuleService` (претензия на разделах).
   imports: [GeoBlockModule],
   controllers: [BookSummaryController],
   providers: [BookSummaryService, BookSummarySectionsService],

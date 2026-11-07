@@ -69,8 +69,9 @@ type AdminRow = Prisma.BookSummarySectionGetPayload<{ select: typeof ADMIN_SELEC
  * меняется при удалении и перестановке, и устаревшая вкладка правила бы чужой раздел. `updatedAt`
  * ставит только правка текста, смену номера отмечает `movedAt` (T6).
  *
- * Чтение для читателя — правилом анализа (D4, T8): окончённая претензия закрывает разделы, полный
- * и очень краткий пересказ не трогает; территориальный гео-блок разделы не закрывает.
+ * Чтение для читателя (D4, T8; правило владельца 07.11.2026, `T163`): разделы закрывает только
+ * окончённая претензия с блоком на весь мир, полный и очень краткий пересказ и анализ претензия
+ * не трогает; территориальный гео-блок разделы не закрывает.
  */
 @Injectable()
 export class BookSummarySectionsService {
@@ -104,7 +105,9 @@ export class BookSummarySectionsService {
 
   /**
    * Публичная страница раздела по номеру. Претензия — 451 **до** проверок существования
-   * (`product.md` §2 п.7): иначе по 404 и 451 различалось бы, есть ли раздел в стране блока.
+   * (`product.md` §2 п.7): иначе по 404 и 451 различалось бы, есть ли раздел под блоком. Закрывает
+   * только блок окончённой претензии на весь мир: страна запроса не передаётся, а без страны
+   * `assertSettledClaimAccess` не видит страновых блоков (правило владельца 07.11.2026, `T163`).
    * Дальше: нет полного пересказа с текстом, кривой номер, нет раздела — 404. Модератор проверки
    * претензии и текста не проходит, как у анализа.
    */
@@ -112,7 +115,6 @@ export class BookSummarySectionsService {
     bookVersionId: string,
     rawNumber: string,
     actor: Actor,
-    countryCode: string | null,
   ): Promise<BookSummarySectionPageDto> {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
@@ -126,7 +128,7 @@ export class BookSummarySectionsService {
       await this.geoBlockRuleService.assertSettledClaimAccess({
         bookId: version.bookId,
         bookVersionId,
-        countryCode,
+        countryCode: null,
         scope: GeoBlockScope.TEXT_READER,
       });
     }

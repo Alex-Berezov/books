@@ -6,7 +6,6 @@ import {
 import { Prisma } from '@prisma/client';
 import type { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import type { PrismaService } from '../../prisma/prisma.service';
-import type { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import {
   BookAnalysisService,
@@ -20,7 +19,7 @@ import type { UpdateBookAnalysisDto } from './dto/update-book-analysis.dto';
 
 /**
  * F03-1: ветки сервиса анализа без базы. Гонку замка и живой SQL держит
- * `test/book-analysis.e2e-spec.ts`; здесь — 404, блок окончённой претензии, ядро для читателя, `dryRun` без записи,
+ * `test/book-analysis.e2e-spec.ts`; здесь — 404, анализ без проверки претензии, ядро для читателя, `dryRun` без записи,
  * границы транзакции (`L-020`) и выборка только упомянутых глав.
  */
 
@@ -74,7 +73,6 @@ describe('BookAnalysisService', () => {
     rightsClaimAccessBlock: { findMany: jest.Mock };
   };
   let isModerator: jest.Mock;
-  let assertSettledClaimAccess: jest.Mock;
   let service: BookAnalysisService;
 
   beforeEach(() => {
@@ -97,41 +95,34 @@ describe('BookAnalysisService', () => {
       rightsClaimAccessBlock: { findMany: jest.fn().mockResolvedValue([]) },
     };
     isModerator = jest.fn().mockResolvedValue(false);
-    assertSettledClaimAccess = jest.fn().mockResolvedValue(undefined);
     service = new BookAnalysisService(
       prisma as unknown as PrismaService,
       { isModerator } as unknown as ModeratorRolesService,
-      { assertSettledClaimAccess } as unknown as GeoBlockRuleService,
     );
   });
 
   describe('getByVersion', () => {
     it('нет версии — 404', async () => {
       prisma.bookVersion.findUnique.mockResolvedValue(null);
-      await expect(service.getByVersion('v1', undefined, null)).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
+      await expect(service.getByVersion('v1', undefined)).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    it('черновик версии читателю — 404, претензия не спрашивается', async () => {
+    it('черновик версии читателю — 404', async () => {
       prisma.bookVersion.findUnique.mockResolvedValue({ status: 'draft', language: 'en' });
-      await expect(service.getByVersion('v1', undefined, 'GB')).rejects.toBeInstanceOf(
-        NotFoundException,
-      );
-      expect(assertSettledClaimAccess).not.toHaveBeenCalled();
+      await expect(service.getByVersion('v1', undefined)).rejects.toBeInstanceOf(NotFoundException);
     });
 
-    // Территориального гео нет (решение владельца 18.10.2026, А1); претензия закрывает после окончания спора.
-    it('читатель проходит только проверку окончённой претензии (scope TEXT_READER)', async () => {
+    // Территориального гео нет (решение владельца 18.10.2026, А1), блок претензии анализ не
+    // закрывает вовсе (правило владельца 07.11.2026, `T163`): выборка версии — без связей блоков.
+    it('опубликованный анализ читателю — без проверки претензии', async () => {
       prisma.bookAnalysis.findUnique.mockResolvedValue(row());
-      const res = await service.getByVersion('v1', undefined, 'GB');
-      expect(assertSettledClaimAccess).toHaveBeenCalledTimes(1);
-      expect(assertSettledClaimAccess).toHaveBeenCalledWith({
-        bookId: 'b1',
-        bookVersionId: 'v1',
-        countryCode: 'GB',
-        scope: GeoBlockScope.TEXT_READER,
+      const res = await service.getByVersion('v1', undefined);
+      expect(prisma.bookVersion.findUnique).toHaveBeenCalledTimes(1);
+      expect(prisma.bookVersion.findUnique).toHaveBeenCalledWith({
+        where: { id: 'v1' },
+        select: { status: true, language: true },
       });
+      expect(prisma.rightsClaimAccessBlock.findMany).not.toHaveBeenCalled();
       expect(res).toMatchObject({ language: 'en', hasCore: true, mainIdea: 'Idea' });
       expect(res).not.toHaveProperty('id');
       expect(res).not.toHaveProperty('bookVersionId');
@@ -141,7 +132,7 @@ describe('BookAnalysisService', () => {
     it('отдаёт номера глав версии по возрастанию, с пределом и без текста глав', async () => {
       prisma.bookAnalysis.findUnique.mockResolvedValue(row());
       prisma.chapter.findMany.mockResolvedValue([{ number: 1 }, { number: 2 }, { number: 5 }]);
-      const res = await service.getByVersion('v1', undefined, null);
+      const res = await service.getByVersion('v1', undefined);
       expect(res?.chapterNumbers).toEqual([1, 2, 5]);
       expect(prisma.chapter.findMany).toHaveBeenCalledTimes(1);
       expect(prisma.chapter.findMany).toHaveBeenCalledWith({
@@ -162,7 +153,7 @@ describe('BookAnalysisService', () => {
       );
       prisma.chapter.findMany.mockResolvedValue([{ number: 3 }]);
 
-      const pending = service.getByVersion('v1', undefined, null);
+      const pending = service.getByVersion('v1', undefined);
       await new Promise((resolve) => setImmediate(resolve));
       expect(prisma.chapter.findMany).toHaveBeenCalledTimes(1);
 
@@ -172,18 +163,17 @@ describe('BookAnalysisService', () => {
 
     it('анализ без ядра читателю — null, редактору — запись', async () => {
       prisma.bookAnalysis.findUnique.mockResolvedValue(row({ hasCore: false }));
-      await expect(service.getByVersion('v1', undefined, null)).resolves.toBeNull();
+      await expect(service.getByVersion('v1', undefined)).resolves.toBeNull();
 
-      assertSettledClaimAccess.mockClear();
       isModerator.mockResolvedValue(true);
       prisma.bookVersion.findUnique.mockResolvedValue({ status: 'draft', language: 'en' });
-      const res = await service.getByVersion('v1', { userId: 'u', email: 'e' }, 'GB');
+      const res = await service.getByVersion('v1', { userId: 'u', email: 'e' });
       expect(res).toMatchObject({ hasCore: false, mainIdea: 'Idea' });
-      expect(assertSettledClaimAccess).not.toHaveBeenCalled();
     });
   });
 
-  // F03-2, решение арбитра `F03 | F03-2`: middleware фронта закрывает анализ в стране блока по этому списку.
+  // F04-3, решения арбитра `F04 | F04-3`, `T163 | LEGACY-490`: middleware фронта закрывает по этому списку
+  // разделы пересказа под блоком на весь мир.
   describe('listClaimClosures', () => {
     const now = new Date('2026-10-18T12:00:00Z');
     const versionBlock = (id: string, over: Record<string, unknown> = {}) => ({
@@ -218,7 +208,11 @@ describe('BookAnalysisService', () => {
           bookVersion: { select: { book: { select: { versions: { where: unknown } } } } };
         };
       };
-      expect(args.where).toEqual(settledClaimBlockWhere(now, GeoBlockScope.TEXT_READER));
+      // Только блок на весь мир (решение арбитра `T163 | LEGACY-490`): страновой блок ничего не закрывает.
+      expect(args.where).toEqual({
+        ...settledClaimBlockWhere(now, GeoBlockScope.TEXT_READER),
+        countryCode: null,
+      });
       expect(args.take).toBe(CLAIM_CLOSURES_BATCH);
       expect(args.select.book.select.versions.where).toEqual({ status: 'published' });
       expect(args.select.bookVersion.select.book.select.versions.where).toEqual({

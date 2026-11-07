@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Headers, Param, Put, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Put, Query, Req, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiExtraModels,
@@ -12,7 +12,6 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
-import { GeoIpCountryService, GeoRequestHeaders } from '../geo-block/geo-ip-country.service';
 import { BookAnalysisService } from './book-analysis.service';
 import { UpdateBookAnalysisDto } from './dto/update-book-analysis.dto';
 import { SaveBookAnalysisQueryDto } from './dto/save-book-analysis-query.dto';
@@ -25,19 +24,17 @@ import {
 @ApiTags('analyses')
 @Controller()
 export class BookAnalysisController {
-  constructor(
-    private readonly service: BookAnalysisService,
-    private readonly geoIpCountryService: GeoIpCountryService,
-  ) {}
+  constructor(private readonly service: BookAnalysisService) {}
 
   /**
-   * Список закрытий анализа блоками окончённых претензий — для middleware фронта (решение арбитра
-   * `F03 | F03-2`). Публичный: в нём только слаги, язык, страна и срок; ответ одинаков для всех.
+   * Список закрытий разделов пересказа блоками окончённых претензий на весь мир — для middleware
+   * фронта (решения арбитра `F03 | F03-2`, `T163 | LEGACY-490`). Публичный: в нём только слаги,
+   * язык, страна (всегда `null`) и срок; ответ одинаков для всех.
    */
   @Get('analyses/claim-closures')
   @ApiOperation({
     summary:
-      'Where book text is closed by active blocks of settled rights claims — the analysis and the summary sections (slugs, language, country, expiry only)',
+      'Where summary sections are closed by active worldwide blocks of settled rights claims (slugs, language, country — always null, expiry only)',
   })
   @ApiOkResponse({ type: BookAnalysisClaimClosuresResponseDto })
   listClaimClosures() {
@@ -48,7 +45,7 @@ export class BookAnalysisController {
   @ApiBearerAuth()
   @ApiOperation({
     summary:
-      'Get book analysis for a version (drafts and analyses without a core are visible to editors only; closed only by active rights-claim blocks of claims whose dispute is over)',
+      'Get book analysis for a version (drafts and analyses without a core are visible to editors only; rights-claim blocks do not close it)',
   })
   // Тело может отсутствовать: у версии нет анализа — `null` (как у пересказа).
   @ApiExtraModels(BookAnalysisResponseDto)
@@ -60,14 +57,9 @@ export class BookAnalysisController {
   @UseGuards(OptionalJwtAuthGuard)
   get(
     @Param('bookVersionId') bookVersionId: string,
-    @Headers() headers?: GeoRequestHeaders,
     @Req() req?: { user?: { userId: string; email: string } },
   ) {
-    return this.service.getByVersion(
-      bookVersionId,
-      req?.user,
-      this.geoIpCountryService.resolveCountry(headers ?? {}),
-    );
+    return this.service.getByVersion(bookVersionId, req?.user);
   }
 
   @Put('versions/:bookVersionId/analysis')

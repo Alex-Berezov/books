@@ -7,8 +7,6 @@ import {
 import { Language, Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
-import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { getSupportedLanguages } from '../../shared/language/language.util';
 import { pickSlugOwner } from '../../shared/slug/book-slug-owner';
 import {
@@ -23,7 +21,7 @@ import { computeAnalysisCore } from './book-analysis-core';
 import { BOOK_ANALYSIS_TX_OPTIONS, lockBookAnalysis } from './book-analysis-lock';
 import { checkAnalysisRefs, collectChapterRefs } from './book-analysis-refs';
 import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
-import { settledClaimBlockWhere } from '../rights-claims/settled-claim-block';
+import { worldwideSettledClaimBlockWhere } from '../rights-claims/settled-claim-block';
 import type { UpdateBookAnalysisDto } from './dto/update-book-analysis.dto';
 import type {
   BookAnalysisClaimClosureDto,
@@ -33,7 +31,7 @@ import type {
   BookAnalysisWarningDto,
 } from './dto/book-analysis-response.dto';
 
-/** Порция списка закрытий анализа (`listClaimClosures`, порог `id > последний`) и предел порций - граница памяти. */
+/** Порция списка закрытий разделов пересказа (`listClaimClosures`, порог `id > последний`) и предел порций - граница памяти. */
 export const CLAIM_CLOSURES_BATCH = 1000;
 export const CLAIM_CLOSURES_MAX_BATCHES = 20;
 /**
@@ -61,7 +59,6 @@ export class BookAnalysisService {
   constructor(
     private prisma: PrismaService,
     private readonly moderatorRoles: ModeratorRolesService,
-    private readonly geoBlockRuleService: GeoBlockRuleService,
   ) {}
 
   /**
@@ -70,31 +67,23 @@ export class BookAnalysisService {
    *
    * Территориального гео-блока нет: анализ — сведения о книге, собственный текст Bibliaris
    * с короткими цитатами (решение владельца 18.10.2026 по А1, ADR-012 п.7 «карточка»).
-   * Блок претензии правообладателя закрывает анализ, только когда спор окончен; пока
-   * разбирательство идёт, анализ открыт, хотя текст версии закрыт (слово владельца 18.10.2026,
-   * `work-queue.md` «ВЛАДЕЛЕЦ» п.6; перевод на статусы — решение арбитра в `decisions-log.md`).
-   * Редактор проверку не проходит.
+   * Блок претензии правообладателя анализ не закрывает — ни пока спор идёт, ни после, ни по
+   * стране, ни на весь мир: анализ — собственный текст редакции (правило владельца 07.11.2026,
+   * `T163`, `LEGACY-490`; прежнее правило 18.10.2026 «закрывать там же, где текст» снято).
    */
   async getByVersion(
     bookVersionId: string,
     actor: { userId: string; email: string } | undefined,
-    countryCode: string | null,
   ): Promise<BookAnalysisResponseDto | null> {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
-      select: { status: true, language: true, bookId: true },
+      select: { status: true, language: true },
     });
     if (!version) throw new NotFoundException('BookVersion not found');
 
     const editor = await this.moderatorRoles.isModerator(actor);
-    if (!editor) {
-      if (version.status !== 'published') throw new NotFoundException('BookVersion not found');
-      await this.geoBlockRuleService.assertSettledClaimAccess({
-        bookId: version.bookId,
-        bookVersionId,
-        countryCode,
-        scope: GeoBlockScope.TEXT_READER,
-      });
+    if (!editor && version.status !== 'published') {
+      throw new NotFoundException('BookVersion not found');
     }
 
     // Номера глав читаются параллельно с анализом (F03-3): на ответе `null` запрос глав лишний,
@@ -112,12 +101,13 @@ export class BookAnalysisService {
   }
 
   /**
-   * Где анализ закрыт блоком окончённой претензии — для middleware фронта (решение арбитра
-   * `F03 | F03-2`). Страница анализа рендерится статично без страны читателя, поэтому блок по
-   * стране закрывает её middleware по этому списку; условие блока — то же, что у ручки
-   * `getByVersion` (`settledClaimBlockWhere`), с блоками по странам. Счётчик `_count.analyses`
-   * с F03 D8 берёт только блок на весь мир: при блоке по стране кнопка и адрес в карте сайта есть,
-   * и в стране блока страницу закрывает только middleware по этому списку.
+   * Где разделы пересказа по главам закрыты блоком окончённой претензии — для middleware фронта
+   * (решения арбитра `F03 | F03-2`, `F04 | F04-3`; имя пути историческое). Только блоки **на весь
+   * мир** (`countryCode = null`): блок по стране не закрывает ни разделы, ни анализ нигде, анализ
+   * не закрывает и блок на весь мир (правило владельца 07.11.2026, решение арбитра
+   * `T163 | LEGACY-490`). Условие блока — то же, что у `summarySectionsVisibleWhere` и страницы
+   * раздела. Поле `countryCode` в ответе осталось (всегда `null`): форма контракта та же, и фронт
+   * после отката тега бэка по-прежнему отбрасывает страновые блоки сам.
    *
    * Элемент один на опубликованную версию и её язык (`language` всегда задан): блок на всю книгу даёт
    * элемент на каждую её версию, блок версии — на неё одну; слаги — по правилу `toClaimClosure`.
@@ -125,11 +115,11 @@ export class BookAnalysisService {
    * держал истёкший блок до следующего обновления списка.
    */
   async listClaimClosures(): Promise<BookAnalysisClaimClosuresResponseDto> {
-    const where = settledClaimBlockWhere(new Date(), ClaimBlockScope.TEXT_READER);
+    const where = worldwideSettledClaimBlockWhere(new Date(), ClaimBlockScope.TEXT_READER);
     const items: BookAnalysisClaimClosuresResponseDto['items'] = [];
     let cursor: string | undefined;
     // Список читается целиком, порциями: обрезанный список middleware не отличил бы от полного
-    // и открыл бы анализ в стране блока (L-015). Предел порций - граница памяти; дошли до него -
+    // и открыл бы раздел под блоком (L-015). Предел порций - граница памяти; дошли до него -
     // отказ, и middleware работает по прежнему списку, а не по урезанному.
     // Предел проверяется после чтения: ровно `MAX_BATCHES` полных порций - ещё полный список, отказ
     // только если за ними есть хоть одна строка.

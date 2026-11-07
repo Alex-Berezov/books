@@ -46,7 +46,7 @@ import { escapeLikeWildcards } from '../../shared/prisma/escape-like';
 import { pickSlugOwner } from '../../shared/slug/book-slug-owner';
 import { seoDtoToData } from '../seo/utils/seo-dto-to-data.util';
 import {
-  bookCardSelect,
+  BOOK_CARD_SELECT,
   bookCardSlug,
   loadBookCardRatings,
   toBookCardDto,
@@ -1314,7 +1314,7 @@ export class AuthorService {
     const [rows, total] = await Promise.all([
       this.prisma.bookVersion.findMany({
         where,
-        select: { ...bookCardSelect(new Date()), firstPublishedYear: true },
+        select: { ...BOOK_CARD_SELECT, firstPublishedYear: true },
         orderBy: [
           { firstPublishedYear: { sort: 'asc', nulls: 'last' } },
           { title: 'asc' },

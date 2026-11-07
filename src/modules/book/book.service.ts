@@ -15,12 +15,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { UpdateBookDto } from './dto/update-book.dto';
 import { BookCardDto } from './dto/book-card.dto';
 import {
-  bookCardSelect,
+  BOOK_CARD_SELECT,
   type BookCardRating,
   type BookCardRow,
   loadBookCardRatings,
   SUMMARIES_WITH_TEXT_COUNT,
-  analysesWithCoreCount,
+  ANALYSES_WITH_CORE_COUNT,
   summarySectionsCount,
   toBookCardDto,
 } from './book-card';
@@ -170,7 +170,7 @@ export class BookService {
                   chapters: true,
                   audioChapters: true,
                   summaries: SUMMARIES_WITH_TEXT_COUNT,
-                  analyses: analysesWithCoreCount(new Date()),
+                  analyses: ANALYSES_WITH_CORE_COUNT,
                 },
               },
               tags: {
@@ -432,7 +432,7 @@ export class BookService {
             chapters: true,
             audioChapters: true,
             summaries: SUMMARIES_WITH_TEXT_COUNT,
-            analyses: analysesWithCoreCount(new Date()),
+            analyses: ANALYSES_WITH_CORE_COUNT,
             summarySections: summarySectionsCount(new Date()),
           },
         },
@@ -872,7 +872,7 @@ export class BookService {
 
     const sameAuthorVersions = await this.prisma.bookVersion.findMany({
       where: sameAuthorWhere,
-      select: bookCardSelect(new Date()),
+      select: BOOK_CARD_SELECT,
       orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
       take: sameAuthorTake,
     });
@@ -894,7 +894,7 @@ export class BookService {
           },
         },
         select: {
-          bookVersion: { select: bookCardSelect(new Date()) },
+          bookVersion: { select: BOOK_CARD_SELECT },
           categoryId: true,
         },
       });
@@ -933,7 +933,7 @@ export class BookService {
           language: lang,
           status: 'published',
         },
-        select: bookCardSelect(new Date()),
+        select: BOOK_CARD_SELECT,
         // Order by publishedAt as a baseline; final rating-based sort below
         orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
         take: remainingSlots,
@@ -1509,7 +1509,7 @@ export class BookService {
     // Fetch one localized published version per book (the first by publishedAt desc)
     const versions = await this.prisma.bookVersion.findMany({
       where: { bookId: { in: bookIds }, language: lang, status: 'published' },
-      select: bookCardSelect(new Date()),
+      select: BOOK_CARD_SELECT,
       orderBy: [{ publishedAt: { sort: 'desc', nulls: 'last' } }, { id: 'asc' }],
     });
 

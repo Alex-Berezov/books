@@ -1,9 +1,9 @@
 import { BookType, GeoBlockScope, RightsClaimBlockStatus, RightsClaimStatus } from '@prisma/client';
 import {
-  bookCardSelect,
+  BOOK_CARD_SELECT,
   type BookCardRow,
   SUMMARIES_WITH_TEXT_COUNT,
-  analysesWithCoreCount,
+  ANALYSES_WITH_CORE_COUNT,
   summarySectionsCount,
   toBookCardDto,
 } from './book-card';
@@ -50,8 +50,8 @@ describe('toBookCardDto', () => {
   const now = new Date('2026-10-18T12:00:00Z');
 
   // Признак пересказа считается только по строкам с видимым текстом (`BookSummary.hasText`).
-  it('bookCardSelect считает пересказы по hasText', () => {
-    expect(bookCardSelect(now)._count.select.summaries).toEqual({ where: { hasText: true } });
+  it('BOOK_CARD_SELECT считает пересказы по hasText', () => {
+    expect(BOOK_CARD_SELECT._count.select.summaries).toEqual({ where: { hasText: true } });
     expect(SUMMARIES_WITH_TEXT_COUNT).toEqual({ where: { hasText: true } });
   });
 
@@ -74,39 +74,28 @@ describe('toBookCardDto', () => {
     },
   };
 
-  // F03: анализ считается только с заполненным ядром (решение арбитра А8) и без действующего блока
-  // окончённой претензии на весь мир — на версии или на всей книге (`F03 | F03-2`, F03 D8,
-  // `T161 | LEGACY-490`): блок по одной стране счётчик не обнуляет. Условие прибито литералом: без
-  // фильтра претензии адрес закрытого анализа уходит в карту сайта, без `countryCode: null` блок
-  // одной страны прячет анализ везде.
-  it('bookCardSelect и обзор считают анализ по hasCore без закрытых претензией на весь мир', () => {
-    const closing = { ...anyCountry, countryCode: null };
-    const expected = {
-      where: {
-        hasCore: true,
-        bookVersion: {
-          rightsClaimAccessBlocks: { none: closing },
-          book: {
-            rightsClaimAccessBlocks: { none: { ...closing, scope: GeoBlockScope.ENTIRE_BOOK } },
-          },
-        },
-      },
-    };
-    expect(analysesWithCoreCount(now)).toEqual(expected);
-    expect(bookCardSelect(now)._count.select.analyses).toEqual(expected);
+  // F03: анализ считается только с заполненным ядром (решение арбитра А8). Блок окончённой
+  // претензии анализ не закрывает ни по стране, ни на весь мир (правило владельца 07.11.2026,
+  // `T163`): фильтр претензии в счётчике прячет анализ со страницы книги, hreflang и карты сайта.
+  it('BOOK_CARD_SELECT и обзор считают анализ по hasCore без фильтра претензий', () => {
+    const expected = { where: { hasCore: true } };
+    expect(ANALYSES_WITH_CORE_COUNT).toEqual(expected);
+    expect(BOOK_CARD_SELECT._count.select.analyses).toEqual(expected);
   });
 
-  // Разделы пересказа по-прежнему закрывает блок по любой стране: D8 только про анализ, перевод
-  // разделов на это правило — вопрос владельцу (`LEGACY-490`; решение арбитра `T161 | LEGACY-490`).
-  it('разделы пересказа закрывает блок окончённой претензии по любой стране', () => {
+  // Разделы пересказа закрывает только блок окончённой претензии на весь мир (`countryCode: null`):
+  // блок одной страны разделы не прячет нигде (правило владельца 07.11.2026, `T163`, `LEGACY-490`).
+  // Без `countryCode: null` блок одной страны снова прячет оглавление и карту сайта везде.
+  it('разделы пересказа закрывает только блок окончённой претензии на весь мир', () => {
+    const closing = { ...anyCountry, countryCode: null };
     expect(summarySectionsCount(now)).toEqual({
       where: {
         bookVersion: {
           summaries: { some: { hasText: true } },
-          rightsClaimAccessBlocks: { none: anyCountry },
+          rightsClaimAccessBlocks: { none: closing },
           book: {
             rightsClaimAccessBlocks: {
-              none: { ...anyCountry, scope: GeoBlockScope.ENTIRE_BOOK },
+              none: { ...closing, scope: GeoBlockScope.ENTIRE_BOOK },
             },
           },
         },

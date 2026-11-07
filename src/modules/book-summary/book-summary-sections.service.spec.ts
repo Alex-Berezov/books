@@ -53,3 +53,35 @@ describe('BookSummarySectionsService.sitemap — предел noindex', () => {
     );
   });
 });
+
+/**
+ * Решение арбитра `T163 | LEGACY-490` (круг 2): страница раздела закрывается только блоком
+ * окончённой претензии на весь мир — вызовом `assertSettledClaimAccess` **без страны**. Выборки
+ * (оглавление, счётчик, карта, список закрытий) держат то же правило через
+ * `worldwideSettledClaimBlockWhere`; страна в этом вызове развела бы страницу с картой сайта.
+ */
+describe('BookSummarySectionsService.getByNumber — претензия без страны', () => {
+  it('читатель: assertSettledClaimAccess ровно раз, countryCode null, scope TEXT_READER', async () => {
+    const stop = new Error('stop after claim check');
+    const assertSettledClaimAccess = jest.fn().mockRejectedValue(stop);
+    const db = {
+      bookVersion: {
+        findUnique: jest.fn().mockResolvedValue({ status: 'published', bookId: 'b1' }),
+      },
+    };
+    const service = new BookSummarySectionsService(
+      db as unknown as PrismaService,
+      { isModerator: jest.fn().mockResolvedValue(false) } as unknown as ModeratorRolesService,
+      { assertSettledClaimAccess } as unknown as GeoBlockRuleService,
+    );
+
+    await expect(service.getByNumber('v1', '1', undefined)).rejects.toBe(stop);
+    expect(assertSettledClaimAccess).toHaveBeenCalledTimes(1);
+    expect(assertSettledClaimAccess).toHaveBeenCalledWith({
+      bookId: 'b1',
+      bookVersionId: 'v1',
+      countryCode: null,
+      scope: 'TEXT_READER',
+    });
+  });
+});

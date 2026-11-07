@@ -453,10 +453,9 @@ describe('BookAnalysis e2e', () => {
   };
 
   /**
-   * Слово владельца 18.10.2026 (`work-queue.md` «ВЛАДЕЛЕЦ» п.6): пока спор с правообладателем
-   * идёт, анализ открыт; спор окончен, а блок не снят (текст убран) — анализ закрыт там же, где
-   * текст. Перевод на статусы — решение арбитра `2026-10-18-f03-claim-upheld`: резолюция
-   * не читается.
+   * Правило владельца 07.11.2026 (`T163`, `LEGACY-490`; прежнее слово 18.10.2026 «закрывать там же,
+   * где текст» снято): блок претензии анализ не закрывает — ни пока спор идёт, ни после, ни по
+   * стране, ни на весь мир, ни на всю книгу. Текст версии при этом закрыт — правило блока действует.
    */
   it.each([
     'RECEIVED',
@@ -467,67 +466,37 @@ describe('BookAnalysis e2e', () => {
     'CONTENT_RESTRICTED',
     'COUNTER_NOTICE_FILED',
     'ESCALATED_TO_LAWYER',
-  ] as const)('спор идёт (%s): текст закрыт, анализ открыт', async (status) => {
+    'RESOLVED_VALID',
+    'RESOLVED_INVALID',
+    'WITHDRAWN',
+    'CLOSED',
+  ] as const)(
+    'претензия (%s) с блоком на весь мир: текст закрыт, анализ открыт',
+    async (status) => {
+      const v = await versionWithAnalysis();
+      await claimWithBlock(v, status);
+      await request(http()).get(`/versions/${v.versionId}/chapters`).expect(451);
+      const res = await request(http()).get(`/versions/${v.versionId}/analysis`).expect(200);
+      expect(res.body).toMatchObject({ hasCore: true });
+    },
+  );
+
+  it('окончённая претензия на всю книгу: текст закрыт, анализ открыт', async () => {
     const v = await versionWithAnalysis();
-    await claimWithBlock(v, status);
+    await claimWithBlock(v, 'CLOSED', { entireBook: true });
     await request(http()).get(`/versions/${v.versionId}/chapters`).expect(451);
     await request(http()).get(`/versions/${v.versionId}/analysis`).expect(200);
   });
 
-  it.each(['RESOLVED_VALID', 'RESOLVED_INVALID', 'WITHDRAWN', 'CLOSED'] as const)(
-    'спор окончен (%s), блок не снят: анализ 451 BLOCKED_BY_RIGHTS_CLAIM, редактору 200',
-    async (status) => {
-      const v = await versionWithAnalysis();
-      // Без резолюции — так статус ставит `changeStatus`; резолюция на исход не влияет.
-      await claimWithBlock(v, status);
-      const res = await request(http()).get(`/versions/${v.versionId}/analysis`).expect(451);
-      expect(res.body.code).toBe('BLOCKED_BY_RIGHTS_CLAIM');
-      // Ни данные претензии, ни редакторский `reasonRu` блока наружу не уходят (ADR-012 п.8).
-      expect(JSON.stringify(res.body)).not.toContain('Claimant');
-      expect(JSON.stringify(res.body)).not.toContain('Zx9');
-      await request(http())
-        .get(`/versions/${v.versionId}/analysis`)
-        .set('Authorization', `Bearer ${adminAccess}`)
-        .expect(200);
-    },
-  );
-
-  it('спор окончен, блок снят — анализ открыт; претензию переоткрыли — снова открыт', async () => {
-    const lifted = await versionWithAnalysis();
-    await claimWithBlock(lifted, 'RESOLVED_VALID', { status: 'LIFTED' });
-    await request(http()).get(`/versions/${lifted.versionId}/analysis`).expect(200);
-
-    const reopened = await versionWithAnalysis();
-    const claim = await claimWithBlock(reopened, 'RESOLVED_VALID');
-    await request(http()).get(`/versions/${reopened.versionId}/analysis`).expect(451);
-    await prisma.rightsClaim.update({ where: { id: claim.id }, data: { status: 'UNDER_REVIEW' } });
-    await request(http()).get(`/versions/${reopened.versionId}/analysis`).expect(200);
-  });
-
-  it('блок на всю книгу: в споре анализ открыт, по окончании закрыт', async () => {
-    const open = await versionWithAnalysis();
-    await claimWithBlock(open, 'UNDER_REVIEW', { entireBook: true });
-    await request(http()).get(`/versions/${open.versionId}/chapters`).expect(451);
-    await request(http()).get(`/versions/${open.versionId}/analysis`).expect(200);
-
-    const settled = await versionWithAnalysis();
-    await claimWithBlock(settled, 'CLOSED', { entireBook: true });
-    await request(http()).get(`/versions/${settled.versionId}/analysis`).expect(451);
-  });
-
-  it('окончённая претензия по стране закрывает анализ только в этой стране', async () => {
+  it('окончённая претензия по стране: анализ открыт и в стране блока', async () => {
     const v = await versionWithAnalysis();
     await claimWithBlock(v, 'RESOLVED_VALID', { countryCode: 'GB' });
-    await request(http())
-      .get(`/versions/${v.versionId}/analysis`)
-      .set('X-Geo-Country', 'GB')
-      .expect(451);
-    await request(http())
-      .get(`/versions/${v.versionId}/analysis`)
-      .set('X-Geo-Country', 'US')
-      .expect(200);
-    // Без страны (запрос сервера фронта) блок по стране не закрывает — то же правило, что у счётчика
-    // `_count.analyses` (F03 D8, `T161 | LEGACY-490`).
+    for (const country of ['GB', 'US']) {
+      await request(http())
+        .get(`/versions/${v.versionId}/analysis`)
+        .set('X-Geo-Country', country)
+        .expect(200);
+    }
     await request(http()).get(`/versions/${v.versionId}/analysis`).expect(200);
   });
 
@@ -554,68 +523,39 @@ describe('BookAnalysis e2e', () => {
   });
 
   /**
-   * F03-2, решение арбитра `F03 | F03-2`: счётчик — источник карты сайта, hreflang и кнопки.
-   * Закрытый окончённой претензией на весь мир анализ в нём не считается; блок по одной стране
-   * счётчик не обнуляет — анализ виден везде, кроме страны блока (F03 D8, `T161 | LEGACY-490`);
-   * пока спор идёт или блок снят — считается.
+   * F03-2, решение арбитра `F03 | F03-2`: счётчик — источник карты сайта, hreflang и кнопки. Блок
+   * претензии его не обнуляет ни в каком виде (правило владельца 07.11.2026, `T163`): закрытый
+   * в счётчике анализ пропал бы со страницы книги и из карты сайта, хотя ручка его отдаёт.
    */
-  it('счётчик анализа не считает закрытый блоком окончённой претензии на весь мир', async () => {
+  it('счётчик анализа считает анализ под любым блоком претензии', async () => {
     const overviewCount = async (bookSlug: string) => {
       const ov = await request(http()).get(`/en/books/${bookSlug}/overview`).expect(200);
       return ov.body.versions[0]._count.analyses as number;
     };
-    const cases: Array<[string, RightsClaimStatus, Parameters<typeof claimWithBlock>[2], number]> =
-      [
-        ['окончена, на весь мир', 'RESOLVED_VALID', {}, 0],
-        ['окончена, по стране', 'CLOSED', { countryCode: 'GB' }, 1],
-        ['окончена, на всю книгу', 'WITHDRAWN', { entireBook: true }, 0],
-        ['окончена, книга по стране', 'WITHDRAWN', { entireBook: true, countryCode: 'GB' }, 1],
-        ['окончена, книга на версии', 'CLOSED', { entireBookOnVersion: true }, 0],
-        [
-          'окончена, книга на версии по стране',
-          'CLOSED',
-          { entireBookOnVersion: true, countryCode: 'GB' },
-          1,
-        ],
-        ['спор идёт', 'UNDER_REVIEW', {}, 1],
-        ['окончена, блок снят', 'RESOLVED_VALID', { status: 'LIFTED' }, 1],
-      ];
-    for (const [name, status, block, expected] of cases) {
+    const cases: Array<[string, RightsClaimStatus, Parameters<typeof claimWithBlock>[2]]> = [
+      ['окончена, на весь мир', 'RESOLVED_VALID', {}],
+      ['окончена, по стране', 'CLOSED', { countryCode: 'GB' }],
+      ['окончена, на всю книгу', 'WITHDRAWN', { entireBook: true }],
+      ['окончена, книга на версии', 'CLOSED', { entireBookOnVersion: true }],
+      ['спор идёт', 'UNDER_REVIEW', {}],
+    ];
+    for (const [name, status, block] of cases) {
       const v = await createVersion({ slugPrefix: 'book-an-claim' });
       await put(v.versionId, { language: 'en', ...core() }).expect(200);
       await claimWithBlock(v, status, block);
-      expect([name, await overviewCount(v.bookSlug)]).toEqual([name, expected]);
+      expect([name, await overviewCount(v.bookSlug)]).toEqual([name, 1]);
     }
-
-    const expired = await createVersion({ slugPrefix: 'book-an-claim' });
-    await put(expired.versionId, { language: 'en', ...core() }).expect(200);
-    await claimWithBlock(expired, 'RESOLVED_VALID');
-    await prisma.rightsClaimAccessBlock.updateMany({
-      where: { bookVersionId: expired.versionId },
-      data: { expiresAt: new Date(Date.now() - 60_000) },
-    });
-    expect(await overviewCount(expired.bookSlug)).toBe(1);
 
     // Список книг (источник карты сайта) — то же правило.
     const closed = await createVersion({ slugPrefix: 'book-an-claim' });
     await put(closed.versionId, { language: 'en', ...core() }).expect(200);
-    await claimWithBlock(closed, 'CLOSED');
-    const byCountry = await createVersion({ slugPrefix: 'book-an-claim' });
-    await put(byCountry.versionId, { language: 'en', ...core() }).expect(200);
-    await claimWithBlock(byCountry, 'CLOSED', { countryCode: 'DE' });
-    const bookByCountry = await createVersion({ slugPrefix: 'book-an-claim' });
-    await put(bookByCountry.versionId, { language: 'en', ...core() }).expect(200);
-    await claimWithBlock(bookByCountry, 'CLOSED', { entireBook: true, countryCode: 'DE' });
+    await claimWithBlock(closed, 'CLOSED', { entireBook: true });
     const list = await request(http()).get('/en/books').query({ page: 1, limit: 100 }).expect(200);
     const items = (list.body.items ?? list.body.data) as {
       slug: string;
       versions: { _count: { analyses: number } }[];
     }[];
-    const listCount = (slug: string) =>
-      items.find((b) => b.slug === slug)?.versions[0]._count.analyses;
-    expect(listCount(closed.bookSlug)).toBe(0);
-    expect(listCount(byCountry.bookSlug)).toBe(1);
-    expect(listCount(bookByCountry.bookSlug)).toBe(1);
+    expect(items.find((b) => b.slug === closed.bookSlug)?.versions[0]._count.analyses).toBe(1);
   });
 
   it('chapterNumbers: номера глав версии по возрастанию; без глав — пустой список', async () => {
@@ -633,9 +573,15 @@ describe('BookAnalysis e2e', () => {
     expect(res2.body.chapterNumbers).toEqual([]);
   });
 
-  it('GET analyses/claim-closures: только блоки окончённых претензий, без правовых полей', async () => {
+  /**
+   * Решение арбитра `T163 | LEGACY-490`: в списке только блоки окончённых претензий **на весь мир**
+   * — ими middleware фронта закрывает разделы пересказа; страновой блок не закрывает ничего.
+   */
+  it('GET analyses/claim-closures: только блоки окончённых претензий на весь мир, без правовых полей', async () => {
     const byCountry = await versionWithAnalysis();
     await claimWithBlock(byCountry, 'RESOLVED_VALID', { countryCode: 'gb' });
+    const bookByCountry = await versionWithAnalysis();
+    await claimWithBlock(bookByCountry, 'CLOSED', { entireBook: true, countryCode: 'DE' });
     const wholeBook = await versionWithAnalysis();
     await claimWithBlock(wholeBook, 'CLOSED', { entireBook: true });
     const inDispute = await versionWithAnalysis();
@@ -648,9 +594,8 @@ describe('BookAnalysis e2e', () => {
       countryCode: string | null;
       expiresAt: string | null;
     }>;
-    expect(items.filter((i) => i.slugs.includes(byCountry.bookSlug))).toEqual([
-      { slugs: [byCountry.bookSlug], language: 'en', countryCode: 'GB', expiresAt: null },
-    ]);
+    expect(items.some((i) => i.slugs.includes(byCountry.bookSlug))).toBe(false);
+    expect(items.some((i) => i.slugs.includes(bookByCountry.bookSlug))).toBe(false);
     expect(items.filter((i) => i.slugs.includes(wholeBook.bookSlug))).toEqual([
       { slugs: [wholeBook.bookSlug], language: 'en', countryCode: null, expiresAt: null },
     ]);
@@ -664,16 +609,16 @@ describe('BookAnalysis e2e', () => {
   /**
    * F04-3 (решение арбитра `F04 | F04-3`): список закрытий - это закрытия **текста**, им же
    * middleware фронта закрывает страницы разделов пересказа. Версия без анализа в нём есть: иначе
-   * раздел пересказа книги без анализа остался бы открыт в стране блока.
+   * раздел пересказа книги без анализа остался бы открыт под блоком.
    */
   it('GET analyses/claim-closures: версия без анализа в списке есть', async () => {
     const noAnalysis = await createVersion();
-    await claimWithBlock(noAnalysis, 'RESOLVED_VALID', { countryCode: 'fr' });
+    await claimWithBlock(noAnalysis, 'RESOLVED_VALID');
 
     const res = await request(http()).get('/analyses/claim-closures').expect(200);
     const items = res.body.items as Array<{ slugs: string[] }>;
     expect(items.filter((i) => i.slugs.includes(noAnalysis.bookSlug))).toEqual([
-      { slugs: [noAnalysis.bookSlug], language: 'en', countryCode: 'FR', expiresAt: null },
+      { slugs: [noAnalysis.bookSlug], language: 'en', countryCode: null, expiresAt: null },
     ]);
   });
 
@@ -797,7 +742,7 @@ describe('BookAnalysis e2e', () => {
 
   it('GET analyses/claim-closures: срок отдаётся датой, истёкший блок и книга без опубликованных версий не попадают', async () => {
     const dated = await versionWithAnalysis();
-    await claimWithBlock(dated, 'CLOSED', { countryCode: 'FR' });
+    await claimWithBlock(dated, 'CLOSED');
     const expiresAt = new Date(Date.now() + 86_400_000);
     await prisma.rightsClaimAccessBlock.updateMany({
       where: { bookVersionId: dated.versionId },
@@ -822,27 +767,30 @@ describe('BookAnalysis e2e', () => {
   });
 
   /**
-   * Решение арбитра `F03 | F03-2` (В5, а): привязка блока к цели одна на три места - ручка (451),
-   * счётчик `_count.analyses` и список закрытий для middleware. Разойдутся - карта сайта или
-   * middleware откроют анализ, который ручка закрывает.
+   * Решение арбитра `F03 | F03-2` (В5, а): привязка блока к цели одна на всех потребителей. С правилом
+   * владельца 07.11.2026 (`T163`) ручка и счётчик анализа блок не видят, а список закрытий (по нему
+   * middleware закрывает разделы пересказа) — видит при любой привязке блока к цели.
    */
   it.each([
     ['блок на книгу по bookId', { entireBook: true }, 'en'],
     ['блок версии по bookVersionId', {}, 'en'],
     ['блок с областью на книгу, привязанный только к версии', { entireBookOnVersion: true }, 'en'],
-  ] as const)('%s: ручка, счётчик и список закрытий согласны', async (_name, block, language) => {
-    const v = await versionWithAnalysis();
-    await claimWithBlock(v, 'CLOSED', block);
+  ] as const)(
+    '%s: анализ открыт и в счётчике, список закрытий его видит',
+    async (_name, block, language) => {
+      const v = await versionWithAnalysis();
+      await claimWithBlock(v, 'CLOSED', block);
 
-    await request(http()).get(`/versions/${v.versionId}/analysis`).expect(451);
-    const ov = await request(http()).get(`/en/books/${v.bookSlug}/overview`).expect(200);
-    expect(ov.body.versions[0]._count.analyses).toBe(0);
-    const list = await request(http()).get('/analyses/claim-closures').expect(200);
-    const items = (list.body.items as Array<{ slugs: string[]; language: string | null }>).filter(
-      (i) => i.slugs.includes(v.bookSlug),
-    );
-    expect(items).toEqual([expect.objectContaining({ language })]);
-  });
+      await request(http()).get(`/versions/${v.versionId}/analysis`).expect(200);
+      const ov = await request(http()).get(`/en/books/${v.bookSlug}/overview`).expect(200);
+      expect(ov.body.versions[0]._count.analyses).toBe(1);
+      const list = await request(http()).get('/analyses/claim-closures').expect(200);
+      const items = (list.body.items as Array<{ slugs: string[]; language: string | null }>).filter(
+        (i) => i.slugs.includes(v.bookSlug),
+      );
+      expect(items).toEqual([expect.objectContaining({ language })]);
+    },
+  );
 
   it('параллельные сохранения одной версии — одна строка и без 500', async () => {
     for (let i = 0; i < 10; i += 1) {

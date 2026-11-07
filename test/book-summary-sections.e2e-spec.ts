@@ -629,41 +629,35 @@ describe('BookSummary sections e2e', () => {
       await request(http()).get(`/versions/${v.versionId}/summary-sections/${n}`).expect(404);
     });
 
-    it('окончённая претензия по стране: 451 там (и на несуществующий номер), 200 вне, полный пересказ открыт', async () => {
+    // Правило владельца 07.11.2026 (`T163`, `LEGACY-490`): блок по стране разделы не закрывает нигде,
+    // включая страну блока, — ни страницу раздела, ни оглавление.
+    it('окончённая претензия по стране: раздел, оглавление и пересказ открыты и в стране блока', async () => {
       const v = await versionWithSections(2);
       await claimWithBlock(v, 'RESOLVED_VALID', 'GB');
-      await request(http())
-        .get(`/versions/${v.versionId}/summary-sections/1`)
-        .set('X-Geo-Country', 'GB')
-        .expect(451);
+      for (const country of ['GB', 'US']) {
+        const page = await request(http())
+          .get(`/versions/${v.versionId}/summary-sections/1`)
+          .set('X-Geo-Country', country)
+          .expect(200);
+        expect((page.body.sections as Array<{ number: number }>).map((s) => s.number)).toEqual([
+          1, 2,
+        ]);
+        const list = await request(http())
+          .get(`/versions/${v.versionId}/summary-sections`)
+          .set('X-Geo-Country', country)
+          .expect(200);
+        expect(list.body.sections).toHaveLength(2);
+      }
+      // Несуществующий номер в стране блока — 404, а не 451: блока для раздела нет.
       await request(http())
         .get(`/versions/${v.versionId}/summary-sections/99`)
         .set('X-Geo-Country', 'GB')
-        .expect(451);
-      // Вне страны блока раздел открыт со своей навигацией (`product.md` §2 п.7).
-      const outside = await request(http())
-        .get(`/versions/${v.versionId}/summary-sections/1`)
-        .set('X-Geo-Country', 'US')
-        .expect(200);
-      expect((outside.body.sections as Array<{ number: number }>).map((s) => s.number)).toEqual([
-        1, 2,
-      ]);
+        .expect(404);
       await request(http()).get(`/versions/${v.versionId}/summary-sections/1`).expect(200);
       await request(http())
         .get(`/versions/${v.versionId}/summary`)
         .set('X-Geo-Country', 'GB')
         .expect(200);
-      // Список для читателя — [] в любой стране (правило счётчика), модератору — всё.
-      const list = await request(http())
-        .get(`/versions/${v.versionId}/summary-sections`)
-        .set('X-Geo-Country', 'US')
-        .expect(200);
-      expect(list.body.sections).toEqual([]);
-      const editor = await request(http())
-        .get(`/versions/${v.versionId}/summary-sections`)
-        .set('Authorization', auth())
-        .expect(200);
-      expect(editor.body.sections).toHaveLength(2);
     });
 
     it('спор идёт — разделы открыты', async () => {
@@ -672,7 +666,7 @@ describe('BookSummary sections e2e', () => {
       await request(http()).get(`/versions/${v.versionId}/summary-sections/1`).expect(200);
     });
 
-    it('_count.summarySections в обзоре: число видимых, 0 без текста полного и при блоке', async () => {
+    it('_count.summarySections в обзоре: число видимых, 0 без текста полного и при блоке на весь мир', async () => {
       // Канонический адрес обзора — слаг версии (по слагу книги — 301 на него).
       const count = async (slug: string | null) => {
         const ov = await request(http()).get(`/en/books/${slug}/overview`).expect(200);
@@ -685,9 +679,10 @@ describe('BookSummary sections e2e', () => {
       await add(noText.versionId, section(1)).expect(200);
       expect(await count(noText.versionSlug)).toBe(0);
 
-      const blocked = await versionWithSections(2);
-      await claimWithBlock(blocked, 'CLOSED', 'DE');
-      expect(await count(blocked.versionSlug)).toBe(0);
+      // Блок по стране счётчик не обнуляет (правило владельца 07.11.2026, `T163`).
+      const countryBlocked = await versionWithSections(2);
+      await claimWithBlock(countryBlocked, 'CLOSED', 'DE');
+      expect(await count(countryBlocked.versionSlug)).toBe(2);
 
       const wholeBook = await versionWithSections(2);
       await claimWithBlock(wholeBook, 'RESOLVED_VALID', null, true);
@@ -696,6 +691,12 @@ describe('BookSummary sections e2e', () => {
         .get(`/versions/${wholeBook.versionId}/summary-sections`)
         .expect(200);
       expect(list.body.sections).toEqual([]);
+      // Модератору оглавление отдаётся и под блоком на весь мир — админка работает с разделами.
+      const editor = await request(http())
+        .get(`/versions/${wholeBook.versionId}/summary-sections`)
+        .set('Authorization', auth())
+        .expect(200);
+      expect(editor.body.sections).toHaveLength(2);
     });
 
     it('маршруты: GET summary-sections/<uuid> — модераторская ручка, не :lang', async () => {
@@ -792,8 +793,9 @@ describe('BookSummary sections e2e', () => {
       const noSeo = await versionWithSections(1, { language: lang });
       const noSlug = await versionWithSections(1, { language: lang, slug: null });
       const draft = await versionWithSections(1, { language: lang, status: 'draft' });
-      const claimed = await versionWithSections(1, { language: lang });
-      await claimWithBlock(claimed, 'RESOLVED_VALID', 'GB');
+      // Блок по стране версию из карты не убирает (правило владельца 07.11.2026, `T163`).
+      const countryClaimed = await versionWithSections(1, { language: lang });
+      await claimWithBlock(countryClaimed, 'RESOLVED_VALID', 'GB');
       const claimedBook = await versionWithSections(1, { language: lang });
       await claimWithBlock(claimedBook, 'CLOSED', null, true);
       const noText = await createVersion({ language: lang });
@@ -820,8 +822,10 @@ describe('BookSummary sections e2e', () => {
       expect(items).toHaveLength(total);
       const slugs = items.map((i) => i.slug);
       expect(new Set(slugs).size).toBe(slugs.length);
-      expect(slugs).toEqual(expect.arrayContaining([open.versionSlug, noSeo.versionSlug]));
-      for (const absent of [noSlug, draft, claimed, claimedBook, noText]) {
+      expect(slugs).toEqual(
+        expect.arrayContaining([open.versionSlug, noSeo.versionSlug, countryClaimed.versionSlug]),
+      );
+      for (const absent of [noSlug, draft, claimedBook, noText]) {
         expect(slugs).not.toContain(absent.versionSlug);
       }
       for (const { slug, expected } of withRobots) {

@@ -3365,7 +3365,7 @@
       "BookAnalysisClaimClosureDto": {
         "properties": {
           "countryCode": {
-            "description": "ISO country; null — worldwide",
+            "description": "ISO country; null — worldwide. Only worldwide blocks are listed, so always null",
             "nullable": true,
             "type": "string"
           },
@@ -43564,7 +43564,7 @@
             "description": ""
           }
         },
-        "summary": "Where book text is closed by active blocks of settled rights claims — the analysis and the summary sections (slugs, language, country, expiry only)",
+        "summary": "Where summary sections are closed by active worldwide blocks of settled rights claims (slugs, language, country — always null, expiry only)",
         "tags": [
           "analyses"
         ]
@@ -47527,7 +47527,7 @@
             "bearer": []
           }
         ],
-        "summary": "Get book analysis for a version (drafts and analyses without a core are visible to editors only; closed only by active rights-claim blocks of claims whose dispute is over)",
+        "summary": "Get book analysis for a version (drafts and analyses without a core are visible to editors only; rights-claim blocks do not close it)",
         "tags": [
           "analyses"
         ]
@@ -48255,7 +48255,7 @@
             "bearer": []
           }
         ],
-        "summary": "Public summary section page by number (451 under a settled rights claim, checked before existence)",
+        "summary": "Public summary section page by number (451 under a worldwide block of a settled rights claim, checked before existence)",
         "tags": [
           "summaries"
         ]
