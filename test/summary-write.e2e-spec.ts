@@ -21,11 +21,11 @@ import { grantStaffRoles } from './helpers/staff-roles';
 describe('Summary run «Write Summary» (e2e)', () => {
   const FAKE_KEY = 'sk-or-e2e-fake-key';
   const DOSSIER_MODEL = 'anthropic/claude-sonnet-5.5';
-  const AUTHOR = 'z-ai/glm-5.3';
-  const REVIEWER = 'openai/gpt-6-luna';
+  const AUTHOR = 'openai/gpt-6-luna';
+  const REVIEWER = 'anthropic/claude-haiku-5.5';
   /** Контекст авторов - 40 000 токенов: обычный раздел влезает, глава в 160 000 знаков - нет (Р4). */
   const AUTHOR_CONTEXT = 40_000;
-  const AUTHORS = [AUTHOR, 'qwen/qwen3.7-plus', 'openai/gpt-5.6-terra'];
+  const AUTHORS = [AUTHOR, 'z-ai/glm-5.3', 'qwen/qwen3.7-plus'];
   const priced = (id: string) => ({
     id,
     name: id,
@@ -37,6 +37,7 @@ describe('Summary run «Write Summary» (e2e)', () => {
     data: [
       DOSSIER_MODEL,
       AUTHOR,
+      'z-ai/glm-5.3',
       'qwen/qwen3.7-plus',
       'openai/gpt-5.6-terra',
       REVIEWER,

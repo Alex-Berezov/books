@@ -83,6 +83,7 @@ describe('Translation run (e2e)', () => {
       // Модели этапов раздела (`F06`): оценка с «Write Summary» берёт их цены (`F06-5`).
       'qwen/qwen3.7-plus',
       'openai/gpt-6-luna',
+      'anthropic/claude-haiku-5.5',
     ].map((id) => ({
       id,
       name: id,

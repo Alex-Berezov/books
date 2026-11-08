@@ -39,6 +39,7 @@ describe('Summary autostart from a translation run (e2e)', () => {
       'qwen/qwen3.7-plus',
       'openai/gpt-5.6-terra',
       'openai/gpt-6-luna',
+      'anthropic/claude-haiku-5.5',
       'deepseek/deepseek-v4-pro',
     ].map(priced),
   };
