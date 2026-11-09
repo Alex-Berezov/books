@@ -123,6 +123,9 @@ class SourcesOffline extends Error {
 
 /** Версий книги в выборке названий для проверки страниц источников: книга на пяти языках. */
 const NAME_VERSIONS_MAX = 10;
+/** Пауза перед повтором источников после 403/429, одна на шаг (`T165 | LEGACY-492`). */
+const REFUSAL_RETRY_PAUSE_MS = 2000;
+const waitMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 /** Причина блока шага 5, который сняла проверка источников (виден как `failedReason`). */
 export const EXTERNAL_UNVERIFIED = 'EXTERNAL_UNVERIFIED';
 
@@ -636,18 +639,21 @@ export class AnalysisWriteHandler {
 
 /**
  * Открытие источников шага 5 фетчером (`tech.md` §4, решение арбитра `F07 | F07-2a`): не больше
- * четырёх одновременно; разовый сбой канала или сервера (`NETWORK`, `TIMEOUT`, 5xx) - один повтор,
- * адрес - не больше двух запросов. Не открылась - отказ (`opened: false`), текст не хранится;
- * `transport` - отказ канала, а не адреса (`sourcesOffline`).
+ * четырёх одновременно; разовый сбой канала или сервера (`NETWORK`, `TIMEOUT`, 5xx) и отказ
+ * сайта 403/429 (решение арбитра `T165 | LEGACY-492`) - один повтор, адрес - не больше двух
+ * запросов. Перед повтором после 403/429 - одна пауза на шаг. Не открылась - отказ
+ * (`opened: false`), текст не хранится; `transport` - отказ канала, а не адреса (`sourcesOffline`).
  */
 export async function openSources(
   fetcher: Pick<SourceFetcherService, 'fetchMany'>,
   draft: StepDraft,
+  pause: (ms: number) => Promise<void> = waitMs,
 ): Promise<PageCheck[]> {
   const urls = (draft.blocks.sources ?? []).map((source) => source.url);
   const pages: SourceFetchResult[] = await fetcher.fetchMany(urls, new Map());
   const again = pages.flatMap((page, i) => (retryable(page) ? [i] : []));
   if (again.length > 0) {
+    if (again.some((i) => isSiteRefusal(pages[i]))) await pause(REFUSAL_RETRY_PAUSE_MS);
     const second = await fetcher.fetchMany(
       again.map((i) => urls[i]),
       new Map(),
@@ -665,13 +671,21 @@ export async function openSources(
   }));
 }
 
-/** Разовый сбой, который стоит повторить: канал или ответ сервера 5xx. */
+/**
+ * Отказ сайта 403/429: бывает и разовым (один адрес отвечает то 200, то 403, `LEGACY-492`), и
+ * постоянным - отличить их может только повтор.
+ */
+const isSiteRefusal = (page: SourceFetchResult): boolean =>
+  !page.ok && page.reason === 'HTTP_STATUS' && (page.status === 403 || page.status === 429);
+
+/** Разовый сбой, который стоит повторить: канал, ответ сервера 5xx или отказ 403/429. */
 const retryable = (page: SourceFetchResult): boolean =>
   !page.ok &&
   (page.reason === 'NETWORK' ||
     page.reason === 'TIMEOUT' ||
     page.reason === 'CONNECTION' ||
-    (page.reason === 'HTTP_STATUS' && (page.status ?? 0) >= 500));
+    (page.reason === 'HTTP_STATUS' && (page.status ?? 0) >= 500) ||
+    isSiteRefusal(page));
 
 /** Итог шага до записи: запись шага, блоки к записи, связи и выброшенные цитаты. */
 export interface StepRecord {

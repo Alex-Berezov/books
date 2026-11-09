@@ -22,6 +22,11 @@ export const MAX_PARALLEL = 4;
 // Таймаут общий на всю цепочку переходов: так сумма не растёт с числом переходов.
 export const CHAIN_TIMEOUT_MS = 10_000;
 
+// Имя, версия и контакт проекта: так требует правило User-Agent Wikimedia (`LEGACY-492`).
+// Контакт - ручная копия `contactGeneral` фронта (`lib/site/owner-contacts.ts`): менять вместе.
+const SOURCE_FETCH_USER_AGENT =
+  'BibliarisSourceFetcher/1.0 (https://bibliaris.com; support@bibliaris.com)';
+
 const ALLOWED_MIME = new Set(['text/html', 'text/plain']);
 
 class SourceFetchError extends Error {
@@ -114,7 +119,9 @@ export class SourceFetcherService {
     } catch (error) {
       const failure = error instanceof SourceFetchError ? error : new SourceFetchError('NETWORK');
       const reason = controller.signal.aborted ? 'TIMEOUT' : failure.reason;
-      this.logger.warn(`host=${host} reason=${reason}`);
+      // Код - только у отказа самого сервера: `CONTENT_TYPE status=200` читался бы как успех.
+      const statusPart = reason === 'HTTP_STATUS' ? ` status=${failure.status}` : '';
+      this.logger.warn(`host=${host} reason=${reason}${statusPart}`);
       return { ok: false, host, status: failure.status, reason, text: '' };
     } finally {
       clearTimeout(timer);
@@ -219,7 +226,7 @@ export class SourceFetcherService {
             Host: url.host,
             Accept: 'text/html, text/plain;q=0.9',
             'Accept-Encoding': 'gzip, br',
-            'User-Agent': 'BibliarisSourceFetcher/1.0',
+            'User-Agent': SOURCE_FETCH_USER_AGENT,
           },
           lookup: lookup as unknown as https.RequestOptions['lookup'],
           signal,

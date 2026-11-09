@@ -1,5 +1,10 @@
 import { Language } from '@prisma/client';
+import type { IncomingMessage, ServerResponse } from 'node:http';
+import * as https from 'node:https';
+import type { AddressInfo } from 'node:net';
+import { TEST_TLS_CERT, TEST_TLS_KEY } from '../../../common/testing/source-fetch-tls-spec';
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
+import { SourceFetcherService } from '../../source-fetch/source-fetcher.service';
 import { indexChapters } from '../draft-quality/quote-check';
 import { emptyAnalysisData, STEP_TARGETS } from './analysis-write.data';
 import { doneRecord, openSources, withStep } from './analysis-write.handler';
@@ -345,7 +350,7 @@ describe('step 5: the external blocks and the refs of the statements', () => {
   });
 });
 
-describe('openSources: one retry on a passing failure, never on a failure of the address', () => {
+describe('openSources: one retry on a passing failure or a refusal of the site, never on a failure of the address', () => {
   const page = (over: object) => ({
     ok: false,
     host: 'h',
@@ -402,10 +407,104 @@ describe('openSources: one retry on a passing failure, never on a failure of the
     expect(checks.map((c) => c.transport)).toEqual([true, false]);
   });
 
+  it('one pause per step, however many addresses were refused and whatever else failed', async () => {
+    const fetchMany = jest
+      .fn()
+      .mockResolvedValueOnce([
+        page({ reason: 'HTTP_STATUS', status: 403 }),
+        page({ reason: 'HTTP_STATUS', status: 503 }),
+        page({ reason: 'HTTP_STATUS', status: 429 }),
+      ])
+      .mockResolvedValueOnce([page({ ok: true }), page({ ok: true }), page({ ok: true })]);
+    const pause = jest.fn().mockResolvedValue(undefined);
+    await openSources({ fetchMany }, draftOf(3), pause);
+    expect(pause.mock.calls).toEqual([[2000]]);
+    expect(fetchMany).toHaveBeenCalledTimes(2);
+    expect(fetchMany.mock.calls[1][0]).toHaveLength(3);
+  });
+
+  it('the pause of the running code is real: the retry waits two seconds', async () => {
+    jest.useFakeTimers();
+    try {
+      const fetchMany = jest
+        .fn()
+        .mockResolvedValueOnce([page({ reason: 'HTTP_STATUS', status: 403 })])
+        .mockResolvedValueOnce([page({ ok: true })]);
+      const run = openSources({ fetchMany }, draftOf(1));
+      await jest.advanceTimersByTimeAsync(1999);
+      expect(fetchMany).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      await run;
+      expect(fetchMany).toHaveBeenCalledTimes(2);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('nothing to retry - one request per address', async () => {
     const fetchMany = jest.fn().mockResolvedValue([page({ ok: true, text: 'Book' })]);
     await openSources({ fetchMany }, draftOf(1));
     expect(fetchMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('openSources: a passing 403 of the site (LEGACY-492), real fetcher against a local server', () => {
+  let server: https.Server;
+  let port: number;
+  let answers: number[];
+  let seen: IncomingMessage[];
+
+  beforeAll(async () => {
+    const respond = (req: IncomingMessage, res: ServerResponse) => {
+      seen.push(req);
+      res.writeHead(answers.shift() ?? 500, { 'content-type': 'text/plain' });
+      res.end('Book');
+    };
+    server = https.createServer({ key: TEST_TLS_KEY, cert: TEST_TLS_CERT }, respond);
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    port = (server.address() as AddressInfo).port;
+  });
+
+  afterAll(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  beforeEach(() => {
+    seen = [];
+  });
+
+  const fetcher = () =>
+    new SourceFetcherService({
+      lookup: () => Promise.resolve([{ address: '127.0.0.1', family: 4 }]),
+      requestOptions: { ca: TEST_TLS_CERT },
+      allowPort: port,
+      allowBlockedAddresses: ['source.test'],
+      timeoutMs: 5000,
+    });
+  const draft = () =>
+    ({
+      blocks: { sources: [{ title: 'S', url: `https://source.test:${port}/page` }] },
+      themeLinks: null,
+      droppedQuotes: [],
+      fixes: [],
+    }) as never;
+
+  it.each([
+    ['403 then 200: the source is kept', [403, 200], 2, true, [2000]],
+    ['429 then 200: the source is kept', [429, 200], 2, true, [2000]],
+    ['403 twice: refused after one retry', [403, 403], 2, false, [2000]],
+    ['404: an address refusal is not retried', [404], 1, false, []],
+    ['503 then 200: retried without the pause', [503, 200], 2, true, []],
+  ])('%s', async (_name, statuses, requests, opened, pauses) => {
+    answers = [...statuses];
+    const pause = jest.fn().mockResolvedValue(undefined);
+    const [check] = await openSources(fetcher(), draft(), pause);
+    expect(seen).toHaveLength(requests);
+    expect(check.opened).toBe(opened);
+    // Ответ сайта - отказ адреса, а не канала: шаг из-за него на паузу не встаёт.
+    expect(check.transport).toBe(false);
+    expect(pause.mock.calls.map(([ms]) => ms as number)).toEqual(pauses);
   });
 });
 

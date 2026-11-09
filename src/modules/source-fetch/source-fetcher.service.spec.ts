@@ -448,13 +448,39 @@ describe('SourceFetcherService', () => {
         lines.push(String(message));
       });
       handler = (req, res) => {
-        res.writeHead(req.url?.startsWith('/bad') ? 404 : 200, { 'content-type': 'text/plain' });
+        res.writeHead(req.url?.startsWith('/bad') ? 404 : 200, {
+          'content-type': req.url?.startsWith('/image') ? 'image/png' : 'text/plain',
+        });
         res.end('СОДЕРЖИМОЕ-СТРАНИЦЫ');
       };
       const { service } = makeService();
       await service.fetchPage(url('/path/page?token=SECRET'));
       await service.fetchPage(url('/bad?token=SECRET'));
-      expect(lines).toEqual(['host=source.test status=200', 'host=source.test reason=HTTP_STATUS']);
+      // Код пишется только при отказе самого сервера: и без ответа, и при ответе 200 его нет.
+      await service.fetchPage('not-a-url');
+      await service.fetchPage(url('/image'));
+      expect(lines).toEqual([
+        'host=source.test status=200',
+        'host=source.test reason=HTTP_STATUS status=404',
+        'host= reason=URL_INVALID',
+        'host=source.test reason=CONTENT_TYPE',
+      ]);
+    });
+  });
+
+  describe('заголовки', () => {
+    it('User-Agent называет проект и контакт (правило Wikimedia, LEGACY-492)', async () => {
+      let userAgent: string | undefined;
+      handler = (req, res) => {
+        userAgent = req.headers['user-agent'];
+        res.writeHead(200, { 'content-type': 'text/plain' });
+        res.end('ok');
+      };
+      const { service } = makeService();
+      await service.fetchPage(url('/'));
+      expect(userAgent).toBe(
+        'BibliarisSourceFetcher/1.0 (https://bibliaris.com; support@bibliaris.com)',
+      );
     });
   });
 
