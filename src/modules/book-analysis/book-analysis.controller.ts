@@ -65,7 +65,7 @@ export class BookAnalysisController {
   @Put('versions/:bookVersionId/analysis')
   @ApiOperation({
     summary:
-      'Create or merge analysis for a version (JSON import format); dryRun=true writes nothing',
+      'Create or merge analysis for a version (JSON import format); dryRun=true writes nothing; 409 when the record is not what the tab saw (expectedUpdatedAt, expectedAbsent)',
   })
   @ApiOkResponse({ type: BookAnalysisSaveResponseDto })
   @ApiParam({ name: 'bookVersionId' })
@@ -77,6 +77,6 @@ export class BookAnalysisController {
     @Query() query: SaveBookAnalysisQueryDto,
     @Body() dto: UpdateBookAnalysisDto,
   ) {
-    return this.service.saveForVersion(bookVersionId, dto, query.dryRun === 'true');
+    return this.service.saveForVersion(bookVersionId, dto, query.dryRun === 'true', query);
   }
 }

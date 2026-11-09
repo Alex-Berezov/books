@@ -8,6 +8,11 @@ import { Language, Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { getSupportedLanguages } from '../../shared/language/language.util';
+import {
+  assertExpectedRowShape,
+  assertRowAsExpected,
+  type ExpectedRow,
+} from '../../shared/dto/expected-row.util';
 import { pickSlugOwner } from '../../shared/slug/book-slug-owner';
 import {
   BOOK_ANALYSIS_SELECT,
@@ -162,6 +167,7 @@ export class BookAnalysisService {
     bookVersionId: string,
     dto: UpdateBookAnalysisDto,
     dryRun: boolean,
+    expected: ExpectedRow = {},
   ): Promise<BookAnalysisSaveResponseDto> {
     const version = await this.prisma.bookVersion.findUnique({
       where: { id: bookVersionId },
@@ -183,7 +189,8 @@ export class BookAnalysisService {
       return { analysis: null, ...(await this.describe(this.prisma, bookVersionId, merged)) };
     }
 
-    const saved = await this.saveLocked(bookVersionId, dto, null);
+    assertExpectedRowShape(expected);
+    const saved = await this.saveLocked(bookVersionId, dto, null, expected);
     // Номера глав — после коммита и вне замка (F03-3): замок держит только «прочитал — слил —
     // записал», чтение глав версии запись не защищает и замок не удлиняет.
     const { row, ...summary } = saved;
@@ -212,6 +219,7 @@ export class BookAnalysisService {
     bookVersionId: string,
     dto: UpdateBookAnalysisDto,
     guard: null,
+    expected?: ExpectedRow,
   ): Promise<SavedAnalysis>;
   private saveLocked(
     bookVersionId: string,
@@ -222,6 +230,7 @@ export class BookAnalysisService {
     bookVersionId: string,
     dto: UpdateBookAnalysisDto,
     guard: BookAnalysisWriteGuard | null,
+    expected: ExpectedRow = {},
   ): Promise<SavedAnalysis | null> {
     try {
       return await this.prisma.$transaction(async (tx) => {
@@ -230,6 +239,8 @@ export class BookAnalysisService {
           where: { bookVersionId },
           select: BOOK_ANALYSIS_SELECT,
         });
+        // Сверка под замком: запись, пришедшая из второй вкладки или от хода, `updatedAt` уже сдвинула.
+        assertRowAsExpected(existing, expected, 'The analysis was changed by another editor');
         if (guard) {
           const stored = existing ? readStoredAnalysis(existing) : EMPTY_BOOK_ANALYSIS;
           if (!(await guard.allow(tx, stored))) return null;

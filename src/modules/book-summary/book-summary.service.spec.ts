@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -6,6 +6,7 @@ import { BookSummaryService } from './book-summary.service';
 
 interface SummaryDelegate {
   findFirst: jest.Mock;
+  findUnique: jest.Mock;
   create: jest.Mock;
   update: jest.Mock;
 }
@@ -24,6 +25,7 @@ interface PrismaStub {
 
 const summaryDelegate = (): SummaryDelegate => ({
   findFirst: jest.fn(),
+  findUnique: jest.fn(),
   create: jest.fn(),
   update: jest.fn(),
 });
@@ -189,6 +191,84 @@ describe('BookSummaryService', () => {
       data: { summary: 'UPD', hasText: true },
     });
     expect(tx.bookSummary.create).not.toHaveBeenCalled();
+  });
+
+  // LEGACY-496: пересказ успели изменить после того, как его видела вкладка, - 409, записи нет.
+  describe('expectedUpdatedAt', () => {
+    const stored = new Date('2026-10-17T00:00:00Z');
+
+    it('upsertForVersion: расхождение - 409 без записи', async () => {
+      prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1' });
+      tx.bookSummary.findFirst.mockResolvedValue({ id: 's1', updatedAt: stored });
+      await expect(
+        service.upsertForVersion(
+          'v1',
+          { summary: 'A' },
+          { expectedUpdatedAt: '2026-10-16T00:00:00.000Z' },
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.bookSummary.update).not.toHaveBeenCalled();
+    });
+
+    it('upsertForVersion: совпадение пишет, строки нет - сверять не с чем', async () => {
+      prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1' });
+      tx.bookSummary.findFirst.mockResolvedValue({ id: 's1', updatedAt: stored });
+      tx.bookSummary.update.mockResolvedValue({ id: 's1' });
+      await service.upsertForVersion(
+        'v1',
+        { summary: 'A' },
+        { expectedUpdatedAt: stored.toISOString() },
+      );
+      expect(tx.bookSummary.update).toHaveBeenCalledTimes(1);
+
+      tx.bookSummary.findFirst.mockResolvedValue(null);
+      tx.bookSummary.create.mockResolvedValue({ id: 's2' });
+      await service.upsertForVersion(
+        'v1',
+        { summary: 'A' },
+        { expectedUpdatedAt: stored.toISOString() },
+      );
+      expect(tx.bookSummary.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('upsertForVersion expectedAbsent: строка есть - 409 с кодом и записи нет, строки нет - создаётся', async () => {
+      prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1' });
+      tx.bookSummary.findFirst.mockResolvedValue({ id: 's1', updatedAt: stored });
+      await expect(
+        service.upsertForVersion('v1', { summary: 'A' }, { expectedAbsent: 'true' }),
+      ).rejects.toMatchObject({ response: { code: 'RECORD_CHANGED' } });
+      expect(tx.bookSummary.update).not.toHaveBeenCalled();
+      expect(tx.bookSummary.create).not.toHaveBeenCalled();
+
+      tx.bookSummary.findFirst.mockResolvedValue(null);
+      tx.bookSummary.create.mockResolvedValue({ id: 's2' });
+      await service.upsertForVersion('v1', { summary: 'A' }, { expectedAbsent: 'true' });
+      expect(tx.bookSummary.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('upsertForVersion: оба поля сразу - 400 без транзакции', async () => {
+      await expect(
+        service.upsertForVersion(
+          'v1',
+          { summary: 'A' },
+          { expectedAbsent: 'true', expectedUpdatedAt: stored.toISOString() },
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('upsertBrief: расхождение - 409 без записи, совпадение пишет', async () => {
+      prisma.bookVersion.findUnique.mockResolvedValue({ id: 'v1' });
+      tx.bookSummary.findUnique.mockResolvedValue({ id: 's1', hasText: true, updatedAt: stored });
+      await expect(
+        service.upsertBrief('v1', { brief: 'B' }, '2026-10-16T00:00:00.000Z'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.bookSummary.update).not.toHaveBeenCalled();
+
+      tx.bookSummary.update.mockResolvedValue({ id: 's1' });
+      await service.upsertBrief('v1', { brief: 'B' }, stored.toISOString());
+      expect(tx.bookSummary.update).toHaveBeenCalledTimes(1);
+    });
   });
 
   /**

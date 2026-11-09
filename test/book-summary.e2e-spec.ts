@@ -125,6 +125,59 @@ describe('BookSummary e2e', () => {
     expect(put2.body.summary).toBe('Updated summary');
   });
 
+  it('expectedUpdatedAt и expectedAbsent через HTTP: 409, запись цела, brief без expectedAbsent (LEGACY-496)', async () => {
+    // Своя версия: общая `versionId` держит текст, который ждут следующие тесты.
+    const book = await createBookFixture(prisma, `book-sum-expected-${Date.now()}`);
+    const own = await prisma.bookVersion.create({
+      data: {
+        bookId: book.id,
+        language: 'en',
+        title: 'Version For Expected Row',
+        author: 'Author',
+        description: 'Desc',
+        coverImageUrl: 'https://example.com/c.jpg',
+        type: 'text',
+        isFree: true,
+        status: 'published',
+      },
+    });
+    const send = (path: string, query: string, body: Record<string, unknown>) =>
+      request(http())
+        .put(`/versions/${own.id}/${path}${query}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send(body);
+
+    const saved = await send('summary', '', { summary: 'Seen' }).expect(200);
+    const seen = saved.body.updatedAt as string;
+    const stale = '2020-01-01T00:00:00.000Z';
+
+    const lost = await send('summary', `?expectedUpdatedAt=${stale}`, { summary: 'Lost' }).expect(
+      409,
+    );
+    expect(lost.body.code).toBe('RECORD_CHANGED');
+    await send('summary', '?expectedAbsent=true', { summary: 'Lost' }).expect(409);
+    const lostBrief = await send('summary/brief', `?expectedUpdatedAt=${stale}`, {
+      brief: 'Lost',
+    }).expect(409);
+    expect(lostBrief.body.code).toBe('RECORD_CHANGED');
+    const current = await request(http()).get(`/versions/${own.id}/summary`).expect(200);
+    expect(current.body.summary).toBe('Seen');
+    expect(current.body.brief).toBeNull();
+
+    await send('summary', '?expectedUpdatedAt=not-a-date', { summary: 'X' }).expect(400);
+    await send('summary/brief', '?expectedAbsent=true', { brief: 'X' }).expect(400);
+    await send('summary', `?expectedAbsent=true&expectedUpdatedAt=${seen}`, {
+      summary: 'X',
+    }).expect(400);
+    const fresh = await send('summary', `?expectedUpdatedAt=${seen}`, { summary: 'Fresh' }).expect(
+      200,
+    );
+    const brief = await send('summary/brief', `?expectedUpdatedAt=${fresh.body.updatedAt}`, {
+      brief: 'Short',
+    }).expect(200);
+    expect(brief.body.brief).toBe('Short');
+  });
+
   // Пустой редактор отдаёт `<p></p>`: такой пересказ вышел бы пустой индексируемой страницей.
   it('PUT rejects a summary without visible text', async () => {
     for (const summary of ['', '   ', '<p></p>', '<p>&nbsp;</p>', '<h2> </h2><p><br></p>']) {

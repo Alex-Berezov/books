@@ -359,6 +359,57 @@ describe('BookAnalysis e2e', () => {
     await put(versionId, { language: 'en' }, '?dryRun=yes').expect(400);
   });
 
+  it('expectedUpdatedAt: устаревший - 409 и запись цела, свежий и первое сохранение проходят (LEGACY-496)', async () => {
+    const { versionId } = await createVersion();
+    const stale = '2020-01-01T00:00:00.000Z';
+    // Строки ещё нет: сверять не с чем.
+    const first = await put(
+      versionId,
+      { language: 'en', mainIdea: 'First.' },
+      `?expectedUpdatedAt=${stale}`,
+    ).expect(200);
+    const seen = first.body.analysis.updatedAt as string;
+
+    await put(
+      versionId,
+      { language: 'en', mainIdea: 'Lost.' },
+      `?expectedUpdatedAt=${stale}`,
+    ).expect(409);
+    const kept = await prisma.bookAnalysis.findUniqueOrThrow({
+      where: { bookVersionId: versionId },
+    });
+    expect(kept.mainIdea).toBe('First.');
+
+    await put(
+      versionId,
+      { language: 'en', mainIdea: 'Second.' },
+      `?expectedUpdatedAt=${seen}`,
+    ).expect(200);
+    await put(versionId, { language: 'en' }, '?expectedUpdatedAt=not-a-date').expect(400);
+  });
+
+  it('expectedAbsent: строка есть - 409 и запись цела, строки нет - создаётся, с updatedAt или =false - 400 (LEGACY-496)', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, { language: 'en', mainIdea: 'A.' }, '?expectedAbsent=true').expect(200);
+    const lost = await put(
+      versionId,
+      { language: 'en', mainIdea: 'B.' },
+      '?expectedAbsent=true',
+    ).expect(409);
+    expect(lost.body.code).toBe('RECORD_CHANGED');
+    const kept = await prisma.bookAnalysis.findUniqueOrThrow({
+      where: { bookVersionId: versionId },
+    });
+    expect(kept.mainIdea).toBe('A.');
+
+    await put(
+      versionId,
+      { language: 'en' },
+      `?expectedAbsent=true&expectedUpdatedAt=${kept.updatedAt.toISOString()}`,
+    ).expect(400);
+    await put(versionId, { language: 'en' }, '?expectedAbsent=false').expect(400);
+  });
+
   it('черновик версии: аноним 404, редактор видит запись', async () => {
     const { versionId } = await createVersion({ status: 'draft' });
     await put(versionId, { language: 'en', ...core() }).expect(200);

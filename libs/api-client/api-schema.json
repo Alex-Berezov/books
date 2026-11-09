@@ -47545,7 +47545,27 @@
             }
           },
           {
-            "description": "Validate and merge exactly as a save would, write nothing, return hasCore and warnings (decision A3)",
+            "in": "query",
+            "name": "expectedUpdatedAt",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expectedAbsent",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Validate and merge exactly as a save would, write nothing, return hasCore and warnings (decision A3); expectedUpdatedAt and expectedAbsent are not checked",
             "in": "query",
             "name": "dryRun",
             "required": false,
@@ -47585,7 +47605,7 @@
             "bearer": []
           }
         ],
-        "summary": "Create or merge analysis for a version (JSON import format); dryRun=true writes nothing",
+        "summary": "Create or merge analysis for a version (JSON import format); dryRun=true writes nothing; 409 when the record is not what the tab saw (expectedUpdatedAt, expectedAbsent)",
         "tags": [
           "analyses"
         ]
@@ -48011,6 +48031,26 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "expectedUpdatedAt",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expectedAbsent",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true"
+              ],
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -48040,7 +48080,7 @@
             "bearer": []
           }
         ],
-        "summary": "Create or update summary for a version (upsert)",
+        "summary": "Create or update summary for a version (upsert); 409 when the summary is not what the tab saw (expectedUpdatedAt, expectedAbsent)",
         "tags": [
           "summaries"
         ]
@@ -48273,6 +48313,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "in": "query",
+            "name": "expectedUpdatedAt",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
           }
         ],
         "requestBody": {
@@ -48302,7 +48351,7 @@
             "bearer": []
           }
         ],
-        "summary": "Set the very short summary of a version (the key is required; null or \"\" clears it); 409 without a full summary",
+        "summary": "Set the very short summary of a version (the key is required; null or \"\" clears it); 409 without a full summary or when expectedUpdatedAt differs from the stored updatedAt",
         "tags": [
           "summaries"
         ]

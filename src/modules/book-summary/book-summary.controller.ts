@@ -7,6 +7,7 @@ import {
   Param,
   Post,
   Put,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -23,6 +24,10 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Role, Roles } from '../../common/decorators/roles.decorator';
+import {
+  ExpectedRowQueryDto,
+  ExpectedUpdatedAtQueryDto,
+} from '../../shared/dto/expected-updated-at-query.dto';
 import { BookSummaryService } from './book-summary.service';
 import { UpdateBookSummaryDto } from './dto/update-book-summary.dto';
 import { BookSummaryResponseDto } from './dto/book-summary-response.dto';
@@ -71,20 +76,27 @@ export class BookSummaryController {
   }
 
   @Put('versions/:bookVersionId/summary')
-  @ApiOperation({ summary: 'Create or update summary for a version (upsert)' })
+  @ApiOperation({
+    summary:
+      'Create or update summary for a version (upsert); 409 when the summary is not what the tab saw (expectedUpdatedAt, expectedAbsent)',
+  })
   @ApiOkResponse({ type: BookSummaryResponseDto })
   @ApiParam({ name: 'bookVersionId' })
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.Admin, Role.ContentManager)
-  upsert(@Param('bookVersionId') bookVersionId: string, @Body() dto: UpdateBookSummaryDto) {
-    return this.service.upsertForVersion(bookVersionId, dto);
+  upsert(
+    @Param('bookVersionId') bookVersionId: string,
+    @Query() query: ExpectedRowQueryDto,
+    @Body() dto: UpdateBookSummaryDto,
+  ) {
+    return this.service.upsertForVersion(bookVersionId, dto, query);
   }
 
   @Put('versions/:bookVersionId/summary/brief')
   @ApiOperation({
     summary:
-      'Set the very short summary of a version (the key is required; null or "" clears it); 409 without a full summary',
+      'Set the very short summary of a version (the key is required; null or "" clears it); 409 without a full summary or when expectedUpdatedAt differs from the stored updatedAt',
   })
   @ApiOkResponse({ type: BookSummaryResponseDto })
   @ApiParam({ name: 'bookVersionId' })
@@ -93,9 +105,10 @@ export class BookSummaryController {
   @Roles(Role.Admin, Role.ContentManager)
   upsertBrief(
     @Param('bookVersionId') bookVersionId: string,
+    @Query() query: ExpectedUpdatedAtQueryDto,
     @Body() dto: UpdateBookSummaryBriefDto,
   ): Promise<BookSummaryResponseDto> {
-    return this.service.upsertBrief(bookVersionId, dto);
+    return this.service.upsertBrief(bookVersionId, dto, query.expectedUpdatedAt);
   }
 
   // Литеральные пути выше параметрических (`route-order.spec.ts`): `…/delete` и `…/order` не

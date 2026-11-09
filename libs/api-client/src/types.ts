@@ -4440,7 +4440,7 @@ export interface paths {
     };
     /** Get book analysis for a version (drafts and analyses without a core are visible to editors only; rights-claim blocks do not close it) */
     get: operations['BookAnalysisController_get'];
-    /** Create or merge analysis for a version (JSON import format); dryRun=true writes nothing */
+    /** Create or merge analysis for a version (JSON import format); dryRun=true writes nothing; 409 when the record is not what the tab saw (expectedUpdatedAt, expectedAbsent) */
     put: operations['BookAnalysisController_save'];
     post?: never;
     delete?: never;
@@ -4529,7 +4529,7 @@ export interface paths {
     };
     /** Get book summary for a version (drafts are visible to editors only) */
     get: operations['BookSummaryController_get'];
-    /** Create or update summary for a version (upsert) */
+    /** Create or update summary for a version (upsert); 409 when the summary is not what the tab saw (expectedUpdatedAt, expectedAbsent) */
     put: operations['BookSummaryController_upsert'];
     post?: never;
     delete?: never;
@@ -4615,7 +4615,7 @@ export interface paths {
       cookie?: never;
     };
     get?: never;
-    /** Set the very short summary of a version (the key is required; null or "" clears it); 409 without a full summary */
+    /** Set the very short summary of a version (the key is required; null or "" clears it); 409 without a full summary or when expectedUpdatedAt differs from the stored updatedAt */
     put: operations['BookSummaryController_upsertBrief'];
     post?: never;
     delete?: never;
@@ -24470,7 +24470,9 @@ export interface operations {
   BookAnalysisController_save: {
     parameters: {
       query?: {
-        /** @description Validate and merge exactly as a save would, write nothing, return hasCore and warnings (decision A3) */
+        expectedUpdatedAt?: string;
+        expectedAbsent?: 'true';
+        /** @description Validate and merge exactly as a save would, write nothing, return hasCore and warnings (decision A3); expectedUpdatedAt and expectedAbsent are not checked */
         dryRun?: 'true' | 'false';
       };
       header?: never;
@@ -24731,7 +24733,10 @@ export interface operations {
   };
   BookSummaryController_upsert: {
     parameters: {
-      query?: never;
+      query?: {
+        expectedUpdatedAt?: string;
+        expectedAbsent?: 'true';
+      };
       header?: never;
       path: {
         bookVersionId: string;
@@ -24874,7 +24879,9 @@ export interface operations {
   };
   BookSummaryController_upsertBrief: {
     parameters: {
-      query?: never;
+      query?: {
+        expectedUpdatedAt?: string;
+      };
       header?: never;
       path: {
         bookVersionId: string;

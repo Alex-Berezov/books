@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -513,6 +514,82 @@ describe('BookAnalysisService', () => {
         }),
       );
       expect(prisma.bookAnalysis.create).not.toHaveBeenCalled();
+    });
+
+    // LEGACY-496: вторая вкладка или ход успели записать - запись целиком не затирается.
+    it('expectedUpdatedAt не равен текущему - 409 и записи нет', async () => {
+      tx.bookAnalysis.findUnique.mockResolvedValue(row());
+      await expect(
+        service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), false, {
+          expectedUpdatedAt: '2026-10-16T00:00:00.000Z',
+        }),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(tx.bookAnalysis.update).not.toHaveBeenCalled();
+      expect(tx.bookAnalysis.create).not.toHaveBeenCalled();
+    });
+
+    it('expectedUpdatedAt равен текущему - запись идёт, в другой тайм-зоне тот же момент', async () => {
+      tx.bookAnalysis.findUnique.mockResolvedValue(row());
+      tx.bookAnalysis.update.mockResolvedValue(row());
+      await service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), false, {
+        expectedUpdatedAt: '2026-10-17T03:00:00+03:00',
+      });
+      expect(tx.bookAnalysis.update).toHaveBeenCalledTimes(1);
+    });
+
+    it('строки ещё нет - первое сохранение со сверкой не отбивается', async () => {
+      tx.bookAnalysis.findUnique.mockResolvedValue(null);
+      tx.bookAnalysis.create.mockResolvedValue(row());
+      await service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), false, {
+        expectedUpdatedAt: '2026-10-16T00:00:00.000Z',
+      });
+      expect(tx.bookAnalysis.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('expectedAbsent: строка есть - 409 с кодом и записи нет, строки нет - создаётся', async () => {
+      tx.bookAnalysis.findUnique.mockResolvedValue(row());
+      await expect(
+        service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), false, { expectedAbsent: 'true' }),
+      ).rejects.toMatchObject({ response: { code: 'RECORD_CHANGED' } });
+      expect(tx.bookAnalysis.update).not.toHaveBeenCalled();
+
+      tx.bookAnalysis.findUnique.mockResolvedValue(null);
+      tx.bookAnalysis.create.mockResolvedValue(row());
+      await service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), false, {
+        expectedAbsent: 'true',
+      });
+      expect(tx.bookAnalysis.create).toHaveBeenCalledTimes(1);
+    });
+
+    it('expectedAbsent вместе с expectedUpdatedAt - 400 без транзакции', async () => {
+      await expect(
+        service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), false, {
+          expectedAbsent: 'true',
+          expectedUpdatedAt: '2026-10-16T00:00:00.000Z',
+        }),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('dryRun сверку не смотрит: оба поля сразу не отбиваются', async () => {
+      prisma.bookAnalysis.findUnique.mockResolvedValue(row());
+      const res = await service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), true, {
+        expectedAbsent: 'true',
+        expectedUpdatedAt: '2026-10-16T00:00:00.000Z',
+      });
+      expect(res.analysis).toBeNull();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('dryRun расхождение не сверяет', async () => {
+      prisma.bookAnalysis.findUnique.mockResolvedValue(row());
+      const res = await service.saveForVersion('v1', dto({ mainIdea: 'Idea' }), true, {
+        expectedUpdatedAt: '2026-10-16T00:00:00.000Z',
+      });
+      expect(res.analysis).toBeNull();
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      expect(tx.bookAnalysis.update).not.toHaveBeenCalled();
+      expect(tx.bookAnalysis.create).not.toHaveBeenCalled();
     });
 
     it('существующая запись с полным ядром — update по слитой записи и hasCore: true', async () => {
