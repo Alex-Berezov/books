@@ -1,11 +1,14 @@
 import { corpusChunks, parallelChapters } from '../../../common/testing/language-corpus';
+import { glossaryFor } from '../translate/translate-piece';
 import { sentencesOf } from './language-detector';
 import { lengthCorridor, textLength } from './length-corridors';
 import {
   checkMechanical,
   FOREIGN_SHARE_MAX,
   formFound,
+  glossaryExclusions,
   MechanicalInput,
+  nameEntriesOf,
   normalized,
 } from './mechanical-check';
 
@@ -288,5 +291,71 @@ describe('checkMechanical', () => {
     });
     expect(missed.nameMisses).toEqual(['john']);
     expect(missed.failures).toEqual([]);
+  });
+
+  describe('имена глоссария, совпавшие с обычным словом (LEGACY-491)', () => {
+    const well = { key: 'well', source: 'well', target: 'pozo' };
+    const bear = { key: 'bear', source: 'The Bear', target: 'Oso' };
+    const channel = { key: 'channel', source: 'the Channel', target: 'Mancha' };
+    const homonyms = 'It was all very well to bear all the labor and to find the channel.';
+    const misses = (
+      text: string,
+      glossary: MechanicalInput['glossary'],
+      overrides: Partial<MechanicalInput> = {},
+    ) =>
+      checkMechanical({
+        ...input(),
+        source: [{ n: 1, html: `<p>${text}</p>` }],
+        translated: [{ n: 1, text: 'Nadie dijo nada aquella noche en la casa.' }],
+        glossary,
+        ...overrides,
+      }).nameMisses;
+
+    it('наречие, глагол и нарицательное в исходнике именем не считаются', () => {
+      expect(misses(homonyms, [well, bear, channel])).toEqual([]);
+    });
+
+    it.each([
+      ['с заглавной внутри предложения', 'Then The Bear said nothing.'],
+      ['капсом', 'THE BEAR SAID NOTHING.'],
+      ['в начале предложения', 'Bear said nothing.'],
+    ])('имя %s остаётся промахом', (_name, text) => {
+      expect(misses(text, [bear])).toEqual(['bear']);
+    });
+
+    it('строчное слово записи с заглавной ищется без учёта регистра', () => {
+      const entry = { key: 'hotel', source: 'Hotel central', target: 'Palacio' };
+      expect(misses('We saw the Hotel Central.', [entry])).toEqual(['hotel']);
+    });
+
+    it('падеж склоняющегося исходника находится среди слов с заглавной', () => {
+      const anna = { key: 'anna', source: 'Анна', target: 'Inés' };
+      const ru = { sourceLanguage: 'ru' as const };
+      expect(misses('Письмо Анны пришло вечером.', [anna], ru)).toEqual(['anna']);
+      expect(misses('Письмо анны пришло вечером.', [anna], ru)).toEqual([]);
+    });
+
+    it('запись keepOriginal без заглавной по-прежнему исключается из доли чужого языка', () => {
+      const river = { key: 'river', source: 'river', target: 'river', keepOriginal: true };
+      expect(glossaryExclusions(nameEntriesOf([river])).has('river')).toBe(true);
+    });
+
+    it('запись идёт переводчику через glossaryFor, но в промахи не попадает', () => {
+      const names = nameEntriesOf(
+        glossaryFor(
+          {
+            entries: [
+              { ...well, kind: 'place' },
+              { ...bear, kind: 'character' },
+              { ...channel, kind: 'place' },
+            ],
+          },
+          { characters: [{ key: 'bear', name: 'The Bear', variants: ['Bear'], role: 'minor' }] },
+          homonyms,
+        ).entries,
+      );
+      expect(names.map((e) => e.key)).toEqual(['well', 'bear', 'channel']);
+      expect(misses(homonyms, names)).toEqual([]);
+    });
   });
 });

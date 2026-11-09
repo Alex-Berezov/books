@@ -63,13 +63,21 @@ export interface MechanicalResult {
   language: Language | null;
   foreignShare: number;
   lengthRatio: number | null;
-  /** Ключи записей глоссария, чья форма в переводе не нашлась (`formFound`) - вопрос сверке смысла. */
+  /**
+   * Ключи записей глоссария, встреченных в исходнике как имя (`nameInSource`), чья форма
+   * в переводе не нашлась (`formFound`) - вопрос сверке смысла.
+   */
   nameMisses: string[];
+}
+
+/** Текст без диакритики, апострофы к одному виду; регистр не трогает. */
+function unmarked(text: string): string {
+  return text.normalize('NFD').replace(/\p{M}/gu, '').replace(/[’‘]/g, "'");
 }
 
 /** Нижний регистр без диакритики: сравнение форм имён и служебных фраз. */
 export function normalized(text: string): string {
-  return text.toLowerCase().normalize('NFD').replace(/\p{M}/gu, '').replace(/[’‘]/g, "'");
+  return unmarked(text.toLowerCase());
 }
 
 /** Служебные слова пяти языков без диакритики: в форме имени это артикли и предлоги. */
@@ -81,13 +89,17 @@ const FUNCTION_WORDS_NORMALIZED = new Set([...FUNCTION_WORDS].map((w) => normali
  * словом не считается («Kurtz’s station» - «kurtz» и «station»): иначе «s» из «s’il» находит
  * форму в любом французском тексте (живой прогон F05-9).
  */
-function significantWords(form: string): string[] {
+function significantCasedWords(form: string): string[] {
   const words =
-    normalized(form)
-      .replace(/(\p{L})'s(?!\p{L})/gu, '$1')
+    unmarked(form)
+      .replace(/(\p{L})'s(?!\p{L})/giu, '$1')
       .match(/\p{L}+/gu) ?? [];
-  const named = words.filter((w) => !FUNCTION_WORDS_NORMALIZED.has(w));
+  const named = words.filter((w) => !FUNCTION_WORDS_NORMALIZED.has(w.toLowerCase()));
   return named.length > 0 ? named : words;
+}
+
+function significantWords(form: string): string[] {
+  return significantCasedWords(form).map((w) => w.toLowerCase());
 }
 
 /**
@@ -121,6 +133,39 @@ export function formFound(form: string, textWords: readonly string[], language: 
   return significantWords(form).every((nameWord) =>
     textWords.some((w) => wordForm(nameWord, w, inflecting)),
   );
+}
+
+const STARTS_CAPITALIZED = /^\p{Lu}/u;
+
+/** Слова исходника в нижнем регистре: все и только те, что написаны с заглавной. */
+interface SourceWords {
+  all: string[];
+  capitalized: string[];
+}
+
+function sourceWordsOf(text: string): SourceWords {
+  const words: string[] = unmarked(text).match(/\p{L}+/gu) ?? [];
+  return {
+    all: words.map((w) => w.toLowerCase()),
+    capitalized: words.filter((w) => STARTS_CAPITALIZED.test(w)).map((w) => w.toLowerCase()),
+  };
+}
+
+/**
+ * Встречена ли запись в исходнике как имя, а не как совпавшее с ней обычное слово (`LEGACY-491`,
+ * решение арбитра `T164`): запись без значимого слова с заглавной («well») именем не считается,
+ * слово записи с заглавной («The Bear») ищется только среди слов текста с заглавной первой буквы,
+ * поэтому капс и начало предложения - находка, а глагол «bear» - нет.
+ */
+function nameInSource(form: string, source: SourceWords, language: Language): boolean {
+  const words = significantCasedWords(form);
+  if (!words.some((w) => STARTS_CAPITALIZED.test(w))) return false;
+  const inflecting = INFLECTING.has(language);
+  return words.every((word) => {
+    const pool = STARTS_CAPITALIZED.test(word) ? source.capitalized : source.all;
+    const nameWord = word.toLowerCase();
+    return pool.some((w) => wordForm(nameWord, w, inflecting));
+  });
 }
 
 /**
@@ -302,12 +347,12 @@ export function checkMechanical(input: MechanicalInput): MechanicalResult {
     });
   }
 
-  const sourceWords = sourceNormalized.match(/\p{L}+/gu) ?? [];
+  const sourceWords = sourceWordsOf(sourceText);
   const translatedWords = translatedNormalized.match(/\p{L}+/gu) ?? [];
   const nameMisses = input.glossary
     .filter(
       (e) =>
-        formFound(e.source, sourceWords, input.sourceLanguage) &&
+        nameInSource(e.source, sourceWords, input.sourceLanguage) &&
         !formFound(e.target, translatedWords, input.targetLanguage),
     )
     .map((e) => e.key);
