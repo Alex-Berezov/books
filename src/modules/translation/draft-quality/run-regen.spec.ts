@@ -27,7 +27,11 @@ describe('acceptInTurn', () => {
       .mockRejectedValueOnce(new ConflictException({ code: 'C' }));
     const error = await failure(acceptInTurn(order([4, 7]), accept));
     expect(error).toBeInstanceOf(ConflictException);
-    expect((error as ConflictException).getResponse()).toEqual({ code: 'C', acceptedIndexes: [4] });
+    expect((error as ConflictException).getResponse()).toEqual({
+      code: 'C',
+      acceptedIndexes: [4],
+      stoppedIndex: 7,
+    });
   });
 
   it('the default (summary): 400 and 404 come out as they were - the same object, no acceptedIndexes', async () => {
@@ -46,7 +50,7 @@ describe('acceptInTurn', () => {
       acceptInTurn(order([2, 3]), accept, { anyHttp: true }),
     )) as BadRequestException;
     expect(error.getStatus()).toBe(400);
-    expect(error.getResponse()).toEqual({ code: 'B', acceptedIndexes: [2] });
+    expect(error.getResponse()).toEqual({ code: 'B', acceptedIndexes: [2], stoppedIndex: 3 });
     const boom = new Error('db');
     await expect(
       acceptInTurn(order([1]), jest.fn().mockRejectedValue(boom), { anyHttp: true }),

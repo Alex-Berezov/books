@@ -5166,6 +5166,8 @@ export interface components {
     AcceptSummaryItemDto: {
       /** @description The editor confirmed that the section moves to other reader chapters */
       confirmChapterChange?: boolean;
+      /** @description Analysis run only: the print of the proposal the editor looked at (`print` of GET items/:index); another proposal now - 409 ANALYSIS_PROPOSAL_CHANGED. Absent - no check */
+      expectedPrint?: string;
     };
     ActivityBookVersionDto: {
       author: string;
@@ -5745,6 +5747,8 @@ export interface components {
       faq: components['schemas']['BookAnalysisFaqDto'][] | null;
       keyQuotes: components['schemas']['BookAnalysisKeyQuoteDto'][] | null;
       misreadings: components['schemas']['BookAnalysisMisreadingDto'][] | null;
+      /** @description Print of this proposal (content and sources): the body of Accept returns it as expectedPrint, so a proposal regenerated elsewhere is not accepted unseen */
+      print: string;
       /** @description The sources block; for a regenerated step 5 block - its verified sources: those not saved yet (by url) are added to the saved ones by its Accept */
       sources: components['schemas']['BookAnalysisSourceDto'][] | null;
       style: components['schemas']['BookAnalysisStyleDto'][] | null;
@@ -16456,7 +16460,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (acceptedIndexes - what is written already). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; a refusal in the middle of the pass carries acceptedIndexes and stoppedIndex (the item the pass stopped on); ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (skipped - the items left as proposals before the stop). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code */
       409: {
         headers: {
           [name: string]: unknown;
@@ -16585,7 +16589,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors) */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint (it was regenerated); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors) */
       409: {
         headers: {
           [name: string]: unknown;

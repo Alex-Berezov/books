@@ -14,6 +14,7 @@ import {
   analysisDataJson,
   blockPrint,
   emptyAnalysisData,
+  proposalPrint,
   readAnalysisData,
   targetValue,
   ThemeLinks,
@@ -195,6 +196,74 @@ describe('AnalysisWriteFields.accept (F07-1b)', () => {
     expect(body.code).toBe('ANALYSIS_BLOCK_CHANGED');
     expect(h.db.stored.characters).toEqual([{ ...ANNA, description: 'raced' }]);
     expect(h.run().items[0].outcome).toBe('proposed');
+  });
+
+  describe('the print of the proposal the editor saw (T174, p.2)', () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, characters: EDITED };
+
+    it('the same proposal is accepted; without a print there is no check', async () => {
+      const shown = proposal(stored);
+      const h = harness(runData([shown]), stored);
+      await h.fields.accept(ROW, 0, proposalPrint(shown));
+      expect(h.run().items[0].outcome).toBe('accepted');
+      const old = harness(runData([proposal(stored)]), stored);
+      await old.fields.accept(ROW, 0);
+      expect(old.run().items[0].outcome).toBe('accepted');
+    });
+
+    it('another proposal at the read: 409 ANALYSIS_PROPOSAL_CHANGED, nothing is written', async () => {
+      const h = harness(runData([proposal(stored, [ANNA])]), stored);
+      const body = await h.codeOf(h.fields.accept(ROW, 0, proposalPrint(proposal(stored))));
+      expect(body.code).toBe('ANALYSIS_PROPOSAL_CHANGED');
+      expect(h.saveGuarded).not.toHaveBeenCalled();
+      expect(h.run().items[0].outcome).toBe('proposed');
+    });
+
+    it('the proposal changes between the read and the lock: allow refuses, the block stays', async () => {
+      // Источник уже сохранён: тело записи то же, пересборка не сработает, поймать может только
+      // сверка под замком.
+      const source = { title: 'T', url: 'https://example.org/a' };
+      const withSource = { ...stored, sources: [source] } as StoredBookAnalysis;
+      const shown = proposal(withSource);
+      const h = harness(runData([shown]), withSource, (db) => {
+        const pendingSources = [source] as never;
+        db.row.data = JSON.parse(
+          JSON.stringify(analysisDataJson(runData([{ ...shown, pendingSources }]))),
+        ) as unknown;
+      });
+      const body = await h.codeOf(h.fields.accept(ROW, 0, proposalPrint(shown)));
+      expect(body.code).toBe('ANALYSIS_PROPOSAL_CHANGED');
+      expect(h.db.stored.characters).toEqual(EDITED);
+      expect(h.written).toHaveLength(0);
+    });
+
+    it('new theme links with the same text are another proposal', () => {
+      expect(proposalPrint(proposal(stored))).not.toBe(
+        proposalPrint({ ...proposal(stored), pendingLinks: LINKS }),
+      );
+    });
+
+    it('new sources with the same text are another proposal', () => {
+      const source = { title: 'T', url: 'https://example.org/a' };
+      expect(proposalPrint(proposal(stored))).not.toBe(
+        proposalPrint({ ...proposal(stored), pendingSources: [source] as never }),
+      );
+    });
+
+    it('not a proposal and a regenerating block keep their own codes, a stale print does not hide them', async () => {
+      const decided = harness(
+        runData([item('characters', { hash: 'h', outcome: 'accepted' })]),
+        stored,
+      );
+      expect((await decided.codeOf(decided.fields.accept(ROW, 0, 'stale'))).code).toBe(
+        'ANALYSIS_ITEM_NOT_PROPOSED',
+      );
+      const regen = { operationId: 'op2', remark: null, pending: null, previous: null };
+      const busy = harness(runData([{ ...proposal(stored), regen }]), stored);
+      expect((await busy.codeOf(busy.fields.accept(ROW, 0, 'stale'))).code).toBe(
+        'ANALYSIS_REGEN_IN_PROGRESS',
+      );
+    });
   });
 
   it('a block that is not a proposal, a regenerating one and a run that is not ready are refused', async () => {

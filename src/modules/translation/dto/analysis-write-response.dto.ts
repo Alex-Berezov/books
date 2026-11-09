@@ -265,6 +265,13 @@ export class AnalysisWriteValueDto {
       'The sources block; for a regenerated step 5 block - its verified sources: those not saved yet (by url) are added to the saved ones by its Accept',
   })
   sources!: BookAnalysisSourceDto[] | null;
+
+  @ApiProperty({
+    type: String,
+    description:
+      'Print of this proposal (content and sources): the body of Accept returns it as expectedPrint, so a proposal regenerated elsewhere is not accepted unseen',
+  })
+  print!: string;
 }
 
 export class AnalysisWriteItemDto {

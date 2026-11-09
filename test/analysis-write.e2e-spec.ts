@@ -1118,6 +1118,7 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     themes: unknown[] | null;
     faq: unknown[] | null;
     sources: Array<{ title: string; url: string }> | null;
+    print: string;
   }
   const proposalOf = async (run: Run, item: Item, status = 200) =>
     (await auth(http().get(`/admin/content-drafts/${run.id}/items/${item.index}`)).expect(status))
@@ -1206,6 +1207,13 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     );
     await auth(http().post(`/admin/content-drafts/${run.id}/items/99/accept`))
       .send({})
+      .expect(400);
+    // Тело проверяется до ручки: у того же пункта без длинного отпечатка был бы 409 выше.
+    await auth(http().post(itemUrl(run, itemOf(run, 'style'), 'accept')))
+      .send({ expectedPrint: 'x'.repeat(65) })
+      .expect(400);
+    await auth(http().post(itemUrl(run, itemOf(run, 'style'), 'accept')))
+      .send({ expectedPrint: null })
       .expect(400);
   });
 
@@ -1379,7 +1387,16 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     expect(itemOf(after, 'facts.narrator').outcome).toBe('written');
     expect((await analysisOf(versionId))?.facts).toEqual(before?.facts);
 
-    await decide(after, 'characters', 'accept').expect(200);
+    // Отпечаток другого предложения: HTTP доносит его до сверки, ничего не записано (T174, п.2).
+    const stale = await auth(http().post(itemUrl(after, characters, 'accept')))
+      .send({ expectedPrint: '0'.repeat(64) })
+      .expect(409);
+    expect(stale.body.code).toBe('ANALYSIS_PROPOSAL_CHANGED');
+    expect((await analysisOf(versionId))?.characters).toEqual(before?.characters);
+
+    await auth(http().post(itemUrl(after, characters, 'accept')))
+      .send({ expectedPrint: shown.print })
+      .expect(200);
     const written = (await analysisOf(versionId))?.characters as Array<{ description: string }>;
     expect(written[0].description).toContain('Rewritten.');
   });

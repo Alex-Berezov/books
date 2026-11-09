@@ -13,8 +13,12 @@ export function httpCode(error: HttpException): string {
 }
 
 /** 409 с кодом в теле: объект, а не строка - иначе кода не видно (как `llmDisabled`). */
-export function llmTaskConflict(code: string, message: string): ConflictException {
-  return new ConflictException({ statusCode: 409, error: 'Conflict', message, code });
+export function llmTaskConflict(
+  code: string,
+  message: string,
+  extra: Record<string, unknown> = {},
+): ConflictException {
+  return new ConflictException({ ...extra, statusCode: 409, error: 'Conflict', message, code });
 }
 
 /** Аренда задачи ушла другому владельцу: попытка не делается, результат не пишется. */

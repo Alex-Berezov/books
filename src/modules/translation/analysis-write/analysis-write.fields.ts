@@ -19,6 +19,7 @@ import { blockOfPath, coreRemark } from './analysis-checks';
 import {
   ANALYSIS_BLOCK_CHANGED,
   ANALYSIS_ITEM_NOT_PROPOSED,
+  ANALYSIS_PROPOSAL_CHANGED,
   ANALYSIS_REGEN_IN_PROGRESS,
   CORE_STEP,
   ANALYSIS_WRITE_REFUSED,
@@ -34,6 +35,7 @@ import {
   blockOfTarget,
   blockPrint,
   factField,
+  proposalPrint,
   readAnalysisData,
   stableJson,
   StepFix,
@@ -87,6 +89,8 @@ export const analysisReadyGate: AnalysisGate = {
 
 const notProposed = () =>
   llmTaskConflict(ANALYSIS_ITEM_NOT_PROPOSED, 'The block is not a proposal');
+const proposalChanged = () =>
+  llmTaskConflict(ANALYSIS_PROPOSAL_CHANGED, 'The proposal changed: read it again');
 const regenInProgress = () =>
   llmTaskConflict(ANALYSIS_REGEN_IN_PROGRESS, 'This block is being regenerated');
 
@@ -839,13 +843,18 @@ export class AnalysisWriteFields {
   async accept(
     row: Pick<ContentDraft, 'id' | 'bookVersionId' | 'language'>,
     index: number,
+    expectedPrint?: string,
   ): Promise<void> {
     const gate = analysisReadyGate;
+    // Предложение уже не то, что видел редактор (`T174`, п.2): `hash` - про блок, а не про него.
+    const seen = (candidate: AnalysisItem) =>
+      expectedPrint === undefined || proposalPrint(candidate) === expectedPrint;
     for (let attempt = 0; attempt < PLAN_ATTEMPTS; attempt++) {
       const data = await this.read(row, gate);
       const item = data?.items[index];
       if (!data || !item || item.outcome !== 'proposed' || item.hash === null) throw notProposed();
       if (item.regen) throw regenInProgress();
+      if (!seen(item)) throw proposalChanged();
       const state = await this.state(this.prisma, row.bookVersionId);
       if (blockPrint(targetValue(state.stored, item.target)) !== item.hash) {
         throw blockChanged(targetValue(state.stored, item.target));
@@ -870,6 +879,7 @@ export class AnalysisWriteFields {
               throw notProposed();
             }
             if (proposal.regen) throw regenInProgress();
+            if (!seen(proposal)) throw proposalChanged();
             if (blockPrint(targetValue(before, item.target)) !== item.hash) {
               throw blockChanged(targetValue(before, item.target));
             }

@@ -364,6 +364,14 @@ export function stableJson(value: unknown): string {
 export const blockPrint = (value: unknown): string =>
   createHash('sha256').update(stableJson(value)).digest('hex');
 
+/** Отпечаток предложения: всё, что вносит его «Accept» - содержимое, источники, связи (`T174`, п.2). */
+export const proposalPrint = (item: AnalysisItem): string =>
+  blockPrint({
+    value: item.value,
+    sources: item.pendingSources ?? null,
+    links: item.pendingLinks ?? null,
+  });
+
 /** Шаг, который пишет темы и их связи с героями и цитатами (`themeLinks`). */
 export const THEMES_STEP = (Object.keys(STEP_TARGETS).map(Number) as AnalysisStepNumber[]).find(
   (step) => STEP_TARGETS[step].includes('themes'),

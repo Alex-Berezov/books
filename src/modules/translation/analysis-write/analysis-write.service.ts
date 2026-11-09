@@ -62,6 +62,7 @@ import {
   ANALYSIS_TARGETS,
   AnalysisWriteData,
   emptyAnalysisData,
+  proposalPrint,
   readAnalysisData,
   regenBase,
   THEMES_STEP,
@@ -332,13 +333,13 @@ export class AnalysisWriteService {
   }
 
   /** «Accept» предложения: в блок, если блок не меняли после предложения (`tech.md` §5). */
-  async accept(id: string, index: number): Promise<AnalysisWriteDto> {
+  async accept(id: string, index: number, expectedPrint?: string): Promise<AnalysisWriteDto> {
     const row = await this.row(id);
     const item = this.itemOf(row, readAnalysisData(row.data), index);
     if (item.regen) {
       throw llmTaskConflict(ANALYSIS_REGEN_IN_PROGRESS, 'This block is being regenerated');
     }
-    await this.fields.accept(row, index);
+    await this.fields.accept(row, index, expectedPrint);
     return this.get(id);
   }
 
@@ -401,7 +402,10 @@ export class AnalysisWriteService {
           if (!(error instanceof ConflictException)) throw error;
           // 409 хода, а не пункта: ход отбросили или он больше не `ready`.
           if ((await this.row(id)).status !== 'ready') {
-            throw llmTaskConflict(ANALYSIS_WRITE_NOT_READY, 'The analysis run is not ready');
+            // `skipped` - причины пунктов, пропущенных до обрыва: иначе они теряются (T174, п.1).
+            throw llmTaskConflict(ANALYSIS_WRITE_NOT_READY, 'The analysis run is not ready', {
+              skipped: reasons,
+            });
           }
           skipped.add(index);
           const code = httpCode(error);
@@ -606,6 +610,7 @@ function valueDto(item: AnalysisItem): AnalysisWriteValueDto | null {
     timeline: null,
     adaptations: null,
     sources: null,
+    print: proposalPrint(item),
   };
   // Перегенерированный блок шага 5 показывает и источники, которые его «Accept» добавит (`F07-2b`).
   const base = item.pendingSources?.length ? { ...empty, sources: item.pendingSources } : empty;

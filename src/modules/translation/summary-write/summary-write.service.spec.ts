@@ -68,6 +68,10 @@ describe('SummaryWriteService.acceptAll: отказ посреди', () => {
       .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(llmTaskConflict('SUMMARY_FIELD_CHANGED', 'changed'));
     const body = await refusal(service);
-    expect(body).toMatchObject({ code: 'SUMMARY_FIELD_CHANGED', acceptedIndexes: [0] });
+    expect(body).toMatchObject({
+      code: 'SUMMARY_FIELD_CHANGED',
+      acceptedIndexes: [0],
+      stoppedIndex: 1,
+    });
   });
 });

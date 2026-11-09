@@ -33,7 +33,7 @@ function setup(kind: Kind | Error) {
     analysis as unknown as AnalysisWriteService,
   );
   const calls = {
-    accept: () => controller.accept('d1', 2, { confirmChapterChange: true }),
+    accept: () => controller.accept('d1', 2, { confirmChapterChange: true, expectedPrint: 'p1' }),
     discardItem: () => controller.discardItem('d1', 2),
     regenerate: () => controller.regenerate('d1', 2, { remark: 'shorter' }, user),
     discardRun: () => controller.discardRun('d1'),
@@ -81,7 +81,7 @@ describe('ContentDraftController: the fork by the kind of the run (F07-1b)', () 
     await analysis.calls.accept();
     await analysis.calls.regenerate();
     expect(analysis.analysis.accept).toHaveBeenCalledTimes(1);
-    expect(analysis.analysis.accept).toHaveBeenCalledWith('d1', 2);
+    expect(analysis.analysis.accept).toHaveBeenCalledWith('d1', 2, 'p1');
     expect(analysis.analysis.regenerate).toHaveBeenCalledTimes(1);
     expect(analysis.analysis.regenerate).toHaveBeenCalledWith('d1', 2, 'shorter', 'u1');
   });

@@ -176,6 +176,8 @@ export async function acceptInTurn(
         const payload = {
           ...(typeof body === 'object' ? body : { message: body }),
           acceptedIndexes: [...accepted],
+          // На каком пункте встали: клиент не угадывает его по списку (T174, п.5).
+          stoppedIndex: index,
         };
         throw error instanceof ConflictException
           ? new ConflictException(payload)

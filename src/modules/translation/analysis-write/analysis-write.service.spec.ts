@@ -348,6 +348,29 @@ describe('AnalysisWriteService.acceptAll (F07-1b)', () => {
     expect(body).toMatchObject({ code: 'ANALYSIS_WRITE_NOT_READY', acceptedIndexes: [0] });
   });
 
+  it('a run that stops being ready mid-pass keeps the reasons of the items skipped before it (T174, p.1)', async () => {
+    const ready = rowOf([item('themes'), item('characters')]);
+    const s = setup(ready);
+    s.fields.accept
+      .mockRejectedValueOnce(llmTaskConflict('ANALYSIS_WRITE_REFUSED', 'refused'))
+      .mockRejectedValueOnce(llmTaskConflict('ANALYSIS_ITEM_NOT_PROPOSED', 'gone'));
+    s.prisma.contentDraft.findUnique
+      .mockResolvedValueOnce(ready)
+      .mockResolvedValueOnce(ready)
+      .mockResolvedValueOnce(ready)
+      .mockResolvedValueOnce(ready)
+      .mockResolvedValueOnce(rowOf([item('themes'), item('characters')], 'discarded'));
+    const body = (
+      (await s.service.acceptAll('d1').catch((e: unknown) => e)) as ConflictException
+    ).getResponse();
+    expect(body).toMatchObject({
+      code: 'ANALYSIS_WRITE_NOT_READY',
+      acceptedIndexes: [],
+      stoppedIndex: 1,
+      skipped: [{ index: 0, code: 'ANALYSIS_WRITE_REFUSED' }],
+    });
+  });
+
   it('links proposals born by an accepted theme (decision Б) are accepted in the same pass', async () => {
     const s = setup(rowOf([item('themes')]));
     let items = [item('themes')];
@@ -483,7 +506,7 @@ describe('AnalysisWriteService: the item routes (F07-1b)', () => {
     await service.discardItem('d1', 0);
     const row = rowOf([item('characters')]);
     expect(fields.accept).toHaveBeenCalledTimes(1);
-    expect(fields.accept).toHaveBeenCalledWith(row, 0);
+    expect(fields.accept).toHaveBeenCalledWith(row, 0, undefined);
     expect(fields.discardItem).toHaveBeenCalledTimes(1);
     expect(fields.discardItem).toHaveBeenCalledWith(row, 0);
     const regen = { operationId: 'op2', remark: null, pending: null, previous: null };
@@ -491,6 +514,18 @@ describe('AnalysisWriteService: the item routes (F07-1b)', () => {
     expect(codeOf(await busy.service.accept('d1', 0).catch((e: unknown) => e))).toBe(
       'ANALYSIS_REGEN_IN_PROGRESS',
     );
+  });
+});
+
+describe('AnalysisWriteService.accept: the print of the proposal (T174, p.2)', () => {
+  it('GET items/:index gives the print and Accept hands it to the fields', async () => {
+    const row = rowOf([item('characters', { value: [{ name: 'A' }] })]);
+    const { service, fields } = setup(row);
+    const { print } = await service.proposal('d1', 0);
+    expect(print).toMatch(/^[0-9a-f]{64}$/);
+    await service.accept('d1', 0, print);
+    expect(fields.accept).toHaveBeenCalledTimes(1);
+    expect(fields.accept).toHaveBeenCalledWith(row, 0, print);
   });
 });
 
@@ -777,6 +812,7 @@ describe('the content of a proposal (F07-1b, decision А: GET items/:index, not 
       themes: null,
       symbols: null,
       ...NO_LATER_BLOCKS,
+      print: expect.stringMatching(/^[0-9a-f]{64}$/) as unknown as string,
     });
     await expect(service.proposal('d1', 1)).resolves.toEqual({
       text: 'Third person',
@@ -786,6 +822,7 @@ describe('the content of a proposal (F07-1b, decision А: GET items/:index, not 
       themes: null,
       symbols: null,
       ...NO_LATER_BLOCKS,
+      print: expect.stringMatching(/^[0-9a-f]{64}$/) as unknown as string,
     });
   });
 
