@@ -131,6 +131,10 @@ export class TranslationCompareService {
       models: dto.models,
     });
     const id = await this.prisma.$transaction(async (tx) => {
+      // Замок строки версии, как у записи пересказа и анализа: два старта подряд встают в очередь,
+      // и второй видит строку первого. Без замка проверка через `tx` гонку не закрывает (`T176`).
+      await tx.$queryRaw`SELECT "id" FROM "BookVersion" WHERE "id" = ${versionId} FOR NO KEY UPDATE`;
+      await this.assertNotRunning(tx, versionId, dto);
       const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
       const row = await tx.translationCompare.create({
         data: {
@@ -148,6 +152,38 @@ export class TranslationCompareService {
       return row.id;
     }, COMPARE_TX_OPTIONS);
     return this.get(id);
+  }
+
+  /**
+   * Второй старт той же главы на тот же язык с тем же набором моделей, пока первое сравнение
+   * идёт или стоит на паузе, - отказ: иначе двойной щелчок оплачивает сравнение дважды. Другой
+   * набор моделей той же главы - законное параллельное сравнение (решение арбитра
+   * `T176 | F05-4b`).
+   */
+  private async assertNotRunning(
+    tx: Prisma.TransactionClient,
+    versionId: string,
+    dto: StartTranslationCompareDto,
+  ): Promise<void> {
+    // Тот же набор - каждая модель старта есть среди колонок и ни одной сверх них: модели в DTO
+    // уникальны (`@ArrayUnique`), колонка на модель одна. Одна строка, без выборки в память.
+    const same = await tx.translationCompare.findFirst({
+      where: {
+        bookVersionId: versionId,
+        chapterNumber: dto.chapterNumber,
+        language: dto.targetLanguage,
+        operation: { status: { in: ['active', 'paused'] } },
+        models: { every: { model: { in: dto.models } } },
+        AND: dto.models.map((model) => ({ models: { some: { model } } })),
+      },
+      select: { id: true },
+    });
+    if (same) {
+      throw llmTaskConflict(
+        'COMPARE_ALREADY_RUNNING',
+        'The same models are already being compared on this chapter and language',
+      );
+    }
   }
 
   async get(id: string): Promise<TranslationCompareDto> {

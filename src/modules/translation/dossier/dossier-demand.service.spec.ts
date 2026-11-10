@@ -66,6 +66,7 @@ function setup() {
   const prisma = {
     bookDossier: { findFirst: jest.fn(), findUnique: jest.fn(), create: jest.fn() },
     bookGlossary: { findUnique: jest.fn(), findMany: jest.fn().mockResolvedValue([]) },
+    bookDossierPart: { findFirst: jest.fn().mockResolvedValue(null) },
     llmOperation: { findUnique: jest.fn().mockResolvedValue(null), create: jest.fn() },
     translationRunLanguage: { findUnique: jest.fn() },
     $transaction: jest.fn(),
@@ -104,7 +105,7 @@ function setup() {
       estimates,
     ),
   );
-  return { service, prisma, llm, tasks, budget };
+  return { service, prisma, llm, tasks, budget, estimates };
 }
 
 const codeOf = async (p: Promise<unknown>): Promise<unknown> => {
@@ -243,6 +244,77 @@ describe('DossierDemandService.demandDossier', () => {
 
     expect(await codeOf(service.demandDossier('v1'))).toBe('DOSSIER_BUSY');
     expect(prisma.$transaction).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('DossierDemandService.demandDossier: a row closed by the start rule (T176)', () => {
+  const waiter = { operationId: 'w1', waitingFor: 'dos1' };
+  const tooLong = (patch: Record<string, unknown> = {}) =>
+    dossierRow({ status: 'failed', failedReason: 'DOSSIER_TOO_LONG', ...patch });
+
+  it('closed at the start (no operation, no parts) and still refused by the current settings: the waiter pauses STEP_FAILED', async () => {
+    const { service, prisma, tasks, estimates } = setup();
+    prisma.bookDossier.findFirst.mockResolvedValue(tooLong());
+    const refusing = jest.spyOn(estimates, 'findRefusingModel').mockResolvedValue('m1');
+
+    const demand = await service.demandDossier('v1', { waiter });
+
+    expect(demand).toMatchObject({ status: 'failed', fresh: true });
+    expect(prisma.bookDossierPart.findFirst).toHaveBeenCalledTimes(1);
+    expect(refusing).toHaveBeenCalledTimes(1);
+    expect(tasks.pauseOperation).toHaveBeenCalledTimes(1);
+    expect(tasks.pauseOperation).toHaveBeenCalledWith('w1', 'STEP_FAILED');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('closed at the start but the settings changed (no longer refused): the waiter builds a new generation', async () => {
+    const { service, prisma, tasks, estimates } = setup();
+    prisma.bookDossier.findFirst.mockResolvedValue(tooLong());
+    jest.spyOn(estimates, 'findRefusingModel').mockResolvedValue(null);
+    const tx = {
+      llmOperation: { create: jest.fn().mockResolvedValue({ id: 'op2' }) },
+      bookDossier: {
+        create: jest.fn().mockResolvedValue(dossierRow({ id: 'dos2', status: 'building' })),
+      },
+    };
+    prisma.$transaction.mockImplementation((fn: (t: typeof tx) => Promise<unknown>) => fn(tx));
+    prisma.llmOperation.findUnique.mockResolvedValue({
+      limitUsd: D('10'),
+      spentUsd: D('0'),
+      reservedUsd: D('0'),
+    });
+
+    const demand = await service.demandDossier('v1', { waiter });
+
+    expect(demand).toMatchObject({ status: 'wait' });
+    expect(tasks.pauseOperation).not.toHaveBeenCalled();
+    expect(tx.bookDossier.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('closed at a takeover (previous builder, takeovers 0) counts as closed at the start without reading parts', async () => {
+    const { service, prisma, tasks, estimates } = setup();
+    prisma.bookDossier.findFirst.mockResolvedValue(tooLong({ previousOperationId: 'old' }));
+    jest.spyOn(estimates, 'findRefusingModel').mockResolvedValue('m1');
+
+    await service.demandDossier('v1', { waiter });
+
+    expect(prisma.bookDossierPart.findFirst).not.toHaveBeenCalled();
+    expect(tasks.pauseOperation).toHaveBeenCalledTimes(1);
+    expect(tasks.pauseOperation).toHaveBeenCalledWith('w1', 'STEP_FAILED');
+  });
+
+  it('a row the builder ran on (it has parts) is the waiter refusal at once: the source is not read again', async () => {
+    const { service, prisma, tasks, estimates } = setup();
+    prisma.bookDossier.findFirst.mockResolvedValue(tooLong());
+    prisma.bookDossierPart.findFirst.mockResolvedValue({ dossierId: 'dos1' });
+    const refusing = jest.spyOn(estimates, 'findRefusingModel');
+
+    await service.demandDossier('v1', { waiter });
+
+    expect(tasks.pauseOperation).toHaveBeenCalledTimes(1);
+    expect(tasks.pauseOperation).toHaveBeenCalledWith('w1', 'STEP_FAILED');
+    expect(pagesMock).not.toHaveBeenCalled();
+    expect(refusing).not.toHaveBeenCalled();
   });
 });
 

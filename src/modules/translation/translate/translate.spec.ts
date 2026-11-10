@@ -469,6 +469,14 @@ describe('glossary findings of a translation answer (F05-4)', () => {
     };
     expect(glossaryFor(glossary, {}, 'she would like a little tea').entries).toEqual([]);
     expect(glossaryFor(glossary, {}, 'and li smiled').entries).toHaveLength(1);
+    // Без учёта диакритики: «Zoë» в глоссарии находится по «Zoe» в тексте и наоборот.
+    const accented = {
+      entries: [{ key: 'found:zoe', source: 'Zoë', target: 'Зоя' }],
+      address: [],
+      phrases: [],
+    };
+    expect(glossaryFor(accented, {}, 'then zoe left').entries).toHaveLength(1);
+    expect(glossaryFor(accented, {}, 'Then ZOË left').entries).toHaveLength(1);
     expect(
       glossaryFindingsOf({ glossaryFindings: [{ source: 'Li', target: 'Ли', kind: 'name' }] }),
     ).toEqual([{ source: 'Li', target: 'Ли', kind: 'name', note: '' }]);

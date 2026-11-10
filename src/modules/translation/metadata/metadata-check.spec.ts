@@ -195,6 +195,55 @@ describe('checkMetadata: the description takes only the language of the piece ch
   });
 });
 
+describe('metadataInputOf: glossary lookup over plain lines (T176)', () => {
+  const glossaryOf = (source: string) => ({
+    entries: [{ key: 'k', source, target: 'Цель', kind: 'person', keepOriginal: false, note: '' }],
+    address: [],
+    phrases: [],
+  });
+  const entries = (fields: MetadataSourceFields, glossary: unknown) =>
+    metadataInputOf(fields, { glossary, dossier: null }).input.glossary.entries;
+
+  it('finds a name split by markup in the title and in a chapter title', () => {
+    expect(
+      entries({ ...FIELDS, author: '', title: '<b>Li</b>ra' }, glossaryOf('Lira')),
+    ).toHaveLength(1);
+    const chapters = [{ number: 1, title: 'Ana<i>bel</i>' }];
+    expect(
+      entries({ ...FIELDS, author: '', chapterTitles: chapters }, glossaryOf('Anabel')),
+    ).toHaveLength(1);
+  });
+
+  it('passes the author to the model without markup', () => {
+    const { input } = metadataInputOf(
+      { ...FIELDS, author: '<b>John</b> Smith' },
+      { glossary: GLOSSARY, dossier: null },
+    );
+    expect(input.author).toBe('John Smith');
+  });
+
+  it('compares the author with the glossary form without markup in the target', () => {
+    const glossary = {
+      ...GLOSSARY,
+      entries: [{ ...GLOSSARY.entries[0], target: '<i>Juan Herrero</i>' }],
+    };
+    expect(remarks(answer(), source(FIELDS, glossary))).toEqual([]);
+  });
+
+  it('a name absent from the fields picks no entry; another author name is still a remark', () => {
+    expect(
+      entries({ ...FIELDS, author: '', title: '<b>Other</b> book' }, glossaryOf('Lira')),
+    ).toEqual([]);
+    const glossary = {
+      ...GLOSSARY,
+      entries: [{ ...GLOSSARY.entries[0], target: '<i>Juan Herrero</i>' }],
+    };
+    expect(remarks(answer({ author: 'Pedro Gómez' }), source(FIELDS, glossary))).toEqual([
+      'The author name must be exactly the glossary form: Juan Herrero.',
+    ]);
+  });
+});
+
 describe('metadataFormErrors', () => {
   const DESCRIPTION = metadataInputOf(FIELDS, { glossary: GLOSSARY, dossier: null }).input
     .description;

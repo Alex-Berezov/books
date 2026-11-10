@@ -1,6 +1,7 @@
 import { Language } from '@prisma/client';
 import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
 import { ChapterLayout } from '../chapter-blocks';
+import { normalized } from '../check/mechanical-check';
 import { ChapterChunk } from '../chunking/chapter-chunks';
 import { TRANSLATE_TAIL_MAX_CHARS } from './translate.constants';
 import { TranslatedBlock } from './translate.format';
@@ -73,11 +74,12 @@ function escapeRegExp(text: string): string {
 }
 
 /**
- * Встречено ли написание в тексте куска (`lower` - текст в нижнем регистре). Подстрокой - ради
+ * Встречено ли написание в тексте куска (`lower` - текст в нижнем регистре без диакритики,
+ * `normalized`, как у записи об авторе). Подстрокой - ради
  * словоформ («Анна» в «Анны»), короткое - целым словом.
  */
 function wordSeen(lower: string, word: string): boolean {
-  const needle = word.trim().toLowerCase();
+  const needle = normalized(word.trim());
   if (needle === '') return false;
   if (needle.length >= WHOLE_WORD_BELOW) return lower.includes(needle);
   return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(needle)}(?![\\p{L}\\p{N}])`, 'u').test(
@@ -96,7 +98,7 @@ export function glossaryFor(
 ): TranslateInput['glossary'] {
   const g = (glossary ?? {}) as GlossaryLike;
   const characters = ((dossier ?? {}) as DossierLike).characters ?? [];
-  const lower = text.toLowerCase();
+  const lower = normalized(text);
   const seen = (word: string) => wordSeen(lower, word);
   const main = new Set(characters.filter((c) => c.role === 'main').map((c) => c.key));
   const variants = new Map(characters.map((c) => [c.key, [c.name, ...c.variants]]));

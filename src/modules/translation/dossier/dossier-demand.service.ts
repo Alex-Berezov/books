@@ -344,10 +344,11 @@ export class DossierDemandService {
     waiter: DossierWaiter,
   ): Promise<boolean> {
     const own = waiter.waitingFor === row.id && fresh;
-    if (own && !(row.failedReason === DOSSIER_TOO_LONG && (await this.closedAtStart(row)))) {
-      return true;
-    }
-    return this.tooLongAgain(row, fresh);
+    // Куски читаются один раз на оба решения (`T176`).
+    const closed =
+      row.failedReason === DOSSIER_TOO_LONG && fresh ? await this.closedAtStart(row) : false;
+    if (own && !closed) return true;
+    return this.tooLongAgain(row, fresh, closed);
   }
 
   /**
@@ -357,9 +358,9 @@ export class DossierDemandService {
    * настройками этапа: это правило детерминировано, и смена одного `maxTokens` или контекста
    * модели его снимает (`T147`).
    */
-  private async tooLongAgain(row: BookDossier, fresh: boolean): Promise<boolean> {
+  private async tooLongAgain(row: BookDossier, fresh: boolean, closed: boolean): Promise<boolean> {
     if (row.failedReason !== DOSSIER_TOO_LONG || !fresh) return false;
-    if (await this.closedAtStart(row)) {
+    if (closed) {
       const { titles, entries } = await this.estimates.walkSource(
         row.sourceVersionId,
         () => undefined,

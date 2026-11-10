@@ -1906,7 +1906,7 @@ describe('Translation run (e2e)', () => {
       // Модель перевода запуска другого семейства - проверяющий находится.
       const other = await estimate({ languages: 'es', translateModel: ALT }).expect(200);
       const [es] = other.body.languages as Array<Record<string, string>>;
-      expect(new Prisma.Decimal(es.checkUsd).isPositive()).toBe(true);
+      expect(new Prisma.Decimal(es.checkUsd).gt(0)).toBe(true);
     });
     expect(
       await runsOf(
@@ -3081,9 +3081,9 @@ describe('Translation run (e2e)', () => {
     // Сверка смысла, итоговая проверка и поля версии - своими полями и в сумме языка (решения
     // арбитра `F05 | F05-5`, `F05 | F05-6`).
     for (const l of before.languages) {
-      expect(new Prisma.Decimal(l.checkUsd).isPositive()).toBe(true);
-      expect(new Prisma.Decimal(l.finalCheckUsd).isPositive()).toBe(true);
-      expect(new Prisma.Decimal(l.metadataUsd).isPositive()).toBe(true);
+      expect(new Prisma.Decimal(l.checkUsd).gt(0)).toBe(true);
+      expect(new Prisma.Decimal(l.finalCheckUsd).gt(0)).toBe(true);
+      expect(new Prisma.Decimal(l.metadataUsd).gt(0)).toBe(true);
       expect(sum([l.splitUsd, l.translateUsd, l.checkUsd, l.finalCheckUsd, l.metadataUsd])).toBe(
         new Prisma.Decimal(l.totalUsd).toString(),
       );
@@ -4722,7 +4722,7 @@ describe('Translation run (e2e)', () => {
     const ok = await estimate({ languages: 'es' }).expect(200);
     const [es] = ok.body.languages as Array<Record<string, string>>;
     const money = (v: string) => new Prisma.Decimal(v);
-    expect(money(es.finalCheckUsd).isPositive()).toBe(true);
+    expect(money(es.finalCheckUsd).gt(0)).toBe(true);
     expect(
       money(es.splitUsd)
         .add(es.translateUsd)
@@ -5068,7 +5068,7 @@ describe('Translation run (e2e)', () => {
           .query({ languages: 'es', translateModel }),
       ).expect(200);
       const [es] = ok.body.languages as Array<Record<string, string>>;
-      expect(new Prisma.Decimal(es.finalCheckUsd).isPositive()).toBe(true);
+      expect(new Prisma.Decimal(es.finalCheckUsd).gt(0)).toBe(true);
     }
   });
 

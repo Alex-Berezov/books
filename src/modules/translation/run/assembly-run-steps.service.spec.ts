@@ -10,6 +10,7 @@ import { SEAM_FINDING_CODES } from '../check/seam-check';
 import { AssemblyRunStepsService } from './assembly-run-steps.service';
 import { FinalCheckRunStepsService } from './final-check-run-steps.service';
 import { LanguageRow, RunStepSupportService } from './run-step-support.service';
+import { RUN_TX_OPTIONS } from './translation-run.constants';
 
 jest.mock('../check/independent-call', () => ({
   ...jest.requireActual<Record<string, unknown>>('../check/independent-call'),
@@ -139,7 +140,7 @@ describe('AssemblyRunStepsService: стыки моделью', () => {
   });
 
   it('ответ стыка - находка главы с моделью и ценой после продления аренды', async () => {
-    const { steps, tx, lease, ctx } = setup(null, null, pendingRow);
+    const { steps, db, tx, lease, ctx } = setup(null, null, pendingRow);
     callMock.mockResolvedValue({
       kind: 'answered',
       answer: { verdict: 'pass', problems: [] },
@@ -147,6 +148,8 @@ describe('AssemblyRunStepsService: стыки моделью', () => {
       costUsd: new Prisma.Decimal('0.02'),
     });
     await steps.assemblyStep(lang, ctx);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), RUN_TX_OPTIONS);
     expect(callMock).toHaveBeenCalledTimes(1);
     expect(lease.renewLease).toHaveBeenCalledTimes(1);
     expect(findingsMock).toHaveBeenCalledTimes(1);
@@ -186,8 +189,10 @@ describe('AssemblyRunStepsService: сборка главы', () => {
 
   it('глава с флагом - счётчик флагов глав языка той же транзакцией', async () => {
     assembleMock.mockReturnValue(flagged);
-    const { steps, tx, ctx } = setup({ number: 1 }, null);
+    const { steps, db, tx, ctx } = setup({ number: 1 }, null);
     await steps.assemblyStep(lang, ctx);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), RUN_TX_OPTIONS);
     expect(tx.translationChapter.createMany).toHaveBeenCalledTimes(1);
     expect(tx.translationChapter.createMany).toHaveBeenCalledWith({
       data: [expect.objectContaining({ status: 'flagged', seamIndex: null })],

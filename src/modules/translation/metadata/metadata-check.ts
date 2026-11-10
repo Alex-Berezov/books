@@ -136,8 +136,8 @@ export function checkMetadata(
     remarks.push(`The author name must be at most ${VERSION_AUTHOR_MAX_LENGTH} characters long.`);
   } else if (sourceAuthor !== '' && author === '') {
     remarks.push('The author name came back empty.');
-  } else if (entry && normalized(author) !== normalized(entry.target.trim())) {
-    remarks.push(`The author name must be exactly the glossary form: ${entry.target}.`);
+  } else if (entry && normalized(author) !== normalized(plainLine(entry.target))) {
+    remarks.push(`The author name must be exactly the glossary form: ${plainLine(entry.target)}.`);
   }
 
   const sourceBlocks = source.descriptionLayout.blocks

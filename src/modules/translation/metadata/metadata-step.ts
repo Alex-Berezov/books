@@ -65,10 +65,10 @@ export function metadataInputOf(
     .filter((b) => b.translatable)
     .map((b) => ({ n: b.n, kind: b.kind, html: b.html }));
   const text = [
-    fields.title,
+    plainLine(fields.title),
     plainLine(fields.author),
     ...description.map((b) => richHtmlText(b.html)),
-    ...fields.chapterTitles.map((c) => c.title),
+    ...fields.chapterTitles.map((c) => plainLine(c.title)),
   ].join('\n');
   const glossary = glossaryFor(context.glossary, context.dossier, text);
   const names: NameEntry[] = nameEntriesOf(glossary.entries);
@@ -77,7 +77,7 @@ export function metadataInputOf(
       sourceLanguage: fields.sourceLanguage,
       targetLanguage: fields.targetLanguage,
       title: fields.title,
-      author: fields.author,
+      author: plainLine(fields.author),
       description,
       chapterTitles: fields.chapterTitles,
       glossary,

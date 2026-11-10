@@ -6,7 +6,7 @@ import { addChapterFindings } from '../assemble/chapter-findings';
 import { callIndependent } from '../check/independent-call';
 import { finalCodeCheck } from '../final-check/final-check-code';
 import { FINAL_CHECK_STAGE, FINAL_FINDING_CODES } from '../final-check/final-check.constants';
-import { FINAL_CODE_TX_OPTIONS } from './translation-run.constants';
+import { FINAL_CODE_TX_OPTIONS, RUN_TX_OPTIONS } from './translation-run.constants';
 import { FinalCheckRunStepsService } from './final-check-run-steps.service';
 import { MetadataDraftRunStepsService } from './metadata-draft-run-steps.service';
 import { LanguageRow, RunStepSupportService } from './run-step-support.service';
@@ -180,7 +180,7 @@ describe('FinalCheckRunStepsService: проверка моделью', () => {
   );
 
   it('ответ модели - глава в состоянии языка с ценой и находка главы одной транзакцией', async () => {
-    const { steps, tx, ctx } = setup(chapterRow);
+    const { steps, db, tx, ctx } = setup(chapterRow);
     callMock.mockResolvedValue({
       kind: 'answered',
       answer: { verdict: 'pass', issues: [] },
@@ -188,6 +188,8 @@ describe('FinalCheckRunStepsService: проверка моделью', () => {
       costUsd: new Prisma.Decimal('0.03'),
     });
     await steps.finalCheckStep(lang(CODE_DONE), ctx);
+    expect(db.$transaction).toHaveBeenCalledTimes(1);
+    expect(db.$transaction).toHaveBeenCalledWith(expect.any(Function), RUN_TX_OPTIONS);
     expect(callMock).toHaveBeenCalledTimes(1);
     expect(tx.translationRunLanguage.updateMany).toHaveBeenCalledTimes(1);
     const written = (tx.translationRunLanguage.updateMany.mock.calls[0] as unknown[])[0] as {

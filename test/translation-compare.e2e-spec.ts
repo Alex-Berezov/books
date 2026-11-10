@@ -682,6 +682,48 @@ describe('Translation compare (e2e)', () => {
     ).toBe(0);
   });
 
+  it('two simultaneous starts of the same models on one chapter: one operation, the other 409 COMPARE_ALREADY_RUNNING (T176)', async () => {
+    const { ids } = await englishBook();
+    const versionId = ids.en as string;
+    const [first, second] = await Promise.all([start(versionId, {}), start(versionId, {})]);
+    expect([first.status, second.status].sort()).toEqual([202, 409]);
+    const refused = first.status === 409 ? first : second;
+    expect(refused.body).toMatchObject({ code: 'COMPARE_ALREADY_RUNNING' });
+    expect(
+      await prisma.llmOperation.count({ where: { kind: 'compare', bookVersionId: versionId } }),
+    ).toBe(1);
+    expect(await prisma.translationCompare.count({ where: { bookVersionId: versionId } })).toBe(1);
+  });
+
+  it('another set of models on the same chapter starts in parallel; a cancelled compare does not block a repeat (T176)', async () => {
+    const { ids } = await englishBook();
+    const versionId = ids.en as string;
+    const [one, other] = await Promise.all([
+      start(versionId, {}),
+      start(versionId, { models: [MODEL, THIRD] }),
+    ]);
+    expect([one.status, other.status]).toEqual([202, 202]);
+    // Набор шире идущего - другой набор, не дубль.
+    await start(versionId, { models: [MODEL, ALT, THIRD] }).expect(202);
+    await auth(http().post(`/admin/llm/operations/${one.body.operation.id}/cancel`)).expect(200);
+    await start(versionId, {}).expect(202);
+  });
+
+  it('a paused compare blocks the same set of models given in another order (T176)', async () => {
+    const { ids } = await englishBook();
+    const versionId = ids.en as string;
+    const first = await start(versionId, {}).expect(202);
+    const models = (first.body.results as Array<{ model: string }>).map((r) => r.model);
+    await prisma.llmOperation.update({
+      where: { id: first.body.operation.id as string },
+      data: { status: 'paused' },
+    });
+    const again = await start(versionId, { models: [...models].reverse() }).expect(409);
+    expect(again.body).toMatchObject({ code: 'COMPARE_ALREADY_RUNNING' });
+    const where = { bookVersionId: versionId, chapterNumber: 1 };
+    expect(await prisma.translationCompare.count({ where })).toBe(1);
+  });
+
   it('every model failed: the compare operation is failed, not done', async () => {
     const { ids } = await englishBook();
     answer = (name, body) =>
