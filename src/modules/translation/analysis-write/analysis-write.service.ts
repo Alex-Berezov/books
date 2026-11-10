@@ -23,7 +23,7 @@ import {
   DRAFT_LIMIT_TOO_LOW,
 } from '../content-draft/content-draft.constants';
 import { ContentDraftService, contextLimits } from '../content-draft/content-draft.service';
-import { htmlToParagraphs } from '../content-draft/content-draft.text';
+import { withChapterText } from '../content-draft/content-draft.text';
 import { DOSSIER_TOO_LONG } from '../dossier/dossier.constants';
 import {
   AnalysisAcceptAllDto,
@@ -35,11 +35,12 @@ import {
 } from '../dto/analysis-write-response.dto';
 import {
   acceptInTurn,
+  cancelRegens,
   regenFieldsOf,
   REGEN_OPERATION_PATH,
   regenOperationIds,
   RegenOperationState,
-  regenOperationStates,
+  waitingAndRegens,
 } from '../draft-quality/run-regen';
 import {
   ANALYSIS_REMARK_CODES,
@@ -56,6 +57,7 @@ import {
   ANALYSIS_WRITE_NOT_READY,
   NOT_REGENERABLE,
   REGENERABLE_STEPS,
+  PREVIOUS_BATCH,
 } from './analysis-write.constants';
 import {
   analysisDataJson,
@@ -68,6 +70,7 @@ import {
   regenBase,
   THEMES_STEP,
   withItem,
+  LIST_VALUE_TARGETS,
 } from './analysis-write.data';
 import { analysisEstimators } from './analysis-estimate';
 import { analysisReadyGate, AnalysisWriteFields } from './analysis-write.fields';
@@ -84,9 +87,6 @@ const KIND = 'analysis_write' as const;
 
 /** Проходов отмены хода, если перегенерацию начинают быстрее, чем отмена её снимает. */
 const DISCARD_ATTEMPTS = 3;
-
-/** Порция чтения прежних ходов на старте: выборка в память - с пределом строк, ходы - все. */
-const PREVIOUS_BATCH = 100;
 
 /**
  * Порядок «Accept all»: толкования (темы - до героев и цитат, чьи `themeKeys` на них ссылаются),
@@ -201,7 +201,7 @@ export class AnalysisWriteService {
     }
     // Перегенерации отброшенных ходов - после коммита нового хода, как у пересказа: старт не удался -
     // их оплаченная работа не снята; операция раньше замка анализа (`clearRegenMark`).
-    await this.cancelRegens(stale);
+    await cancelRegens(this.tasks, this.handler, stale);
     return this.get(id);
   }
 
@@ -235,7 +235,11 @@ export class AnalysisWriteService {
     for (let attempt = 0; attempt < DISCARD_ATTEMPTS; attempt++) {
       const row = await this.row(id);
       if (row.status === 'discarded') return this.get(id);
-      await this.cancelRegens(regenOperationIds(readAnalysisData(row.data).items));
+      await cancelRegens(
+        this.tasks,
+        this.handler,
+        regenOperationIds(readAnalysisData(row.data).items),
+      );
       if (row.status === 'building') {
         await this.tasks.cancelOperation(row.operationId, async (tx) => {
           await tx.contentDraft.updateMany({
@@ -263,15 +267,6 @@ export class AnalysisWriteService {
       ANALYSIS_REGEN_IN_PROGRESS,
       'A regeneration keeps starting: discard again',
     );
-  }
-
-  /** Перегенерации - каждая своей отменой со снятием отметки (операция раньше замка анализа). */
-  private async cancelRegens(operationIds: readonly string[]): Promise<void> {
-    for (const operationId of operationIds) {
-      await this.tasks.cancelOperation(operationId, (tx) =>
-        this.handler.clearRegenMark(operationId, tx),
-      );
-    }
   }
 
   /**
@@ -480,9 +475,9 @@ export class AnalysisWriteService {
       select: { language: true, title: true, author: true },
     });
     if (!version) throw new NotFoundException('Book version not found');
-    const chapters = (
-      await allChapters(this.prisma, versionId, { number: true, title: true, content: true })
-    ).filter((c) => htmlToParagraphs(c.content) !== '');
+    const chapters = withChapterText(
+      await allChapters(this.prisma, versionId, { number: true, title: true, content: true }),
+    );
     if (chapters.length === 0) {
       throw llmTaskConflict('SOURCE_HAS_NO_CHAPTERS', 'The version has no chapter text');
     }
@@ -524,16 +519,11 @@ export class AnalysisWriteService {
 
   private async toDto(row: ContentDraft & { operation: LlmOperation }): Promise<AnalysisWriteDto> {
     const data = readAnalysisData(row.data);
-    // Что ждёт строящийся ход и статус перегенераций - два независимых запроса вместе (как у пересказа).
-    const waiting = row.waitingFor && row.status === 'building' ? row.waitingFor : null;
-    const [glossary, regenOps] = await Promise.all([
-      waiting === null
-        ? null
-        : this.prisma.bookGlossary.findUnique({ where: { id: waiting }, select: { id: true } }),
-      regenOperationStates(this.prisma, regenOperationIds(data.items)),
-    ]);
-    const waitingFor: AnalysisWriteDto['waitingFor'] =
-      waiting === null ? null : glossary ? 'glossary' : 'dossier';
+    const { waitingFor, regenOps } = await waitingAndRegens(
+      this.prisma,
+      row,
+      regenOperationIds(data.items),
+    );
     return {
       id: row.id,
       bookVersionId: row.bookVersionId,
@@ -576,20 +566,6 @@ function reviewDto(review: AnalysisItem['review']) {
     ? { kind: review.kind, model: review.kind === 'answered' ? review.model : null }
     : null;
 }
-
-const LIST_VALUE_TARGETS = [
-  'characters',
-  'keyQuotes',
-  'style',
-  'themes',
-  'symbols',
-  'misreadings',
-  'discussionQuestions',
-  'faq',
-  'timeline',
-  'adaptations',
-  'sources',
-] as const;
 
 /**
  * Содержимое предложения для `GET items/:index`: ровно одно поле по виду блока; значение не той

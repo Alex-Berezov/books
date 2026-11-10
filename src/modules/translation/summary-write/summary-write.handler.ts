@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { ContentDraft, LlmOperation, LlmTask, Prisma } from '@prisma/client';
+import { PartContext } from '../draft-quality/draft-context';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { RICH_HTML_MAX_LENGTH } from '../../../shared/validators/rich-html.decorator';
 import { lockSummary } from '../../book-summary/book-summary-lock';
@@ -12,12 +13,14 @@ import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { runQualityLoop } from '../draft-quality/quality-loop';
 import {
   clearRegenMarkOf,
+  draftRowOf,
   regenResumeOf,
   runTaskInput,
   runTaskPayload,
 } from '../draft-quality/run-regen';
 import { ChapterIndex, indexChapters } from '../draft-quality/quote-check';
-import { PAUSE_BY_FAILURE } from '../pause-by-failure';
+import { failRun, finishRun, RunGone, stepGone } from '../draft-quality/run-steps';
+import { pauseOnFailure } from '../pause-by-failure';
 import { runStageModels } from '../run/run-models';
 import {
   DRAFT_INPUT_MISSING,
@@ -52,7 +55,6 @@ import {
   briefPart,
   fullPart,
   loopSpec,
-  PartContext,
   PartInput,
   RunPlanSection,
   runPlanOf,
@@ -110,7 +112,7 @@ export class SummaryWriteHandler {
 
   readonly handler: LlmTaskHandler = {
     run: (task, ctx) => this.run(task, ctx),
-    onFailed: (task, reason) => this.onFailed(task, reason),
+    onFailed: (task, reason) => pauseOnFailure(this.tasks, task, reason),
   };
 
   /**
@@ -142,10 +144,8 @@ export class SummaryWriteHandler {
   }
 
   private async run(task: LlmTask, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
-    const { draftId, index } = runTaskPayload(task);
-    const row = draftId
-      ? await this.prisma.contentDraft.findUnique({ where: { id: draftId } })
-      : null;
+    const { index } = runTaskPayload(task);
+    const row = await draftRowOf(this.prisma, task);
     if (!row || row.kind !== 'summary_write') {
       await this.tasks.completeOperation(task.operationId);
       return { kind: 'done' };
@@ -175,22 +175,22 @@ export class SummaryWriteHandler {
       );
     }
     const dossier = await this.prisma.bookDossier.findUnique({ where: { id: row.dossierId } });
-    if (!dossier) return this.fail(row, DRAFT_INPUT_MISSING);
+    if (!dossier) return failRun(this.tasks, row, DRAFT_INPUT_MISSING);
     const plan = runPlanOf(dossier.data);
-    if (plan.length === 0) return this.fail(row, DRAFT_NO_PLAN);
+    if (plan.length === 0) return failRun(this.tasks, row, DRAFT_NO_PLAN);
     const gate = runGate(row.operationId);
     const data = await this.fields.mutate(row, gate, (d) =>
       d.plannedSections === plan.length ? null : { ...d, plannedSections: plan.length },
     );
     // Строки нет или она уже не этой операции: операция закрывается, а не висит `active` (круг 5).
-    if (!data) return this.stepGone(row.operationId);
+    if (!data) return stepGone(this.tasks, row.operationId);
     // Текст, записанный в данные, но не дошедший до поля (обрыв между записями): дописать.
     for (const [i, item] of data.items.entries()) {
       if (item.outcome === 'waiting') await this.fields.settle(row, gate, i);
     }
     const context = await this.contextOf(row, dossier.data);
     const step = await this.nextPart(row, data, plan, context, null);
-    if (step === null) return this.finish(row);
+    if (step === null) return finishRun(this.tasks, row);
     return this.producePart(row, gate, runSlot, step, row.operationId, ctx, {
       replaceAt: null,
       regenIndex: null,
@@ -379,7 +379,7 @@ export class SummaryWriteHandler {
         : await this.loop(row, gate, slot, part, operationId, ctx);
     // Строка больше не принимает шаг этой операции (отброшена, перегенерацию сняли): операция
     // закрывается, а не остаётся `active` без задач (круг 4).
-    if (item === null) return this.stepGone(operationId);
+    if (item === null) return stepGone(this.tasks, operationId);
     await ctx.renewLease();
     let at = opts.replaceAt ?? step.index;
     let settle = item.verdict !== 'failed';
@@ -416,7 +416,7 @@ export class SummaryWriteHandler {
       }
       return next;
     });
-    if (!saved) return this.stepGone(operationId);
+    if (!saved) return stepGone(this.tasks, operationId);
     if (settle) await this.fields.settle(row, gate, at);
     return { kind: 'continue' };
   }
@@ -545,44 +545,11 @@ export class SummaryWriteHandler {
     return indexChapters(paragraphs);
   }
 
-  /** Шаг, который строка уже не принимает: операция закрывается (уже закрытая - без изменений). */
-  private async stepGone(operationId: string): Promise<LlmTaskStepResult> {
-    await this.tasks.completeOperation(operationId);
-    return { kind: 'done' };
-  }
-
-  /** Конец хода: `ready` вместе с концом операции; операция не идёт - ждёт «Continue». */
-  private async finish(row: ContentDraft): Promise<LlmTaskStepResult> {
-    await this.tasks.completeOperation(row.operationId, async (tx) => {
-      await tx.contentDraft.updateMany({
-        where: { id: row.id, status: 'building', operationId: row.operationId },
-        data: { status: 'ready', waitingFor: null },
-      });
-    });
-    return { kind: 'done' };
-  }
-
   private async finishRegen(operationId: string): Promise<LlmTaskStepResult> {
     // Отметка снимается в той же транзакции, что закрывает операцию: обрыв между ними не оставляет
     // операцию без отметки, которую «Continue» уже не найдёт (круг 4).
     await this.tasks.completeOperation(operationId, (tx) => this.clearRegenMark(operationId, tx));
     return { kind: 'done' };
-  }
-
-  /** Окончательный отказ хода: операция `failed`, ход `failed` с причиной одной записью. */
-  private async fail(row: ContentDraft, reason: string): Promise<LlmTaskStepResult> {
-    await this.tasks.failOperation(row.operationId, async (tx) => {
-      await tx.contentDraft.updateMany({
-        where: { id: row.id, status: 'building' },
-        data: { status: 'failed', failedReason: reason },
-      });
-    });
-    return { kind: 'done' };
-  }
-
-  /** Деньги и отказ провайдеров - пауза своей причиной, прочее - `STEP_FAILED` (продолжаемо). */
-  private async onFailed(task: LlmTask, reason: string): Promise<void> {
-    await this.tasks.pauseOperation(task.operationId, PAUSE_BY_FAILURE[reason] ?? 'STEP_FAILED');
   }
 }
 
@@ -628,12 +595,4 @@ const failedItem = (part: FailedPart): WriteItem => ({
 function tailTarget(target: SummaryTarget): 'full' | 'brief' {
   if (target === 'section') throw new Error('A section is not a tail part');
   return target;
-}
-
-/** Строка хода больше не принимает запись этой операции: цикл качества обрывается без вызовов. */
-class RunGone extends Error {
-  constructor() {
-    super('The summary run no longer takes this step');
-    this.name = 'RunGone';
-  }
 }

@@ -1,10 +1,9 @@
 import { Injectable } from '@nestjs/common';
-import { ContentDraft, LlmOperation, LlmTask, Prisma } from '@prisma/client';
+import { LlmOperation, LlmTask, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmOperationKindHandler } from '../../llm-worker/llm-operation-kind.registry';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
-import { PAUSE_BY_FAILURE } from '../pause-by-failure';
 import {
   DRAFT_CANCELLED,
   DRAFT_INPUT_MISSING,
@@ -12,7 +11,9 @@ import {
 } from './content-draft.constants';
 import { ContentDraftService, draftTaskInput } from './content-draft.service';
 import { summaryWriteTaskInput, SummaryWriteHandler } from '../summary-write/summary-write.handler';
-import { runTaskPayload } from '../draft-quality/run-regen';
+import { draftRowOf } from '../draft-quality/run-regen';
+import { failRun } from '../draft-quality/run-steps';
+import { pauseOnFailure } from '../pause-by-failure';
 import {
   AnalysisWriteHandler,
   analysisWriteTaskInput,
@@ -40,7 +41,7 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
 
   readonly handler: LlmTaskHandler = {
     run: (task) => this.run(task),
-    onFailed: (task, reason) => this.onFailed(task, reason),
+    onFailed: (task, reason) => pauseOnFailure(this.tasks, task, reason),
   };
 
   /**
@@ -84,8 +85,7 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
   }
 
   private async run(task: LlmTask): Promise<LlmTaskStepResult> {
-    const id = runTaskPayload(task).draftId;
-    const row = id ? await this.prisma.contentDraft.findUnique({ where: { id } }) : null;
+    const row = await draftRowOf(this.prisma, task);
     // Строки нет (версию удалили - каскад) или она уже не строится: делать нечего.
     if (!row || row.status !== 'building') {
       await this.tasks.completeOperation(task.operationId);
@@ -97,22 +97,6 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
       return { kind: 'done' };
     }
     // Ход своего вида задачей заготовки не строится (Л1 `F07-1a`): окончательный отказ.
-    return this.fail(row, DRAFT_INPUT_MISSING);
-  }
-
-  /** Окончательный отказ: операция `failed`, строка `failed` с причиной одной записью. */
-  private async fail(row: ContentDraft, reason: string): Promise<LlmTaskStepResult> {
-    await this.tasks.failOperation(row.operationId, async (tx) => {
-      await tx.contentDraft.updateMany({
-        where: { id: row.id, status: 'building' },
-        data: { status: 'failed', failedReason: reason },
-      });
-    });
-    return { kind: 'done' };
-  }
-
-  /** Деньги и отказ провайдеров - пауза своей причиной, прочее - `STEP_FAILED` (продолжаемо). */
-  private async onFailed(task: LlmTask, reason: string): Promise<void> {
-    await this.tasks.pauseOperation(task.operationId, PAUSE_BY_FAILURE[reason] ?? 'STEP_FAILED');
+    return failRun(this.tasks, row, DRAFT_INPUT_MISSING);
   }
 }

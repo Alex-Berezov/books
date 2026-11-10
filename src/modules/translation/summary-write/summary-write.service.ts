@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { ContentDraft, Language, LlmOperation, Prisma } from '@prisma/client';
+import { PartContext } from '../draft-quality/draft-context';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { lockSummary } from '../../book-summary/book-summary-lock';
 import { moneyUsd } from '../../llm/dto/llm-money';
@@ -26,10 +27,11 @@ import {
 import { htmlToParagraphs } from '../content-draft/content-draft.text';
 import {
   acceptInTurn,
+  cancelRegens,
   regenFieldsOf,
   regenOperationIds,
   RegenOperationState,
-  regenOperationStates,
+  waitingAndRegens,
 } from '../draft-quality/run-regen';
 import {
   SummaryWriteDto,
@@ -65,7 +67,6 @@ import {
   briefPart,
   fullPart,
   NO_QUOTES,
-  PartContext,
   partUsd,
   pipelineUsd,
   runPlanOf,
@@ -198,7 +199,7 @@ export class SummaryWriteService {
     // Перегенерации отброшенных ходов - после коммита нового хода: старт не удался - их оплаченная
     // работа не снята. Обрыв здесь оставляет операцию, которая сама кончится на условии строки
     // (ход уже не `ready`) или снимается со страницы операций.
-    await this.cancelRegens(stale);
+    await cancelRegens(this.tasks, this.handler, stale);
     return this.get(id);
   }
 
@@ -225,7 +226,7 @@ export class SummaryWriteService {
     const row = await this.row(id);
     // Сначала перегенерации (каждая со снятием своей отметки), потом сам ход: обрыв посреди не
     // оставляет операции перегенерации у отброшенного хода.
-    await this.cancelRegens(regenOperations(row.data));
+    await cancelRegens(this.tasks, this.handler, regenOperations(row.data));
     if (row.status === 'building') {
       await this.tasks.cancelOperation(row.operationId, async (tx) => {
         await tx.contentDraft.updateMany({
@@ -239,14 +240,6 @@ export class SummaryWriteService {
       data: { status: 'discarded' },
     });
     return this.get(id);
-  }
-
-  private async cancelRegens(operationIds: readonly string[]): Promise<void> {
-    for (const operationId of operationIds) {
-      await this.tasks.cancelOperation(operationId, (tx) =>
-        this.handler.clearRegenMark(operationId, tx),
-      );
-    }
   }
 
   /**
@@ -555,16 +548,11 @@ export class SummaryWriteService {
 
   private async toDto(row: ContentDraft & { operation: LlmOperation }): Promise<SummaryWriteDto> {
     const data = readWriteData(row.data);
-    // Что ждёт строящийся ход и статус перегенераций (F06-5c) - два независимых запроса вместе.
-    const waiting = row.waitingFor && row.status === 'building' ? row.waitingFor : null;
-    const [glossary, regenOps] = await Promise.all([
-      waiting === null
-        ? null
-        : this.prisma.bookGlossary.findUnique({ where: { id: waiting }, select: { id: true } }),
-      regenOperationStates(this.prisma, regenOperations(row.data)),
-    ]);
-    const waitingFor: SummaryWriteDto['waitingFor'] =
-      waiting === null ? null : glossary ? 'glossary' : 'dossier';
+    const { waitingFor, regenOps } = await waitingAndRegens(
+      this.prisma,
+      row,
+      regenOperations(row.data),
+    );
     return {
       id: row.id,
       bookVersionId: row.bookVersionId,

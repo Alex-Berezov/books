@@ -16,20 +16,6 @@ import { DraftRemark, DraftRemarkCode } from './text-checks';
  * не пропадает. Проверяющая выбирается по семейству **фактически ответившей** модели-автора.
  */
 
-/**
- * Коды, которые ставит проверяющая модель пересказа (§3): длину, строй, язык, цитаты и мусор ставит
- * код. Умолчание `QualityLoopSpec.reviewCodes`: у анализа `F07` свой набор (решение арбитра
- * `F07 | F07-1`, В2).
- */
-export const REVIEW_REMARK_CODES = [
-  'NAME_MISMATCH',
-  'FACT_UNSUPPORTED',
-  'EVENT_MISSING',
-  'EXTERNAL_FACT',
-  'ORDER_BROKEN',
-  'STYLE_POOR',
-] as const satisfies readonly DraftRemarkCode[];
-
 const str = 'string' as const;
 
 /**
@@ -46,9 +32,6 @@ export function reviewShapeOf(codes: readonly DraftRemarkCode[]): Shape {
     },
   };
 }
-
-/** Форма ответа проверяющей пересказа. */
-export const REVIEW_SHAPE: Shape = reviewShapeOf(REVIEW_REMARK_CODES);
 
 interface ReviewAnswer {
   verdict: 'ok' | 'remarks';
@@ -80,10 +63,10 @@ export interface QualityLoopSpec<T> {
   codeCheck: (draft: T) => DraftRemark[];
   reviewStage: string;
   /**
-   * Коды проверяющей: из них строится форма её ответа (`reviewShapeOf`). Нет - коды пересказа
-   * (`REVIEW_REMARK_CODES`); запрос `reviewRequest` строится той же формой.
+   * Коды проверяющей: из них строится форма её ответа (`reviewShapeOf`); запрос `reviewRequest`
+   * строится той же формой. Свои у пересказа (`SUMMARY_REVIEW_REMARK_CODES`) и анализа.
    */
-  reviewCodes?: readonly DraftRemarkCode[];
+  reviewCodes: readonly DraftRemarkCode[];
   reviewModels: StageModels;
   reviewRequest: (draft: T) => ShapedRequest;
   /**
@@ -169,7 +152,7 @@ export async function runQualityLoop<T>(
   spec: QualityLoopSpec<T>,
 ): Promise<QualityLoopResult<T>> {
   let costUsd = new Prisma.Decimal(0);
-  const reviewShape = spec.reviewCodes ? reviewShapeOf(spec.reviewCodes) : REVIEW_SHAPE;
+  const reviewShape = reviewShapeOf(spec.reviewCodes);
 
   const round = async (redo: Redo<T> | null, attempt: 1 | 2): Promise<Round<T> | null> => {
     const answer = await callShaped(

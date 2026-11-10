@@ -11,6 +11,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { CreateAuthorDto } from './dto/create-author.dto';
 import { UpdateAuthorDto } from './dto/update-author.dto';
 import { AdminAuditAction, AdminAuditTargetType, Language, Prisma } from '@prisma/client';
+import { compactBlock } from '../../shared/prisma/compact-block.util';
 import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service';
 import type { AuthorPhotoCreditDto as AuthorPhotoCredit } from './dto/author-page-blocks.dto';
 import { SlugRedirectService } from '../slug-redirect/slug-redirect.service';
@@ -61,7 +62,6 @@ import {
   PublicSimilarAuthor,
   canonicalJson,
   collectSlugRefs,
-  compactBlock,
   readStoredBlocks,
   sortByYear,
   StoredAuthorPageBlocks,

@@ -15,19 +15,21 @@ import {
   DRAFT_TOO_LONG,
 } from '../content-draft/content-draft.constants';
 import { ContentDraftService } from '../content-draft/content-draft.service';
-import { htmlToParagraphs } from '../content-draft/content-draft.text';
+import { htmlToParagraphs, withChapterText } from '../content-draft/content-draft.text';
 import { awaitDraftContext } from '../content-draft/draft-context-wait';
 import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { QualityLoopResult, runQualityLoop } from '../draft-quality/quality-loop';
 import {
   clearRegenMarkOf,
+  draftRowOf,
   regenResumeOf,
   runTaskInput,
   runTaskPayload,
 } from '../draft-quality/run-regen';
 import { indexChapters } from '../draft-quality/quote-check';
 import { DraftRemark } from '../draft-quality/text-checks';
-import { PAUSE_BY_FAILURE } from '../pause-by-failure';
+import { failRun, finishRun, RunGone, stepGone } from '../draft-quality/run-steps';
+import { pauseOnFailure } from '../pause-by-failure';
 import { runStageModels } from '../run/run-models';
 import { blockOfPath, stepDroppedQuotes } from './analysis-checks';
 import {
@@ -73,6 +75,7 @@ import {
   StepFix,
   StepSource,
   stepKey,
+  BLOCK_NAMES,
 } from './analysis-write.data';
 import {
   analysisRegenGate,
@@ -100,14 +103,6 @@ export const analysisWriteTaskInput = (
   index: number | null = null,
 ): EnqueueTaskInput => runTaskInput(ANALYSIS_WRITE_TASK_KIND, row, operationId, index);
 
-/** Строка хода больше не принимает запись этой операции: цикл качества обрывается без вызовов. */
-class RunGone extends Error {
-  constructor() {
-    super('The analysis run no longer takes this step');
-    this.name = 'RunGone';
-  }
-}
-
 type LoopDraft = Extract<QualityLoopResult<StepDraft>, { ok: true }>;
 
 /**
@@ -128,27 +123,6 @@ const REFUSAL_RETRY_PAUSE_MS = 2000;
 const waitMs = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 /** Причина блока шага 5, который сняла проверка источников (виден как `failedReason`). */
 export const EXTERNAL_UNVERIFIED = 'EXTERNAL_UNVERIFIED';
-
-/** Блоки, которые знает разбор места замечания (`where` начинается с пути поля). */
-const BLOCK_NAMES = new Set([
-  'facts',
-  'characters',
-  'keyQuotes',
-  'style',
-  'mainIdea',
-  'themes',
-  'symbols',
-  'titleMeaning',
-  'endingMeaning',
-  'misreadings',
-  'discussionQuestions',
-  'faq',
-  'context',
-  'timeline',
-  'reception',
-  'adaptations',
-  'sources',
-]);
 
 /**
  * Замечания блока: у замечания с путём поля - только своего блока (`facts.<подполе>` - своего
@@ -230,7 +204,7 @@ export class AnalysisWriteHandler {
 
   readonly handler: LlmTaskHandler = {
     run: (task, ctx) => this.run(task, ctx),
-    onFailed: (task, reason) => this.onFailed(task, reason),
+    onFailed: (task, reason) => pauseOnFailure(this.tasks, task, reason),
   };
 
   /**
@@ -270,8 +244,8 @@ export class AnalysisWriteHandler {
   }
 
   private async run(task: LlmTask, ctx: LlmTaskContext): Promise<LlmTaskStepResult> {
-    const { draftId: id, index } = runTaskPayload(task);
-    const row = id ? await this.prisma.contentDraft.findUnique({ where: { id } }) : null;
+    const { index } = runTaskPayload(task);
+    const row = await draftRowOf(this.prisma, task);
     if (index !== null) {
       if (!row || row.kind !== 'analysis_write') return this.finishRegen(task.operationId);
       return this.regenStep(row, index, task, ctx);
@@ -283,7 +257,7 @@ export class AnalysisWriteHandler {
       row.status !== 'building' ||
       row.operationId !== task.operationId
     ) {
-      return this.stepGone(task.operationId);
+      return stepGone(this.tasks, task.operationId);
     }
     if (!row.dossierId) {
       return awaitDraftContext(
@@ -297,13 +271,13 @@ export class AnalysisWriteHandler {
       );
     }
     const dossier = await this.prisma.bookDossier.findUnique({ where: { id: row.dossierId } });
-    if (!dossier) return this.fail(row, DRAFT_INPUT_MISSING);
+    if (!dossier) return failRun(this.tasks, row, DRAFT_INPUT_MISSING);
     const gate = analysisRunGate(row.operationId);
     try {
       return await this.runStep(row, gate, dossier.data, ctx);
     } catch (error) {
       // Версию удалили посреди записи (сервис анализа - 404): писать некуда.
-      if (error instanceof NotFoundException) return this.fail(row, DRAFT_INPUT_MISSING);
+      if (error instanceof NotFoundException) return failRun(this.tasks, row, DRAFT_INPUT_MISSING);
       throw error;
     }
   }
@@ -404,44 +378,45 @@ export class AnalysisWriteHandler {
     ctx: LlmTaskContext,
   ): Promise<LlmTaskStepResult> {
     let data = await this.fields.read(row, gate);
-    if (!data) return this.stepGone(row.operationId);
+    if (!data) return stepGone(this.tasks, row.operationId);
     // Запись шага не той формы: номер следующего шага не вывести, оплаченный шаг не повторяется.
-    if (data.stepsBroken) return this.fail(row, DRAFT_DATA_INVALID);
+    if (data.stepsBroken) return failRun(this.tasks, row, DRAFT_DATA_INVALID);
     // Итог шага сохранён, а запись не дошла (обрыв между записями): дописать.
     const waiting = [
       ...new Set(data.items.filter((i) => i.outcome === 'waiting').map((i) => i.step)),
     ];
     for (const step of waiting) {
       if ((await this.fields.settleStep(row, gate, step)) === 'gone') {
-        return this.stepGone(row.operationId);
+        return stepGone(this.tasks, row.operationId);
       }
     }
     data = await this.fields.read(row, gate);
-    if (!data) return this.stepGone(row.operationId);
+    if (!data) return stepGone(this.tasks, row.operationId);
     const step = data.steps.length + 1;
     if (step > data.stepsTotal) {
-      if ((await this.fields.markCore(row, gate)) === null) return this.stepGone(row.operationId);
-      return this.finish(row);
+      if ((await this.fields.markCore(row, gate)) === null)
+        return stepGone(this.tasks, row.operationId);
+      return finishRun(this.tasks, row);
     }
     const n = step as AnalysisStepNumber;
     const context = await this.contextOf(row, dossier, data);
     const record = await this.produceStep(row, gate, n, context, data.pending, ctx);
-    if (record === null) return this.stepGone(row.operationId);
+    if (record === null) return stepGone(this.tasks, row.operationId);
     await ctx.renewLease();
     const saved = await this.fields.mutate(row, gate, (current) =>
       current.steps.length + 1 === n ? withStep(current, record) : null,
     );
-    if (!saved) return this.stepGone(row.operationId);
+    if (!saved) return stepGone(this.tasks, row.operationId);
     // Шаг уже записан другой попыткой (аренда истекла посреди вызова): этот итог не пишется и не
     // решается - следующий шаг начнёт с записанного.
     if (!saved.written) return { kind: 'continue' };
     if ((await this.fields.settleStep(row, gate, n)) === 'gone') {
-      return this.stepGone(row.operationId);
+      return stepGone(this.tasks, row.operationId);
     }
     // Ядро - по записанному после шага 3 (`tech.md` §3, К5), а не в конце хода: шаги 4-5 его не
     // меняют, и плашка ядра видна, пока они идут.
     if (n === CORE_STEP && (await this.fields.markCore(row, gate)) === null) {
-      return this.stepGone(row.operationId);
+      return stepGone(this.tasks, row.operationId);
     }
     return { kind: 'continue' };
   }
@@ -596,7 +571,7 @@ export class AnalysisWriteHandler {
       author: version?.author ?? '',
       stored: state.stored,
       merged: data.merged,
-      chapters: chapters.filter((c) => htmlToParagraphs(c.content) !== ''),
+      chapters: withChapterText(chapters),
       otherKeys,
       originalLanguage: version?.originalLanguage ?? '',
       names: {
@@ -608,38 +583,6 @@ export class AnalysisWriteHandler {
         ),
       },
     };
-  }
-
-  private async stepGone(operationId: string): Promise<LlmTaskStepResult> {
-    await this.tasks.completeOperation(operationId);
-    return { kind: 'done' };
-  }
-
-  /** Конец хода: `ready` вместе с концом операции (В4). */
-  private async finish(row: ContentDraft): Promise<LlmTaskStepResult> {
-    await this.tasks.completeOperation(row.operationId, async (tx) => {
-      await tx.contentDraft.updateMany({
-        where: { id: row.id, status: 'building', operationId: row.operationId },
-        data: { status: 'ready', waitingFor: null },
-      });
-    });
-    return { kind: 'done' };
-  }
-
-  /** Окончательный отказ хода: операция `failed`, ход `failed` с причиной одной записью. */
-  private async fail(row: ContentDraft, reason: string): Promise<LlmTaskStepResult> {
-    await this.tasks.failOperation(row.operationId, async (tx) => {
-      await tx.contentDraft.updateMany({
-        where: { id: row.id, status: 'building' },
-        data: { status: 'failed', failedReason: reason },
-      });
-    });
-    return { kind: 'done' };
-  }
-
-  /** Деньги и отказ провайдеров - пауза своей причиной, прочее - `STEP_FAILED` (продолжаемо). */
-  private async onFailed(task: LlmTask, reason: string): Promise<void> {
-    await this.tasks.pauseOperation(task.operationId, PAUSE_BY_FAILURE[reason] ?? 'STEP_FAILED');
   }
 }
 

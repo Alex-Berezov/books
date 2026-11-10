@@ -39,6 +39,19 @@ export const SUMMARY_REMARK_CODES = [
 ] as const;
 
 /**
+ * Коды, которые ставит проверяющая модель пересказа (§3): длину, строй, язык, цитаты и мусор ставит
+ * код. У анализа `F07` свой набор (решение арбитра `F07 | F07-1`, В2).
+ */
+export const SUMMARY_REVIEW_REMARK_CODES = [
+  'NAME_MISMATCH',
+  'FACT_UNSUPPORTED',
+  'EVENT_MISSING',
+  'EXTERNAL_FACT',
+  'ORDER_BROKEN',
+  'STYLE_POOR',
+] as const satisfies readonly DraftRemarkCode[];
+
+/**
  * Все коды чистовика: коды пересказа и коды анализа `F07` (`features/F07-analysis-autofill/product.md`
  * §3.2, §3.4; решение арбитра `F07 | F07-1`, В2): код - `IMPORT_INVALID`, `CHAPTER_UNKNOWN`,
  * `LIMIT_OUT`, `CORE_MISSING`, проверяющая - `NOT_IN_TEXT` … `ONE_SIDED` и общий `STYLE_POOR`.

@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { compactBlock } from '../author/author-page-data';
+import { compactBlock } from '../../shared/prisma/compact-block.util';
 import { jsonField } from '../../shared/prisma/json-field.util';
 import type {
   BookAnalysisAdaptationDto,

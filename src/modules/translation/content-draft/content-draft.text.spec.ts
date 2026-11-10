@@ -1,4 +1,4 @@
-import { chaptersText, escapeHtml, htmlToParagraphs } from './content-draft.text';
+import { chaptersText, escapeHtml, htmlToParagraphs, withChapterText } from './content-draft.text';
 
 describe('content draft text', () => {
   it('htmlToParagraphs: saved rich HTML to paragraphs, headings kept, image attributes and empty blocks dropped', () => {
@@ -20,5 +20,15 @@ describe('content draft text', () => {
 
   it('escapeHtml: markup of the model is text', () => {
     expect(escapeHtml('a < b & <script>')).toBe('a &lt; b &amp; &lt;script&gt;');
+  });
+
+  it('withChapterText: chapters without visible text are dropped, order kept', () => {
+    const chapters = [
+      { number: 1, content: '<p>text</p>' },
+      { number: 2, content: '<p> </p>' },
+      { number: 3, content: '<img alt="only alt">' },
+      { number: 4, content: '<h2>Title</h2>' },
+    ];
+    expect(withChapterText(chapters).map((c) => c.number)).toEqual([1, 4]);
   });
 });

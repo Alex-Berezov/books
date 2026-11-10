@@ -1,8 +1,12 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
+import { oneOf, remarksReader, reviewReader, stringOf } from '../draft-quality/draft-record';
 import { isRecord } from '../../../shared/prisma/json-record.util';
-import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
-import { FillableFact } from '../content-draft/content-draft.analysis';
+import {
+  BOOK_ANALYSIS_BLOCK_KEYS,
+  type StoredBookAnalysis,
+} from '../../book-analysis/book-analysis-data';
+import { FillableFact } from './analysis-import';
 import { DRAFT_DATA_INVALID } from '../content-draft/content-draft.constants';
 import { ANALYSIS_STEPS, LEGACY_ANALYSIS_STEPS } from './analysis-write.constants';
 import { QualityLoopResume, ReviewState } from '../draft-quality/quality-loop';
@@ -391,40 +395,20 @@ export function blocksValue(blocks: StepBlocks, target: AnalysisTarget): unknown
   return blocks[target as keyof StepBlocks];
 }
 
-const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
-const oneOf = <T extends string>(list: readonly T[], v: unknown): T | null =>
-  typeof v === 'string' && (list as readonly string[]).includes(v) ? (v as T) : null;
 const stepOf = (v: unknown): AnalysisStepNumber | null =>
   v === 1 || v === 2 || v === 3 || v === 4 || v === 5 ? v : null;
 
-function remarkOf(v: unknown): DraftRemark[] {
-  if (!isRecord(v)) return [];
-  const code = oneOf<DraftRemarkCode>(DRAFT_REMARK_CODES, v.code);
-  const by = oneOf(['code', 'model'] as const, v.by);
-  const where = str(v.where);
-  const note = str(v.note);
-  return code && by && where !== null && note !== null ? [{ code, where, note, by }] : [];
-}
+const remarksOf = remarksReader(DRAFT_REMARK_CODES);
 
-const remarksOf = (v: unknown): DraftRemark[] => (Array.isArray(v) ? v.flatMap(remarkOf) : []);
-
-function reviewOf(v: unknown): ReviewState | null {
-  if (!isRecord(v)) return null;
-  const kind = oneOf(ANALYSIS_REVIEW_KINDS, v.kind);
-  if (kind === 'answered') {
-    const model = str(v.model);
-    return model === null ? null : { kind, model };
-  }
-  return kind === null ? null : { kind };
-}
+const reviewOf = reviewReader(ANALYSIS_REVIEW_KINDS);
 
 function fixesOf(v: unknown): StepFix[] {
   if (!Array.isArray(v)) return [];
   return v.flatMap((f) => {
     if (!isRecord(f)) return [];
     const code = oneOf(STEP_FIX_CODES, f.code);
-    const path = str(f.path);
-    const note = str(f.note);
+    const path = stringOf(f.path);
+    const note = stringOf(f.note);
     return code && path !== null && note !== null ? [{ code, path, note }] : [];
   });
 }
@@ -433,8 +417,8 @@ function droppedOf(v: unknown): Array<Omit<DroppedQuote, 'step'>> {
   if (!Array.isArray(v)) return [];
   return v.flatMap((d) => {
     if (!isRecord(d)) return [];
-    const path = str(d.path);
-    const text = str(d.text);
+    const path = stringOf(d.path);
+    const text = stringOf(d.text);
     const reason = oneOf(QUOTE_CHECK_REASONS, d.reason);
     const chapter = Number.isInteger(d.chapter) ? (d.chapter as number) : null;
     return path !== null && text !== null && reason ? [{ path, text, chapter, reason }] : [];
@@ -533,8 +517,8 @@ function droppedSourcesOf(v: unknown): DroppedSource[] {
   if (!Array.isArray(v)) return [];
   return v.flatMap((d) => {
     if (!isRecord(d)) return [];
-    const title = str(d.title);
-    const host = str(d.host);
+    const title = stringOf(d.title);
+    const host = stringOf(d.host);
     const reason = oneOf(['SOURCE_UNREACHABLE', 'SOURCE_UNRELATED'] as const, d.reason);
     return title !== null && host !== null && reason ? [{ title, host, reason }] : [];
   });
@@ -554,10 +538,10 @@ function stepDraftOf(v: unknown): StepDraft | null {
 
 function pendingOf(v: unknown): PendingStep | null {
   if (!isRecord(v) || !isRecord(v.resume)) return null;
-  const key = str(v.key);
-  const operationId = str(v.operationId);
+  const key = stringOf(v.key);
+  const operationId = stringOf(v.operationId);
   const draft = stepDraftOf(v.resume.draft);
-  const authorModel = str(v.resume.authorModel);
+  const authorModel = stringOf(v.resume.authorModel);
   const attempt = v.resume.attempt === 1 || v.resume.attempt === 2 ? v.resume.attempt : null;
   if (key === null || operationId === null || draft === null || !authorModel || !attempt) {
     return null;
@@ -589,8 +573,8 @@ function stepRecordOf(v: unknown): AnalysisStep[] {
       remarks: remarksOf(v.remarks),
       attempt: v.attempt === 2 ? 2 : 1,
       outcome,
-      failedReason: str(v.failedReason),
-      authorModel: str(v.authorModel),
+      failedReason: stringOf(v.failedReason),
+      authorModel: stringOf(v.authorModel),
       review: reviewOf(v.review),
       source: oneOf(STEP_SOURCES, v.source),
       dropped: fixesOf(v.dropped),
@@ -631,12 +615,12 @@ function itemOf(v: unknown): AnalysisItem {
     remarks: remarksOf(v.remarks),
     review: reviewOf(v.review),
     outcome,
-    hash: str(v.hash),
+    hash: stringOf(v.hash),
     value: v.value ?? null,
-    failedReason: str(v.failedReason),
+    failedReason: stringOf(v.failedReason),
     links: v.links === true,
     regen: regenOf(v.regen),
-    regenFailedReason: str(v.regenFailedReason),
+    regenFailedReason: stringOf(v.regenFailedReason),
     pendingDropped: Array.isArray(v.pendingDropped) ? droppedQuotesOf(v.pendingDropped) : null,
     pendingLinks: linksOf(v.pendingLinks),
     pendingSources: sourceListOf(v.pendingSources),
@@ -693,12 +677,12 @@ export function sourceKey(url: string): string {
 
 function regenOf(v: unknown): AnalysisRegen | null {
   if (!isRecord(v)) return null;
-  const operationId = str(v.operationId);
+  const operationId = stringOf(v.operationId);
   if (operationId === null) return null;
   const previous = isRecord(v.previous) ? itemOf(v.previous) : null;
   return {
     operationId,
-    remark: str(v.remark),
+    remark: stringOf(v.remark),
     pending: pendingOf(v.pending),
     previous: previous && !('broken' in previous) ? { ...previous, regen: null } : null,
   };
@@ -971,7 +955,7 @@ export function readAnalysisData(data: unknown): AnalysisWriteData {
         ? (d.stepsTotal as number)
         : LEGACY_ANALYSIS_STEPS,
     owns: flagsOf(d.owns, (v) => (v === true ? true : v === false ? false : null)),
-    written: flagsOf(d.written, str),
+    written: flagsOf(d.written, stringOf),
     pending: pendingOf(d.pending),
   };
 }
@@ -993,3 +977,21 @@ export const analysisDataJson = (data: AnalysisWriteData): Prisma.InputJsonValue
 
 /** Ключ шага для сохранённого текста. */
 export const stepKey = (step: AnalysisStepNumber): string => `step:${step}`;
+
+/** Блоки, которые знает разбор места замечания (`where` начинается с пути поля). */
+export const BLOCK_NAMES: ReadonlySet<string> = new Set(BOOK_ANALYSIS_BLOCK_KEYS);
+
+/** Блоки-списки: значение предложения `GET items/:index` - массив, прочие блоки - текст. */
+export const LIST_VALUE_TARGETS = [
+  'characters',
+  'keyQuotes',
+  'style',
+  'themes',
+  'symbols',
+  'misreadings',
+  'discussionQuestions',
+  'faq',
+  'timeline',
+  'adaptations',
+  'sources',
+] as const;

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ContentDraft, Prisma } from '@prisma/client';
+import { lockVersionRow } from '../version-lock';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { withSummaryLock } from '../../book-summary/book-summary-lock';
 import { BookSummaryService } from '../../book-summary/book-summary.service';
@@ -240,7 +241,7 @@ export class SummaryWriteFields {
    */
   async state(tx: Db, bookVersionId: string, lock = false): Promise<FieldState> {
     if (lock) {
-      await tx.$queryRaw`SELECT "id" FROM "BookVersion" WHERE "id" = ${bookVersionId} FOR NO KEY UPDATE`;
+      await lockVersionRow(tx, bookVersionId);
     }
     const [version, summary, sections, last] = await Promise.all([
       tx.bookVersion.findUnique({ where: { id: bookVersionId }, select: { status: true } }),

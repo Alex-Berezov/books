@@ -38,3 +38,7 @@ export function chaptersText(
     })
     .join('\n\n');
 }
+
+/** Главы, в которых есть текст (пустые и из одной разметки отбрасываются). */
+export const withChapterText = <T extends { content: string }>(chapters: readonly T[]): T[] =>
+  chapters.filter((c) => htmlToParagraphs(c.content) !== '');

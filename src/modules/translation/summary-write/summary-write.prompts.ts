@@ -3,8 +3,8 @@ import { LlmChatMessage } from '../../llm/openrouter.client';
 import { Shape } from '../dossier/dossier.format';
 import { LANGUAGE_NAMES, shapedRequest, ShapedRequest } from '../dossier/dossier.prompts';
 import { FENCE_RULE, fenceAll, remarksPart } from '../fenced-data';
-import { DraftRemark } from '../draft-quality/text-checks';
-import { Redo, REVIEW_SHAPE } from '../draft-quality/quality-loop';
+import { Redo, reviewShapeOf } from '../draft-quality/quality-loop';
+import { DraftRemark, SUMMARY_REVIEW_REMARK_CODES } from '../draft-quality/text-checks';
 import {
   BRIEF_PARAGRAPHS,
   FIRST_SENTENCE_MAX_CHARS,
@@ -28,6 +28,9 @@ import {
  * данные в оградах (`F05-14`), а не инструкция. Название раздела модель не пишет - его ставит код
  * (`sectionTitle`, §2.1).
  */
+
+/** Форма ответа проверяющей пересказа. */
+const SUMMARY_REVIEW_SHAPE: Shape = reviewShapeOf(SUMMARY_REVIEW_REMARK_CODES);
 
 const str = 'string' as const;
 
@@ -327,7 +330,7 @@ export function summaryReviewRequest(input: ReviewInput): ShapedRequest {
     'what to fix, in English. verdict "ok" with an empty list when there is nothing to fix.';
   return shapedRequest(
     SUMMARY_REVIEW_STAGE,
-    REVIEW_SHAPE,
+    SUMMARY_REVIEW_SHAPE,
     messages(
       system,
       [

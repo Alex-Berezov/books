@@ -1,7 +1,7 @@
 import { ConflictException, HttpException } from '@nestjs/common';
 import { ContentDraft, LlmOperation, LlmTask, Prisma } from '@prisma/client';
 import type { PrismaService } from '../../../prisma/prisma.service';
-import type { EnqueueTaskInput } from '../../llm-worker/llm-task.service';
+import type { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 
 /**
  * Общее у ходов пересказа (`F06-2`) и анализа (`F07-1b`): задача хода и перегенерации одного текста
@@ -130,7 +130,7 @@ export const regenOperationIds = (items: readonly RegenMarked[]): string[] =>
 export type RegenOperationState = Pick<LlmOperation, 'id' | 'status' | 'pauseReason'>;
 
 /** Статус и причина паузы операций перегенераций (`F06-5c`) - одним запросом по идущим. */
-export async function regenOperationStates(
+async function regenOperationStates(
   prisma: PrismaService,
   ids: readonly string[],
 ): Promise<ReadonlyMap<string, RegenOperationState>> {
@@ -196,4 +196,43 @@ export async function acceptInTurn(
     if (taken !== false) accepted.push(index);
   }
   return accepted;
+}
+
+/** Строка хода, на которую указывает задача (`null` - в задаче нет id или строки уже нет). */
+export async function draftRowOf(db: PrismaService, task: LlmTask): Promise<ContentDraft | null> {
+  const { draftId } = runTaskPayload(task);
+  return draftId ? db.contentDraft.findUnique({ where: { id: draftId } }) : null;
+}
+
+/** Перегенерации - каждая своей отменой со снятием отметки (операция раньше замка хода). */
+export async function cancelRegens(
+  tasks: Pick<LlmTaskService, 'cancelOperation'>,
+  handler: { clearRegenMark(operationId: string, tx: Prisma.TransactionClient): Promise<void> },
+  operationIds: readonly string[],
+): Promise<void> {
+  for (const operationId of operationIds) {
+    await tasks.cancelOperation(operationId, (tx) => handler.clearRegenMark(operationId, tx));
+  }
+}
+
+/**
+ * Что ждёт строящийся ход (`dossier` или `glossary`) и статус перегенераций - два независимых
+ * запроса вместе.
+ */
+export async function waitingAndRegens(
+  db: PrismaService,
+  row: Pick<ContentDraft, 'waitingFor' | 'status'>,
+  regenIds: readonly string[],
+): Promise<{
+  waitingFor: 'dossier' | 'glossary' | null;
+  regenOps: ReadonlyMap<string, RegenOperationState>;
+}> {
+  const waiting = row.waitingFor && row.status === 'building' ? row.waitingFor : null;
+  const [glossary, regenOps] = await Promise.all([
+    waiting === null
+      ? null
+      : db.bookGlossary.findUnique({ where: { id: waiting }, select: { id: true } }),
+    regenOperationStates(db, regenIds),
+  ]);
+  return { waitingFor: waiting === null ? null : glossary ? 'glossary' : 'dossier', regenOps };
 }

@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Language, Prisma } from '@prisma/client';
+import { lockVersionRow } from '../version-lock';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { PaginatedResult, paginated } from '../../../shared/dto/paginated-response.dto';
 import { moneyUsd } from '../../llm/dto/llm-money';
@@ -133,7 +134,7 @@ export class TranslationCompareService {
     const id = await this.prisma.$transaction(async (tx) => {
       // Замок строки версии, как у записи пересказа и анализа: два старта подряд встают в очередь,
       // и второй видит строку первого. Без замка проверка через `tx` гонку не закрывает (`T176`).
-      await tx.$queryRaw`SELECT "id" FROM "BookVersion" WHERE "id" = ${versionId} FOR NO KEY UPDATE`;
+      await lockVersionRow(tx, versionId);
       await this.assertNotRunning(tx, versionId, dto);
       const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
       const row = await tx.translationCompare.create({

@@ -17,13 +17,13 @@ import type {
 } from '../../book-analysis/dto/book-analysis-blocks.dto';
 import type { LlmService, StageCallEstimator } from '../../llm/llm.service';
 import { ANSWER_CHARS_PER_TOKEN, estimateInputTokens } from '../../llm/openrouter.client';
-import { FILLABLE_FACTS } from '../content-draft/content-draft.analysis';
+import { FILLABLE_FACTS } from './analysis-import';
 import { chaptersText } from '../content-draft/content-draft.text';
 import { ShapedRequest } from '../dossier/dossier.prompts';
 import { QualityLoopSpec } from '../draft-quality/quality-loop';
 import { ChapterIndex, normalizeQuote } from '../draft-quality/quote-check';
 import { StageModels } from '../run/run-models';
-import { glossaryNames, glossaryText, PartContext } from '../summary-write/summary-write.parts';
+import { glossaryNames, glossaryText, PartContext } from '../draft-quality/draft-context';
 import { fixDraft, regenRemarks, stepRemarks } from './analysis-checks';
 import { ANALYSIS_REVIEW_STAGE, EXTERNAL_STEP, READER_STEP } from './analysis-write.constants';
 import { ownSources } from './analysis-write.external';

@@ -1,8 +1,13 @@
 import { Language, Prisma } from '@prisma/client';
 import { StageCallEstimator } from '../../llm/llm.service';
 import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
-import { nameEntriesOf, NameEntry } from '../check/mechanical-check';
 import { ShapedRequest } from '../dossier/dossier.prompts';
+import {
+  dossierOf,
+  glossaryNames,
+  glossaryText,
+  PartContext,
+} from '../draft-quality/draft-context';
 import { QualityLoopSpec } from '../draft-quality/quality-loop';
 import { ChapterIndex, indexChapters } from '../draft-quality/quote-check';
 import {
@@ -12,10 +17,15 @@ import {
   checkNames,
   checkQuotes,
   DraftRemark,
+  SUMMARY_REVIEW_REMARK_CODES,
   wordCount,
 } from '../draft-quality/text-checks';
 import { StageModels } from '../run/run-models';
-import { chaptersText, htmlToParagraphs } from '../content-draft/content-draft.text';
+import {
+  chaptersText,
+  htmlToParagraphs,
+  withChapterText,
+} from '../content-draft/content-draft.text';
 import { PlanSection, summaryPlanOf } from './summary-sources';
 import { checkLength, checkStructure, sectionTitle, SummaryTarget } from './summary-checks';
 import {
@@ -46,45 +56,6 @@ export const AUTHOR_STAGE: Record<SummaryTarget, string> = {
 };
 
 export type VersionChapter = { number: number; title: string; content: string };
-
-/** Досье и глоссарий хода строками для промптов и записи глоссария для `NAME_MISMATCH`. */
-export interface PartContext {
-  language: Language;
-  dossier: unknown;
-  glossary: unknown;
-}
-
-interface DossierLike {
-  characters?: Array<{ name?: unknown; variants?: unknown; whoIs?: unknown; fate?: unknown }>;
-  chronology?: unknown;
-  setting?: unknown;
-  chapters?: Array<{ number?: unknown; title?: unknown; summary?: unknown }>;
-}
-
-const dossierOf = (data: unknown): DossierLike => (data ?? {}) as DossierLike;
-
-/** Записи глоссария языка версии; на языке досье глоссария нет - пусто (В6 `F05-10`). */
-export function glossaryNames(glossary: unknown): NameEntry[] {
-  const entries = (glossary as { entries?: unknown } | null)?.entries;
-  return Array.isArray(entries) ? nameEntriesOf(entries) : [];
-}
-
-/** Глоссарий в промпт: «форма оригинала → форма версии»; без глоссария - имена героев досье. */
-export function glossaryText(context: PartContext): string {
-  const names = glossaryNames(context.glossary);
-  if (names.length > 0) return names.map((n) => `${n.source} → ${n.target}`).join('\n');
-  const characters = dossierOf(context.dossier).characters ?? [];
-  const lines = characters.flatMap((c) =>
-    typeof c.name === 'string'
-      ? [
-          [c.name, ...(Array.isArray(c.variants) ? (c.variants as unknown[]) : [])]
-            .filter((v): v is string => typeof v === 'string')
-            .join(', '),
-        ]
-      : [],
-  );
-  return lines.length > 0 ? lines.join('\n') : 'none';
-}
 
 /** Раздел плана хода целиком (номер - позиция, с `why`) - вход автора (круг 2: не по номеру модели). */
 function planText(section: RunPlanSection): string {
@@ -187,7 +158,7 @@ export function sectionSource(
     section,
     title,
     readerChapter,
-    chapters: chapters.filter((c) => htmlToParagraphs(c.content) !== ''),
+    chapters: withChapterText(chapters),
   };
 }
 
@@ -366,6 +337,7 @@ export function loopSpec(
     readAuthor: (value) => (value as { text: string }).text.trim(),
     codeCheck: part.codeCheck,
     reviewStage: SUMMARY_REVIEW_STAGE,
+    reviewCodes: SUMMARY_REVIEW_REMARK_CODES,
     reviewModels: models.review,
     reviewRequest: part.review,
   };

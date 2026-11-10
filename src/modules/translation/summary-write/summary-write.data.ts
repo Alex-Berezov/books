@@ -1,8 +1,9 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
+import { intOf, oneOf, remarksReader, reviewReader, stringOf } from '../draft-quality/draft-record';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 import { QualityLoopResume, ReviewState } from '../draft-quality/quality-loop';
-import { DraftRemark, DraftRemarkCode, SUMMARY_REMARK_CODES } from '../draft-quality/text-checks';
+import { DraftRemark, SUMMARY_REMARK_CODES } from '../draft-quality/text-checks';
 import { DRAFT_DATA_INVALID } from '../content-draft/content-draft.constants';
 import { SummaryTarget } from './summary-checks';
 
@@ -147,38 +148,16 @@ export function fieldPrint(...parts: Array<string | number | null>): string {
 export const sectionPrint = (s: { title: string; text: string; readerChapter: number | null }) =>
   fieldPrint(s.title, s.text, s.readerChapter);
 
-const str = (v: unknown): string | null => (typeof v === 'string' ? v : null);
-const int = (v: unknown): number | null => (Number.isInteger(v) ? (v as number) : null);
-const oneOf = <T extends string>(list: readonly T[], v: unknown): T | null =>
-  typeof v === 'string' && (list as readonly string[]).includes(v) ? (v as T) : null;
+const remarksOf = remarksReader(SUMMARY_REMARK_CODES);
 
-function remarkOf(v: unknown): DraftRemark[] {
-  if (!isRecord(v)) return [];
-  const code = oneOf<DraftRemarkCode>(SUMMARY_REMARK_CODES, v.code);
-  const by = oneOf(['code', 'model'] as const, v.by);
-  const where = str(v.where);
-  const note = str(v.note);
-  return code && by && where !== null && note !== null ? [{ code, where, note, by }] : [];
-}
-
-const remarksOf = (v: unknown): DraftRemark[] => (Array.isArray(v) ? v.flatMap(remarkOf) : []);
-
-function reviewOf(v: unknown): ReviewState | null {
-  if (!isRecord(v)) return null;
-  const kind = oneOf(REVIEW_KINDS, v.kind);
-  if (kind === 'answered') {
-    const model = str(v.model);
-    return model === null ? null : { kind, model };
-  }
-  return kind === null ? null : { kind };
-}
+const reviewOf = reviewReader(REVIEW_KINDS);
 
 function pendingOf(v: unknown): PendingText | null {
   if (!isRecord(v) || !isRecord(v.resume)) return null;
-  const key = str(v.key);
-  const operationId = str(v.operationId);
-  const draft = str(v.resume.draft);
-  const authorModel = str(v.resume.authorModel);
+  const key = stringOf(v.key);
+  const operationId = stringOf(v.operationId);
+  const draft = stringOf(v.resume.draft);
+  const authorModel = stringOf(v.resume.authorModel);
   const attempt = v.resume.attempt === 1 || v.resume.attempt === 2 ? v.resume.attempt : null;
   if (key === null || operationId === null || draft === null || !authorModel || !attempt) {
     return null;
@@ -199,12 +178,12 @@ function pendingOf(v: unknown): PendingText | null {
 
 function regenOf(v: unknown): ItemRegen | null {
   if (!isRecord(v)) return null;
-  const operationId = str(v.operationId);
+  const operationId = stringOf(v.operationId);
   return operationId === null
     ? null
     : {
         operationId,
-        remark: str(v.remark),
+        remark: stringOf(v.remark),
         pending: pendingOf(v.pending),
         produced: v.produced === true,
         tail: v.tail === true,
@@ -223,7 +202,7 @@ function brokenItem(v: unknown): WriteItem {
   const target = oneOf(ITEM_TARGETS, r.target) ?? 'full';
   return {
     target,
-    number: target === 'section' ? (int(r.number) ?? 0) : null,
+    number: target === 'section' ? (intOf(r.number) ?? 0) : null,
     title: null,
     readerChapter: null,
     text: '',
@@ -249,33 +228,33 @@ function itemOf(v: unknown): WriteItem {
   const target = oneOf(ITEM_TARGETS, v.target);
   const verdict = oneOf(ITEM_VERDICTS, v.verdict);
   const outcome = oneOf(ITEM_OUTCOMES, v.outcome);
-  const text = str(v.text);
+  const text = stringOf(v.text);
   if (!target || !verdict || !outcome || text === null) return brokenItem(v);
-  const number = int(v.number);
+  const number = intOf(v.number);
   if (target === 'section' && number === null) return brokenItem(v);
   return {
     target,
     number: target === 'section' ? number : null,
-    title: str(v.title),
-    readerChapter: int(v.readerChapter),
+    title: stringOf(v.title),
+    readerChapter: intOf(v.readerChapter),
     text,
     attempt: v.attempt === 2 ? 2 : 1,
     verdict,
     remarks: remarksOf(v.remarks),
     review: reviewOf(v.review),
     outcome,
-    failedReason: str(v.failedReason),
-    authorModel: str(v.authorModel),
+    failedReason: stringOf(v.failedReason),
+    authorModel: stringOf(v.authorModel),
     chapters:
       target === 'section' && Array.isArray(v.chapters)
         ? v.chapters.filter((c): c is number => Number.isInteger(c))
         : null,
-    fieldHash: str(v.fieldHash),
+    fieldHash: stringOf(v.fieldHash),
     fieldMode: oneOf(['replace', 'append'] as const, v.fieldMode),
     fieldBase: Array.isArray(v.fieldBase)
       ? v.fieldBase.filter((b): b is string => typeof b === 'string')
       : null,
-    regenFailedReason: str(v.regenFailedReason),
+    regenFailedReason: stringOf(v.regenFailedReason),
     regen: regenOf(v.regen),
   };
 }
@@ -294,13 +273,13 @@ export function readWriteData(data: unknown): SummaryWriteData {
       brief: owns.brief === true,
     },
     written: {
-      full: str(written.full),
-      brief: str(written.brief),
+      full: stringOf(written.full),
+      brief: stringOf(written.brief),
       sections: Object.fromEntries(
         Object.entries(sections).filter((e): e is [string, string] => typeof e[1] === 'string'),
       ),
     },
-    plannedSections: int(d.plannedSections),
+    plannedSections: intOf(d.plannedSections),
     pending: pendingOf(d.pending),
   };
 }

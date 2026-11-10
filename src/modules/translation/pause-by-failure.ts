@@ -1,4 +1,5 @@
-import { LlmPauseReason } from '@prisma/client';
+import { LlmPauseReason, LlmTask } from '@prisma/client';
+import type { LlmTaskService } from '../llm-worker/llm-task.service';
 
 /**
  * Отказ шага по деньгам - пауза операции своей причиной; код - как его пишет исполнитель
@@ -31,4 +32,13 @@ export function passesThroughOptional(code: string): boolean {
     STOP_CODES.has(code) ||
     Object.keys(BUDGET_PAUSE_BY_FAILURE).some((k) => k.split(':')[0] === code)
   );
+}
+
+/** Отказ шага задачи: деньги и отказ провайдеров - пауза своей причиной, прочее - `STEP_FAILED` (продолжаемо). */
+export async function pauseOnFailure(
+  tasks: Pick<LlmTaskService, 'pauseOperation'>,
+  task: Pick<LlmTask, 'operationId'>,
+  reason: string,
+): Promise<void> {
+  await tasks.pauseOperation(task.operationId, PAUSE_BY_FAILURE[reason] ?? 'STEP_FAILED');
 }

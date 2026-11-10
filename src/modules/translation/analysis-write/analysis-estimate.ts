@@ -1,7 +1,7 @@
 import { Language, Prisma } from '@prisma/client';
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
 import { LlmService } from '../../llm/llm.service';
-import { htmlToParagraphs } from '../content-draft/content-draft.text';
+import { withChapterText } from '../content-draft/content-draft.text';
 import { stageEstimatorFor } from '../llm-model-checks';
 import { SectionUpperSource } from '../run/section-upper-source';
 import {
@@ -40,7 +40,7 @@ export async function analysisUpperUsd(
   languages: readonly Language[],
 ): Promise<Map<Language, Prisma.Decimal>> {
   const calls = await analysisEstimators(llm);
-  const withText = source.chapters.filter((c) => htmlToParagraphs(c.content) !== '');
+  const withText = withChapterText(source.chapters);
   return new Map(
     languages.map((language) => [
       language,

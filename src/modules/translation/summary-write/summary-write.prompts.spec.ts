@@ -1,4 +1,4 @@
-import { REVIEW_REMARK_CODES } from '../draft-quality/quality-loop';
+import { SUMMARY_REVIEW_REMARK_CODES } from '../draft-quality/text-checks';
 import { codeRemark } from '../draft-quality/text-checks';
 import {
   briefWriteRequest,
@@ -170,7 +170,7 @@ describe('summary write prompts', () => {
     // Все коды проверяющей из одного списка (F06-2, хвост F06-1): код, выпавший из промпта, модель
     // не поставит никогда.
     for (const target of ['section', 'full', 'brief'] as const) {
-      for (const code of REVIEW_REMARK_CODES) {
+      for (const code of SUMMARY_REVIEW_REMARK_CODES) {
         expect([target, code, review(target).includes(`- ${code}:`)]).toEqual([target, code, true]);
       }
     }

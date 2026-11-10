@@ -1,5 +1,13 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { acceptInTurn, regenOperationIds, regenResumeOf } from './run-regen';
+import { LlmTask } from '@prisma/client';
+import {
+  acceptInTurn,
+  cancelRegens,
+  draftRowOf,
+  regenOperationIds,
+  regenResumeOf,
+  waitingAndRegens,
+} from './run-regen';
 
 /**
  * «Accept all» по одному (`F06-2`, `F07-1b`): 409 несёт `acceptedIndexes` у обоих ходов; прочие
@@ -111,5 +119,82 @@ describe('regenResumeOf (T177)', () => {
       await regenResumeOf(prisma([]), 'summary_write', { id: 'op1' }, () => [], taskOf),
     ).toEqual([]);
     expect(taskOf).not.toHaveBeenCalled();
+  });
+});
+
+describe('draftRowOf', () => {
+  it('no draft id in the payload - null without a query; with it - one read by id', async () => {
+    const findUnique = jest.fn();
+    const db = { contentDraft: { findUnique } } as never;
+    expect(await draftRowOf(db, { payload: {} } as unknown as LlmTask)).toBeNull();
+    expect(findUnique).not.toHaveBeenCalled();
+    findUnique.mockResolvedValue({ id: 'd1' });
+    expect(await draftRowOf(db, { payload: { draftId: 'd1' } } as unknown as LlmTask)).toEqual({
+      id: 'd1',
+    });
+    expect(findUnique).toHaveBeenCalledTimes(1);
+    expect(findUnique).toHaveBeenCalledWith({ where: { id: 'd1' } });
+  });
+});
+
+describe('cancelRegens', () => {
+  it('each operation - its own cancel, the mark of that operation cleared in its transaction', async () => {
+    const txs: object[] = [];
+    const cancelOperation = jest.fn(async (_id: string, fn: (tx: never) => Promise<void>) => {
+      const tx = {};
+      txs.push(tx);
+      await fn(tx as never);
+    });
+    const clearRegenMark = jest.fn().mockResolvedValue(undefined);
+    await cancelRegens({ cancelOperation } as never, { clearRegenMark }, ['a', 'b']);
+    expect(cancelOperation.mock.calls.map((c) => c[0])).toEqual(['a', 'b']);
+    expect(clearRegenMark.mock.calls).toEqual([
+      ['a', txs[0]],
+      ['b', txs[1]],
+    ]);
+  });
+});
+
+describe('waitingAndRegens', () => {
+  function fakeDb(glossary: object | null) {
+    return {
+      bookGlossary: { findUnique: jest.fn().mockResolvedValue(glossary) },
+      llmOperation: {
+        findMany: jest.fn().mockResolvedValue([{ id: 'r1', status: 'paused', pauseReason: 'X' }]),
+      },
+    };
+  }
+
+  it('building and waiting for a glossary row - glossary; another row - dossier', async () => {
+    const db = fakeDb({ id: 'g' });
+    const row = { waitingFor: 'g', status: 'building' } as never;
+    const result = await waitingAndRegens(db as never, row, ['r1']);
+    expect(result.waitingFor).toBe('glossary');
+    expect(db.bookGlossary.findUnique).toHaveBeenCalledTimes(1);
+    expect(db.bookGlossary.findUnique).toHaveBeenCalledWith({
+      where: { id: 'g' },
+      select: { id: true },
+    });
+    expect(db.llmOperation.findMany).toHaveBeenCalledTimes(1);
+    expect(db.llmOperation.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['r1'] } },
+      select: { id: true, status: true, pauseReason: true },
+    });
+    expect([...result.regenOps.keys()]).toEqual(['r1']);
+    expect((await waitingAndRegens(fakeDb(null) as never, row, [])).waitingFor).toBe('dossier');
+  });
+
+  it('not building or nothing awaited - null without reading the glossary; no regenerations - no query', async () => {
+    for (const row of [
+      { waitingFor: 'g', status: 'ready' },
+      { waitingFor: null, status: 'building' },
+    ]) {
+      const db = fakeDb({ id: 'g' });
+      const result = await waitingAndRegens(db as never, row as never, []);
+      expect(result.waitingFor).toBeNull();
+      expect(result.regenOps.size).toBe(0);
+      expect(db.bookGlossary.findUnique).not.toHaveBeenCalled();
+      expect(db.llmOperation.findMany).not.toHaveBeenCalled();
+    }
   });
 });

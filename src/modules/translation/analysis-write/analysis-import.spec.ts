@@ -1,5 +1,5 @@
 import { EMPTY_BOOK_ANALYSIS, StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
-import { analysisImportErrors, quoteCheck } from './content-draft.analysis';
+import { analysisImportErrors, quoteCheck } from './analysis-import';
 import { indexChapters } from '../draft-quality/quote-check';
 
 /**

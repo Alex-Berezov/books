@@ -5,7 +5,7 @@ import { LlmTaskContext } from '../../llm-worker/llm-task.types';
 import { Shape } from '../dossier/dossier.format';
 import { shapedRequest } from '../dossier/dossier.prompts';
 import { QualityLoopSpec, Redo, runQualityLoop } from './quality-loop';
-import { codeRemark, DraftRemark } from './text-checks';
+import { codeRemark, DraftRemark, SUMMARY_REVIEW_REMARK_CODES } from './text-checks';
 
 /**
  * Цикл качества (`F06-1`, шаг 4; `product.md` §3) на подменённом модуле LLM: замечание - ровно
@@ -76,6 +76,7 @@ function spec(
     readAuthor: (value) => (value as { text: string }).text,
     codeCheck,
     reviewStage: REVIEW_STAGE,
+    reviewCodes: SUMMARY_REVIEW_REMARK_CODES,
     reviewModels: {},
     reviewRequest: () => shapedRequest('r', TEXT, [{ role: 'user', content: 'review' }]),
   };
@@ -391,7 +392,7 @@ describe('runQualityLoop', () => {
     expect(calls.filter((c) => c.stage === AUTHOR_STAGE)).toHaveLength(1);
   });
 
-  it('the default (no reviewCodes) is the summary set: an analysis code fails the form', async () => {
+  it('reviewCodes of the summary: an analysis code fails the form', async () => {
     const notInText = {
       verdict: 'remarks',
       remarks: [{ code: 'NOT_IN_TEXT', where: 'a', note: 'b' }],

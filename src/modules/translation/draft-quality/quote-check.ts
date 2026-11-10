@@ -1,7 +1,7 @@
 /**
  * Дословность цитат - общая для заготовки Analysis (`F05-11`, решения арбитра `F05 | F05-11`,
  * Р5-Р7, Р20, Р21) и код-проверки `QUOTE_NOT_VERBATIM` пересказа и анализа (`F06`, `F07`;
- * `features/F06-summary-autofill/product.md` §3). Вынесено из `content-draft.analysis.ts`
+ * `features/F06-summary-autofill/product.md` §3). Вынесено из `content-draft.analysis.ts` (с `T178` - `analysis-write/analysis-import.ts`)
  * без смены поведения (`F06-1`).
  */
 

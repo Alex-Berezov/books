@@ -7,7 +7,7 @@ import {
 } from '../../book-analysis/dto/book-analysis-blocks.dto';
 import type { UpdateBookAnalysisDto } from '../../book-analysis/dto/update-book-analysis.dto';
 import { NameEntry } from '../check/mechanical-check';
-import { analysisImportErrors, quoteCheck } from '../content-draft/content-draft.analysis';
+import { analysisImportErrors, quoteCheck } from './analysis-import';
 import {
   ChapterIndex,
   foldedParagraphs,
@@ -31,6 +31,7 @@ import {
   STEP_TARGETS,
   StepDraft,
   StepFix,
+  LIST_VALUE_TARGETS,
 } from './analysis-write.data';
 import { EXTERNAL_STEP, READER_STEP } from './analysis-write.constants';
 
@@ -220,19 +221,7 @@ export function fixDraft(
   if (blocks.faq) out.faq = limited(blocks.faq, LIMITS.faq, 'faq', fixes);
   if (blocks.sources) out.sources = limited(blocks.sources, LIMITS.sources, 'sources', fixes);
 
-  for (const key of [
-    'characters',
-    'keyQuotes',
-    'style',
-    'themes',
-    'symbols',
-    'misreadings',
-    'discussionQuestions',
-    'faq',
-    'timeline',
-    'adaptations',
-    'sources',
-  ] as const) {
+  for (const key of LIST_VALUE_TARGETS) {
     if (out[key]?.length === 0) delete out[key];
   }
   return { blocks: out, droppedQuotes, fixes };

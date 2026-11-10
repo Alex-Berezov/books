@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { ContentDraft, Language, Prisma } from '@prisma/client';
+import { lockVersionRow } from '../version-lock';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
   BOOK_ANALYSIS_SELECT,
@@ -11,9 +12,9 @@ import { BOOK_ANALYSIS_TX_OPTIONS, lockBookAnalysis } from '../../book-analysis/
 import { BookAnalysisService } from '../../book-analysis/book-analysis.service';
 import { BOOK_ANALYSIS_LIMITS } from '../../book-analysis/dto/book-analysis-blocks.dto';
 import type { UpdateBookAnalysisDto } from '../../book-analysis/dto/update-book-analysis.dto';
-import { compactBlock } from '../../author/author-page-data';
+import { compactBlock } from '../../../shared/prisma/compact-block.util';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
-import { analysisImportErrors } from '../content-draft/content-draft.analysis';
+import { analysisImportErrors } from './analysis-import';
 import { codeRemark } from '../draft-quality/text-checks';
 import { blockOfPath, coreRemark } from './analysis-checks';
 import {
@@ -749,7 +750,7 @@ export class AnalysisWriteFields {
   /** Блоки версии; `lock` - строка версии `FOR NO KEY UPDATE`: публикация не проскочит до записи. */
   async state(tx: Db, bookVersionId: string, lock = false): Promise<BlockState> {
     if (lock) {
-      await tx.$queryRaw`SELECT "id" FROM "BookVersion" WHERE "id" = ${bookVersionId} FOR NO KEY UPDATE`;
+      await lockVersionRow(tx, bookVersionId);
     }
     const [version, row] = await Promise.all([
       tx.bookVersion.findUnique({ where: { id: bookVersionId }, select: { status: true } }),
