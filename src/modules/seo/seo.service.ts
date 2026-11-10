@@ -718,10 +718,9 @@ export class SeoService {
 
     // Hreflang alternate links
     const slugsMap: Record<string, string> = {};
+    // `LEGACY-489`: слаг книги у версии без своего - тот же адрес, что canonical страницы.
     for (const v of versions) {
-      if (v.slug) {
-        slugsMap[v.language.toLowerCase()] = v.slug;
-      }
+      slugsMap[v.language.toLowerCase()] = bookCardSlug(v);
     }
     const hreflangLinks = generateHreflangLinks('book', slugsMap);
 

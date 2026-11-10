@@ -192,6 +192,34 @@ describe('SeoService (unit)', () => {
       );
     });
 
+    it('hreflang of a version without its own slug carries the book slug, same as canonical (LEGACY-489)', async () => {
+      prisma.bookVersion.findFirst.mockResolvedValue(null);
+      prisma.book.findUnique.mockResolvedValue({ id: 'b1', slug: 'book-slug' });
+      const row = (language: string, slug: string | null) => ({
+        id: `v-${language}`,
+        bookId: 'b1',
+        language,
+        title: 'T',
+        author: 'A',
+        description: 'D',
+        coverImageUrl: null,
+        seoId: null,
+        slug,
+        status: 'published',
+        type: 'text',
+        book: { slug: 'book-slug' },
+      });
+      prisma.bookVersion.findMany.mockResolvedValue([row('en', null), row('ru', 'gamlet')]);
+      const bundle = (await service.resolvePublic('book', 'book-slug', {
+        pathLang: 'en' as Language,
+      })) as unknown as SeoBundle & { hreflangs: Array<{ hreflang: string; href: string }> };
+      const byLang = Object.fromEntries(bundle.hreflangs.map((h) => [h.hreflang, h.href]));
+      expect(byLang.en).toBe(bundle.meta.canonicalUrl);
+      expect(byLang.en).toBe('http://localhost:5000/static/en/book/book-slug');
+      expect(byLang.ru).toBe('http://localhost:5000/static/ru/book/gamlet');
+      expect(byLang['x-default']).toBe(byLang.en);
+    });
+
     it('version page JSON-LD of a version without slug uses the book slug (LEGACY-472)', async () => {
       prisma.bookVersion.findFirst.mockResolvedValueOnce({
         id: 'v1',
