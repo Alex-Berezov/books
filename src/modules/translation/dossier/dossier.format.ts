@@ -5,6 +5,7 @@
  */
 
 import { DossierChapterDto, DossierSummarySectionDto } from '../dto/dossier-data.dto';
+import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 
 export const DOSSIER_FORMAT_VERSION = 1;
@@ -273,8 +274,8 @@ export function missingChapters(
 /**
  * Досье из ответа итога по группам и ответов групп уровня 0 в порядке книги (`F05-12`):
  * `chapters` - по номеру; глава, чьи куски попали в две группы, - одна запись с первым непустым
- * названием и пересказами по порядку; `summaryPlan` - разделы групп подряд (`joinPlans`), номера
- * заново с 1. Поля - в порядке `DOSSIER_SHAPE`.
+ * названием и пересказами по порядку; `summaryPlan` - разделы групп подряд (`joinPlans`), не
+ * длиннее потолка пересказа (`fitPlan`), номера заново с 1. Поля - в порядке `DOSSIER_SHAPE`.
  */
 export function assembleDossier(
   merged: object,
@@ -297,27 +298,77 @@ export function assembleDossier(
   const assembled: Record<string, unknown> = {
     ...withoutAssembledFields(merged),
     chapters: [...byNumber.values()].sort((a, b) => a.number - b.number),
-    summaryPlan: joinPlans(groups.map((g) => g.summaryPlan)),
+    summaryPlan: fitPlan(
+      joinPlans(groups.map((g) => g.summaryPlan)),
+      SUMMARY_SECTION_LIMITS.sectionsPerVersion,
+    ),
   };
   return Object.fromEntries(Object.keys(DOSSIER_FIELDS).map((key) => [key, assembled[key]]));
 }
 
 /**
- * Планы групп подряд. Глава, чьи куски попали в две группы, есть в разделе на стыке у обеих:
- * первый раздел следующей группы, задевший главы последнего взятого, вливается в него (главы -
- * объединением), иначе заготовка пересказа получила бы эту главу дважды.
+ * Планы групп подряд. Глава, чьи куски попали в две группы, есть в плане у обеих: она остаётся
+ * за разделом прежней группы, у разделов следующей группы такие главы вычёркиваются, раздел без
+ * глав выпадает (решение арбитра `T175 | LEGACY-477`, 1а). Объединения и пересортировки нет:
+ * глава стыка - хвост прежней группы, порядок модели не ломается. Номера заново с 1.
  */
 function joinPlans(plans: ReadonlyArray<readonly PlanSection[]>): PlanSection[] {
   const joined: PlanSection[] = [];
+  const taken = new Set<number>();
   for (const plan of plans) {
-    plan.forEach((section, i) => {
-      const last = joined[joined.length - 1];
-      if (i === 0 && last && section.chapters.some((n) => last.chapters.includes(n))) {
-        last.chapters = [...new Set([...last.chapters, ...section.chapters])].sort((a, b) => a - b);
-        return;
-      }
-      joined.push({ ...section, chapters: [...section.chapters] });
-    });
+    // Вычёркиваются только главы прежних групп: дубли внутри одного плана модели не трогаются,
+    // главы плана попадают в `taken` после него.
+    const own: number[] = [];
+    for (const section of plan) {
+      const chapters = section.chapters.filter((n) => !taken.has(n));
+      // Выпадает раздел, который опустел от вычёркивания; пустой раздел самой модели остаётся,
+      // как и в одной сводке.
+      if (chapters.length === 0 && section.chapters.length > 0) continue;
+      joined.push({ ...section, chapters });
+      own.push(...chapters);
+    }
+    for (const n of own) taken.add(n);
   }
   return joined.map((section, i) => ({ ...section, number: i + 1 }));
+}
+
+/**
+ * План не длиннее `cap` разделов (решение арбитра `T175 | LEGACY-477`, 2б): лишние разделы
+ * сливает код, без замечания модели и без отказа. Сливается пара соседей с наименьшей суммой
+ * глав (при равенстве - первая), `title` - у первого, `why` - склейкой через пробел, главы -
+ * подряд без повторов. Главы не теряются и не задваиваются; план в потолке возвращается как есть.
+ */
+export function fitPlan<T extends PlanSection>(plan: readonly T[], cap: number): T[] {
+  const limit = Math.max(1, cap);
+  const fitted = plan.map((section) => ({ ...section, chapters: [...section.chapters] }));
+  // В потолке - без перенумерации: план модели как есть.
+  if (fitted.length <= limit) return fitted;
+  while (fitted.length > limit) {
+    let at = 0;
+    for (let i = 1; i < fitted.length - 1; i++) {
+      const size = fitted[i].chapters.length + fitted[i + 1].chapters.length;
+      if (size < fitted[at].chapters.length + fitted[at + 1].chapters.length) at = i;
+    }
+    const [first, second] = [fitted[at], fitted[at + 1]];
+    fitted.splice(at, 2, {
+      ...first,
+      chapters: [...new Set([...first.chapters, ...second.chapters])],
+      why: [first.why, second.why].filter(Boolean).join(' '),
+    });
+  }
+  return fitted.map((section, i) => ({ ...section, number: i + 1 }));
+}
+
+/**
+ * Ответ сводки с `summaryPlan` (уровень 0 или одна сводка) с планом не длиннее `cap`
+ * (`fitPlan`; по умолчанию - потолок пересказа); остальные поля как есть.
+ */
+export function withPlanCap(
+  value: object,
+  cap: number = SUMMARY_SECTION_LIMITS.sectionsPerVersion,
+): object {
+  const plan = (value as { summaryPlan?: PlanSection[] }).summaryPlan;
+  if (!Array.isArray(plan)) return value;
+  const fitted = fitPlan(plan, cap);
+  return fitted.length === plan.length ? value : { ...value, summaryPlan: fitted };
 }

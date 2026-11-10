@@ -30,6 +30,7 @@ import {
   missingChapters,
   Shape,
   withoutAssembledFields,
+  withPlanCap,
 } from './dossier.format';
 import {
   distinctChapters,
@@ -272,12 +273,13 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       );
       // Списки глав и разделов пишет только уровень 0 (`F05-12`), разделов - своей долей потолка.
       const isLevel0 = pending.level === 0;
+      const maxSections = groupSectionCap(ownPlanned.length, planned.length, groups.length);
       const request = dossierSummaryRequest({
         chapters: own,
         parts: items.map((i) => i.entry),
         merge: !isLevel0,
         limits,
-        maxSections: groupSectionCap(ownPlanned.length, planned.length, groups.length),
+        maxSections,
       });
       const stage = await this.summaryFit(request);
       // Заведённую группу не перепаковывают (Р4 `F05 | F05-Rb`): если `maxTokens` этапа снизили
@@ -301,7 +303,10 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
         return { kind: 'fail', reason: DOSSIER_INVALID_RESPONSE };
       }
       await ctx.renewLease();
-      const data = isLevel0 ? answer.value : withoutAssembledFields(answer.value as object);
+      // План длиннее доли группы сжимает код, без замечания модели (`T175 | LEGACY-477`, 2б).
+      const data = isLevel0
+        ? withPlanCap(answer.value as object, maxSections)
+        : withoutAssembledFields(answer.value as object);
       await this.prisma.bookDossierGroup.updateMany({
         where: { id: pending.id, done: false },
         data: { done: true, data: data as Prisma.InputJsonValue, callId: answer.callId },
@@ -414,7 +419,10 @@ export class DossierTasksHandler implements LlmOperationKindHandler {
       await this.failBuild('bookDossier', row.id, task.operationId, row.takeovers);
       return { kind: 'fail', reason: DOSSIER_INVALID_RESPONSE };
     }
-    const data = lists ? assembleDossier(answer.value as object, lists) : answer.value;
+    // Одна сводка - тот же потолок пересказа, что у склейки групп (`T175 | LEGACY-477`, 2б).
+    const data = lists
+      ? assembleDossier(answer.value as object, lists)
+      : withPlanCap(answer.value as object);
     await ctx.renewLease();
     // Строка `ready` и закрытие операции - одной записью: отказ закрытия не оставит готовое досье
     // под операцией `failed`. Строку уже перехватили - операцию закрывает перехватчик.

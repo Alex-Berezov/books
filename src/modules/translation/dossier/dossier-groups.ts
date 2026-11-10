@@ -41,7 +41,7 @@ export function exceedsChapterCap(chapters: number, maxTokens: number): boolean 
  * Групп уровня 0 сверху для оценки - те же два условия, что у упаковки обработчика: вход
  * (`capacity` ответов в группе) и `groupChapterCap` глав. Упаковка закрывает группу по тому
  * пределу, что настал раньше: групп, закрытых по входу, не больше ⌊куски / capacity⌋, по главам -
- * ⌊главы / предел⌋, плюс последняя. 0 - групп нет, одна сводка.
+ * ⌊(главы + закрытые по входу) / предел⌋, плюс последняя. 0 - групп нет, одна сводка.
  */
 export function level0GroupsUpperBound(
   parts: number,
@@ -51,7 +51,12 @@ export function level0GroupsUpperBound(
 ): number {
   if (parts <= capacity && !exceedsChapterCap(chapters, maxTokens)) return 0;
   const byInput = Number.isFinite(capacity) ? Math.floor(parts / capacity) : 0;
-  return Math.min(parts, byInput + Math.floor(chapters / groupChapterCap(maxTokens)) + 1);
+  // Глава, чьи куски попали в две группы, считается у обеих (`distinctChapters` упаковки). Стык
+  // бывает только за группой, закрытой по входу: закрытая по главам кончается перед новой главой.
+  // Группа, закрытая по главам, держит ровно предел глав, поэтому таких групп не больше
+  // ⌊(главы + стыки) / предел⌋, а стыков не больше `byInput` (`T175`).
+  const byChapters = Math.floor((chapters + byInput) / groupChapterCap(maxTokens));
+  return Math.min(parts, byInput + byChapters + 1);
 }
 
 /**
@@ -59,7 +64,7 @@ export function level0GroupsUpperBound(
  * (`SUMMARY_SECTION_LIMITS`), не меньше одного. Глава, чьи куски попали в две группы, считается
  * у обеих: на `groups` групп таких стыков меньше `groups`, поэтому делитель - главы книги плюс
  * число групп, и сумма долей вниз не больше потолка (пока доля не упирается в один раздел -
- * книги в тысячи глав на группу).
+ * книги в тысячи глав на группу; там склейку держит `fitPlan`, `T175`).
  */
 export function groupSectionCap(
   groupChapters: number,

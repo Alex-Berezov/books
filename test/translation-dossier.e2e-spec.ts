@@ -1687,6 +1687,93 @@ describe('Translation source and dossier (e2e)', () => {
       );
 
       it(
+        'a group plan longer than its share is merged by code: no remark, no refusal, every chapter once (T175)',
+        async () => {
+          // Группа отвечает разделом на главу: 18 разделов при доле 13 (хвост в 16 - 12).
+          answer = (name, body) => {
+            const base = defaultAnswer(name, body);
+            if (name !== 'dossier') return base;
+            const chapters = (base as { chapters: Array<{ number: number }> }).chapters;
+            return {
+              ...(base as object),
+              summaryPlan: chapters.map((c, i) => ({
+                number: i + 1,
+                title: `Chapter ${c.number}`,
+                chapters: [c.number],
+                why: 'one scene',
+              })),
+            };
+          };
+          const { ids } = await book([
+            { language: 'en', originalLanguage: 'English', chapters: numberedChapters(250) },
+          ]);
+          await dossiers.demandDossier(ids.en as string);
+          await drainAll();
+          const row = await dossiers.latestDossier(ids.en as string);
+          expect(row).toMatchObject({ status: 'ready' });
+          const groups = await prisma.bookDossierGroup.findMany({
+            where: { dossierId: row?.id, level: 0 },
+            select: { data: true },
+            orderBy: { groupIndex: 'asc' },
+          });
+          // Ни одного повтора с замечанием: по вызову на каждую из 14 групп и итог.
+          expect(groups).toHaveLength(14);
+          expect(callsOf('dossier')).toHaveLength(groups.length + 1);
+          // План группы ответил разделом на главу (18, хвост 16) и сжат кодом до доли: 13, хвост 12.
+          expect(
+            groups.map((g) => (g.data as { summaryPlan: unknown[] }).summaryPlan.length),
+          ).toEqual([...Array.from({ length: 13 }, () => 13), 12]);
+          const data = row?.data as { summaryPlan: Array<{ number: number; chapters: number[] }> };
+          expect(data.summaryPlan.flatMap((s) => s.chapters)).toEqual(
+            Array.from({ length: 250 }, (_, i) => i + 1),
+          );
+          expect(data.summaryPlan.length).toBeLessThanOrEqual(200);
+          expect(data.summaryPlan.map((s) => s.number)).toEqual(
+            Array.from({ length: data.summaryPlan.length }, (_, i) => i + 1),
+          );
+        },
+        GROUPS_TIMEOUT_MS,
+      );
+
+      it(
+        'one summary with a plan longer than 200 sections: merged by code to 200, no remark (T175)',
+        async () => {
+          // Одна сводка без групп (3 главы), модель вернула 201 раздел.
+          answer = (name, body) => {
+            const base = defaultAnswer(name, body);
+            if (name !== 'dossier') return base;
+            return {
+              ...(base as object),
+              summaryPlan: Array.from({ length: 201 }, (_, i) => ({
+                number: i + 1,
+                title: `Part ${i + 1}`,
+                chapters: [(i % 3) + 1],
+                why: '',
+              })),
+            };
+          };
+          const { ids } = await book([
+            { language: 'en', originalLanguage: 'English', chapters: numberedChapters(3) },
+          ]);
+          await dossiers.demandDossier(ids.en as string);
+          await drainAll();
+          const row = await dossiers.latestDossier(ids.en as string);
+          expect(row).toMatchObject({ status: 'ready' });
+          expect(await groupsOf(ids.en as string)).toEqual([]);
+          expect(callsOf('dossier')).toHaveLength(1);
+          const plan = (row?.data as { summaryPlan: Array<{ number: number; chapters: number[] }> })
+            .summaryPlan;
+          expect(plan.map((s) => s.number)).toEqual(Array.from({ length: 200 }, (_, i) => i + 1));
+          // Слита первая пара соседей с наименьшей суммой; ни одна глава не потеряна.
+          expect(plan[0].chapters).toEqual([1, 2]);
+          const mentioned = plan.flatMap((s) => s.chapters);
+          expect(mentioned).toHaveLength(201);
+          expect([...new Set(mentioned)].sort((a, b) => a - b)).toEqual([1, 2, 3]);
+        },
+        GROUPS_TIMEOUT_MS,
+      );
+
+      it(
         'exactly the chapter limit: one summary without groups; one chapter more: groups (F05-12)',
         async () => {
           const at = await book([

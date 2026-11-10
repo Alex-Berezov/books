@@ -252,9 +252,16 @@ describe('chapter limit of a level 0 group (F05-12)', () => {
 
   it('level 0 groups for the estimate: none when one summary fits, otherwise both limits added up', () => {
     expect(level0GroupsUpperBound(18, 18, Number.POSITIVE_INFINITY, 16_000)).toBe(0);
+    // Без предела входа стыков нет: ⌊250 / 18⌋ + 1.
     expect(level0GroupsUpperBound(250, 250, Number.POSITIVE_INFINITY, 16_000)).toBe(14);
-    // Упаковка закрывает группу по тому пределу, что настал раньше: 10 по входу, 4 по главам, 1.
-    expect(level0GroupsUpperBound(100, 80, 10, 16_000)).toBe(15);
+    expect(level0GroupsUpperBound(2_000, 1_000, Number.POSITIVE_INFINITY, 16_000)).toBe(56);
+    // Упаковка закрывает группу по тому пределу, что настал раньше: 10 по входу; по главам -
+    // ⌊(80 + 10 стыков) / 18⌋ = 5, глава стыка считается у обеих групп (T175); плюс последняя.
+    expect(level0GroupsUpperBound(100, 80, 10, 16_000)).toBe(16);
+    // Предел в одну главу: по главе на группу и по группе на стык.
+    expect(groupChapterCap(700)).toBe(1);
+    expect(level0GroupsUpperBound(40, 30, 4, 700)).toBe(40);
+    expect(level0GroupsUpperBound(40, 30, Number.POSITIVE_INFINITY, 700)).toBe(31);
     // Групп не больше кусков.
     expect(level0GroupsUpperBound(3, 3, 1, 16_000)).toBe(3);
   });

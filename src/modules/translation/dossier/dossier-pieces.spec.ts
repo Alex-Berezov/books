@@ -18,9 +18,11 @@ import {
   DOSSIER_SHAPE,
   dossierChapterErrors,
   dossierMergeErrors,
+  fitPlan,
   GLOSSARY_SHAPE,
   jsonSchemaOf,
   shapeErrors,
+  withPlanCap,
 } from './dossier.format';
 import {
   dossierPartRequest,
@@ -254,6 +256,135 @@ describe('dossier form checks', () => {
     ]);
     expect(shapeErrors(dossier, DOSSIER_SHAPE)).toEqual([]);
     expect(dossierChapterErrors(dossier, [1, 2, 3], [1, 2, 3])).toEqual([]);
+  });
+
+  describe('seam and section cap of the plan (T175, arbiter T175 | LEGACY-477)', () => {
+    const list = (n: number) => ({ number: n, title: '', summary: '' });
+    const section = (n: number, chapters: number[], why = '') => ({
+      number: n,
+      title: `S${n}`,
+      chapters,
+      why,
+    });
+    const planOf = (dossier: Record<string, unknown>) =>
+      (dossier.summaryPlan as Array<{ number: number; title: string; chapters: number[] }>).map(
+        (s) => [s.number, s.title, s.chapters],
+      );
+
+    it('a seam chapter stays with the earlier group: the next group drops it, whole plan checked', () => {
+      const dossier = assembleDossier({}, [
+        { chapters: [list(1), list(2)], summaryPlan: [section(1, [1]), section(2, [2])] },
+        {
+          chapters: [list(2), list(3), list(4)],
+          summaryPlan: [section(1, [3]), section(2, [2, 3]), section(3, [4])],
+        },
+      ]);
+      // Глава 2 - за прежней группой; у [2,3] вычеркнута, глава 3 осталась своей (дубль модели).
+      expect(planOf(dossier)).toEqual([
+        [1, 'S1', [1]],
+        [2, 'S2', [2]],
+        [3, 'S1', [3]],
+        [4, 'S2', [3]],
+        [5, 'S3', [4]],
+      ]);
+    });
+
+    it('a seam section with a later chapter keeps the book order and its own title', () => {
+      const dossier = assembleDossier({}, [
+        { chapters: [list(1), list(2)], summaryPlan: [section(1, [1]), section(2, [2])] },
+        {
+          chapters: [list(2), list(3), list(4)],
+          summaryPlan: [section(1, [3]), section(2, [2, 4])],
+        },
+      ]);
+      expect(planOf(dossier)).toEqual([
+        [1, 'S1', [1]],
+        [2, 'S2', [2]],
+        [3, 'S1', [3]],
+        [4, 'S2', [4]],
+      ]);
+    });
+
+    it('a next-group section made only of seam chapters drops out', () => {
+      const dossier = assembleDossier({}, [
+        { chapters: [list(1), list(2)], summaryPlan: [section(1, [1, 2])] },
+        { chapters: [list(2), list(3)], summaryPlan: [section(1, [2]), section(2, [3])] },
+      ]);
+      expect(planOf(dossier)).toEqual([
+        [1, 'S1', [1, 2]],
+        [2, 'S2', [3]],
+      ]);
+    });
+
+    it('a section the model left without chapters stays: only one emptied by the seam drops', () => {
+      const dossier = assembleDossier({}, [
+        { chapters: [list(1)], summaryPlan: [section(1, []), section(2, [1])] },
+        { chapters: [list(2)], summaryPlan: [section(1, []), section(2, [2])] },
+      ]);
+      expect(planOf(dossier)).toEqual([
+        [1, 'S1', []],
+        [2, 'S2', [1]],
+        [3, 'S1', []],
+        [4, 'S2', [2]],
+      ]);
+    });
+
+    it('a group plan longer than its share is merged by code: smallest neighbours, first title, why joined', () => {
+      const plan = [
+        section(1, [1, 2, 3], 'a'),
+        section(2, [4], 'b'),
+        section(3, [5], 'c'),
+        section(4, [6, 7], 'd'),
+      ];
+      const fitted = fitPlan(plan, 3);
+      expect(fitted.map((s) => [s.number, s.title, s.chapters, s.why])).toEqual([
+        [1, 'S1', [1, 2, 3], 'a'],
+        [2, 'S2', [4, 5], 'b c'],
+        [3, 'S4', [6, 7], 'd'],
+      ]);
+      // В потолке - как есть, вход не меняется.
+      expect(fitPlan(plan, 4)).toEqual(plan);
+      expect(plan[1].chapters).toEqual([4]);
+      // Доля в один раздел - один раздел со всеми главами.
+      expect(fitPlan(plan, 1).map((s) => s.chapters)).toEqual([[1, 2, 3, 4, 5, 6, 7]]);
+      expect(withPlanCap({ summaryPlan: plan, x: 1 }, 2)).toMatchObject({ x: 1 });
+      expect(
+        (withPlanCap({ summaryPlan: plan }, 2) as { summaryPlan: unknown[] }).summaryPlan,
+      ).toHaveLength(2);
+      // План в потолке - тот же объект ответа; потолок по умолчанию - 200 разделов пересказа.
+      const inCap = { summaryPlan: plan };
+      expect(withPlanCap(inCap, 4)).toBe(inCap);
+      expect(withPlanCap(inCap)).toBe(inCap);
+    });
+
+    it('equal neighbour sums merge the first pair; an empty why adds no space; a shared chapter is kept once', () => {
+      const equal = [section(1, [1]), section(2, [2], 'b'), section(3, [3], 'c')];
+      expect(fitPlan(equal, 2).map((s) => [s.title, s.chapters, s.why])).toEqual([
+        ['S1', [1, 2], 'b'],
+        ['S3', [3], 'c'],
+      ]);
+      const shared = [section(1, [1, 2], 'a'), section(2, [2, 3], 'b')];
+      expect(fitPlan(shared, 1).map((s) => [s.chapters, s.why])).toEqual([[[1, 2, 3], 'a b']]);
+    });
+
+    it('a joined plan longer than 200 sections is merged to 200: every chapter exactly once, numbers ascending', () => {
+      // 260 групп по 2 главы, глава на стыке у обеих: раздел на каждую главу - 521 раздел.
+      const groups = Array.from({ length: 260 }, (_, g) => {
+        const chapters = [2 * g + 1, 2 * g + 2, 2 * g + 3];
+        return {
+          chapters: chapters.map(list),
+          summaryPlan: chapters.map((n, i) => section(i + 1, [n])),
+        };
+      });
+      const plan = assembleDossier({}, groups).summaryPlan as Array<{
+        number: number;
+        chapters: number[];
+      }>;
+      expect(plan).toHaveLength(200);
+      const all = plan.flatMap((s) => s.chapters);
+      expect(all).toEqual(Array.from({ length: 521 }, (_, i) => i + 1));
+      expect(plan.map((s) => s.number)).toEqual(Array.from({ length: 200 }, (_, i) => i + 1));
+    });
   });
 });
 
