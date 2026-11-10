@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { acceptInTurn } from './run-regen';
+import { acceptInTurn, regenOperationIds, regenResumeOf } from './run-regen';
 
 /**
  * «Accept all» по одному (`F06-2`, `F07-1b`): 409 несёт `acceptedIndexes` у обоих ходов; прочие
@@ -68,5 +68,48 @@ describe('acceptInTurn', () => {
       [0, 1, 2].find((i) => !accepted.includes(i) && !skipped.has(i) && !seen.includes(i)) ?? null;
     await expect(acceptInTurn(next, accept)).resolves.toEqual([0, 2]);
     expect(accept).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe('regenOperationIds', () => {
+  it('lists only the items with a regeneration mark', () => {
+    expect(
+      regenOperationIds([
+        { regen: { operationId: 'a' } },
+        { regen: null },
+        { regen: { operationId: 'b' } },
+      ]),
+    ).toEqual(['a', 'b']);
+  });
+});
+
+describe('regenResumeOf (T177)', () => {
+  const row = { id: 'd1', bookVersionId: 'v1', language: 'en' };
+  const prisma = (found: unknown[]) =>
+    ({
+      $queryRaw: jest.fn().mockResolvedValue(found),
+      contentDraft: { findUnique: jest.fn().mockResolvedValue({ ...row, data: {} }) },
+    }) as never;
+
+  it('builds the task by the handler own task input, not by the kind of the row', async () => {
+    const taskOf = jest.fn().mockReturnValue({ kind: 'task-kind-of-the-handler' });
+    const tasks = await regenResumeOf(
+      prisma([{ id: 'd1', bookVersionId: 'v1' }]),
+      'summary_write',
+      { id: 'op1' },
+      () => [{ regen: null }, { regen: { operationId: 'op1' } }],
+      taskOf,
+    );
+    expect(taskOf).toHaveBeenCalledTimes(1);
+    expect(taskOf).toHaveBeenCalledWith(expect.objectContaining({ id: 'd1' }), 'op1', 1);
+    expect(tasks).toEqual([{ kind: 'task-kind-of-the-handler' }]);
+  });
+
+  it('no row with the mark - no task', async () => {
+    const taskOf = jest.fn();
+    expect(
+      await regenResumeOf(prisma([]), 'summary_write', { id: 'op1' }, () => [], taskOf),
+    ).toEqual([]);
+    expect(taskOf).not.toHaveBeenCalled();
   });
 });

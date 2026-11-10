@@ -107,3 +107,36 @@ describe('field prints', () => {
     expect(fieldPrint(null)).not.toBe(fieldPrint(''));
   });
 });
+
+describe('readWriteData remark codes (T177)', () => {
+  const run = (code: string) =>
+    readWriteData({
+      items: [
+        {
+          target: 'section',
+          number: 1,
+          title: 'T',
+          readerChapter: 1,
+          text: 'x',
+          attempt: 1,
+          verdict: 'flags',
+          remarks: [{ code, where: 'w', note: 'n', by: 'code' }],
+          review: null,
+          outcome: 'written',
+          failedReason: null,
+          authorModel: null,
+          chapters: [1],
+          fieldHash: null,
+          fieldMode: null,
+          fieldBase: null,
+          regenFailedReason: null,
+          regen: null,
+        },
+      ],
+    }).items[0].remarks;
+
+  it('keeps a summary code and drops a code only the analysis run puts', () => {
+    expect(run('JUNK')).toHaveLength(1);
+    expect(run('CORE_MISSING')).toEqual([]);
+  });
+});

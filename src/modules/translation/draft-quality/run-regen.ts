@@ -41,6 +41,12 @@ export function runTaskPayload(task: LlmTask): { draftId: string | null; index: 
   };
 }
 
+/**
+ * Путь jsonpath к операциям перегенераций в `ContentDraft.data` - та же отметка, что ищет `regenProbe`
+ * (`items[].regen.operationId`); только строки. Переносить отметку - вместе с обоими.
+ */
+export const REGEN_OPERATION_PATH = '$.items[*].regen.operationId ? (@.type() == "string")';
+
 /** Запрос `data @>`: у текста или блока хода идёт перегенерация операцией `operationId`. */
 const regenProbe = (operationId: string): string =>
   JSON.stringify({ items: [{ regen: { operationId } }] });
@@ -79,13 +85,14 @@ export async function regenResumeOf(
   kind: RunKind,
   op: Pick<LlmOperation, 'id'>,
   itemsOf: (data: unknown) => readonly RegenMarked[],
+  taskOf: (row: ContentDraft, operationId: string, index: number) => EnqueueTaskInput,
 ): Promise<EnqueueTaskInput[]> {
   const found = await regenRowOf(prisma, kind, op.id, true);
   if (!found) return [];
   const row = await prisma.contentDraft.findUnique({ where: { id: found.id } });
   if (!row) return [];
   const index = itemsOf(row.data).findIndex((i) => i.regen?.operationId === op.id);
-  return index < 0 ? [] : [runTaskInput(kind, row, op.id, index)];
+  return index < 0 ? [] : [taskOf(row, op.id, index)];
 }
 
 /**

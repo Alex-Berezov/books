@@ -36,6 +36,7 @@ import {
 import {
   acceptInTurn,
   regenFieldsOf,
+  REGEN_OPERATION_PATH,
   regenOperationIds,
   RegenOperationState,
   regenOperationStates,
@@ -523,16 +524,16 @@ export class AnalysisWriteService {
 
   private async toDto(row: ContentDraft & { operation: LlmOperation }): Promise<AnalysisWriteDto> {
     const data = readAnalysisData(row.data);
-    let waitingFor: AnalysisWriteDto['waitingFor'] = null;
-    if (row.waitingFor && row.status === 'building') {
-      const glossary = await this.prisma.bookGlossary.findUnique({
-        where: { id: row.waitingFor },
-        select: { id: true },
-      });
-      waitingFor = glossary ? 'glossary' : 'dossier';
-    }
-    // Статус и причина паузы перегенераций: одним запросом по идущим операциям.
-    const regenOps = await regenOperationStates(this.prisma, regenOperationIds(data.items));
+    // Что ждёт строящийся ход и статус перегенераций - два независимых запроса вместе (как у пересказа).
+    const waiting = row.waitingFor && row.status === 'building' ? row.waitingFor : null;
+    const [glossary, regenOps] = await Promise.all([
+      waiting === null
+        ? null
+        : this.prisma.bookGlossary.findUnique({ where: { id: waiting }, select: { id: true } }),
+      regenOperationStates(this.prisma, regenOperationIds(data.items)),
+    ]);
+    const waitingFor: AnalysisWriteDto['waitingFor'] =
+      waiting === null ? null : glossary ? 'glossary' : 'dossier';
     return {
       id: row.id,
       bookVersionId: row.bookVersionId,
@@ -640,27 +641,36 @@ function itemDto(
 }
 
 /**
- * Ручной старт отбрасывает все прежние `ready`/`failed` ходы версии; их перегенерации читаются
- * порциями (выборка в память - с пределом строк) и отменяются после коммита - отдаются наружу.
+ * Ручной старт отбрасывает все прежние `ready`/`failed` ходы версии; операции их перегенераций
+ * читаются порциями по `id` (выборка в память - с пределом строк, решение арбитра `T177 | F07-1a`),
+ * из jsonb - только идентификаторы, без `data` целиком под замком; отменяются после коммита -
+ * отдаются наружу.
  */
 async function discardPrevious(tx: Prisma.TransactionClient, versionId: string): Promise<string[]> {
-  const stale: string[] = [];
-  const where: Prisma.ContentDraftWhereInput = {
-    bookVersionId: versionId,
-    kind: KIND,
-    status: { in: ['ready', 'failed'] },
-  };
+  const stale = new Set<string>();
   for (let after: string | null = null; ; ) {
-    const page: Array<{ id: string; data: Prisma.JsonValue }> = await tx.contentDraft.findMany({
-      where: { ...where, ...(after === null ? {} : { id: { gt: after } }) },
-      select: { id: true, data: true },
-      orderBy: { id: 'asc' },
-      take: PREVIOUS_BATCH,
-    });
-    stale.push(...page.flatMap((p) => regenOperationIds(readAnalysisData(p.data).items)));
+    const page: Array<{ id: string; operationIds: unknown }> = await tx.$queryRaw`
+      SELECT "id",
+        CASE WHEN jsonb_typeof("data") = 'object'
+          THEN jsonb_path_query_array("data", ${REGEN_OPERATION_PATH}::jsonpath)
+          ELSE '[]'::jsonb END AS "operationIds"
+      FROM "ContentDraft"
+      WHERE "bookVersionId" = ${versionId}
+        AND "kind" = ${KIND}::"ContentDraftKind"
+        AND "status" IN ('ready', 'failed')
+        ${after === null ? Prisma.empty : Prisma.sql`AND "id" > ${after}`}
+      ORDER BY "id"
+      LIMIT ${PREVIOUS_BATCH}`;
+    for (const row of page) {
+      if (!Array.isArray(row.operationIds)) continue;
+      for (const id of row.operationIds) if (typeof id === 'string') stale.add(id);
+    }
     if (page.length < PREVIOUS_BATCH) break;
     after = page[page.length - 1].id;
   }
-  await tx.contentDraft.updateMany({ where, data: { status: 'discarded' } });
-  return stale;
+  await tx.contentDraft.updateMany({
+    where: { bookVersionId: versionId, kind: KIND, status: { in: ['ready', 'failed'] } },
+    data: { status: 'discarded' },
+  });
+  return [...stale];
 }

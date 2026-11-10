@@ -1257,6 +1257,32 @@ describe('Analysis run «Write Analysis» (e2e)', () => {
     );
   });
 
+  it('a failed run is closed by discard-run too; an id that is not a uuid is 400 before any lookup on every content-drafts route (T177)', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    await prisma.contentDraft.update({
+      where: { id: run.id },
+      data: { status: 'failed', failedReason: 'LLM_FAILED' },
+    });
+    const res = await auth(http().post(`/admin/content-drafts/${run.id}/discard-run`))
+      .send({})
+      .expect(200);
+    expect(res.body.status).toBe('discarded');
+    const bad = '/admin/content-drafts/not-a-uuid';
+    await auth(http().get(`${bad}/items/0`)).expect(400);
+    for (const path of [
+      `${bad}/items/0/regenerate`,
+      `${bad}/items/0/accept`,
+      `${bad}/items/0/discard`,
+      `${bad}/discard-run`,
+      `${bad}/accept-all`,
+    ]) {
+      await auth(http().post(path)).send({}).expect(400);
+    }
+  });
+
   it('discard-run of a building run cancels its operation', async () => {
     const versionId = await sourceWithDossier();
     const started = await start(versionId).expect(202);

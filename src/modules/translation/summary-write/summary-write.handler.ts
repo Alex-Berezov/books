@@ -118,7 +118,13 @@ export class SummaryWriteHandler {
    * строка ищется по `data @> regen.operationId`; задача - только пока перегенерация её.
    */
   regenResume(op: LlmOperation): Promise<EnqueueTaskInput[]> {
-    return regenResumeOf(this.prisma, 'summary_write', op, (data) => readWriteData(data).items);
+    return regenResumeOf(
+      this.prisma,
+      'summary_write',
+      op,
+      (data) => readWriteData(data).items,
+      summaryWriteTaskInput,
+    );
   }
 
   /** Отмена операции перегенерации: снимается отметка у её текста, ход остаётся `ready` (Р2). */

@@ -628,7 +628,7 @@ function applyAccept(
  * «Accept» отбил бы их 409 навсегда - блок менял сам ход), предложения связей пересобираются
  * (`syncLinks`).
  */
-function afterOwnWrite(
+export function afterOwnWrite(
   data: AnalysisWriteData,
   target: AnalysisTarget,
   saved: StoredBookAnalysis,
@@ -637,11 +637,19 @@ function afterOwnWrite(
   const hash = blockPrint(targetValue(saved, target));
   const next = {
     ...data,
-    items: data.items.map((other, i) =>
-      i !== skip && !other.links && other.target === target && other.outcome === 'proposed'
-        ? { ...other, hash }
-        : other,
-    ),
+    items: data.items.map((other, i) => {
+      if (i === skip || other.links || other.target !== target) return other;
+      if (other.outcome === 'proposed') return { ...other, hash };
+      // Итог перегенерации ждёт решения (`hash` пуст): прежнее предложение в `regen.previous` вернётся
+      // отменой (`withoutRegen`) и должно сверяться с записанным блоком, а не с тем, что был до записи.
+      const previous = other.regen?.previous;
+      return other.outcome === 'waiting' &&
+        other.regen &&
+        previous?.outcome === 'proposed' &&
+        !previous.links
+        ? { ...other, regen: { ...other.regen, previous: { ...previous, hash } } }
+        : other;
+    }),
   };
   if (!data.themeLinks || !isLinkBlock(target)) return next;
   const themeKeys = new Set((saved.themes ?? []).map((theme) => theme.key));

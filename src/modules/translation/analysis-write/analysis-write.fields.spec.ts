@@ -1,14 +1,16 @@
 import { EMPTY_BOOK_ANALYSIS, StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
 import {
   ANALYSIS_TARGETS,
+  AnalysisItem,
   AnalysisWriteData,
   blockPrint,
   emptyAnalysisData,
   targetValue,
+  withoutRegen,
 } from './analysis-write.data';
 import type { BookAnalysisService } from '../../book-analysis/book-analysis.service';
 import type { PrismaService } from '../../../prisma/prisma.service';
-import { AnalysisWriteFields, applyPlan, planStep } from './analysis-write.fields';
+import { AnalysisWriteFields, afterOwnWrite, applyPlan, planStep } from './analysis-write.fields';
 import { remarksOfTarget, StepRecord, withStep } from './analysis-write.handler';
 import { quotePrint } from './analysis-write.steps';
 
@@ -272,5 +274,76 @@ describe('withStep', () => {
       'GENERIC',
     ]);
     expect(remarksOfTarget(remarks, 'mainIdea').map((r) => r.code)).toEqual(['GENERIC']);
+  });
+});
+
+describe('afterOwnWrite - the proposal held in regen.previous (T177)', () => {
+  const item = (over: Partial<AnalysisItem>): AnalysisItem => ({
+    target: 'mainIdea',
+    step: 3,
+    verdict: 'ok',
+    remarks: [],
+    review: null,
+    outcome: 'proposed',
+    hash: 'old',
+    value: null,
+    failedReason: null,
+    links: false,
+    regen: null,
+    regenFailedReason: null,
+    ...over,
+  });
+  const saved = { ...EMPTY_BOOK_ANALYSIS } as StoredBookAnalysis;
+  const fresh = blockPrint(targetValue(saved, 'mainIdea'));
+
+  it('refreshes the hash of a proposal and of the proposal a waiting regeneration would return', () => {
+    const previous = item({ hash: 'old' });
+    const waiting = item({
+      outcome: 'waiting',
+      hash: null,
+      regen: { operationId: 'op', remark: null, pending: null, previous },
+    });
+    const data = { ...emptyAnalysisData({}, {}), items: [item({}), waiting, item({})] };
+    const next = afterOwnWrite(data, 'mainIdea', saved, 2);
+    expect(next.items[0].hash).toBe(fresh);
+    expect(next.items[1].hash).toBeNull();
+    expect(next.items[1].regen?.previous?.hash).toBe(fresh);
+    // Сам записанный пункт не трогается.
+    expect(next.items[2].hash).toBe('old');
+  });
+
+  /** Ждущий итог перегенерации с прежним пунктом `previous`. */
+  const waitingOver = (previous: AnalysisItem | null, over: Partial<AnalysisItem> = {}) =>
+    item({
+      outcome: 'waiting',
+      hash: null,
+      regen: { operationId: 'op', remark: null, pending: null, previous },
+      ...over,
+    });
+
+  it('leaves previous alone when it is not a proposal, a proposal of links, missing, or of another block', () => {
+    const cases: AnalysisItem[] = [
+      waitingOver(item({ outcome: 'accepted' })),
+      waitingOver(item({ links: true })),
+      waitingOver(null),
+      waitingOver(item({ target: 'style', step: 1 }), { target: 'style', step: 1 }),
+    ];
+    const data = { ...emptyAnalysisData({}, {}), items: [...cases, item({})] };
+    const next = afterOwnWrite(data, 'mainIdea', saved, cases.length);
+    expect(next.items.slice(0, cases.length)).toEqual(cases);
+  });
+
+  it('decision T177 | F07-1b: cancelled after the own write - the proposal matches the written block; an editor change after it - it does not', () => {
+    const data = {
+      ...emptyAnalysisData({}, {}),
+      items: [waitingOver(item({ hash: 'old' })), item({})],
+    };
+    const next = afterOwnWrite(data, 'mainIdea', saved, 1);
+    const restored = withoutRegen(next, 0, null).items[0];
+    expect(restored.outcome).toBe('proposed');
+    // «Accept» сверяет отпечаток блока с `hash` предложения.
+    expect(restored.hash).toBe(blockPrint(targetValue(saved, 'mainIdea')));
+    const edited = { ...saved, mainIdea: 'The editor wrote this.' } as StoredBookAnalysis;
+    expect(restored.hash).not.toBe(blockPrint(targetValue(edited, 'mainIdea')));
   });
 });

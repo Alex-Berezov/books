@@ -3,7 +3,9 @@ import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { DossierService } from '../dossier/dossier.service';
-import { ContentDraftService } from './content-draft.service';
+import { Prisma } from '@prisma/client';
+import { ContentDraftService, contextLimits } from './content-draft.service';
+import { DRAFT_LIMIT_FACTOR } from './content-draft.constants';
 
 /**
  * Общая часть ходов на подменённой базе: дренаж снятых видов (Summary `F05-10` - F06-3, А1;
@@ -123,5 +125,22 @@ describe('ContentDraftService.runKindOf (F07-1b, В6)', () => {
       prisma.contentDraft.findUnique.mockResolvedValue(row);
       await expect(service.runKindOf('d1')).rejects.toBeInstanceOf(NotFoundException);
     }
+  });
+});
+
+describe('contextLimits (T177)', () => {
+  const none = {
+    run: null,
+    dossier: null,
+    glossaryData: null,
+    dossierLine: null,
+    glossaryLine: null,
+  };
+
+  it('the limit is the stage cost times 1.5 when no context is built first', () => {
+    expect(DRAFT_LIMIT_FACTOR).toBe('1.5');
+    const limits = contextLimits(none, new Prisma.Decimal('2'));
+    expect(limits.suggestedLimitUsd.toString()).toBe('3');
+    expect(limits.contextLimitUsd.toString()).toBe('0');
   });
 });

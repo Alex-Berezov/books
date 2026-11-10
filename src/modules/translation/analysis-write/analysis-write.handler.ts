@@ -238,7 +238,13 @@ export class AnalysisWriteHandler {
    * ищется по `data @> regen.operationId`; задача - только пока перегенерация её (`F07-1b`).
    */
   regenResume(op: LlmOperation): Promise<EnqueueTaskInput[]> {
-    return regenResumeOf(this.prisma, 'analysis_write', op, (data) => readAnalysisData(data).items);
+    return regenResumeOf(
+      this.prisma,
+      'analysis_write',
+      op,
+      (data) => readAnalysisData(data).items,
+      analysisWriteTaskInput,
+    );
   }
 
   /** Отмена операции перегенерации: отметка снимается у её блока, ход остаётся `ready`. */

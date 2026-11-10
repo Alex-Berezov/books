@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 import { QualityLoopResume, ReviewState } from '../draft-quality/quality-loop';
-import { DRAFT_REMARK_CODES, DraftRemark, DraftRemarkCode } from '../draft-quality/text-checks';
+import { DraftRemark, DraftRemarkCode, SUMMARY_REMARK_CODES } from '../draft-quality/text-checks';
 import { DRAFT_DATA_INVALID } from '../content-draft/content-draft.constants';
 import { SummaryTarget } from './summary-checks';
 
@@ -154,7 +154,7 @@ const oneOf = <T extends string>(list: readonly T[], v: unknown): T | null =>
 
 function remarkOf(v: unknown): DraftRemark[] {
   if (!isRecord(v)) return [];
-  const code = oneOf<DraftRemarkCode>(DRAFT_REMARK_CODES, v.code);
+  const code = oneOf<DraftRemarkCode>(SUMMARY_REMARK_CODES, v.code);
   const by = oneOf(['code', 'model'] as const, v.by);
   const where = str(v.where);
   const note = str(v.note);

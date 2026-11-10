@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Post,
   Req,
   UseGuards,
@@ -271,7 +272,7 @@ export class ContentDraftController {
       'ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED: the block is not a proposal',
   })
   async proposal(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('index', ParseIntPipe) index: number,
   ): Promise<AnalysisWriteValueDto> {
     // Одна выборка строки - в сервисе анализа: ход пересказа (его текст - в его ответе), заготовка и
@@ -297,7 +298,7 @@ export class ContentDraftController {
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
   async regenerate(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: RegenerateSummaryItemDto,
     @Req() req: { user: RequestUser },
@@ -326,7 +327,7 @@ export class ContentDraftController {
     description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint (it was regenerated); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors)`,
   })
   async accept(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: AcceptSummaryItemDto,
   ): Promise<SummaryWriteDto | AnalysisWriteDto> {
@@ -354,7 +355,7 @@ export class ContentDraftController {
     description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal`,
   })
   async discardItem(
-    @Param('id') id: string,
+    @Param('id', ParseUUIDPipe) id: string,
     @Param('index', ParseIntPipe) index: number,
   ): Promise<SummaryWriteDto | AnalysisWriteDto> {
     return this.byKind(
@@ -377,7 +378,9 @@ export class ContentDraftController {
     description:
       'ANALYSIS_REGEN_IN_PROGRESS: an analysis run - a regeneration of its blocks keeps starting while the run is discarded, discard again',
   })
-  async discardRun(@Param('id') id: string): Promise<SummaryWriteDto | AnalysisWriteDto> {
+  async discardRun(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<SummaryWriteDto | AnalysisWriteDto> {
     return this.byKind(
       id,
       () => this.summaryWrite.discard(id),
@@ -397,7 +400,9 @@ export class ContentDraftController {
   @ApiConflictResponse({
     description: `${ITEM_CONFLICTS}; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; a refusal in the middle of the pass carries acceptedIndexes and stoppedIndex (the item the pass stopped on); ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (skipped - the items left as proposals before the stop). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code`,
   })
-  async acceptAll(@Param('id') id: string): Promise<SummaryWriteDto | AnalysisAcceptAllDto> {
+  async acceptAll(
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<SummaryWriteDto | AnalysisAcceptAllDto> {
     return this.byKind(
       id,
       () => this.summaryWrite.acceptAll(id),

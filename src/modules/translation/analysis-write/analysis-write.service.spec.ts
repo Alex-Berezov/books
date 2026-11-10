@@ -67,6 +67,23 @@ interface Estimate {
   dto: { dossier: { refusedTooLong: boolean } | null };
 }
 
+/**
+ * Порции прежних ходов (jsonb): `pages[n]` - строки n-й порции `{ id, operationIds }`; прочие
+ * `$queryRaw` (замок) - пусто. Возвращает значения шаблона каждого запроса порции.
+ */
+function previousRegens(
+  tx: { $queryRaw: jest.Mock },
+  pages: Array<Array<{ id: string; operationIds: unknown }>>,
+) {
+  const calls: unknown[][] = [];
+  tx.$queryRaw.mockImplementation((strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (!strings.join('?').includes('jsonb_path_query_array')) return Promise.resolve([]);
+    calls.push(values);
+    return Promise.resolve(pages[calls.length - 1] ?? []);
+  });
+  return calls;
+}
+
 function setup(row: ReturnType<typeof rowOf> | null = null) {
   const tx = {
     $queryRaw: jest.fn().mockResolvedValue([]),
@@ -203,21 +220,17 @@ describe('AnalysisWriteService.start: the write of the start (F07-1a)', () => {
     const { service, internals, estimate, tx, prisma, tasks, fields } = setup();
     jest.spyOn(internals, 'estimateOf').mockResolvedValue(estimate());
     prisma.contentDraft.findUnique.mockResolvedValue(rowOf([], 'building'));
-    tx.contentDraft.findMany.mockResolvedValue([{ id: 'old', data: rowOf([]).data }]);
+    const reads = previousRegens(tx, [[{ id: 'old', operationIds: [] }]]);
     await service.start('v1', undefined, 'u1');
     expect(prisma.$transaction).toHaveBeenCalledTimes(1);
     expect(prisma.$transaction).toHaveBeenCalledWith(
       expect.any(Function),
       BOOK_ANALYSIS_TX_OPTIONS,
     );
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(1);
-    expect(tx.contentDraft.findMany).toHaveBeenCalledTimes(1);
-    expect(tx.contentDraft.findMany).toHaveBeenCalledWith({
-      where: { bookVersionId: 'v1', kind: 'analysis_write', status: { in: ['ready', 'failed'] } },
-      select: { id: true, data: true },
-      orderBy: { id: 'asc' },
-      take: 100,
-    });
+    // Одна порция прежних ходов этой версии и вида; `data` целиком не читается.
+    expect(reads).toHaveLength(1);
+    expect(reads[0]).toEqual(expect.arrayContaining(['v1', 'analysis_write', 100]));
+    expect(tx.contentDraft.findMany).not.toHaveBeenCalled();
     expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
     expect(tx.contentDraft.updateMany).toHaveBeenCalledWith({
       where: { bookVersionId: 'v1', kind: 'analysis_write', status: { in: ['ready', 'failed'] } },
@@ -235,29 +248,23 @@ describe('AnalysisWriteService.start: the write of the start (F07-1a)', () => {
     expect(tasks.cancelOperation).not.toHaveBeenCalled();
   });
 
-  it('more previous runs than a page: all are discarded by one write, the regenerations of every page are cancelled (/fix 3, blocker 6)', async () => {
+  it('more previous runs than a page: read by pages of ids, all discarded by one write, each regeneration cancelled once (T177, decision T177 | F07-1a)', async () => {
     const { service, internals, estimate, tx, tasks } = setup();
     jest.spyOn(internals, 'estimateOf').mockResolvedValue(estimate());
-    const regen = (n: number) => ({
-      operationId: `op-${n}`,
-      remark: null,
-      pending: null,
-      previous: null,
-    });
-    const page = Array.from({ length: 100 }, (_, n) => ({
+    const first = Array.from({ length: 100 }, (_, n) => ({
       id: `a${String(n).padStart(3, '0')}`,
-      data: rowOf(n === 0 ? [item('characters', { regen: regen(0) })] : []).data,
+      operationIds: n === 0 ? ['op-0'] : n === 1 ? ['op-0', 7] : [],
     }));
-    tx.contentDraft.findMany
-      .mockResolvedValueOnce(page)
-      .mockResolvedValueOnce([{ id: 'b', data: rowOf([item('style', { regen: regen(1) })]).data }]);
+    const reads = previousRegens(tx, [first, [{ id: 'b', operationIds: ['op-1'] }]]);
     await service.start('v1', undefined, 'u1');
-    expect(tx.contentDraft.findMany).toHaveBeenCalledTimes(2);
-    expect(tx.contentDraft.findMany).toHaveBeenLastCalledWith(
-      expect.objectContaining({ where: expect.objectContaining({ id: { gt: 'a099' } }) }),
+    expect(reads).toHaveLength(2);
+    // Вторая порция - после последнего id первой.
+    expect(reads[1]).toEqual(
+      expect.arrayContaining([expect.objectContaining({ values: ['a099'] })]),
     );
+    expect(tx.contentDraft.findMany).not.toHaveBeenCalled();
     expect(tx.contentDraft.updateMany).toHaveBeenCalledTimes(1);
-    expect(tasks.cancelOperation).toHaveBeenCalledTimes(2);
+    // Повтор и не строка - отброшены.
     expect((tasks.cancelOperation.mock.calls as Array<[string]>).map(([id]) => id)).toEqual([
       'op-0',
       'op-1',
@@ -267,10 +274,7 @@ describe('AnalysisWriteService.start: the write of the start (F07-1a)', () => {
   it('the regenerations of the discarded previous run are cancelled after the commit, each clearing its mark (/fix 2, blocker 3)', async () => {
     const { service, internals, estimate, tx, prisma, tasks, handler } = setup();
     jest.spyOn(internals, 'estimateOf').mockResolvedValue(estimate());
-    const regen = { operationId: 'op9', remark: null, pending: null, previous: null };
-    tx.contentDraft.findMany.mockResolvedValue([
-      { id: 'old', data: rowOf([item('characters', { regen })]).data },
-    ]);
+    previousRegens(tx, [[{ id: 'old', operationIds: ['op9'] }]]);
     const order: string[] = [];
     prisma.$transaction.mockImplementation((cb) => {
       order.push('start transaction');
@@ -530,6 +534,18 @@ describe('AnalysisWriteService.accept: the print of the proposal (T174, p.2)', (
 });
 
 describe('AnalysisWriteService.regenerate (F07-1b)', () => {
+  it('the run dossier is gone (no id or no row) - 409 DRAFT_DOSSIER_MISSING before any operation (T177)', async () => {
+    for (const dossierId of [null, 'dos-gone']) {
+      const run = setup({ ...rowOf([item('characters')]), dossierId } as ReturnType<typeof rowOf>);
+      const bookDossier = { findUnique: jest.fn().mockResolvedValue(null) };
+      Object.assign(run.prisma, { bookDossier });
+      const error = await run.service.regenerate('d1', 0, null, 'u1').catch((e: unknown) => e);
+      expect([dossierId, codeOf(error)]).toEqual([dossierId, 'DRAFT_DOSSIER_MISSING']);
+      expect(bookDossier.findUnique).toHaveBeenCalledTimes(dossierId === null ? 0 : 1);
+      expect(run.tx.llmOperation.create).not.toHaveBeenCalled();
+    }
+  });
+
   it('theme links and sources are not regenerated on their own - 409 (F07-2b)', async () => {
     const links = setup(rowOf([item('characters', { links: true })]));
     expect(

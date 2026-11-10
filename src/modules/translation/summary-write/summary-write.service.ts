@@ -555,16 +555,16 @@ export class SummaryWriteService {
 
   private async toDto(row: ContentDraft & { operation: LlmOperation }): Promise<SummaryWriteDto> {
     const data = readWriteData(row.data);
-    let waitingFor: SummaryWriteDto['waitingFor'] = null;
-    if (row.waitingFor && row.status === 'building') {
-      const glossary = await this.prisma.bookGlossary.findUnique({
-        where: { id: row.waitingFor },
-        select: { id: true },
-      });
-      waitingFor = glossary ? 'glossary' : 'dossier';
-    }
-    // Статус и причина паузы перегенераций (F06-5c): одним запросом по идущим операциям.
-    const regenOps = await regenOperationStates(this.prisma, regenOperations(row.data));
+    // Что ждёт строящийся ход и статус перегенераций (F06-5c) - два независимых запроса вместе.
+    const waiting = row.waitingFor && row.status === 'building' ? row.waitingFor : null;
+    const [glossary, regenOps] = await Promise.all([
+      waiting === null
+        ? null
+        : this.prisma.bookGlossary.findUnique({ where: { id: waiting }, select: { id: true } }),
+      regenOperationStates(this.prisma, regenOperations(row.data)),
+    ]);
+    const waitingFor: SummaryWriteDto['waitingFor'] =
+      waiting === null ? null : glossary ? 'glossary' : 'dossier';
     return {
       id: row.id,
       bookVersionId: row.bookVersionId,
