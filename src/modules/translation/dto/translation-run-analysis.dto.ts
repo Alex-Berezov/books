@@ -57,7 +57,7 @@ export class TranslationRunAnalysisDto {
   @ApiProperty({
     type: Number,
     description:
-      'Blocks of the run with model flags (verdict flags) - blocks, not remarks; the step flag CORE_MISSING is not counted',
+      'Blocks of the run with flags, as Model flags of the Analysis tab: verdict flags and at least one remark of the run other than EXTERNAL_CHECK (check facts by hand) and CORE_MISSING (step flag) - blocks, not remarks; a flags block without such remarks (the checker did not answer) and a Nothing to add block are not counted',
   })
   flaggedItems!: number;
 

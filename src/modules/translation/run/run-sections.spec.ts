@@ -131,11 +131,12 @@ describe('analysisOf (F07-3b; решение арбитра F07 | F07-3b, В2)',
   });
 
   it('ход - шаги, блоки с флагами и упавшие, ядро - как передано', () => {
-    const block = (verdict: string) => ({
+    const block = (verdict: string, codes: string[] = [], outcome = 'written') => ({
       target: 'mainIdea',
       step: 3,
       verdict,
-      outcome: 'written',
+      outcome,
+      remarks: codes.map((code) => ({ code, where: 'w', note: 'n', by: 'code' })),
     });
     const step = (n: number) => ({ step: n, verdict: 'ok', outcome: 'done', attempt: 1 });
     const draft = {
@@ -149,9 +150,19 @@ describe('analysisOf (F07-3b; решение арбитра F07 | F07-3b, В2)',
         // Битый элемент (не той формы) в счёт не идёт, даже с вердиктом `flags`.
         items: [
           block('ok'),
+          block('flags', ['NOT_IN_TEXT']),
+          block('flags', ['EXTERNAL_CHECK', 'NOT_IN_TEXT']),
+          // Только метки человеку: флагом модели не считаются (T189, LEGACY-497).
+          block('flags', ['EXTERNAL_CHECK']),
+          block('flags', ['CORE_MISSING']),
+          // Проверяющая не ответила: замечаний нет - вкладка «Model flags» не показывает.
           block('flags'),
-          block('flags'),
-          block('failed'),
+          // Код пересказа в ответ хода анализа не идёт (remarksDto) - вкладка его не показывает.
+          block('flags', ['LENGTH_OUT']),
+          // «Nothing to add»: вкладка отметки проверки не показывает.
+          block('flags', ['NOT_IN_TEXT'], 'none'),
+          block('failed', ['NOT_IN_TEXT']),
+          block('ok', ['NOT_IN_TEXT']),
           { broken: true, verdict: 'flags' },
         ],
         stepsTotal: 5,

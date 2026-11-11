@@ -1,13 +1,14 @@
 import { ContentDraftKind, LlmOperationStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { moneyUsd } from '../../llm/dto/llm-money';
-import { readAnalysisData } from '../analysis-write/analysis-write.data';
+import { AnalysisItem, readAnalysisData } from '../analysis-write/analysis-write.data';
 import {
   AUTOSTART_CANCELLED,
   AUTOSTART_FAILED,
   AUTOSTART_NOTHING_TO_START,
   AUTOSTART_KINDS,
 } from '../autostart/content-autostart.constants';
+import { ANALYSIS_REMARK_CODES, AnalysisRemarkCode } from '../draft-quality/text-checks';
 import { TranslationRunAnalysisDto } from '../dto/translation-run-analysis.dto';
 import { TranslationRunSummaryDto } from '../dto/translation-run-summary.dto';
 import { hasText, readWriteData } from '../summary-write/summary-write.data';
@@ -117,6 +118,28 @@ function notStarted(own: readonly SectionOperation[], draft: SectionDraft | null
 const spentOf = (own: readonly SectionOperation[]): string =>
   moneyUsd(own.reduce((sum, o) => sum.add(o.spentUsd), new Prisma.Decimal(0)));
 
+/** Метка «сверить факты» человеку и флаг момента шага - не находки модели (T174, п.3; `F07 | F07-3`). */
+const NOT_MODEL_REMARKS: readonly AnalysisRemarkCode[] = ['EXTERNAL_CHECK', 'CORE_MISSING'];
+
+/** Замечания, которые вкладка хода показывает как «Model flags»: коды ответа хода без меток. */
+const SHOWN_REMARKS = new Set<string>(
+  ANALYSIS_REMARK_CODES.filter((c) => !NOT_MODEL_REMARKS.includes(c)),
+);
+
+/**
+ * Блок с отметкой модели - то же правило, что у вкладки хода (T189, решение арбитра `T189`):
+ * вердикт `flags` и хотя бы одно показанное замечание. Ответ хода отдаёт только
+ * `ANALYSIS_REMARK_CODES` (`remarksDto`), вкладка снимает метки (`shownRemarks`) и пишет
+ * «Model flags» при непустом остатке (`ItemCheck`); `flags` без замечаний - не в счёте.
+ */
+const isModelFlagged = (
+  item: Pick<AnalysisItem, 'verdict' | 'remarks' | 'outcome' | 'failedReason'>,
+): boolean =>
+  item.verdict === 'flags' &&
+  // «Nothing to add» вкладка показывает без отметки проверки (`isNothingToAdd`).
+  !(item.outcome === 'none' && item.failedReason === null) &&
+  item.remarks.some((r) => SHOWN_REMARKS.has(r.code));
+
 /**
  * Состояние анализа языка (`F07-3b`, решение арбитра `F07 | F07-3b`, В2) - как `summaryOf`, но
  * единица хода - шаг, счёт - блоки с флагами и упавшие; `coreReady` - живой `BookAnalysis.hasCore`
@@ -141,7 +164,7 @@ export function analysisOf(
       pauseReason: op?.pauseReason ?? null,
       stepsDone: data.steps.length,
       stepsTotal: data.stepsTotal,
-      flaggedItems: items.filter((i) => i.verdict === 'flags').length,
+      flaggedItems: items.filter(isModelFlagged).length,
       failedItems: items.filter((i) => i.verdict === 'failed').length,
       coreReady,
       spentUsd,

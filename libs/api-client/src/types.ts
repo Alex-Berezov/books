@@ -14444,7 +14444,7 @@ export interface components {
       draftId: string | null;
       /** @description Blocks of the run that failed: a ready run with failed blocks is not «Done» */
       failedItems: number;
-      /** @description Blocks of the run with model flags (verdict flags) - blocks, not remarks; the step flag CORE_MISSING is not counted */
+      /** @description Blocks of the run with flags, as Model flags of the Analysis tab: verdict flags and at least one remark of the run other than EXTERNAL_CHECK (check facts by hand) and CORE_MISSING (step flag) - blocks, not remarks; a flags block without such remarks (the checker did not answer) and a Nothing to add block are not counted */
       flaggedItems: number;
       /** @description Status of the operation of the analysis run: paused - Continue on the Analysis tab of the draft version */
       operationStatus: components['schemas']['LlmOperationStatus'] | null;
