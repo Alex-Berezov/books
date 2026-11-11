@@ -24,7 +24,7 @@ import { QualityLoopSpec } from '../draft-quality/quality-loop';
 import { ChapterIndex, normalizeQuote } from '../draft-quality/quote-check';
 import { StageModels } from '../run/run-models';
 import { glossaryNames, glossaryText, PartContext } from '../draft-quality/draft-context';
-import { fixDraft, regenRemarks, stepRemarks } from './analysis-checks';
+import { bookFolder, fixDraft, regenRemarks, stepRemarks } from './analysis-checks';
 import { ANALYSIS_REVIEW_STAGE, EXTERNAL_STEP, READER_STEP } from './analysis-write.constants';
 import { ownSources } from './analysis-write.external';
 import { EXAMPLE_ANALYSES } from './examples';
@@ -918,6 +918,8 @@ export function stepInput(
   const glossary = glossaryText(context);
   const names = glossaryNames(context.glossary);
   const previous = previousOf(step, context);
+  // Одна свёртка книги на шаг: `codeCheck` зовётся на каждой попытке цикла качества.
+  const foldedBook = bookFolder(quotes);
   const targets: LinkTargets = {
     characterKeys: new Set(castOf(context).map((c) => c.key)),
     quoteIds: new Set(quotesOf(context).map((q) => q.id)),
@@ -975,6 +977,7 @@ export function stepInput(
           ...(context.names?.titles ?? [context.bookTitle]),
           ...context.chapters.map((c) => c.title),
         ],
+        foldedBook,
       }),
     ],
   };

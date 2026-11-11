@@ -157,22 +157,29 @@ function quotedFragments(text: string): string[] {
   return found;
 }
 
+/** Своя сверка цитаты вместо поиска по главам: `true` - цитата есть в книге. */
+export type QuoteMatch = (quote: string) => boolean;
+
+/** Сверка по `findVerbatim` в абзацах всех глав `chapters`. */
+function verbatimIn(chapters: ChapterIndex): QuoteMatch {
+  const paragraphs = [...chapters.values()].flat();
+  return (quote) => findVerbatim(quote, paragraphs) !== null;
+}
+
 /**
  * `QUOTE_NOT_VERBATIM` (§3): текст в кавычках от `QUOTE_MIN_WORDS` слов не нашёлся дословно
  * ни в одном абзаце `chapters` (у раздела - главы раздела, у полного и «Очень кратко» - вся
  * версия); номер главы не нужен. Отдаёт и цитаты, прошедшие сверку, - их не считает `DUPLICATE_TEXT`.
- * Пересказ сверяет по `findVerbatim` с порогом `QUOTE_MIN_WORDS`; толкования анализа (`F07-5`)
- * передают свой порог и сверку `matches` (`quotedInText` из `quote-check.ts`) - `chapters` тогда
- * не читается.
+ * Пересказ передаёт главы и сверяет по `findVerbatim` с порогом `QUOTE_MIN_WORDS`; толкования
+ * анализа (`F07-5`) передают вместо глав свою сверку (`quotedInText` из `quote-check.ts`) и порог.
  */
 export function checkQuotes(
   text: string,
-  chapters: ChapterIndex,
-  options: { minWords?: number; matches?: (quote: string) => boolean } = {},
+  source: ChapterIndex | QuoteMatch,
+  options: { minWords?: number } = {},
 ): { remarks: DraftRemark[]; verbatim: string[] } {
   const minWords = options.minWords ?? QUOTE_MIN_WORDS;
-  const paragraphs = options.matches ? [] : [...chapters.values()].flat();
-  const found = options.matches ?? ((quote: string) => findVerbatim(quote, paragraphs) !== null);
+  const found = typeof source === 'function' ? source : verbatimIn(source);
   const remarks: DraftRemark[] = [];
   const verbatim: string[] = [];
   for (const quote of quotedFragments(text)) {

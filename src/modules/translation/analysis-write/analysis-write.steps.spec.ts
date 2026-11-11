@@ -5,6 +5,7 @@ import {
   estimateInputTokens,
   INPUT_CHARS_PER_TOKEN,
 } from '../../llm/openrouter.client';
+import * as quoteCheck from '../draft-quality/quote-check';
 import { indexChapters } from '../draft-quality/quote-check';
 import { regenRemarks } from './analysis-checks';
 import { EXAMPLE_ANALYSES } from './examples';
@@ -551,6 +552,51 @@ describe('F07-2b: regeneration of the blocks of steps 3-5', () => {
       'titleMeaning: El río oscuro',
       'titleMeaning: she burns the house',
     ]);
+  });
+
+  it('the book is folded once per step, not on every attempt of the quality loop (T182)', () => {
+    const ctx = context();
+    const index = indexChapters(new Map([[1, 'Anna walked along the cold river at dawn.']]));
+    const draft = {
+      ...EMPTY_DRAFT,
+      blocks: { mainIdea: '«walked along the cold river» and «she burns the house».' },
+    };
+    const fold = jest.spyOn(quoteCheck, 'foldedParagraphs');
+    try {
+      const input = stepInput(3, ctx, versionBook(ctx), index);
+      const first = input.codeCheck(draft).filter((r) => r.code === 'QUOTE_NOT_VERBATIM');
+      const second = input.codeCheck(draft).filter((r) => r.code === 'QUOTE_NOT_VERBATIM');
+      expect(first.map((r) => r.where)).toEqual(['mainIdea: she burns the house']);
+      expect(second).toEqual(first);
+      expect(fold).toHaveBeenCalledTimes(1);
+    } finally {
+      fold.mockRestore();
+    }
+  });
+
+  it('nothing to check - the book is not folded at all; a chapter titled with marks only changes nothing (T182)', () => {
+    const base = context();
+    const ctx: StepContext = {
+      ...base,
+      chapters: base.chapters.map((c) => (c.number === 2 ? { ...c, title: '* * *' } : c)),
+    };
+    const index = indexChapters(new Map([[1, 'Anna walked along the cold river at dawn.']]));
+    const fold = jest.spyOn(quoteCheck, 'foldedParagraphs');
+    try {
+      const input = stepInput(3, ctx, versionBook(ctx), index);
+      const plain = { ...EMPTY_DRAFT, blocks: { mainIdea: 'Anna walks along the river.' } };
+      expect(input.codeCheck(plain).filter((r) => r.code === 'QUOTE_NOT_VERBATIM')).toEqual([]);
+      expect(fold).not.toHaveBeenCalled();
+      const quoted = { ...EMPTY_DRAFT, blocks: { mainIdea: 'She says «she burns the house».' } };
+      expect(
+        input
+          .codeCheck(quoted)
+          .filter((r) => r.code === 'QUOTE_NOT_VERBATIM')
+          .map((r) => r.where),
+      ).toEqual(['mainIdea: she burns the house']);
+    } finally {
+      fold.mockRestore();
+    }
   });
 
   it('new themes without the key of a theme the characters or quotations link to - a code remark; kept keys - none', () => {

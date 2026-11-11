@@ -394,28 +394,32 @@ const quotesTheBook = (f: TextField): boolean =>
  * `F07 | F07-5`): не нашлась ни в одном абзаце версии (`quotedInText`) - замечание с переделкой
  * и флаг на месте; текст не режется и не выбрасывается (U5). Название книги (любой её версии)
  * или главы в кавычках - не цитата. Поля `quote`/`text`/`example` сверяет `fixDraft`. Книга
- * сворачивается для сверки только когда есть что сверять. Нет глав (оценка цены) - замечаний нет.
+ * сворачивается для сверки только когда есть что сверять, `foldedBook` отдаёт свёртку, общую
+ * на все попытки шага (`bookFolder`). Нет глав (оценка цены) - замечаний нет.
  */
 export function innerQuoteRemarks(
   blocks: StepBlocks,
   chapters: ChapterIndex,
   titles: readonly string[] = [],
+  foldedBook: () => readonly string[] = bookFolder(chapters),
 ): DraftRemark[] {
   if (chapters.size === 0) return [];
-  let folded: string[] | null = null;
   const named = new Set(titles.map(foldQuote));
-  const matches = (quote: string) => {
-    if (named.has(foldQuote(quote))) return true;
-    folded ??= foldedParagraphs(chapters);
-    return quotedInText(quote, folded);
-  };
+  const matches = (quote: string) =>
+    named.has(foldQuote(quote)) || quotedInText(quote, foldedBook());
   return textFields(blocks)
     .filter(quotesTheBook)
     .flatMap((f) =>
-      checkQuotes(f.text, chapters, { minWords: INNER_QUOTE_MIN_WORDS, matches }).remarks.map((r) =>
+      checkQuotes(f.text, matches, { minWords: INNER_QUOTE_MIN_WORDS }).remarks.map((r) =>
         atPath(f.path, r),
       ),
     );
+}
+
+/** Свёртка абзацев книги для `innerQuoteRemarks`: считается при первом запросе и один раз. */
+export function bookFolder(chapters: ChapterIndex): () => readonly string[] {
+  let folded: string[] | null = null;
+  return () => (folded ??= foldedParagraphs(chapters));
 }
 
 /** Замечания кода шага, которые зовут переделку (В3). */
@@ -428,11 +432,13 @@ export function stepRemarks(input: {
   chapters: ChapterIndex;
   /** Название книги и главы: в кавычках - не цитата. */
   titles?: readonly string[];
+  /** Свёртка книги, общая на попытки шага (`bookFolder`); нет - своя на вызов. */
+  foldedBook?: () => readonly string[];
 }): DraftRemark[] {
   return [
     ...importRemarks(input.language, input.stored, input.merged, input.draft.blocks),
     ...textRemarks(input.draft.blocks, input.language, input.glossary),
-    ...innerQuoteRemarks(input.draft.blocks, input.chapters, input.titles),
+    ...innerQuoteRemarks(input.draft.blocks, input.chapters, input.titles, input.foldedBook),
   ];
 }
 

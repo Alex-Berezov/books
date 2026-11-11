@@ -48,12 +48,12 @@ describe('QUOTE_NOT_VERBATIM', () => {
 
   it('minWords and matches replace the threshold and the search', () => {
     const seen: string[] = [];
-    const { remarks, verbatim } = checkQuotes('A «two words» and «three more words».', CHAPTERS, {
+    const matches = (quote: string) => {
+      seen.push(quote);
+      return quote === 'two words';
+    };
+    const { remarks, verbatim } = checkQuotes('A «two words» and «three more words».', matches, {
       minWords: 2,
-      matches: (quote) => {
-        seen.push(quote);
-        return quote === 'two words';
-      },
     });
     expect(seen).toEqual(['two words', 'three more words']);
     expect(verbatim).toEqual(['two words']);
