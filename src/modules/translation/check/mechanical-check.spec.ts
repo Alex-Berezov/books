@@ -7,9 +7,11 @@ import {
   FOREIGN_SHARE_MAX,
   formFound,
   glossaryExclusions,
+  hasPhrase,
   MechanicalInput,
   nameEntriesOf,
   normalized,
+  pieceTexts,
 } from './mechanical-check';
 
 /** Строки главы - в `count` блоков подряд: у параллельных глав число строк разное. */
@@ -357,5 +359,24 @@ describe('checkMechanical', () => {
       expect(names.map((e) => e.key)).toEqual(['well', 'bear', 'channel']);
       expect(misses(homonyms, names)).toEqual([]);
     });
+  });
+});
+
+describe('piece text without markup (LEGACY-500)', () => {
+  it('a name inside <em> is found as a word, the mark after the tag stays attached', () => {
+    const { sourceText, translatedText } = pieceTexts(
+      [{ n: 1, html: '<p><strong>Anna</strong>; ok</p>' }],
+      [{ n: 1, text: '<p>See <em>Anna</em>, then go.</p>' }],
+    );
+    expect(sourceText).toBe('Anna; ok');
+    expect(translatedText).toBe('See Anna, then go.');
+    expect(
+      hasPhrase(
+        normalized(
+          pieceTexts([{ n: 1, html: 'x' }], [{ n: 1, text: '<em>Ann</em>a' }]).translatedText,
+        ),
+        'anna',
+      ),
+    ).toBe(true);
   });
 });

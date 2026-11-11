@@ -1,4 +1,5 @@
 import { RICH_HTML_ALLOWED_TAGS, sanitizeRichHtml } from '../../shared/sanitize/rich-html';
+import { GLUED_TAGS } from '../../shared/sanitize/rich-html-text';
 import { assembleChapter, BLOCK_TAGS, INLINE_TAGS, splitChapter } from './chapter-blocks';
 
 /** Корпус глав: формы сида приёмки (`prisma/seed-analyses.ts:435`) и краевые случаи карточки. */
@@ -128,6 +129,12 @@ describe('chapter blocks against the sanitizer allow-list', () => {
     const known = new Set([...BLOCK_TAGS, ...INLINE_TAGS]);
     expect(RICH_HTML_ALLOWED_TAGS.filter((t) => !known.has(t))).toEqual([]);
     expect([...BLOCK_TAGS].filter((t) => INLINE_TAGS.has(t))).toEqual([]);
+  });
+
+  it('text for checks glues inline tags with text and spaces the rest (LEGACY-500)', () => {
+    const textless = new Set(['br', 'img']);
+    expect([...INLINE_TAGS].filter((t) => !textless.has(t) && !GLUED_TAGS.has(t))).toEqual([]);
+    expect([...BLOCK_TAGS, ...textless].filter((t) => GLUED_TAGS.has(t))).toEqual([]);
   });
 
   it.each(CORPUS)('a block never carries block markup inside, corpus %#', (raw) => {

@@ -1,5 +1,5 @@
 import { Language } from '@prisma/client';
-import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
+import { richHtmlInlineText } from '../../../shared/sanitize/rich-html-text';
 import { LANGUAGE_NAMES } from '../dossier/dossier.prompts';
 import { TranslatedBlock } from '../translate/translate.format';
 import { CHECK_FLAG_REASONS, CheckFlagReason } from './check.constants';
@@ -201,7 +201,7 @@ export function hasPhrase(normalizedText: string, phrase: string): boolean {
 /** Конец законченного предложения: знак конца, за ним кавычки и скобки. */
 const SENTENCE_END = /[.!?…:;»«"“”„'’‘)\]›*—–-]\s*$/u;
 
-const plain = (html: string) => richHtmlText(html).trim();
+const plain = richHtmlInlineText;
 
 /**
  * Текст куска без разметки - исходник и перевод по номерам исходных блоков, блок строкой.

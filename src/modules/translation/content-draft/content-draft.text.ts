@@ -1,4 +1,4 @@
-import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
+import { richHtmlInlineText } from '../../../shared/sanitize/rich-html-text';
 import { splitChapter } from '../chapter-blocks';
 
 /**
@@ -19,7 +19,7 @@ export function htmlToParagraphs(html: string): string {
       .blocks.filter((b) => b.translatable && b.kind !== 'img-alt' && b.kind !== 'img-title')
       .map((b) => {
         // Строчная разметка снимается без пробела («<em>arrives</em>.»), перенос строки - пробел.
-        const text = richHtmlText(b.html.replace(/<br\s*\/?>/gi, ' ').replace(/<[^>]*>/g, ''));
+        const text = richHtmlInlineText(b.html);
         return /^h[1-6]$/.test(b.kind) ? `## ${text}` : text;
       })
       .filter((text) => text !== '' && text !== '##')

@@ -9,6 +9,12 @@ describe('content draft text', () => {
     ).toBe('## Part One\n\nAnna arrives.');
   });
 
+  it('htmlToParagraphs: inline markup glued, line break and image spaced (LEGACY-500)', () => {
+    expect(htmlToParagraphs('<p>See <em>Anna</em>, then<br>go<img src="x.jpg">home.</p>')).toBe(
+      'See Anna, then go home.',
+    );
+  });
+
   it('chaptersText: the reader chapter mark before each chapter', () => {
     expect(
       chaptersText([
