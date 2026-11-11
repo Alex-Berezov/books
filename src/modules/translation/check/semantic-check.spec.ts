@@ -117,6 +117,115 @@ describe('semantic check', () => {
     );
   });
 
+  it('a lost name under a key the checker distorted counts against the sent entry (LEGACY-494)', () => {
+    const channel = [{ key: 'found:the channel', source: 'the Channel', target: 'Ла-Манш' }];
+    for (const key of ['found:the channel: the Channel', 'found:thechannel', 'Found:The Channel']) {
+      const lost = answer({ nameFlags: [{ key, verdict: 'lost' }] });
+      expect(semanticFailed(lost, channel)).toBe(true);
+      expect(semanticRemarks(lost, channel)).toContain(
+        'Keep the name "Ла-Манш" (source "the Channel") as the glossary says.',
+      );
+    }
+    // Чужой ключ и ключ, совпавший с двумя отправленными, - не флаг.
+    const two = [
+      { key: 'found:the-channel', source: 'the Channel', target: 'Ла-Манш' },
+      { key: 'found:the channel', source: 'The channel', target: 'фарватер' },
+    ];
+    const distorted = answer({ nameFlags: [{ key: 'found:thechannel', verdict: 'lost' }] });
+    expect(semanticFailed(distorted, two)).toBe(false);
+    expect(semanticRemarks(distorted, two)).toEqual([]);
+    const foreign = answer({ nameFlags: [{ key: 'found:the sea', verdict: 'lost' }] });
+    expect(semanticFailed(foreign, channel)).toBe(false);
+    // Пустой по буквам ключ ни с чем не совпадает.
+    expect(
+      semanticFailed(answer({ nameFlags: [{ key: '::', verdict: 'lost' }] }), [
+        { key: '-', source: 'x', target: 'y' },
+      ]),
+    ).toBe(false);
+  });
+
+  it('one lost entry is one remark, a contradiction under any keys fails (LEGACY-494)', () => {
+    const channel = [{ key: 'found:the channel', source: 'the Channel', target: 'Ла-Манш' }];
+    const keep = 'Keep the name "Ла-Манш" (source "the Channel") as the glossary says.';
+    const twice = answer({
+      nameFlags: [
+        { key: 'found:the channel', verdict: 'lost' },
+        { key: 'found:thechannel', verdict: 'lost' },
+      ],
+    });
+    expect(semanticRemarks(twice, channel).filter((r) => r === keep)).toHaveLength(1);
+    // Склонённая под точным ключом и потерянная под искажённым - провал и одно замечание.
+    const contradictory = answer({
+      nameFlags: [
+        { key: 'found:the channel', verdict: 'inflected' },
+        { key: 'found:thechannel', verdict: 'lost' },
+      ],
+    });
+    expect(semanticFailed(contradictory, channel)).toBe(true);
+    expect(semanticRemarks(contradictory, channel)).toEqual([keep]);
+  });
+
+  it('matching goes by steps: case beats letters, a spaced colon is a prefix, marks tell names apart (LEGACY-494)', () => {
+    const two = [
+      { key: 'found:the-channel', source: 'the Channel', target: 'Ла-Манш' },
+      { key: 'found:the channel', source: 'The channel', target: 'фарватер' },
+    ];
+    const fairway = 'Keep the name "фарватер" (source "The channel") as the glossary says.';
+    const cased = answer({ nameFlags: [{ key: 'Found:The Channel', verdict: 'lost' }] });
+    expect(semanticRemarks(cased, two)).toEqual([fairway]);
+    const channel = [{ key: 'found:the channel', source: 'the Channel', target: 'Ла-Манш' }];
+    const spaced = answer({
+      nameFlags: [{ key: 'found:the channel : the Channel', verdict: 'lost' }],
+    });
+    expect(semanticFailed(spaced, channel)).toBe(true);
+    const ram = [
+      { key: 'found:राम', source: 'राम', target: 'Рама' },
+      { key: 'found:रम', source: 'रम', target: 'Рам' },
+    ];
+    const marked = answer({ nameFlags: [{ key: 'found: राम', verdict: 'lost' }] });
+    expect(semanticRemarks(marked, ram)).toEqual([
+      'Keep the name "Рама" (source "राम") as the glossary says.',
+    ]);
+    // Префикс одной записи и буквы другой - разные ступени: первая с совпадением решает.
+    const nested = [
+      { key: 'found:mr', source: 'Mr', target: 'мистер' },
+      { key: 'found:mrsmith', source: 'Mr Smith', target: 'мистер Смит' },
+    ];
+    const prefixed = answer({ nameFlags: [{ key: 'found:mr: Smith', verdict: 'lost' }] });
+    expect(semanticRemarks(prefixed, nested)).toEqual([
+      'Keep the name "мистер" (source "Mr") as the glossary says.',
+    ]);
+  });
+
+  it('a distorted key matches regardless of accent composition, an exact key beats a letters clash (LEGACY-494)', () => {
+    const jose = [{ key: 'found:josé', source: 'José', target: 'Хосе' }];
+    const nfd = answer({ nameFlags: [{ key: 'Found:José', verdict: 'lost' }] });
+    expect(semanticFailed(nfd, jose)).toBe(true);
+    const two = [
+      { key: 'found:the-channel', source: 'the Channel', target: 'Ла-Манш' },
+      { key: 'found:the channel', source: 'The channel', target: 'фарватер' },
+    ];
+    const exact = answer({ nameFlags: [{ key: 'found:the channel', verdict: 'lost' }] });
+    expect(semanticFailed(exact, two)).toBe(true);
+    expect(semanticRemarks(exact, two)).toEqual([
+      'Keep the name "фарватер" (source "The channel") as the glossary says.',
+    ]);
+  });
+
+  it('the same key counts even under two sent entries; an empty key is no prefix (LEGACY-494)', () => {
+    const twins = [
+      { key: 'anna', source: 'Anna', target: 'Анна' },
+      { key: 'anna', source: 'Anne', target: 'Анна' },
+    ];
+    expect(semanticFailed(answer({ nameFlags: [{ key: 'anna', verdict: 'lost' }] }), twins)).toBe(
+      true,
+    );
+    const empty = [{ key: '', source: 'X', target: 'Y' }];
+    expect(
+      semanticFailed(answer({ nameFlags: [{ key: ': something', verdict: 'lost' }] }), empty),
+    ).toBe(false);
+  });
+
   it('an unknown verdict is a form error, not unsure', () => {
     const value = { verdict: 'maybe', samples: [], omissions: [], nameFlags: [], remarks: [] };
     expect(shapeErrors(value, SEMANTIC_SHAPE)).toEqual([

@@ -160,6 +160,58 @@ function realOmissions(answer: Pick<SemanticAnswer, 'omissions'>): string[] {
     .filter((o) => o !== '' && !(o.length <= NO_OMISSION_MAX_CHARS && NO_OMISSION.test(o)));
 }
 
+/** Ключ к одному виду: диакритика (NFC - «josé» модели из разложенной формы) и регистр. */
+const foldKey = (key: string) => key.normalize('NFC').toLowerCase();
+
+/**
+ * Ключ только из букв, знаков при них и цифр: «found:the channel» - «foundthechannel». Знаки
+ * `\p{M}` остаются: огласовки письменностей без составных форм различают имена («राम» и «रम»).
+ */
+const keyLetters = (key: string) => foldKey(key).replace(/[^\p{L}\p{M}\p{N}]/gu, '');
+
+/**
+ * Отправленная запись, к которой относится ключ флага проверяющего (`LEGACY-494`, решения арбитра
+ * `T181`). Ступени по порядку: тот же ключ; тот же без регистра; отправленный ключ с приписанной
+ * через «:» формой («found:the channel: the Channel», пробел перед «:» допустим); тот же по одним
+ * буквам и цифрам («found:thechannel»). Ступень засчитывается только при единственном совпадении,
+ * следующая - лишь если предыдущая не дала ни одного: чужой ключ или совпавший с несколькими
+ * отправленными - не флаг (решение `F05 | F05-5`). Тот же ключ засчитывается всегда, как до
+ * `T181`: две отправленные записи под одним ключом - первая из них.
+ */
+function sentNameOf(flagKey: string, names: readonly NameEntry[]): NameEntry | undefined {
+  const exact = names.find((n) => n.key === flagKey);
+  if (exact) return exact;
+  const folded = foldKey(flagKey);
+  const letters = keyLetters(flagKey);
+  const steps: Array<(n: NameEntry) => boolean> = [
+    (n) => foldKey(n.key) === folded,
+    (n) =>
+      n.key !== '' &&
+      folded.startsWith(foldKey(n.key)) &&
+      /^\s*:/.test(folded.slice(foldKey(n.key).length)),
+    (n) => letters !== '' && keyLetters(n.key) === letters,
+  ];
+  for (const step of steps) {
+    const matched = names.filter(step);
+    if (matched.length > 0) return matched.length === 1 ? matched[0] : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Потерянные отправленные записи, каждая один раз: два флага на одну запись (точный и искажённый
+ * ключ) - одна потеря и одно замечание. `lost` под любым ключом записи - потеря, даже если под
+ * другим ключом её назвали склонённой: противоречивый ответ проваливается одинаково при любых
+ * ключах (решение арбитра `T181`, круг 2).
+ */
+function lostNames(answer: SemanticAnswer, names: readonly NameEntry[]): NameEntry[] {
+  const lost = answer.nameFlags
+    .filter((f) => f.verdict === 'lost')
+    .map((f) => sentNameOf(f.key, names))
+    .filter((n): n is NameEntry => n !== undefined);
+  return [...new Set(lost)];
+}
+
 /**
  * Провал смысла: `fail`, неточный образец или названный пропуск (pass с `accurate: false` или
  * с `omissions` противоречит себе: промпт определяет pass как «samples accurate and nothing
@@ -167,12 +219,11 @@ function realOmissions(answer: Pick<SemanticAnswer, 'omissions'>): string[] {
  * ключам - не провал (решения арбитра `F05 | F05-5`).
  */
 export function semanticFailed(answer: SemanticAnswer, names: readonly NameEntry[]): boolean {
-  const sent = new Set(names.map((n) => n.key));
   return (
     answer.verdict === 'fail' ||
     answer.samples.some((s) => !s.accurate) ||
     realOmissions(answer).length > 0 ||
-    answer.nameFlags.some((f) => f.verdict === 'lost' && sent.has(f.key))
+    lostNames(answer, names).length > 0
   );
 }
 
@@ -181,11 +232,9 @@ export function semanticRemarks(answer: SemanticAnswer, names: readonly NameEntr
   const inaccurate = answer.samples
     .filter((s) => !s.accurate)
     .map((s) => `Inaccurate: "${s.source}" is rendered as "${s.translation}".`);
-  const lost = answer.nameFlags
-    .filter((f) => f.verdict === 'lost')
-    .map((f) => names.find((n) => n.key === f.key))
-    .filter((n): n is NameEntry => n !== undefined)
-    .map((n) => `Keep the name "${n.target}" (source "${n.source}") as the glossary says.`);
+  const lost = lostNames(answer, names).map(
+    (n) => `Keep the name "${n.target}" (source "${n.source}") as the glossary says.`,
+  );
   return [
     ...answer.remarks,
     ...inaccurate,
