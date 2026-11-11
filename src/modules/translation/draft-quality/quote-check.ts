@@ -103,6 +103,13 @@ const GAP = /\[[^\]]*\]|\(\s*(?:…|\.\.\.)\s*\)|…|\.\.\./u;
 /** Знаки по краям куска, которые цитата берёт себе («a man without a shadow,»). */
 const EDGE_MARKS = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}\p{M}]+$/gu;
 
+/**
+ * Вид названия для сверки «в кавычках - название, а не цитата»: `foldQuote` без знаков по краям
+ * («The Sound and the Fury,», «Absalom, Absalom» против `Absalom, Absalom!`). Только точное
+ * совпадение: кусок названия или похожая фраза остаётся цитатой.
+ */
+export const foldTitle = (text: string): string => foldQuote(text).replace(EDGE_MARKS, '');
+
 /** Символ абзаца у края куска продолжает слово. */
 function continuesWord(paragraph: string, at: number): boolean {
   const ch = paragraph[at];

@@ -1,4 +1,10 @@
-import { findVerbatim, indexChapters, paragraphsOf, quoteInChapter } from './quote-check';
+import {
+  findVerbatim,
+  foldTitle,
+  indexChapters,
+  paragraphsOf,
+  quoteInChapter,
+} from './quote-check';
 
 /**
  * Общая дословность цитат и правило абзаца (`F06-1`, вынос из заготовки анализа `F05-11` без смены
@@ -49,5 +55,19 @@ describe('quoteInChapter', () => {
     expect(quoteInChapter('x', 0, chapters, 100)).toEqual({ reason: 'NO_CHAPTER' });
     expect(quoteInChapter('x', 9, chapters, 100)).toEqual({ reason: 'CHAPTER_MISSING' });
     expect(quoteInChapter('missing', 2, chapters, 100)).toEqual({ reason: 'NOT_FOUND' });
+  });
+});
+
+describe('foldTitle (T182)', () => {
+  it('drops marks at the edges only, keeps the inner ones and the case-folded words', () => {
+    expect(foldTitle('Absalom, Absalom!')).toBe(foldTitle('«Absalom, Absalom»'));
+    expect(foldTitle('The Sound and the Fury,')).toBe('the sound and the fury');
+    expect(foldTitle('¿Quién?')).toBe('quién');
+    expect(foldTitle('Absalom, Absalom')).not.toBe(foldTitle('Absalom Absalom'));
+  });
+
+  it('a title made only of marks folds to an empty string', () => {
+    expect(foldTitle('* * *')).toBe('');
+    expect(foldTitle('—')).toBe('');
   });
 });

@@ -11,7 +11,7 @@ import { analysisImportErrors, quoteCheck } from './analysis-import';
 import {
   ChapterIndex,
   foldedParagraphs,
-  foldQuote,
+  foldTitle,
   quotedInText,
 } from '../draft-quality/quote-check';
 import {
@@ -392,8 +392,9 @@ const quotesTheBook = (f: TextField): boolean =>
 /**
  * `QUOTE_NOT_VERBATIM` по цитатам в кавычках внутри текстов толкований (`F07-5`, решения арбитра
  * `F07 | F07-5`): не нашлась ни в одном абзаце версии (`quotedInText`) - замечание с переделкой
- * и флаг на месте; текст не режется и не выбрасывается (U5). Название книги (любой её версии)
- * или главы в кавычках - не цитата. Поля `quote`/`text`/`example` сверяет `fixDraft`. Книга
+ * и флаг на месте; текст не режется и не выбрасывается (U5). Название книги (любой её версии,
+ * в том числе оригинальное) или главы в кавычках - не цитата: точное совпадение без знаков по
+ * краям (`foldTitle`, `T182`). Поля `quote`/`text`/`example` сверяет `fixDraft`. Книга
  * сворачивается для сверки только когда есть что сверять, `foldedBook` отдаёт свёртку, общую
  * на все попытки шага (`bookFolder`). Нет глав (оценка цены) - замечаний нет.
  */
@@ -404,9 +405,10 @@ export function innerQuoteRemarks(
   foldedBook: () => readonly string[] = bookFolder(chapters),
 ): DraftRemark[] {
   if (chapters.size === 0) return [];
-  const named = new Set(titles.map(foldQuote));
+  // Название из одних знаков («* * *», «—») сворачивается в пустую строку - это не название.
+  const named = new Set(titles.map(foldTitle).filter((t) => t !== ''));
   const matches = (quote: string) =>
-    named.has(foldQuote(quote)) || quotedInText(quote, foldedBook());
+    named.has(foldTitle(quote)) || quotedInText(quote, foldedBook());
   return textFields(blocks)
     .filter(quotesTheBook)
     .flatMap((f) =>

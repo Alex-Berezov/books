@@ -501,6 +501,11 @@ export interface StepContext extends PartContext {
    * про эту книгу (название на языке версии или оригинала, фамилия автора; `product.md` §3.3).
    */
   names?: { titles: string[]; authors: string[] };
+  /**
+   * Оригинальные названия книги (`BookVersion.originalTitle` её версий): в кавычках толкования -
+   * не цитата (`innerQuoteRemarks`, `T182`). В подтверждение источника шага 5 не входят.
+   */
+  originalTitles?: string[];
   /** Язык оригинала книги (`BookVersion.originalLanguage`) - вход внешнего шага (`tech.md` §2). */
   originalLanguage?: string;
 }
@@ -975,6 +980,7 @@ export function stepInput(
         chapters: quotes,
         titles: [
           ...(context.names?.titles ?? [context.bookTitle]),
+          ...(context.originalTitles ?? []),
           ...context.chapters.map((c) => c.title),
         ],
         foldedBook,

@@ -554,6 +554,35 @@ describe('F07-2b: regeneration of the blocks of steps 3-5', () => {
     ]);
   });
 
+  it('an original title and a title with marks at its edges are not quotations; a near-title phrase still is (T182)', () => {
+    const base = context();
+    const ctx: StepContext = {
+      ...base,
+      bookTitle: 'Absalom, Absalom!',
+      names: { titles: ['Absalom, Absalom!'], authors: [] },
+      originalTitles: ['The Sound and the Fury'],
+    };
+    const index = indexChapters(new Map([[1, 'Anna walked along the cold river at dawn.']]));
+    const draft = {
+      ...EMPTY_DRAFT,
+      blocks: {
+        titleMeaning:
+          'Read as «Absalom, Absalom», after «The Sound and the Fury,» and not «the sound and fury».',
+      },
+    };
+    const flagged = (c: StepContext) =>
+      stepInput(3, c, versionBook(c), index)
+        .codeCheck(draft)
+        .filter((r) => r.code === 'QUOTE_NOT_VERBATIM')
+        .map((r) => r.where);
+    expect(flagged(ctx)).toEqual(['titleMeaning: the sound and fury']);
+    // Без оригинального названия оно - цитата, которой нет в книге.
+    expect(flagged({ ...ctx, originalTitles: undefined })).toEqual([
+      'titleMeaning: The Sound and the Fury,',
+      'titleMeaning: the sound and fury',
+    ]);
+  });
+
   it('the book is folded once per step, not on every attempt of the quality loop (T182)', () => {
     const ctx = context();
     const index = indexChapters(new Map([[1, 'Anna walked along the cold river at dawn.']]));

@@ -546,7 +546,7 @@ export class AnalysisWriteHandler {
     const [version, glossary, chapters, state, otherKeys, versions] = await Promise.all([
       this.prisma.bookVersion.findUnique({
         where: { id: row.bookVersionId },
-        select: { title: true, author: true, originalLanguage: true },
+        select: { title: true, author: true, originalLanguage: true, originalTitle: true },
       }),
       row.glossaryId
         ? this.prisma.bookGlossary.findUnique({
@@ -559,7 +559,7 @@ export class AnalysisWriteHandler {
       otherLanguageKeys(this.prisma, this.dossiers, row.bookVersionId, row.language),
       this.prisma.bookVersion.findMany({
         where: { book: { versions: { some: { id: row.bookVersionId } } } },
-        select: { title: true, author: true },
+        select: { title: true, author: true, originalTitle: true },
         take: NAME_VERSIONS_MAX,
       }),
     ]);
@@ -574,6 +574,9 @@ export class AnalysisWriteHandler {
       chapters: withChapterText(chapters),
       otherKeys,
       originalLanguage: version?.originalLanguage ?? '',
+      originalTitles: [
+        ...new Set([version?.originalTitle ?? '', ...versions.map((v) => v.originalTitle ?? '')]),
+      ].filter((t) => t !== ''),
       names: {
         titles: [...new Set([version?.title ?? '', ...versions.map((v) => v.title)])].filter(
           (t) => t !== '',
