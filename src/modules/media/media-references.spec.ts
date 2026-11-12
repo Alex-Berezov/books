@@ -66,6 +66,10 @@ const NOT_MEDIA_TEXT_REFERENCES: Record<string, string> = {
   'RightsEvidence.contentType': 'MIME-тип, пишет сервер из загрузки; в DTO поля нет',
   'TranslationRunLanguage.reasonText':
     'текст отказа сервиса создать черновик перевода, пишет сервер (F05-6b); в DTO запроса поля нет',
+  'BookVersion.summaryReadById':
+    'id редактора, отметившего пересказ прочитанным, пишет сервер (T184, auto-text-read.service.ts); в DTO запроса поля нет',
+  'BookVersion.analysisReadById':
+    'id редактора, отметившего анализ прочитанным, пишет сервер (T184, auto-text-read.service.ts); в DTO запроса поля нет',
 };
 
 /** Поля, куда редактор админки вставляет картинку из медиатеки (книга, глава, сводка, автор, категория, тег, страница, ответ на комментарий). */

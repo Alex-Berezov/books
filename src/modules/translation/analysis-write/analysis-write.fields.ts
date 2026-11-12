@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
+import { stableJson } from '../draft-quality/draft-record';
 import { ContentDraft, Language, Prisma } from '@prisma/client';
 import { lockVersionRow } from '../version-lock';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -15,6 +16,7 @@ import type { UpdateBookAnalysisDto } from '../../book-analysis/dto/update-book-
 import { compactBlock } from '../../../shared/prisma/compact-block.util';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
 import { analysisImportErrors } from './analysis-import';
+import { saveNotingAutoText } from '../content-draft/auto-text-landing';
 import { codeRemark } from '../draft-quality/text-checks';
 import { blockOfPath, coreRemark } from './analysis-checks';
 import {
@@ -38,7 +40,6 @@ import {
   factField,
   proposalPrint,
   readAnalysisData,
-  stableJson,
   StepFix,
   targetValue,
   THEMES_STEP,
@@ -1094,14 +1095,17 @@ export class AnalysisWriteFields {
 
   /** Данные хода - условием своей операции и `building`: не совпало - откат транзакции. */
   private async save(tx: Db, id: string, gate: AnalysisGate, data: AnalysisWriteData) {
-    const { count } = await tx.contentDraft.updateMany({
-      where:
-        gate.status === 'building'
-          ? { id, status: 'building', operationId: gate.operationId ?? undefined }
-          : { id, status: 'ready' },
-      data: { data: analysisDataJson(data) },
+    // Вклад модели в поля версии - по прежним данным под замком анализа (`T184`).
+    await saveNotingAutoText(tx, id, 'analysis', data, readAnalysisData, async () => {
+      const { count } = await tx.contentDraft.updateMany({
+        where:
+          gate.status === 'building'
+            ? { id, status: 'building', operationId: gate.operationId ?? undefined }
+            : { id, status: 'ready' },
+        data: { data: analysisDataJson(data) },
+      });
+      if (count !== 1) throw new AnalysisRunGone();
     });
-    if (count !== 1) throw new AnalysisRunGone();
   }
 }
 

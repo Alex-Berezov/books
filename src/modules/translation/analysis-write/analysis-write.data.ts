@@ -1,6 +1,12 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
-import { oneOf, remarksReader, reviewReader, stringOf } from '../draft-quality/draft-record';
+import {
+  oneOf,
+  remarksReader,
+  reviewReader,
+  stableJson,
+  stringOf,
+} from '../draft-quality/draft-record';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 import {
   BOOK_ANALYSIS_BLOCK_KEYS,
@@ -348,21 +354,6 @@ export const emptyAnalysisData = (
   pending: null,
   stepsBroken: false,
 });
-
-/**
- * Сериализация с ключами по алфавиту на каждом уровне: jsonb переставляет ключи объекта (Л2),
- * поэтому отпечаток не зависит от порядка ключей. `undefined` у ключа - как отсутствие ключа.
- */
-export function stableJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map((v) => stableJson(v ?? null)).join(',')}]`;
-  if (isRecord(value)) {
-    const keys = Object.keys(value)
-      .filter((k) => value[k] !== undefined)
-      .sort();
-    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableJson(value[k])}`).join(',')}}`;
-  }
-  return JSON.stringify(value ?? null);
-}
 
 /** Отпечаток содержимого блока: sha256 стабильной сериализации (`tech.md` §5, Л2). */
 export const blockPrint = (value: unknown): string =>

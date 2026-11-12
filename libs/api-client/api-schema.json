@@ -3190,6 +3190,38 @@
         ],
         "type": "object"
       },
+      "AutoTextReadDto": {
+        "properties": {
+          "autoTextAt": {
+            "description": "When model text last landed in the fields of this tab (a run item written or accepted); null - never",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "read": {
+            "description": "true - nothing to read or the mark is not older than the last model text; false - publication of the version is refused (AUTO_TEXT_NOT_READ)",
+            "type": "boolean"
+          },
+          "readAt": {
+            "description": "When the editor marked the text read; null - not marked",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "readById": {
+            "description": "Who marked the text read",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "autoTextAt",
+          "readAt",
+          "readById",
+          "read"
+        ],
+        "type": "object"
+      },
       "BackgroundJobStatusDto": {
         "properties": {
           "name": {
@@ -6550,6 +6582,22 @@
             "nullable": true,
             "type": "array"
           },
+          "analysisAutoTextAt": {
+            "description": "T184: when model text last landed in the analysis blocks; null - never",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "analysisReadAt": {
+            "description": "T184: when the editor marked the analysis model text read",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "analysisReadById": {
+            "nullable": true,
+            "type": "string"
+          },
           "approvedRightsReviewId": {
             "nullable": true,
             "type": "string"
@@ -6834,6 +6882,22 @@
             ],
             "type": "string"
           },
+          "summaryAutoTextAt": {
+            "description": "T184: when model text last landed in the summary fields; null - never",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "summaryReadAt": {
+            "description": "T184: when the editor marked the summary model text read",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "summaryReadById": {
+            "nullable": true,
+            "type": "string"
+          },
           "summaryShort": {
             "nullable": true,
             "type": "string"
@@ -6926,6 +6990,12 @@
           "rightsGeoBlockVerifiedAt",
           "rightsGeoBlockVerifiedByUserId",
           "rightsGeoBlockLastGeneratedAt",
+          "summaryAutoTextAt",
+          "summaryReadAt",
+          "summaryReadById",
+          "analysisAutoTextAt",
+          "analysisReadAt",
+          "analysisReadById",
           "rightsContentHash",
           "rightsContentHashAlgorithmVersion",
           "rightsContentHashInput",
@@ -7185,6 +7255,22 @@
             },
             "nullable": true,
             "type": "array"
+          },
+          "analysisAutoTextAt": {
+            "description": "T184: when model text last landed in the analysis blocks; null - never",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "analysisReadAt": {
+            "description": "T184: when the editor marked the analysis model text read",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "analysisReadById": {
+            "nullable": true,
+            "type": "string"
           },
           "approvedRightsReviewId": {
             "nullable": true,
@@ -7458,6 +7544,22 @@
             ],
             "type": "string"
           },
+          "summaryAutoTextAt": {
+            "description": "T184: when model text last landed in the summary fields; null - never",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "summaryReadAt": {
+            "description": "T184: when the editor marked the summary model text read",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "summaryReadById": {
+            "nullable": true,
+            "type": "string"
+          },
           "summaryShort": {
             "nullable": true,
             "type": "string"
@@ -7544,6 +7646,12 @@
           "rightsGeoBlockVerifiedAt",
           "rightsGeoBlockVerifiedByUserId",
           "rightsGeoBlockLastGeneratedAt",
+          "summaryAutoTextAt",
+          "summaryReadAt",
+          "summaryReadById",
+          "analysisAutoTextAt",
+          "analysisReadAt",
+          "analysisReadById",
           "rightsContentHash",
           "rightsContentHashAlgorithmVersion",
           "rightsContentHashInput",
@@ -15452,6 +15560,19 @@
           "method",
           "authHeader",
           "note"
+        ],
+        "type": "object"
+      },
+      "MarkAutoTextReadDto": {
+        "properties": {
+          "autoTextAt": {
+            "description": "autoTextAt the editor saw (from GET .../read); another one - 409 AUTO_TEXT_CHANGED",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "autoTextAt"
         ],
         "type": "object"
       },
@@ -42061,6 +42182,173 @@
           }
         ],
         "summary": "Upper cost estimate of the summary run: every section of the dossier plan, the full and the very short summary, each text × 2 passes of the author and the reviewer",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/drafts/{kind}/read": {
+      "delete": {
+        "operationId": "ContentDraftController_unmarkRead",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "summary_write",
+                "analysis_write"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The mark is removed"
+          },
+          "400": {
+            "description": "Not a UUID or not a run kind"
+          },
+          "404": {
+            "description": "Book version not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Remove the «read» mark of the Summary or Analysis tab",
+        "tags": [
+          "admin"
+        ]
+      },
+      "get": {
+        "operationId": "ContentDraftController_readState",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "summary_write",
+                "analysis_write"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoTextReadDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "Not a UUID or not a run kind"
+          },
+          "404": {
+            "description": "Book version not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The editor «read» mark of the Summary or Analysis tab: when model text last landed in its fields and when the editor marked it read",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "ContentDraftController_markRead",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "kind",
+            "required": true,
+            "schema": {
+              "enum": [
+                "summary_write",
+                "analysis_write"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkAutoTextReadDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AutoTextReadDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "Not a UUID, not a run kind or autoTextAt is not a date"
+          },
+          "404": {
+            "description": "Book version not found"
+          },
+          "409": {
+            "description": "AUTO_TEXT_RUN_BUILDING: a run of this kind is still writing; AUTO_TEXT_NONE: no model text has landed in these fields; AUTO_TEXT_CHANGED: newer model text landed than the autoTextAt the editor saw (current - the state now)"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Mark the model text of the Summary or Analysis tab read: publication of the version stops refusing AUTO_TEXT_NOT_READ for this tab until model text lands again",
         "tags": [
           "admin"
         ]

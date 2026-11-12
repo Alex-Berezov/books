@@ -75,7 +75,14 @@ function runData(
 }
 
 interface Db {
-  row: { id: string; kind: string; status: string; operationId: string; data: unknown };
+  row: {
+    id: string;
+    bookVersionId: string;
+    kind: string;
+    status: string;
+    operationId: string;
+    data: unknown;
+  };
   stored: StoredBookAnalysis;
   published: boolean;
 }
@@ -93,6 +100,7 @@ function harness(
   const db: Db = {
     row: {
       id: 'd1',
+      bookVersionId: 'v1',
       kind: 'analysis_write',
       status,
       operationId: 'op1',
@@ -120,6 +128,7 @@ function harness(
     },
     bookVersion: {
       findUnique: jest.fn(() => Promise.resolve({ status: db.published ? 'published' : 'draft' })),
+      update: jest.fn(() => Promise.resolve({})),
     },
     bookAnalysis: { findUnique: jest.fn(() => Promise.resolve({ ...db.stored })) },
   };
@@ -170,6 +179,24 @@ describe('AnalysisWriteFields.accept (F07-1b)', () => {
     expect(h.db.stored.characters).toEqual([ANNA, BORIS]);
     expect(h.db.stored.style).toHaveLength(1);
     expect(h.run().items[0].outcome).toBe('accepted');
+  });
+
+  it('Accept notes the model text on the version in the same transaction; a refused Accept does not (T184)', async () => {
+    const stored = { ...EMPTY_BOOK_ANALYSIS, characters: EDITED };
+    const h = harness(runData([proposal(stored)]), stored);
+    await h.fields.accept(ROW, 0);
+    expect(h.tx.bookVersion.update).toHaveBeenCalledTimes(1);
+    expect(h.tx.bookVersion.update).toHaveBeenCalledWith({
+      where: { id: 'v1' },
+      data: { analysisAutoTextAt: expect.any(Date) as Date },
+    });
+
+    const refused = harness(runData([proposal(stored)]), {
+      ...stored,
+      characters: [{ ...ANNA, description: 'edited again' }],
+    });
+    await refused.codeOf(refused.fields.accept(ROW, 0));
+    expect(refused.tx.bookVersion.update).not.toHaveBeenCalled();
   });
 
   it('the editor changed this block after the proposal: 409 ANALYSIS_BLOCK_CHANGED with the current content, nothing is written', async () => {

@@ -2,9 +2,11 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
-import { Language, BookType, RightsPublicationGate } from '@prisma/client';
+import { Language, BookType, RightsPublicationGate, RoleName } from '@prisma/client';
 import { createBookWithRights, cleanupBookWithRights } from './helpers/book-with-rights';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import { createBookFixture } from './helpers/book-fixture';
@@ -746,5 +748,202 @@ describe('BookVersion Publication Gate (e2e)', () => {
       .patch(`/versions/${unblockVersionId}/unpublish`)
       .set('Authorization', `Bearer ${adminToken}`)
       .expect(200);
+  });
+
+  // T184: текст модели в полях пересказа или анализа без отметки «прочитано» не публикуется.
+  describe('model text must be marked read before publication', () => {
+    const arrange = async (prefix: string) => {
+      const s = `${prefix}-${Date.now()}`;
+      const rights = await createBookWithRights(prisma, s);
+      createdSlugs.push(s);
+      const res = await request(http())
+        .post(`/books/${rights.book.id}/versions`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({
+          language: Language.en,
+          title: 'Auto Text',
+          author: 'Author',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/cover.jpg',
+          type: BookType.text,
+          isFree: true,
+        })
+        .expect(201);
+      return res.body.id as string;
+    };
+    const publish = (id: string) =>
+      request(http()).patch(`/versions/${id}/publish`).set('Authorization', `Bearer ${adminToken}`);
+    // «Mark as read» несёт время текста модели, который редактор видел на вкладке (GET отметки).
+    const readMark = async (id: string, kind: string, status: number, seen?: string) => {
+      const shown = await request(http())
+        .get(`/admin/versions/${id}/drafts/${kind}/read`)
+        .set('Authorization', `Bearer ${adminToken}`);
+      const autoTextAt =
+        seen ?? (shown.body.autoTextAt as string | null | undefined) ?? new Date().toISOString();
+      return request(http())
+        .post(`/admin/versions/${id}/drafts/${kind}/read`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .send({ autoTextAt })
+        .expect(status);
+    };
+
+    it('refuses publication until each tab with model text is marked read', async () => {
+      const id = await arrange('auto-text');
+      const landed = new Date(Date.now() - 60_000);
+      await prisma.bookVersion.update({
+        where: { id },
+        data: { summaryAutoTextAt: landed, analysisAutoTextAt: landed },
+      });
+
+      const gate = await request(http())
+        .get(`/admin/versions/${id}/publication-gate`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(gate.body.canPublish).toBe(false);
+      expect(gate.body.canPrepare).toBe(true);
+      const reason = (gate.body.blockingReasons as Array<{ code: string; details: unknown }>).find(
+        (r) => r.code === 'AUTO_TEXT_NOT_READ',
+      );
+      expect(reason?.details).toEqual({ kinds: ['summary', 'analysis'] });
+
+      const refused = await publish(id).expect(400);
+      expect(refused.body.code).toBe('RIGHTS_PUBLICATION_BLOCKED');
+      expect(refused.body.blockingReasons.map((r: { code: string }) => r.code)).toContain(
+        'AUTO_TEXT_NOT_READ',
+      );
+
+      const summary = await readMark(id, 'summary_write', 200);
+      expect(summary.body.read).toBe(true);
+      const half = await publish(id).expect(400);
+      expect(half.body.blockingReasons[0].details).toEqual({ kinds: ['analysis'] });
+
+      await readMark(id, 'analysis_write', 200);
+      const published = await publish(id).expect(200);
+      expect(published.body.status).toBe('published');
+    });
+
+    it('model text landing after the mark takes the mark back; the mark can be removed', async () => {
+      const id = await arrange('auto-text-again');
+      await prisma.bookVersion.update({
+        where: { id },
+        data: { summaryAutoTextAt: new Date(Date.now() - 60_000) },
+      });
+      await readMark(id, 'summary_write', 200);
+      await prisma.bookVersion.update({
+        where: { id },
+        data: { summaryAutoTextAt: new Date(Date.now() + 60_000) },
+      });
+      const state = await request(http())
+        .get(`/admin/versions/${id}/drafts/summary_write/read`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(200);
+      expect(state.body.read).toBe(false);
+      await publish(id).expect(400);
+
+      await readMark(id, 'summary_write', 200);
+      await request(http())
+        .delete(`/admin/versions/${id}/drafts/summary_write/read`)
+        .set('Authorization', `Bearer ${adminToken}`)
+        .expect(204);
+      const after = await prisma.bookVersion.findUniqueOrThrow({ where: { id } });
+      expect(after.summaryReadAt).toBeNull();
+      expect(after.summaryReadById).toBeNull();
+    });
+
+    it('a mark for older model text than the latest is refused: the editor has not seen it', async () => {
+      const id = await arrange('auto-text-changed');
+      const landed = new Date(Date.now() - 60_000);
+      await prisma.bookVersion.update({ where: { id }, data: { summaryAutoTextAt: landed } });
+      const stale = new Date(landed.getTime() - 1000).toISOString();
+      const refused = await readMark(id, 'summary_write', 409, stale);
+      expect(refused.body.code).toBe('AUTO_TEXT_CHANGED');
+      await readMark(id, 'summary_write', 400, 'not a date');
+      const after = await prisma.bookVersion.findUniqueOrThrow({ where: { id } });
+      expect(after.summaryReadAt).toBeNull();
+    });
+
+    it('only an admin marks or removes the mark: content manager 403, anonymous 401', async () => {
+      const id = await arrange('auto-text-roles');
+      await prisma.bookVersion.update({
+        where: { id },
+        data: { summaryAutoTextAt: new Date(Date.now() - 60_000) },
+      });
+      const email = `cm-auto-text-${Date.now()}@example.com`;
+      const reg = await request(http())
+        .post('/auth/register')
+        .send({ email, password: 'password123' })
+        .expect(201);
+      await grantStaffRoles(app, email, [RoleName.content_manager]);
+      const cmToken = reg.body.accessToken as string;
+      const path = `/admin/versions/${id}/drafts/summary_write/read`;
+
+      await request(http())
+        .post(path)
+        .set('Authorization', `Bearer ${cmToken}`)
+        .send({ autoTextAt: new Date().toISOString() })
+        .expect(403);
+      await request(http()).delete(path).set('Authorization', `Bearer ${cmToken}`).expect(403);
+      await request(http()).post(path).expect(401);
+      const after = await prisma.bookVersion.findUniqueOrThrow({ where: { id } });
+      expect(after.summaryReadAt).toBeNull();
+    });
+
+    it('nothing to mark without model text; a bad kind is 400', async () => {
+      const id = await arrange('auto-text-none');
+      const none = await readMark(id, 'summary_write', 409);
+      expect(none.body.code).toBe('AUTO_TEXT_NONE');
+      await readMark(id, 'summary_sections', 400);
+      await publish(id).expect(200);
+    });
+
+    it('the migration backfills when model text landed, never the mark', async () => {
+      const id = await arrange('auto-text-backfill');
+      const operation = await prisma.llmOperation.create({
+        data: { kind: 'draft', limitUsd: 1, bookVersionId: id },
+      });
+      const draft = await prisma.contentDraft.create({
+        data: {
+          bookVersionId: id,
+          kind: 'summary_write',
+          status: 'discarded',
+          language: Language.en,
+          operationId: operation.id,
+          data: { items: [{ outcome: 'proposed' }, { outcome: 'written' }], written: {} },
+        },
+      });
+      // Строка с `items` не массивом миграцию не роняет и автотекстом не считается.
+      const broken = await arrange('auto-text-backfill-broken');
+      const brokenOperation = await prisma.llmOperation.create({
+        data: { kind: 'draft', limitUsd: 1, bookVersionId: broken },
+      });
+      await prisma.contentDraft.create({
+        data: {
+          bookVersionId: broken,
+          kind: 'analysis_write',
+          status: 'failed',
+          language: Language.en,
+          operationId: brokenOperation.id,
+          data: { items: 'not an array', written: {} },
+        },
+      });
+      const sql = readFileSync(
+        join(__dirname, '../prisma/migrations/20261112100000_t184_auto_text_read/migration.sql'),
+        'utf8',
+      );
+      const updates = sql
+        .split(';')
+        .map((part) => part.replace(/^\s*(--[^\n]*\n\s*)*/, '').trim())
+        .filter((part) => part.startsWith('UPDATE'));
+      expect(updates).toHaveLength(2);
+      for (const statement of updates) await prisma.$executeRawUnsafe(statement);
+
+      const after = await prisma.bookVersion.findUniqueOrThrow({ where: { id } });
+      expect(after.summaryAutoTextAt?.getTime()).toBe(draft.updatedAt.getTime());
+      expect(after.analysisAutoTextAt).toBeNull();
+      expect(after.summaryReadAt).toBeNull();
+      await publish(id).expect(400);
+      const brokenAfter = await prisma.bookVersion.findUniqueOrThrow({ where: { id: broken } });
+      expect(brokenAfter.analysisAutoTextAt).toBeNull();
+    });
   });
 });

@@ -1,3 +1,5 @@
+import type { AutoTextKind } from './auto-text-marks';
+
 /**
  * WP-H: стадия гейта. Один и тот же набор проверок отвечает на два разных вопроса.
  *
@@ -113,6 +115,9 @@ export const isLawyerOverridableGateCode = (code: string): boolean =>
 /** Код-маркер: в ответе гейта видно, что блокеры сняты заключением, а не исчезли сами. */
 export const LAWYER_OVERRIDE_APPLIED_CODE = 'LAWYER_OVERRIDE_APPLIED';
 
+/** `T184`: код блокера «текст модели на вкладке Summary или Analysis не отмечен прочитанным». */
+export const AUTO_TEXT_NOT_READ_CODE = 'AUTO_TEXT_NOT_READ';
+
 /**
  * Решение владельца 27.09.2026 (тема №4): «Разрешить публикацию» — последняя инстанция по правам.
  *
@@ -120,11 +125,14 @@ export const LAWYER_OVERRIDE_APPLIED_CODE = 'LAWYER_OVERRIDE_APPLIED';
  * юриста выше: владелец так и сформулировал — «снимает все возможные ограничения». Поэтому здесь
  * перечислено обратное — то, что решение не снимает никогда:
  * - `VERSION_CONTENT_INCOMPLETE` — не правовой вопрос: пустая карточка наружу не уходит;
+ * - `AUTO_TEXT_NOT_READ` — не правовой вопрос: текст модели наружу не уходит непрочитанным (`T184`);
  * - претензия правообладателя, заведённая **после** решения, — её гейт отбирает сам по дате
  *   претензии, а не по коду: тот же код от претензии, пришедшей раньше, решение снимает.
  */
 export const SUPERVISOR_OVERRIDE_EXEMPT_GATE_CODES: readonly string[] = [
   'VERSION_CONTENT_INCOMPLETE',
+  // `T184`: отметка редактора «прочитано» - не правовой вопрос, как и наполненность версии.
+  AUTO_TEXT_NOT_READ_CODE,
 ];
 
 export const isSupervisorOverrideExemptGateCode = (code: string): boolean =>
@@ -177,3 +185,20 @@ export const collectMissingVersionContentFields = (version: {
   coverImageUrl: string | null;
 }): VersionContentField[] =>
   VERSION_CONTENT_FIELDS.filter((field) => !isVersionContentFieldFilled(version[field]));
+
+const AUTO_TEXT_TAB_NAMES_RU: Record<AutoTextKind, string> = {
+  summary: 'Summary',
+  analysis: 'Analysis',
+};
+
+/** Причина отказа публикации по непрочитанному автотексту: одна строка гейта и записи публикации. */
+export const autoTextNotReadReason = (kinds: readonly AutoTextKind[]) => ({
+  code: AUTO_TEXT_NOT_READ_CODE,
+  severity: 'BLOCKER' as const,
+  messageRu: `Текст модели не отмечен прочитанным на вкладке ${kinds
+    .map((kind) => `«${AUTO_TEXT_TAB_NAMES_RU[kind]}»`)
+    .join(
+      ' и ',
+    )}. Администратор читает его и нажимает «Mark as read» на этой вкладке — публикация непрочитанного автотекста запрещена.`,
+  details: { kinds: [...kinds] },
+});

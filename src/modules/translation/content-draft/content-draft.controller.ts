@@ -1,10 +1,12 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
+  ParseEnumPipe,
   ParseIntPipe,
   ParseUUIDPipe,
   Post,
@@ -17,6 +19,7 @@ import {
   ApiBearerAuth,
   ApiConflictResponse,
   ApiExtraModels,
+  ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -45,6 +48,14 @@ import {
   AnalysisWriteValueDto,
 } from '../dto/analysis-write-response.dto';
 import { AnalysisWriteService } from '../analysis-write/analysis-write.service';
+import { MarkAutoTextReadDto } from '../dto/auto-text-read-request.dto';
+import { AutoTextReadDto } from '../dto/auto-text-read-response.dto';
+import {
+  AUTO_TEXT_RUN_KINDS,
+  autoTextKindOfRun,
+  type AutoTextRunKind,
+} from './content-draft.constants';
+import { AutoTextReadService } from './auto-text-read.service';
 import { ContentDraftService } from './content-draft.service';
 
 interface RequestUser {
@@ -109,6 +120,12 @@ const ACCEPT_ALL_RESPONSE = {
   },
 };
 
+/** Вид хода в маршруте отметки «прочитано» - вид автотекста версии (`T184`). */
+const READ_RUN_KINDS = Object.values(AUTO_TEXT_RUN_KINDS);
+const READ_KIND_PIPE = new ParseEnumPipe(
+  Object.fromEntries(READ_RUN_KINDS.map((kind) => [kind, kind])),
+);
+
 const ITEM_CONFLICTS =
   'SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated';
 
@@ -117,7 +134,8 @@ const ANALYSIS_ITEM_CONFLICTS =
 
 /**
  * Ходы «Write Summary» (`F06-2`) и «Write Analysis» (`F07-1a`) - только `admin` (U6): оценка,
- * старт, ход, предложения, «Accept», «Regenerate» и отмена. Заготовки из досье сняты все
+ * старт, ход, предложения, «Accept», «Regenerate», отмена и отметка редактора «прочитано»
+ * (`versions/:id/drafts/:kind/read`, `T184`). Заготовки из досье сняты все
  * (Summary `F05-10` в `F06-3`, Analysis `F05-11` в `F07-3a`, решение арбитра `F07 | F07-3`):
  * маршрутов `drafts/:kind` и `content-drafts/:id/discard` больше нет.
  */
@@ -132,6 +150,7 @@ export class ContentDraftController {
     private readonly drafts: ContentDraftService,
     private readonly summaryWrite: SummaryWriteService,
     private readonly analysisWrite: AnalysisWriteService,
+    private readonly autoTextRead: AutoTextReadService,
   ) {}
 
   /**
@@ -253,6 +272,66 @@ export class ContentDraftController {
       dto.limitUsd != null ? new Prisma.Decimal(dto.limitUsd) : undefined,
       req.user.userId,
     );
+  }
+
+  // Отметка редактора «прочитано» (`T184`; решение арбитра 12.11.2026 `T184 | LEGACY-493 |
+  // LEGACY-495`): без неё публикация версии с текстом модели в полях вкладки отказывает
+  // `AUTO_TEXT_NOT_READ`. Текст модели, легший после отметки, снимает её сам.
+
+  @Get('versions/:id/drafts/:kind/read')
+  @ApiOperation({
+    summary:
+      'The editor «read» mark of the Summary or Analysis tab: when model text last landed in its fields and when the editor marked it read',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiParam({ name: 'kind', enum: READ_RUN_KINDS })
+  @ApiOkResponse({ type: AutoTextReadDto })
+  @ApiBadRequestResponse({ description: 'Not a UUID or not a run kind' })
+  @ApiNotFoundResponse({ description: 'Book version not found' })
+  readState(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('kind', READ_KIND_PIPE) kind: AutoTextRunKind,
+  ): Promise<AutoTextReadDto> {
+    return this.autoTextRead.state(id, autoTextKindOfRun(kind));
+  }
+
+  @Post('versions/:id/drafts/:kind/read')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary:
+      'Mark the model text of the Summary or Analysis tab read: publication of the version stops refusing AUTO_TEXT_NOT_READ for this tab until model text lands again',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiParam({ name: 'kind', enum: READ_RUN_KINDS })
+  @ApiOkResponse({ type: AutoTextReadDto })
+  @ApiBadRequestResponse({ description: 'Not a UUID, not a run kind or autoTextAt is not a date' })
+  @ApiNotFoundResponse({ description: 'Book version not found' })
+  @ApiConflictResponse({
+    description:
+      'AUTO_TEXT_RUN_BUILDING: a run of this kind is still writing; AUTO_TEXT_NONE: no model text has landed in these fields; AUTO_TEXT_CHANGED: newer model text landed than the autoTextAt the editor saw (current - the state now)',
+  })
+  markRead(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('kind', READ_KIND_PIPE) kind: AutoTextRunKind,
+    @Body() dto: MarkAutoTextReadDto,
+    @Req() req: { user: RequestUser },
+  ): Promise<AutoTextReadDto> {
+    return this.autoTextRead.mark(id, autoTextKindOfRun(kind), req.user.userId, dto.autoTextAt);
+  }
+
+  @Delete('versions/:id/drafts/:kind/read')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Remove the «read» mark of the Summary or Analysis tab' })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiParam({ name: 'kind', enum: READ_RUN_KINDS })
+  @ApiNoContentResponse({ description: 'The mark is removed' })
+  @ApiBadRequestResponse({ description: 'Not a UUID or not a run kind' })
+  @ApiNotFoundResponse({ description: 'Book version not found' })
+  unmarkRead(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('kind', READ_KIND_PIPE) kind: AutoTextRunKind,
+  ): Promise<void> {
+    return this.autoTextRead.unmark(id, autoTextKindOfRun(kind));
   }
 
   @Get('content-drafts/:id/items/:index')

@@ -1929,6 +1929,63 @@ describe('PublicationGateService', () => {
   });
 
   // ---------------------------------------------------------------------------
+  // T184: текст модели в полях пересказа или анализа без отметки «прочитано» наружу не уходит.
+  // ---------------------------------------------------------------------------
+  describe('model text read before publication (T184)', () => {
+    const LANDED = new Date('2026-11-12T10:00:00.000Z');
+    const arrange = (overrides: Record<string, unknown> = {}) => {
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        ...overrides,
+      });
+      (prisma.rightsReview.findUnique as jest.Mock).mockResolvedValue(baseReview);
+      (prisma.rightsProfile.findUnique as jest.Mock).mockResolvedValue(baseProfile);
+      (prisma.rightsAction.findMany as jest.Mock).mockResolvedValue([]);
+      (prisma.editionRights.findMany as jest.Mock).mockResolvedValue([
+        { languageCode: 'en', status: 'ALLOWED' },
+      ]);
+    };
+    const reasonOf = (result: { blockingReasons: Array<{ code: string }> }) =>
+      result.blockingReasons.find((r) => r.code === 'AUTO_TEXT_NOT_READ');
+
+    it('blocks publication, not preparation, while model text is not marked read', async () => {
+      arrange({ summaryAutoTextAt: LANDED, summaryReadAt: null });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.canPublish).toBe(false);
+      expect(result.canPrepare).toBe(true);
+      expect(reasonOf(result)).toMatchObject({
+        severity: 'BLOCKER',
+        details: { kinds: ['summary'] },
+      });
+    });
+
+    it('a mark older than the last model text does not count', async () => {
+      arrange({
+        summaryAutoTextAt: LANDED,
+        summaryReadAt: LANDED,
+        analysisAutoTextAt: LANDED,
+        analysisReadAt: new Date(LANDED.getTime() - 1000),
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(reasonOf(result)).toMatchObject({ details: { kinds: ['analysis'] } });
+    });
+
+    it('adds no blocker without model text or with a fresh mark', async () => {
+      arrange();
+      expect(reasonOf(await service.checkVersionCanPublish('v1'))).toBeUndefined();
+
+      arrange({ summaryAutoTextAt: LANDED, summaryReadAt: LANDED });
+      const read = await service.checkVersionCanPublish('v1');
+      expect(reasonOf(read)).toBeUndefined();
+      expect(read.canPublish).toBe(true);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // WP-H: стадия подготовки. Тот же расчёт отвечает на второй вопрос — «можно ли готовить
   // материал». Тесты идут парами: смягчение работает / несмягчённый случай по-прежнему закрыт.
   // ---------------------------------------------------------------------------
@@ -2196,6 +2253,21 @@ describe('PublicationGateService', () => {
       const result = await service.checkVersionCanPublish('v1');
 
       expect(result.blockingReasons.map((r) => r.code)).toEqual(['VERSION_CONTENT_INCOMPLETE']);
+      expect(result.canPublish).toBe(false);
+    });
+
+    it('never lifts unread model text: the read mark is not a legal question (T184)', async () => {
+      arrangeEverythingBlocked();
+      grantOverride();
+      (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+        ...baseVersion,
+        analysisAutoTextAt: new Date('2026-11-12T10:00:00.000Z'),
+        analysisReadAt: null,
+      });
+
+      const result = await service.checkVersionCanPublish('v1');
+
+      expect(result.blockingReasons.map((r) => r.code)).toEqual(['AUTO_TEXT_NOT_READ']);
       expect(result.canPublish).toBe(false);
     });
 

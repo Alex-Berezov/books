@@ -128,7 +128,8 @@ async function bumpTokenVersion(tx: Prisma.TransactionClient, userId: string): P
  * Лайки на чужие комментарии в цели не входят: каскад книги ждёт такую строку `Like`, а удалению
  * пользователя от каскада ждать нечего — цикла нет.
  *
- * 🔴 `T101`. Версии, где пользователь — `rightsGeoBlockVerifiedByUserId`, входят в цели и сверх
+ * 🔴 `T101`. Версии, где пользователь — `rightsGeoBlockVerifiedByUserId` (с `T184` — и автор отметки
+ * «прочитано» `summaryReadById`, `analysisReadById`: те же `SetNull`-ссылки), входят в цели и сверх
  * `KEY SHARE` берутся `FOR NO KEY UPDATE` по возрастанию `id`: `tx.user.delete` обнуляет это поле
  * (`SetNull`) и иначе брал бы тот же замок в самом конце, уже держа лайки, которые нужны каскаду
  * удаления книги или главы (держит версию `FOR UPDATE` или `FOR NO KEY UPDATE`), — `deadlock
@@ -155,6 +156,7 @@ async function lockUserContentTargets(tx: Prisma.TransactionClient, userId: stri
       UNION SELECT "bookVersionId" FROM "ReadingProgress" WHERE "userId" = ${userId}
       UNION SELECT "bookVersionId" FROM "ViewStat" WHERE "userId" = ${userId}
       UNION SELECT id FROM "BookVersion" WHERE "rightsGeoBlockVerifiedByUserId" = ${userId}
+        OR "summaryReadById" = ${userId} OR "analysisReadById" = ${userId}
     )
     SELECT 'version' AS kind, id FROM v WHERE id IS NOT NULL
     UNION SELECT 'book', bv."bookId" FROM "BookVersion" bv WHERE bv.id IN (SELECT id FROM v)
@@ -177,6 +179,7 @@ async function lockUserContentTargets(tx: Prisma.TransactionClient, userId: stri
     await tx.$queryRaw(Prisma.sql`
       SELECT count(*)::int AS n FROM (
         SELECT id FROM "BookVersion" WHERE "rightsGeoBlockVerifiedByUserId" = ${userId}
+          OR "summaryReadById" = ${userId} OR "analysisReadById" = ${userId}
         ORDER BY id FOR NO KEY UPDATE
       ) locked`);
   }

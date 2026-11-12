@@ -4,7 +4,9 @@ import {
   PublicationGateResultDto,
   PublicationGateReasonDto,
 } from './dto/publication-gate-result.dto';
+import { unreadAutoTextKinds } from './auto-text-marks';
 import {
+  autoTextNotReadReason,
   collectMissingVersionContentFields,
   DEFAULT_PUBLICATION_GATE_STAGE,
   isLawyerOverridableGateCode,
@@ -727,6 +729,17 @@ export class PublicationGateService {
           details: { missingFields: missingContentFields },
         }),
       );
+    }
+
+    // 6.23 Автотекст прочитан (`T184`, слово владельца 09.11.2026; решение арбитра 12.11.2026
+    // `T184 | LEGACY-493 | LEGACY-495`). Текст модели в полях пересказа или анализа без отметки
+    // редактора «прочитано» не позже последнего вклада модели наружу не уходит. Не про права:
+    // код добавлен аддитивно (ADR-008), подготовку не запрещает, «Разрешить публикацию» его
+    // не снимает (`SUPERVISOR_OVERRIDE_EXEMPT_GATE_CODES`). Запись публикации сверяет то же
+    // под замком строки (`BookVersionService.publish`).
+    const unreadAutoText = unreadAutoTextKinds(version);
+    if (unreadAutoText.length > 0) {
+      blockingReasons.push(new PublicationGateReasonDto(autoTextNotReadReason(unreadAutoText)));
     }
 
     // WP-M: действующее заключение юриста снимает блокеры, о которых оно высказывается.

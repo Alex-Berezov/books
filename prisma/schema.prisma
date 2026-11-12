@@ -147,6 +147,16 @@ model BookVersion {
   rightsGeoBlockVerifiedByUserId String?
   rightsGeoBlockVerifiedBy User? @relation("BookVersionGeoBlockVerifiedBy", fields: [rightsGeoBlockVerifiedByUserId], references: [id], onDelete: SetNull)
   rightsGeoBlockLastGeneratedAt DateTime?
+  /// T184: время последней записи текста модели в поля пересказа и анализа (элемент хода стал
+  /// written или accepted); отметка редактора «прочитано» действует, только если она не раньше.
+  summaryAutoTextAt DateTime?
+  summaryReadAt DateTime?
+  summaryReadById String?
+  summaryReadBy User? @relation("BookVersionSummaryReadBy", fields: [summaryReadById], references: [id], onDelete: SetNull)
+  analysisAutoTextAt DateTime?
+  analysisReadAt DateTime?
+  analysisReadById String?
+  analysisReadBy User? @relation("BookVersionAnalysisReadBy", fields: [analysisReadById], references: [id], onDelete: SetNull)
   geoBlockRules GeoBlockRule[]
 
   // Phase 8: Content hash & stale detection
@@ -206,6 +216,8 @@ model BookVersion {
   @@index([rightsRecheckRequired])
   @@index([rightsStaleDetectedAt])
   @@index([rightsGeoBlockVerifiedByUserId])
+  @@index([summaryReadById])
+  @@index([analysisReadById])
   @@index([rightsLicenseCoverageStatus])
   @@index([rightsClaimBlockActive])
   // LEGACY-272. Строковая половина связи автора с книгами
@@ -356,6 +368,8 @@ model User {
   rightsContentHashEvents RightsContentHashEvent[]
   verifiedGeoBlockRules GeoBlockRule[] @relation("GeoBlockRuleVerifiedBy")
   verifiedGeoBlockVersions BookVersion[] @relation("BookVersionGeoBlockVerifiedBy")
+  summaryReadVersions BookVersion[] @relation("BookVersionSummaryReadBy")
+  analysisReadVersions BookVersion[] @relation("BookVersionAnalysisReadBy")
   rightsLicensesCreated RightsLicense[] @relation("RightsLicenseCreatedBy")
   rightsLicensesRevoked RightsLicense[] @relation("RightsLicenseRevokedBy")
   rightsLicenseLinksCreated RightsLicenseLink[] @relation("RightsLicenseLinkCreatedBy")

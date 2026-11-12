@@ -235,6 +235,44 @@ export class BookVersionResponseDto {
   @ApiProperty({ type: String, format: 'date-time', nullable: true })
   rightsGeoBlockLastGeneratedAt!: Date | null;
 
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description: 'T184: when model text last landed in the summary fields; null - never',
+  })
+  summaryAutoTextAt!: Date | null;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description: 'T184: when the editor marked the summary model text read',
+  })
+  summaryReadAt!: Date | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  summaryReadById!: string | null;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description: 'T184: when model text last landed in the analysis blocks; null - never',
+  })
+  analysisAutoTextAt!: Date | null;
+
+  @ApiProperty({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description: 'T184: when the editor marked the analysis model text read',
+  })
+  analysisReadAt!: Date | null;
+
+  @ApiProperty({ type: String, nullable: true })
+  analysisReadById!: string | null;
+
   @ApiProperty({ type: String, nullable: true })
   rightsContentHash!: string | null;
 

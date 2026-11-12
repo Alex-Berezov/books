@@ -1,5 +1,6 @@
 import { NotFoundException } from '@nestjs/common';
 import type { AnalysisWriteService } from '../analysis-write/analysis-write.service';
+import type { AutoTextReadService } from './auto-text-read.service';
 import type { SummaryWriteService } from '../summary-write/summary-write.service';
 import { ContentDraftController } from './content-draft.controller';
 import type { ContentDraftService } from './content-draft.service';
@@ -23,6 +24,11 @@ function setup(kind: Kind | Error) {
   });
   const summary = methods();
   const analysis = methods();
+  const autoTextRead = {
+    state: jest.fn().mockResolvedValue({ read: false }),
+    mark: jest.fn().mockResolvedValue({ read: true }),
+    unmark: jest.fn().mockResolvedValue(undefined),
+  };
   const drafts = {
     runKindOf:
       kind instanceof Error ? jest.fn().mockRejectedValue(kind) : jest.fn().mockResolvedValue(kind),
@@ -31,6 +37,7 @@ function setup(kind: Kind | Error) {
     drafts as unknown as ContentDraftService,
     summary as unknown as SummaryWriteService,
     analysis as unknown as AnalysisWriteService,
+    autoTextRead as unknown as AutoTextReadService,
   );
   const calls = {
     accept: () => controller.accept('d1', 2, { confirmChapterChange: true, expectedPrint: 'p1' }),
@@ -39,7 +46,7 @@ function setup(kind: Kind | Error) {
     discardRun: () => controller.discardRun('d1'),
     acceptAll: () => controller.acceptAll('d1'),
   };
-  return { controller, summary, analysis, drafts, calls };
+  return { controller, summary, analysis, drafts, calls, autoTextRead };
 }
 
 const ROUTES = [
@@ -105,5 +112,30 @@ describe('GET content-drafts/:id/items/:index (F07-1b, decision А)', () => {
     expect(analysis.proposal).toHaveBeenCalledWith('d1', 2);
     expect(summary.proposal).not.toHaveBeenCalled();
     expect(drafts.runKindOf).not.toHaveBeenCalled();
+  });
+});
+
+describe('versions/:id/drafts/:kind/read (T184)', () => {
+  it('the run kind of the route picks the auto-text kind; the mark carries the user', async () => {
+    const { controller, autoTextRead } = setup('summary_write');
+    await controller.readState('v1', 'summary_write');
+    await controller.markRead(
+      'v1',
+      'analysis_write',
+      { autoTextAt: '2026-11-12T10:00:00.000Z' },
+      { user: { userId: 'admin-1' } },
+    );
+    await controller.unmarkRead('v1', 'summary_write');
+    expect(autoTextRead.state).toHaveBeenCalledTimes(1);
+    expect(autoTextRead.state).toHaveBeenCalledWith('v1', 'summary');
+    expect(autoTextRead.mark).toHaveBeenCalledTimes(1);
+    expect(autoTextRead.mark).toHaveBeenCalledWith(
+      'v1',
+      'analysis',
+      'admin-1',
+      '2026-11-12T10:00:00.000Z',
+    );
+    expect(autoTextRead.unmark).toHaveBeenCalledTimes(1);
+    expect(autoTextRead.unmark).toHaveBeenCalledWith('v1', 'summary');
   });
 });

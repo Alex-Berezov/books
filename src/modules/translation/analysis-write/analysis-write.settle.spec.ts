@@ -60,7 +60,14 @@ const record = (step: 1 | 2 | 3, blocks: Record<string, unknown>): StepRecord =>
 });
 
 interface Db {
-  row: { id: string; kind: string; status: string; operationId: string; data: unknown };
+  row: {
+    id: string;
+    bookVersionId: string;
+    kind: string;
+    status: string;
+    operationId: string;
+    data: unknown;
+  };
   stored: StoredBookAnalysis;
   published: boolean;
   raws: string[];
@@ -80,6 +87,7 @@ function harness(
   const db: Db = {
     row: {
       id: 'd1',
+      bookVersionId: 'v1',
       kind: 'analysis_write',
       status: 'building',
       operationId: OP,
@@ -111,6 +119,7 @@ function harness(
     },
     bookVersion: {
       findUnique: jest.fn(() => Promise.resolve({ status: db.published ? 'published' : 'draft' })),
+      update: jest.fn(() => Promise.resolve({})),
     },
     bookAnalysis: { findUnique: jest.fn(() => Promise.resolve({ ...db.stored })) },
   };
@@ -157,6 +166,27 @@ describe('AnalysisWriteFields.settleStep', () => {
     );
     expect(outcomes(h.run())).toEqual([['characters', 'written']]);
     expect(h.db.stored.characters).toEqual([ANNA]);
+  });
+
+  it('a block the step writes notes the model text on the version; proposals only do not (T184)', async () => {
+    const h = harness(withStep(startData(EMPTY_BOOK_ANALYSIS), record(1, { characters: [ANNA] })));
+    await h.settle(1);
+    expect(h.tx.bookVersion.update).toHaveBeenCalledTimes(1);
+    expect(h.tx.bookVersion.update).toHaveBeenCalledWith({
+      where: { id: 'v1' },
+      data: { analysisAutoTextAt: expect.any(Date) as Date },
+    });
+
+    const refused = harness(
+      withStep(startData(EMPTY_BOOK_ANALYSIS), record(1, { characters: [ANNA] })),
+      EMPTY_BOOK_ANALYSIS,
+      () => {
+        throw new BadRequestException(['characters.0.name: broken']);
+      },
+    );
+    await refused.settle(1);
+    expect(outcomes(refused.run())).toEqual([['characters', 'proposed']]);
+    expect(refused.tx.bookVersion.update).not.toHaveBeenCalled();
   });
 
   it('cancelled between the decision and the write: nothing of the run is written - gone', async () => {

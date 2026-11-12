@@ -45,6 +45,7 @@ import { ContentDraftController } from './content-draft/content-draft.controller
 import { DossierController } from './dossier/dossier.controller';
 import { TranslationChunksController } from './retry/translation-chunks.controller';
 import { TranslationRunController } from './run/translation-run.controller';
+import { AutoTextReadService } from './content-draft/auto-text-read.service';
 import { ContentDraftService } from './content-draft/content-draft.service';
 import { ContentDraftTasksHandler } from './content-draft/content-draft-tasks.handler';
 import { TranslationSourceService } from './translation-source.service';
@@ -121,6 +122,7 @@ import { AnalysisWriteService } from './analysis-write/analysis-write.service';
     ChunkRetryService,
     ChunkRetryHandler,
     ContentDraftService,
+    AutoTextReadService,
     ContentDraftTasksHandler,
     SummaryWriteFields,
     SummaryWriteHandler,

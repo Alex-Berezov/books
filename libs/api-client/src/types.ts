@@ -2834,6 +2834,25 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/versions/{id}/drafts/{kind}/read': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The editor «read» mark of the Summary or Analysis tab: when model text last landed in its fields and when the editor marked it read */
+    get: operations['ContentDraftController_readState'];
+    put?: never;
+    /** Mark the model text of the Summary or Analysis tab read: publication of the version stops refusing AUTO_TEXT_NOT_READ for this tab until model text lands again */
+    post: operations['ContentDraftController_markRead'];
+    /** Remove the «read» mark of the Summary or Analysis tab */
+    delete: operations['ContentDraftController_unmarkRead'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/versions/{id}/geo-block-check': {
     parameters: {
       query?: never;
@@ -6150,6 +6169,22 @@ export interface components {
       /** Format: date-time */
       updatedAt: string;
     };
+    AutoTextReadDto: {
+      /**
+       * Format: date-time
+       * @description When model text last landed in the fields of this tab (a run item written or accepted); null - never
+       */
+      autoTextAt: string | null;
+      /** @description true - nothing to read or the mark is not older than the last model text; false - publication of the version is refused (AUTO_TEXT_NOT_READ) */
+      read: boolean;
+      /**
+       * Format: date-time
+       * @description When the editor marked the text read; null - not marked
+       */
+      readAt: string | null;
+      /** @description Who marked the text read */
+      readById: string | null;
+    };
     BackgroundJobStatusDto: {
       /** @description Устойчивое имя механизма — оно же ключ в ответе эндпоинта. */
       name: string;
@@ -7166,6 +7201,17 @@ export interface components {
     BookVersionAdminDetailResponseDto: {
       /** @description Альтернативные названия книги (Json-колонка: массив строк) */
       alternativeTitles: string[] | null;
+      /**
+       * Format: date-time
+       * @description T184: when model text last landed in the analysis blocks; null - never
+       */
+      analysisAutoTextAt: string | null;
+      /**
+       * Format: date-time
+       * @description T184: when the editor marked the analysis model text read
+       */
+      analysisReadAt: string | null;
+      analysisReadById: string | null;
       approvedRightsReviewId: string | null;
       author: string;
       authorId: string | null;
@@ -7265,6 +7311,17 @@ export interface components {
       slug: string | null;
       /** @enum {string} */
       status: 'draft' | 'published';
+      /**
+       * Format: date-time
+       * @description T184: when model text last landed in the summary fields; null - never
+       */
+      summaryAutoTextAt: string | null;
+      /**
+       * Format: date-time
+       * @description T184: when the editor marked the summary model text read
+       */
+      summaryReadAt: string | null;
+      summaryReadById: string | null;
       summaryShort: string | null;
       /** @description Символы в книге (Json-колонка; форма задана CreateBookVersionDto.symbols) */
       symbols: components['schemas']['BookVersionSymbolDto'][] | null;
@@ -7355,6 +7412,17 @@ export interface components {
     BookVersionResponseDto: {
       /** @description Альтернативные названия книги (Json-колонка: массив строк) */
       alternativeTitles: string[] | null;
+      /**
+       * Format: date-time
+       * @description T184: when model text last landed in the analysis blocks; null - never
+       */
+      analysisAutoTextAt: string | null;
+      /**
+       * Format: date-time
+       * @description T184: when the editor marked the analysis model text read
+       */
+      analysisReadAt: string | null;
+      analysisReadById: string | null;
       approvedRightsReviewId: string | null;
       author: string;
       authorId: string | null;
@@ -7451,6 +7519,17 @@ export interface components {
       slug: string | null;
       /** @enum {string} */
       status: 'draft' | 'published';
+      /**
+       * Format: date-time
+       * @description T184: when model text last landed in the summary fields; null - never
+       */
+      summaryAutoTextAt: string | null;
+      /**
+       * Format: date-time
+       * @description T184: when the editor marked the summary model text read
+       */
+      summaryReadAt: string | null;
+      summaryReadById: string | null;
       summaryShort: string | null;
       /** @description Символы в книге (Json-колонка; форма задана CreateBookVersionDto.symbols) */
       symbols: components['schemas']['BookVersionSymbolDto'][] | null;
@@ -10455,6 +10534,13 @@ export interface components {
       /** @example POST */
       method: string;
       note: string;
+    };
+    MarkAutoTextReadDto: {
+      /**
+       * Format: date-time
+       * @description autoTextAt the editor saw (from GET .../read); another one - 409 AUTO_TEXT_CHANGED
+       */
+      autoTextAt: string;
     };
     MediaAssetResponseDto: {
       contentType: string | null;
@@ -21336,6 +21422,124 @@ export interface operations {
       };
       /** @description DRAFT_IN_PROGRESS: a summary run is being built; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED */
       409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_readState: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        kind: 'summary_write' | 'analysis_write';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AutoTextReadDto'];
+        };
+      };
+      /** @description Not a UUID or not a run kind */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_markRead: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        kind: 'summary_write' | 'analysis_write';
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['MarkAutoTextReadDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['AutoTextReadDto'];
+        };
+      };
+      /** @description Not a UUID, not a run kind or autoTextAt is not a date */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description AUTO_TEXT_RUN_BUILDING: a run of this kind is still writing; AUTO_TEXT_NONE: no model text has landed in these fields; AUTO_TEXT_CHANGED: newer model text landed than the autoTextAt the editor saw (current - the state now) */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_unmarkRead: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        kind: 'summary_write' | 'analysis_write';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description The mark is removed */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Not a UUID or not a run kind */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Book version not found */
+      404: {
         headers: {
           [name: string]: unknown;
         };

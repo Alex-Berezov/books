@@ -15,6 +15,7 @@ import {
 } from '../../book-summary/book-summary-sections.service';
 import { SUMMARY_SECTION_LIMITS } from '../../book-summary/dto/create-book-summary-section.dto';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
+import { saveNotingAutoText } from '../content-draft/auto-text-landing';
 import { summaryHtml } from './summary-html';
 import {
   SUMMARY_CHAPTER_CHANGE,
@@ -550,8 +551,11 @@ export class SummaryWriteFields {
     return gate.allows(row, data) ? { row, data } : null;
   }
 
+  /** Данные хода - и время вклада модели в поля версии, если запись его означает (`T184`). */
   private async save(tx: Db, id: string, data: SummaryWriteData): Promise<void> {
-    await tx.contentDraft.update({ where: { id }, data: { data: toJson(data) } });
+    await saveNotingAutoText(tx, id, 'summary', data, readWriteData, async () => {
+      await tx.contentDraft.update({ where: { id }, data: { data: toJson(data) } });
+    });
   }
 }
 

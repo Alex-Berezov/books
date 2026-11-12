@@ -48,7 +48,7 @@ describe('SummaryWriteFields.settle', () => {
     },
   });
 
-  function setup(read: string, underLock: string) {
+  function setup(read: string, underLock: string, runDone = false) {
     const calls: string[] = [];
     const tx = {
       $queryRaw: jest.fn((sql: TemplateStringsArray) => {
@@ -71,6 +71,7 @@ describe('SummaryWriteFields.settle', () => {
           calls.push('read-version');
           return Promise.resolve({ status: 'draft' });
         }),
+        update: jest.fn(() => Promise.resolve({})),
       },
       bookSummary: { findUnique: jest.fn(() => Promise.resolve(null)) },
       bookSummarySection: { findMany: jest.fn(() => Promise.resolve([])) },
@@ -84,6 +85,7 @@ describe('SummaryWriteFields.settle', () => {
     const sections = {
       writeGuarded: jest.fn(async (_v: string, _dto: unknown, guard: SectionWriteGuard) => {
         decided = await guard.decide(tx as never);
+        if (runDone && decided !== null) await guard.done(tx as never, 1);
         return decided !== null;
       }),
     };
@@ -94,6 +96,17 @@ describe('SummaryWriteFields.settle', () => {
     );
     return { fields, sections, calls, tx, decided: () => decided };
   }
+
+  it('a text the run writes notes the model text on the version with the same transaction (T184)', async () => {
+    const { fields, tx } = setup('waiting', 'waiting', true);
+    await fields.settle({ id: 'd1', bookVersionId: 'v1' }, runGate('op1'), 0);
+    expect(tx.contentDraft.update).toHaveBeenCalledTimes(1);
+    expect(tx.bookVersion.update).toHaveBeenCalledTimes(1);
+    expect(tx.bookVersion.update).toHaveBeenCalledWith({
+      where: { id: 'v1' },
+      data: { summaryAutoTextAt: expect.any(Date) as Date },
+    });
+  });
 
   it('a waiting text is written; the version row is locked FOR NO KEY UPDATE before its status is read', async () => {
     const { fields, calls, decided } = setup('waiting', 'waiting');

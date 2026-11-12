@@ -210,6 +210,15 @@ const createPrismaStub = (): PrismaStub => {
   return stub;
 };
 
+/** Отметки автотекста версии под замком публикации (`T184`): текста модели нет - читать нечего. */
+const noAutoText = () =>
+  jest.fn().mockResolvedValue({
+    summaryAutoTextAt: null,
+    summaryReadAt: null,
+    analysisAutoTextAt: null,
+    analysisReadAt: null,
+  });
+
 describe('BookVersionService', () => {
   let service: BookVersionService;
   let prisma: PrismaStub;
@@ -1691,7 +1700,10 @@ describe('BookVersionService', () => {
           rightsLicenseUncoveredCountryCodes: ['MX'],
         },
       ]);
-      const txClient = { bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw };
+      const txClient = {
+        bookVersion: { update: txUpdate, findUnique: noAutoText() },
+        $queryRaw: txQueryRaw,
+      };
       let transactionOptions: unknown;
       jest
         .spyOn(prisma, '$transaction')
@@ -1772,11 +1784,14 @@ describe('BookVersionService', () => {
           rightsLicenseUncoveredCountryCodes: [],
         },
       ]);
-      jest
-        .spyOn(prisma, '$transaction')
-        .mockImplementationOnce((fn: (tx: unknown) => unknown) =>
-          Promise.resolve(fn({ bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw })),
-        );
+      jest.spyOn(prisma, '$transaction').mockImplementationOnce((fn: (tx: unknown) => unknown) =>
+        Promise.resolve(
+          fn({
+            bookVersion: { update: txUpdate, findUnique: noAutoText() },
+            $queryRaw: txQueryRaw,
+          }),
+        ),
+      );
 
       const afterCommitFailure = new Prisma.PrismaClientKnownRequestError('gone', {
         code: 'P2025',
@@ -1852,11 +1867,14 @@ describe('BookVersionService', () => {
           rightsLicenseUncoveredCountryCodes: ['BR'],
         },
       ]);
-      jest
-        .spyOn(prisma, '$transaction')
-        .mockImplementationOnce((fn: (tx: unknown) => unknown) =>
-          Promise.resolve(fn({ bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw })),
-        );
+      jest.spyOn(prisma, '$transaction').mockImplementationOnce((fn: (tx: unknown) => unknown) =>
+        Promise.resolve(
+          fn({
+            bookVersion: { update: txUpdate, findUnique: noAutoText() },
+            $queryRaw: txQueryRaw,
+          }),
+        ),
+      );
 
       const result = await service.unpublish('v1', 'admin-7');
 
@@ -1891,11 +1909,14 @@ describe('BookVersionService', () => {
           rightsLicenseUncoveredCountryCodes: [],
         },
       ]);
-      jest
-        .spyOn(prisma, '$transaction')
-        .mockImplementationOnce((fn: (tx: unknown) => unknown) =>
-          Promise.resolve(fn({ bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw })),
-        );
+      jest.spyOn(prisma, '$transaction').mockImplementationOnce((fn: (tx: unknown) => unknown) =>
+        Promise.resolve(
+          fn({
+            bookVersion: { update: txUpdate, findUnique: noAutoText() },
+            $queryRaw: txQueryRaw,
+          }),
+        ),
+      );
 
       await service.unpublish('v1', 'admin-7');
 
@@ -1911,13 +1932,14 @@ describe('BookVersionService', () => {
     it('answers 404 when the version is gone by the time the row is locked', async () => {
       (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue(publishedSnapshot);
       const txUpdate = jest.fn();
-      jest
-        .spyOn(prisma, '$transaction')
-        .mockImplementationOnce((fn: (tx: unknown) => unknown) =>
-          Promise.resolve(
-            fn({ bookVersion: { update: txUpdate }, $queryRaw: jest.fn().mockResolvedValue([]) }),
-          ),
-        );
+      jest.spyOn(prisma, '$transaction').mockImplementationOnce((fn: (tx: unknown) => unknown) =>
+        Promise.resolve(
+          fn({
+            bookVersion: { update: txUpdate, findUnique: noAutoText() },
+            $queryRaw: jest.fn().mockResolvedValue([]),
+          }),
+        ),
+      );
 
       await expect(service.unpublish('v1', 'admin-7')).rejects.toBeInstanceOf(NotFoundException);
       expect(txUpdate).not.toHaveBeenCalled();
@@ -1974,6 +1996,57 @@ describe('BookVersionService', () => {
    * обязан назвать тот самый снимок, который записан этим же оператором, — иначе две
    * половины истории версии читаются двумя разными выборками.
    */
+  it('текст модели лёг после вердикта гейта: под замком публикация отказывает AUTO_TEXT_NOT_READ и не пишет (T184)', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({
+      id: 'v1',
+      status: 'draft',
+    } as BookVersion);
+    const txUpdate = jest.fn();
+    const txQueryRaw = jest.fn().mockResolvedValue([
+      {
+        status: 'draft',
+        publishedAt: null,
+        rightsLicenseIds: null,
+        rightsLicenseCoverageStatus: null,
+        rightsLicenseCheckedAt: null,
+        rightsLicenseUncoveredCountryCodes: null,
+      },
+    ]);
+    const marks = jest.fn().mockResolvedValue({
+      summaryAutoTextAt: new Date('2026-11-12T10:00:01.000Z'),
+      summaryReadAt: new Date('2026-11-12T10:00:00.000Z'),
+      analysisAutoTextAt: null,
+      analysisReadAt: null,
+    });
+    jest
+      .spyOn(prisma, '$transaction')
+      .mockImplementationOnce((fn: (tx: unknown) => unknown) =>
+        Promise.resolve(
+          fn({ bookVersion: { update: txUpdate, findUnique: marks }, $queryRaw: txQueryRaw }),
+        ),
+      );
+
+    const error: unknown = await service.publish('v1', 'admin-7').catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(BadRequestException);
+    expect((error as BadRequestException).getResponse()).toMatchObject({
+      code: 'RIGHTS_PUBLICATION_BLOCKED',
+      blockingReasons: [{ code: 'AUTO_TEXT_NOT_READ', details: { kinds: ['summary'] } }],
+    });
+    expect(marks).toHaveBeenCalledTimes(1);
+    expect(marks).toHaveBeenCalledWith({
+      where: { id: 'v1' },
+      select: {
+        summaryAutoTextAt: true,
+        summaryReadAt: true,
+        analysisAutoTextAt: true,
+        analysisReadAt: true,
+      },
+    });
+    expect(txUpdate).not.toHaveBeenCalled();
+    expect(adminAudit.record).not.toHaveBeenCalled();
+  });
+
   it('публикация пишет VERSION_PUBLISHED клиентом транзакции со снимком лицензий (LEGACY-015)', async () => {
     const publishedAt = new Date('2026-09-20T10:00:00.000Z');
     const checkedAt = new Date('2026-09-20T09:59:00.000Z');
@@ -2015,7 +2088,10 @@ describe('BookVersionService', () => {
         rightsLicenseUncoveredCountryCodes: null,
       },
     ]);
-    const txClient = { bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw };
+    const txClient = {
+      bookVersion: { update: txUpdate, findUnique: noAutoText() },
+      $queryRaw: txQueryRaw,
+    };
     let transactionOptions: unknown;
     jest
       .spyOn(prisma, '$transaction')
@@ -2089,7 +2165,10 @@ describe('BookVersionService', () => {
         rightsLicenseUncoveredCountryCodes: [],
       },
     ]);
-    const txClient = { bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw };
+    const txClient = {
+      bookVersion: { update: txUpdate, findUnique: noAutoText() },
+      $queryRaw: txQueryRaw,
+    };
     jest
       .spyOn(prisma, '$transaction')
       .mockImplementationOnce((fn: (tx: unknown) => unknown) => Promise.resolve(fn(txClient)));
@@ -2147,7 +2226,10 @@ describe('BookVersionService', () => {
         rightsLicenseUncoveredCountryCodes: ['BR'],
       },
     ]);
-    const txClient = { bookVersion: { update: txUpdate }, $queryRaw: txQueryRaw };
+    const txClient = {
+      bookVersion: { update: txUpdate, findUnique: noAutoText() },
+      $queryRaw: txQueryRaw,
+    };
     jest
       .spyOn(prisma, '$transaction')
       .mockImplementationOnce((fn: (tx: unknown) => unknown) => Promise.resolve(fn(txClient)));

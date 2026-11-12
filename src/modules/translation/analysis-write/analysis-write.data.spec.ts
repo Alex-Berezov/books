@@ -1,4 +1,5 @@
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
+import { stableJson } from '../draft-quality/draft-record';
 import {
   analysisDataJson,
   AnalysisItem,
@@ -10,7 +11,6 @@ import {
   readAnalysisData,
   regenBase,
   RegenResult,
-  stableJson,
   targetValue,
   withoutRegen,
   withRegenerated,

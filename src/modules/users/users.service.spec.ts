@@ -866,6 +866,8 @@ describe('UsersService (unit)', () => {
         '"ViewStat"',
         '"BookRating"',
         '"rightsGeoBlockVerifiedByUserId"',
+        '"summaryReadById"',
+        '"analysisReadById"',
       ]) {
         expect(sqlAt(1)).toContain(source);
       }
@@ -884,9 +886,10 @@ describe('UsersService (unit)', () => {
       // Версии, где удаляемый — сверяющий гео-блокировки: `SetNull` при удалении строки
       // пользователя пишет их, и замок записи берётся до лайков, а не в самом конце.
       expect(sqlAt(4)).toMatch(
-        /FROM "BookVersion" WHERE "rightsGeoBlockVerifiedByUserId" = \?\s+ORDER BY id FOR NO KEY UPDATE/,
+        /FROM "BookVersion" WHERE "rightsGeoBlockVerifiedByUserId" = \?\s+OR "summaryReadById" = \? OR "analysisReadById" = \?\s+ORDER BY id FOR NO KEY UPDATE/,
       );
-      expect(valuesAt(4)).toEqual(['u1']);
+      // T184: автор отметки «прочитано» — та же `SetNull`-ссылка версии на пользователя.
+      expect(valuesAt(4)).toEqual(['u1', 'u1', 'u1']);
       // Главы и аудиоглавы комментариев — `KEY SHARE` после версий: удаление главы держит её
       // строку, и удаление пользователя встаёт за ним раньше первого комментария.
       expect(sqlAt(1)).toMatch(/'chapter', "chapterId" FROM "Comment" WHERE "userId" = \?/);

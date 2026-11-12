@@ -1,4 +1,5 @@
 import { ContentDraftKind } from '@prisma/client';
+import type { AutoTextKind } from '../../book-version/auto-text-marks';
 
 /**
  * Снятые виды заготовок: пошаговые Summary `F05-10` (сняты в `F06-3`, заменены ходом
@@ -42,3 +43,21 @@ export const DRAFT_DOSSIER_MISSING = 'DRAFT_DOSSIER_MISSING';
 export const DRAFT_INPUT_MISSING = 'DRAFT_INPUT_MISSING';
 /** Операцию отменили со страницы операций, а не кнопкой «discard». */
 export const DRAFT_CANCELLED = 'DRAFT_CANCELLED';
+
+/** `T184`: ход этого вида ещё пишет текст - отмечать прочитанным рано. */
+export const AUTO_TEXT_RUN_BUILDING = 'AUTO_TEXT_RUN_BUILDING';
+/** `T184`: текст модели в поля этого вида не ложился - отмечать нечего. */
+export const AUTO_TEXT_NONE = 'AUTO_TEXT_NONE';
+/** `T184`: после показа вкладки лёг новый текст модели - редактор его не видел. */
+export const AUTO_TEXT_CHANGED = 'AUTO_TEXT_CHANGED';
+
+/** `T184`: вид хода, который пишет автотекст вида, - одна таблица на ручки отметки и её сервис. */
+export const AUTO_TEXT_RUN_KINDS = {
+  summary: 'summary_write',
+  analysis: 'analysis_write',
+} as const satisfies Record<AutoTextKind, ContentDraftKind>;
+export type AutoTextRunKind = (typeof AUTO_TEXT_RUN_KINDS)[AutoTextKind];
+
+/** Вид автотекста по виду хода в маршруте. */
+export const autoTextKindOfRun = (runKind: AutoTextRunKind): AutoTextKind =>
+  runKind === AUTO_TEXT_RUN_KINDS.summary ? 'summary' : 'analysis';

@@ -12,7 +12,9 @@ import { CreateBookVersionDto } from './dto/create-book-version.dto';
 import { UpdateBookVersionDto } from './dto/update-book-version.dto';
 import { BookRightsDashboardDto } from './dto/rights-dashboard.dto';
 import { PublicationGateService } from './publication-gate.service';
+import { AUTO_TEXT_MARKS_SELECT, unreadAutoTextKinds } from './auto-text-marks';
 import {
+  autoTextNotReadReason,
   isVersionContentFieldFilled,
   VERSION_CONTENT_FIELDS,
   type VersionContentField,
@@ -1465,6 +1467,23 @@ export class BookVersionService {
         // Версию удалили между чтением выше и замком: публиковать нечего.
         if (!before) throw new NotFoundException('BookVersion not found');
         const wasPublished = before.status === 'published';
+
+        // `T184`: отметку «прочитано» гейт видел до транзакции; между его вердиктом и записью
+        // успевает лечь новый текст модели. Запись хода берёт замок этой же строки
+        // (`lockVersionRow`), поэтому под замком выше сравнение окончательное.
+        const marks = await tx.bookVersion.findUnique({
+          where: { id },
+          select: AUTO_TEXT_MARKS_SELECT,
+        });
+        const unreadAutoText = marks ? unreadAutoTextKinds(marks) : [];
+        if (unreadAutoText.length > 0) {
+          throw new BadRequestException({
+            message: 'Publication blocked by rights gate',
+            code: 'RIGHTS_PUBLICATION_BLOCKED',
+            canPublish: false,
+            blockingReasons: [autoTextNotReadReason(unreadAutoText)],
+          });
+        }
 
         // Условие на содержимое стоит в самой записи, а не только в гейте. Гейт читает версию
         // до транзакции, и между его вердиктом и этой записью проходит чужой `PATCH`, который
