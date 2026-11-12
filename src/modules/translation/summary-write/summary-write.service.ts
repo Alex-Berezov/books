@@ -28,6 +28,7 @@ import { htmlToParagraphs } from '../content-draft/content-draft.text';
 import {
   acceptInTurn,
   cancelRegens,
+  discardPrevious,
   regenFieldsOf,
   regenOperationIds,
   RegenOperationState,
@@ -165,16 +166,7 @@ export class SummaryWriteService {
         if (autostart) {
           await assertNoLiveRun(tx, versionId, KIND);
         } else {
-          const previous = await tx.contentDraft.findMany({
-            where: { bookVersionId: versionId, kind: KIND, status: { in: ['ready', 'failed'] } },
-            select: { id: true, data: true },
-            take: 100,
-          });
-          await tx.contentDraft.updateMany({
-            where: { id: { in: previous.map((p) => p.id) } },
-            data: { status: 'discarded' },
-          });
-          stale = previous.flatMap((p) => regenOperations(p.data));
+          stale = await discardPrevious(tx, versionId, KIND);
         }
         const data = emptyWriteData(...(await this.ownership(tx, versionId)));
         const op = await tx.llmOperation.create({ data: opData, select: { id: true } });

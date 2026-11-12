@@ -36,8 +36,8 @@ import {
 import {
   acceptInTurn,
   cancelRegens,
+  discardPrevious,
   regenFieldsOf,
-  REGEN_OPERATION_PATH,
   regenOperationIds,
   RegenOperationState,
   waitingAndRegens,
@@ -57,7 +57,6 @@ import {
   ANALYSIS_WRITE_NOT_READY,
   NOT_REGENERABLE,
   REGENERABLE_STEPS,
-  PREVIOUS_BATCH,
 } from './analysis-write.constants';
 import {
   analysisDataJson,
@@ -178,7 +177,7 @@ export class AnalysisWriteService {
       id = await this.prisma.$transaction(async (tx) => {
         await lockBookAnalysis(tx, versionId);
         if (autostart) await assertNoLiveRun(tx, versionId, KIND);
-        else stale.push(...(await discardPrevious(tx, versionId)));
+        else stale.push(...(await discardPrevious(tx, versionId, KIND)));
         const { owns, written } = await this.fields.ownership(tx, versionId);
         const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
         const row = await tx.contentDraft.create({
@@ -614,39 +613,4 @@ function itemDto(
     regenFailedReason: item.regenFailedReason,
     ...regenFieldsOf(item.regen, regenOps),
   };
-}
-
-/**
- * Ручной старт отбрасывает все прежние `ready`/`failed` ходы версии; операции их перегенераций
- * читаются порциями по `id` (выборка в память - с пределом строк, решение арбитра `T177 | F07-1a`),
- * из jsonb - только идентификаторы, без `data` целиком под замком; отменяются после коммита -
- * отдаются наружу.
- */
-async function discardPrevious(tx: Prisma.TransactionClient, versionId: string): Promise<string[]> {
-  const stale = new Set<string>();
-  for (let after: string | null = null; ; ) {
-    const page: Array<{ id: string; operationIds: unknown }> = await tx.$queryRaw`
-      SELECT "id",
-        CASE WHEN jsonb_typeof("data") = 'object'
-          THEN jsonb_path_query_array("data", ${REGEN_OPERATION_PATH}::jsonpath)
-          ELSE '[]'::jsonb END AS "operationIds"
-      FROM "ContentDraft"
-      WHERE "bookVersionId" = ${versionId}
-        AND "kind" = ${KIND}::"ContentDraftKind"
-        AND "status" IN ('ready', 'failed')
-        ${after === null ? Prisma.empty : Prisma.sql`AND "id" > ${after}`}
-      ORDER BY "id"
-      LIMIT ${PREVIOUS_BATCH}`;
-    for (const row of page) {
-      if (!Array.isArray(row.operationIds)) continue;
-      for (const id of row.operationIds) if (typeof id === 'string') stale.add(id);
-    }
-    if (page.length < PREVIOUS_BATCH) break;
-    after = page[page.length - 1].id;
-  }
-  await tx.contentDraft.updateMany({
-    where: { bookVersionId: versionId, kind: KIND, status: { in: ['ready', 'failed'] } },
-    data: { status: 'discarded' },
-  });
-  return [...stale];
 }

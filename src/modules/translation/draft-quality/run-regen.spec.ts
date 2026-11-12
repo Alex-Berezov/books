@@ -1,9 +1,11 @@
 import { BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
-import { LlmTask } from '@prisma/client';
+import { LlmTask, Prisma } from '@prisma/client';
 import {
   acceptInTurn,
   cancelRegens,
+  discardPrevious,
   draftRowOf,
+  PREVIOUS_BATCH,
   regenOperationIds,
   regenResumeOf,
   waitingAndRegens,
@@ -196,5 +198,61 @@ describe('waitingAndRegens', () => {
       expect(db.bookGlossary.findUnique).not.toHaveBeenCalled();
       expect(db.llmOperation.findMany).not.toHaveBeenCalled();
     }
+  });
+});
+
+describe('discardPrevious (T191, LEGACY-498)', () => {
+  const page = (from: number, count: number, ops: Record<number, unknown[]> = {}) =>
+    Array.from({ length: count }, (_, n) => ({
+      id: `r${String(from + n).padStart(4, '0')}`,
+      operationIds: ops[from + n] ?? [],
+    }));
+
+  function txWith(pages: Array<Array<{ id: string; operationIds: unknown }>>) {
+    const reads: unknown[][] = [];
+    const tx = {
+      $queryRaw: jest.fn((_: TemplateStringsArray, ...values: unknown[]) => {
+        reads.push(values);
+        return Promise.resolve(pages[reads.length - 1] ?? []);
+      }),
+      contentDraft: { updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+    };
+    return { tx: tx as unknown as Prisma.TransactionClient, raw: tx, reads };
+  }
+
+  it.each(['summary_write', 'analysis_write'] as const)(
+    '%s: more than one page of previous runs - all pages read, all discarded, every regeneration returned once',
+    async (kind) => {
+      const { tx, raw, reads } = txWith([
+        page(0, PREVIOUS_BATCH, { 0: ['op-a'], 1: ['op-a', 5] }),
+        page(PREVIOUS_BATCH, 3, { [PREVIOUS_BATCH + 2]: ['op-b'] }),
+      ]);
+      const stale = await discardPrevious(tx, 'v1', kind);
+      expect(stale).toEqual(['op-a', 'op-b']);
+      expect(reads).toHaveLength(2);
+      expect(reads[0]).toEqual(expect.arrayContaining(['v1', kind]));
+      // Первая порция - без курсора (пустой фрагмент), вторая - после последнего id первой.
+      expect(reads[0]).toContainEqual(expect.objectContaining({ values: [] }));
+      expect(reads[1]).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            strings: ['AND "id" > ', ''],
+            values: [`r${String(PREVIOUS_BATCH - 1).padStart(4, '0')}`],
+          }),
+        ]),
+      );
+      expect(raw.contentDraft.updateMany).toHaveBeenCalledTimes(1);
+      expect(raw.contentDraft.updateMany).toHaveBeenCalledWith({
+        where: { bookVersionId: 'v1', kind, status: { in: ['ready', 'failed'] } },
+        data: { status: 'discarded' },
+      });
+    },
+  );
+
+  it('a full last page is followed by one more read that finds nothing', async () => {
+    const { tx, raw, reads } = txWith([page(0, PREVIOUS_BATCH), []]);
+    expect(await discardPrevious(tx, 'v1', 'summary_write')).toEqual([]);
+    expect(reads).toHaveLength(2);
+    expect(raw.contentDraft.updateMany).toHaveBeenCalledTimes(1);
   });
 });

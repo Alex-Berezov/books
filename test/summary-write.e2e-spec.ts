@@ -1275,4 +1275,54 @@ describe('Summary run «Write Summary» (e2e)', () => {
       .send({ remark: 'x'.repeat(2001) })
       .expect(400);
   });
+
+  it('a new start while a regeneration of the previous run is running: the previous run is discarded, its regeneration operation cancelled and its mark cleared (T191, LEGACY-498)', async () => {
+    const versionId = await sourceWithDossier();
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    await auth(http().post(itemPath(run, itemOf(run, 'section', 1), 'regenerate')))
+      .send({})
+      .expect(202);
+    const regenItem = (await runOf(versionId)).items[0] as Item & { regenOperationId: string };
+    expect(regenItem.regenerating).toBe(true);
+    // Ещё сотня прежних упавших ходов: чтение идёт второй порцией по курсору `id` на живой базе,
+    // ход с отметкой - в случайном месте порядка uuid.
+    const { language } = await prisma.contentDraft.findUniqueOrThrow({ where: { id: run.id } });
+    for (let n = 0; n < 100; n++) {
+      const op = await prisma.llmOperation.create({
+        data: { kind: 'draft', limitUsd: 1, status: 'failed', bookVersionId: versionId },
+      });
+      await prisma.contentDraft.create({
+        data: {
+          bookVersionId: versionId,
+          kind: 'summary_write',
+          status: 'failed',
+          language,
+          operationId: op.id,
+        },
+      });
+    }
+    // Новый старт - без исполнения перегенерации: отметка ещё стоит на тексте прежнего хода.
+    await start(versionId).expect(202);
+    // По строкам в базе, а не по ответу ручки (L-017): чтение отметки идёт запросом jsonb.
+    expect(
+      (await prisma.llmOperation.findUniqueOrThrow({ where: { id: regenItem.regenOperationId } }))
+        .status,
+    ).toBe('cancelled');
+    const old = await prisma.contentDraft.findUniqueOrThrow({ where: { id: run.id } });
+    expect(old.status).toBe('discarded');
+    expect(
+      await prisma.contentDraft.count({
+        where: {
+          bookVersionId: versionId,
+          kind: 'summary_write',
+          status: { in: ['ready', 'failed'] },
+        },
+      }),
+    ).toBe(0);
+    const items = (old.data as { items: Array<{ regen: unknown }> }).items;
+    expect(items[0].regen).toBeNull();
+    await drain();
+  });
 });

@@ -215,6 +215,48 @@ export async function cancelRegens(
   }
 }
 
+/** Порция чтения прежних ходов на старте: выборка в память - с пределом строк, ходы - все. */
+export const PREVIOUS_BATCH = 100;
+
+/**
+ * Ручной старт отбрасывает все прежние `ready`/`failed` ходы версии вида `kind`; операции их
+ * перегенераций читаются порциями по `id` (выборка в память - с пределом строк, решение арбитра
+ * `T177 | F07-1a`), из jsonb - только идентификаторы, без `data` целиком под замком; отменяются
+ * после коммита - отдаются наружу.
+ */
+export async function discardPrevious(
+  tx: Prisma.TransactionClient,
+  versionId: string,
+  kind: RunKind,
+): Promise<string[]> {
+  const stale = new Set<string>();
+  for (let after: string | null = null; ; ) {
+    const page: Array<{ id: string; operationIds: unknown }> = await tx.$queryRaw`
+      SELECT "id",
+        CASE WHEN jsonb_typeof("data") = 'object'
+          THEN jsonb_path_query_array("data", ${REGEN_OPERATION_PATH}::jsonpath)
+          ELSE '[]'::jsonb END AS "operationIds"
+      FROM "ContentDraft"
+      WHERE "bookVersionId" = ${versionId}
+        AND "kind" = ${kind}::"ContentDraftKind"
+        AND "status" IN ('ready', 'failed')
+        ${after === null ? Prisma.empty : Prisma.sql`AND "id" > ${after}`}
+      ORDER BY "id"
+      LIMIT ${PREVIOUS_BATCH}`;
+    for (const row of page) {
+      if (!Array.isArray(row.operationIds)) continue;
+      for (const id of row.operationIds) if (typeof id === 'string') stale.add(id);
+    }
+    if (page.length < PREVIOUS_BATCH) break;
+    after = page[page.length - 1].id;
+  }
+  await tx.contentDraft.updateMany({
+    where: { bookVersionId: versionId, kind, status: { in: ['ready', 'failed'] } },
+    data: { status: 'discarded' },
+  });
+  return [...stale];
+}
+
 /**
  * Что ждёт строящийся ход (`dossier` или `glossary`) и статус перегенераций - два независимых
  * запроса вместе.

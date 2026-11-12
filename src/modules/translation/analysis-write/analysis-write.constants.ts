@@ -170,6 +170,3 @@ export const ACCEPT_ALL_SKIP_CODES = [
   ANALYSIS_REGEN_IN_PROGRESS,
 ] as const;
 export type AcceptAllSkipCode = (typeof ACCEPT_ALL_SKIP_CODES)[number];
-
-/** Порция чтения прежних ходов на старте: выборка в память - с пределом строк, ходы - все. */
-export const PREVIOUS_BATCH = 100;
