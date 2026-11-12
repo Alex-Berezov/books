@@ -1,6 +1,6 @@
 import { Language } from '@prisma/client';
 import { sanitizeRichHtml } from '../../../shared/sanitize/rich-html';
-import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
+import { richHtmlInlineText } from '../../../shared/sanitize/rich-html-text';
 import {
   VERSION_AUTHOR_MAX_LENGTH,
   VERSION_TITLE_MIN_LENGTH,
@@ -86,7 +86,7 @@ const DESCRIPTION_LANGUAGE_FAILURES: ReadonlySet<string> = new Set([
 
 /** Текст без тегов: название, автор и названия глав - строки, а не HTML. */
 export function plainLine(text: string): string {
-  return richHtmlText(sanitizeRichHtml(text)).replace(/\s+/g, ' ').trim();
+  return richHtmlInlineText(sanitizeRichHtml(text)).replace(/\s+/g, ' ').trim();
 }
 
 /** Запись глоссария об авторе: по написанию исходника без регистра и диакритики. */

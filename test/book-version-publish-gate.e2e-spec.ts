@@ -896,8 +896,12 @@ describe('BookVersion Publication Gate (e2e)', () => {
       await publish(id).expect(200);
     });
 
-    it('the migration backfills when model text landed, never the mark', async () => {
-      const id = await arrange('auto-text-backfill');
+    // Повтор в `T193` - тот же бэкфилл для окна выката `T184`: оба файла по одному сценарию.
+    it.each([
+      ['20261112100000_t184_auto_text_read', 't184'],
+      ['20261112130000_t193_auto_text_backfill_repeat', 't193'],
+    ])('the migration %s backfills when model text landed, never the mark', async (dir, tag) => {
+      const id = await arrange(`auto-text-backfill-${tag}`);
       const operation = await prisma.llmOperation.create({
         data: { kind: 'draft', limitUsd: 1, bookVersionId: id },
       });
@@ -912,7 +916,7 @@ describe('BookVersion Publication Gate (e2e)', () => {
         },
       });
       // Строка с `items` не массивом миграцию не роняет и автотекстом не считается.
-      const broken = await arrange('auto-text-backfill-broken');
+      const broken = await arrange(`auto-text-backfill-broken-${tag}`);
       const brokenOperation = await prisma.llmOperation.create({
         data: { kind: 'draft', limitUsd: 1, bookVersionId: broken },
       });
@@ -926,8 +930,37 @@ describe('BookVersion Publication Gate (e2e)', () => {
           data: { items: 'not an array', written: {} },
         },
       });
+      // Заполненное не трогается: время вклада и отметка «прочитано» остаются, хотя ход
+      // обновлён позже них (решение арбитра 12.11.2026 `T193 | LEGACY-500 | T184`).
+      const filled = await arrange(`auto-text-backfill-filled-${tag}`);
+      const autoTextAt = new Date('2026-11-01T10:00:00.000Z');
+      const readAt = new Date('2026-11-01T11:00:00.000Z');
+      await prisma.bookVersion.update({
+        where: { id: filled },
+        data: {
+          summaryAutoTextAt: autoTextAt,
+          summaryReadAt: readAt,
+          analysisAutoTextAt: autoTextAt,
+          analysisReadAt: readAt,
+        },
+      });
+      for (const kind of ['summary_write', 'analysis_write'] as const) {
+        const filledOperation = await prisma.llmOperation.create({
+          data: { kind: 'draft', limitUsd: 1, bookVersionId: filled },
+        });
+        await prisma.contentDraft.create({
+          data: {
+            bookVersionId: filled,
+            kind,
+            status: 'discarded',
+            language: Language.en,
+            operationId: filledOperation.id,
+            data: { items: [{ outcome: 'written' }], written: {} },
+          },
+        });
+      }
       const sql = readFileSync(
-        join(__dirname, '../prisma/migrations/20261112100000_t184_auto_text_read/migration.sql'),
+        join(__dirname, '../prisma/migrations', dir, 'migration.sql'),
         'utf8',
       );
       const updates = sql
@@ -944,6 +977,11 @@ describe('BookVersion Publication Gate (e2e)', () => {
       await publish(id).expect(400);
       const brokenAfter = await prisma.bookVersion.findUniqueOrThrow({ where: { id: broken } });
       expect(brokenAfter.analysisAutoTextAt).toBeNull();
+      const filledAfter = await prisma.bookVersion.findUniqueOrThrow({ where: { id: filled } });
+      expect(filledAfter.summaryAutoTextAt?.getTime()).toBe(autoTextAt.getTime());
+      expect(filledAfter.analysisAutoTextAt?.getTime()).toBe(autoTextAt.getTime());
+      expect(filledAfter.summaryReadAt?.getTime()).toBe(readAt.getTime());
+      expect(filledAfter.analysisReadAt?.getTime()).toBe(readAt.getTime());
     });
   });
 });

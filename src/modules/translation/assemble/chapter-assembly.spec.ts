@@ -73,6 +73,16 @@ describe('assembleTranslatedChapter', () => {
     });
   });
 
+  it('an inline tag before a comma does not hide a seam repeat (LEGACY-500)', () => {
+    const result = assembleTranslatedChapter(layout, [
+      chunk(0, 1, 2, {
+        blocks: [translated(1), translated(2, '<em>El segundo</em>, párrafo del texto')],
+      }),
+      chunk(1, 3, 5, { blocks: [translated(3, 'El segundo, párrafo del texto'), translated(5)] }),
+    ]);
+    expect(result.flagReason).toBe('SEAM_REPEAT');
+  });
+
   it('flags the next piece starting with the tail of the previous one', () => {
     const tail = 'The tail of the previous piece, long enough';
     const result = assembleTranslatedChapter(layout, [

@@ -32,7 +32,7 @@ import {
   finalCheckStateJson,
   finalCheckStateOf,
 } from '../final-check/final-check-state';
-import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
+import { richHtmlInlineText } from '../../../shared/sanitize/rich-html-text';
 import {
   RUN_CHAPTER_CHUNKS_MAX,
   RUN_LANGUAGE_UNFINISHED,
@@ -126,7 +126,7 @@ export class FinalCheckRunStepsService {
         if (!chunksOfChapter(source.content, own)) return this.support.pauseStale(lang);
         const assembly = assembleTranslatedChapter(layout, own);
         if (assembly.status !== 'assembled') return this.support.pauseStale(lang);
-        text = richHtmlText(assembly.content);
+        text = richHtmlInlineText(assembly.content);
       }
       chapters.push({
         number: source.number,

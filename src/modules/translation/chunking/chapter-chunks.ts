@@ -1,4 +1,4 @@
-import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
+import { richHtmlInlineText } from '../../../shared/sanitize/rich-html-text';
 import { ChapterLayout } from '../chapter-blocks';
 
 /**
@@ -67,7 +67,7 @@ function describe(layout: Pick<ChapterLayout, 'blocks' | 'parts' | 'format'>): I
   const gaps = gapsBefore(layout);
   const emptyParagraph = layout.format === 'plain' ? PLAIN_EMPTY_PARAGRAPH : EMPTY_PARAGRAPH;
   return layout.blocks.map((block) => {
-    const text = block.translatable ? richHtmlText(block.html) : '';
+    const text = block.translatable ? richHtmlInlineText(block.html) : '';
     const marker = block.kind === 'hr' || SCENE_MARK.test(text);
     return {
       n: block.n,

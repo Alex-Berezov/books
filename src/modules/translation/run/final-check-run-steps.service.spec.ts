@@ -4,7 +4,9 @@ import { LlmService } from '../../llm/llm.service';
 import { LlmTaskContext } from '../../llm-worker/llm-task.types';
 import { addChapterFindings } from '../assemble/chapter-findings';
 import { callIndependent } from '../check/independent-call';
+import { assembleTranslatedChapter } from '../assemble/chapter-assembly';
 import { finalCodeCheck } from '../final-check/final-check-code';
+import { chapterFingerprint } from '../source-fingerprint';
 import { FINAL_CHECK_STAGE, FINAL_FINDING_CODES } from '../final-check/final-check.constants';
 import { FINAL_CODE_TX_OPTIONS, RUN_TX_OPTIONS } from './translation-run.constants';
 import { FinalCheckRunStepsService } from './final-check-run-steps.service';
@@ -237,6 +239,23 @@ describe('FinalCheckRunStepsService: проверка кодом', () => {
       'l1',
       expect.objectContaining({ id: 'ch1' }),
       found,
+    );
+  });
+
+  it('текст собранной главы - строчный тег перед запятой без пробела (LEGACY-500)', async () => {
+    const { steps, db, ctx } = setup();
+    db.translationChapter.findMany.mockResolvedValue([{ ...chapterRow, status: 'assembled' }]);
+    db.translationChunk.findMany.mockResolvedValue([
+      { chapterNumber: 1, chapterFingerprint: chapterFingerprint('<p>One.</p>') },
+    ]);
+    (assembleTranslatedChapter as jest.Mock).mockReturnValueOnce({
+      status: 'assembled',
+      content: '<p><em>Uno</em>, dos.</p>',
+    });
+    await steps.finalCheckStep(lang(null), ctx);
+    expect(codeMock).toHaveBeenCalledTimes(1);
+    expect((codeMock.mock.calls[0] as [Array<{ text: string | null }>])[0][0].text).toBe(
+      'Uno, dos.',
     );
   });
 

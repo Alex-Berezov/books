@@ -1,5 +1,5 @@
 import { Language, Prisma } from '@prisma/client';
-import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
+import { richHtmlInlineText } from '../../../shared/sanitize/rich-html-text';
 import { LlmError } from '../../llm/llm.errors';
 import { LlmService, StageCallEstimator } from '../../llm/llm.service';
 import { LlmTaskContext } from '../../llm-worker/llm-task.types';
@@ -67,7 +67,7 @@ export function metadataInputOf(
   const text = [
     plainLine(fields.title),
     plainLine(fields.author),
-    ...description.map((b) => richHtmlText(b.html)),
+    ...description.map((b) => richHtmlInlineText(b.html)),
     ...fields.chapterTitles.map((c) => plainLine(c.title)),
   ].join('\n');
   const glossary = glossaryFor(context.glossary, context.dossier, text);

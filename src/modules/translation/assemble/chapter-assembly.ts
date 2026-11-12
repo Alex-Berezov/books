@@ -1,6 +1,6 @@
 import { TranslationChunkStatus } from '@prisma/client';
 import { sanitizeRichHtml } from '../../../shared/sanitize/rich-html';
-import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
+import { richHtmlInlineText } from '../../../shared/sanitize/rich-html-text';
 import { RICH_HTML_MAX_LENGTH } from '../../../shared/validators/rich-html.decorator';
 import { assembleChapter, ChapterLayout } from '../chapter-blocks';
 import { normalized } from '../check/mechanical-check';
@@ -79,7 +79,7 @@ const NOT_WRITTEN: ReadonlySet<AssemblyFlagReason> = new Set([
 
 /** Текст блока для сравнения: без разметки, регистра и диакритики, пробелы схлопнуты. */
 function plain(html: string): string {
-  return normalized(richHtmlText(html)).replace(/\s+/g, ' ').trim();
+  return normalized(richHtmlInlineText(html)).replace(/\s+/g, ' ').trim();
 }
 
 /** Куски покрывают блоки главы `1..N` по порядку и без дыр; глава без блоков - один пустой кусок. */

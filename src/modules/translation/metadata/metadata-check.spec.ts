@@ -1,6 +1,6 @@
 import { parallelChapters } from '../../../common/testing/language-corpus';
 import { RICH_HTML_MAX_LENGTH } from '../../../shared/validators/rich-html.decorator';
-import { checkMetadata, metadataFormErrors } from './metadata-check';
+import { checkMetadata, metadataFormErrors, plainLine } from './metadata-check';
 import { MetadataAnswer } from './metadata.prompts';
 import { metadataInputOf, MetadataSourceFields } from './metadata-step';
 
@@ -212,6 +212,16 @@ describe('metadataInputOf: glossary lookup over plain lines (T176)', () => {
     expect(
       entries({ ...FIELDS, author: '', chapterTitles: chapters }, glossaryOf('Anabel')),
     ).toHaveLength(1);
+  });
+
+  it('an inline tag before a comma leaves no space in a plain line (LEGACY-500)', () => {
+    expect(plainLine('<em>Emma</em>, a novel')).toBe('Emma, a novel');
+    expect(plainLine('Chapter<br>One')).toBe('Chapter One');
+  });
+
+  it('finds a name split by inline markup in the description (LEGACY-500)', () => {
+    const description = '<p><b>Mc</b>Gregor came home, <em>tired</em>, at night.</p>';
+    expect(entries({ ...FIELDS, author: '', description }, glossaryOf('McGregor'))).toHaveLength(1);
   });
 
   it('passes the author to the model without markup', () => {

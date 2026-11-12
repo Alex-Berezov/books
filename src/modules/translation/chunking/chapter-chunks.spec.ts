@@ -68,6 +68,19 @@ describe('planChunks', () => {
     expect(splitChapter(html).blocks[boundary - 1].html.startsWith('—')).toBe(false);
   });
 
+  it('an inline tag before a comma: no extra word and no space in the head for the model (LEGACY-500)', async () => {
+    // Блок 16 - первый кандидат границы: его начало уходит модели, его слова - в счёт.
+    const html = Array.from({ length: 40 }, (_, i) =>
+      p(i === 15 ? `<em>word</em>, ${words(99)}` : words(100)),
+    ).join('');
+    const pick = jest.fn((w: ContestedWindow) => Promise.resolve(w.candidates[0].block));
+    await planChunks(splitChapter(html), pick);
+    const window = pick.mock.calls[0][0];
+    expect(window.candidates[0].block).toBe(16);
+    expect(window.candidates[0].head).toBe(`word, ${words(11)}`);
+    expect(window.candidates[1].words).toBe(1_600);
+  });
+
   it('asks the model for a contested joint and takes its answer', async () => {
     const html = Array.from({ length: 40 }, () => p(words(100))).join('');
     const pick = jest.fn((w: ContestedWindow) => Promise.resolve(w.candidates[2].block));

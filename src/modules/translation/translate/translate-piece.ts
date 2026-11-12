@@ -1,5 +1,5 @@
 import { Language } from '@prisma/client';
-import { richHtmlText } from '../../../shared/sanitize/rich-html-text';
+import { richHtmlInlineText } from '../../../shared/sanitize/rich-html-text';
 import { ChapterLayout } from '../chapter-blocks';
 import { normalized } from '../check/mechanical-check';
 import { ChapterChunk } from '../chunking/chapter-chunks';
@@ -62,7 +62,7 @@ export function chunkBlocks(
 function chunkText(layout: Pick<ChapterLayout, 'blocks'>, chunk: ChapterChunk | undefined): string {
   if (!chunk) return '';
   return chunkBlocks(layout, chunk)
-    .map((b) => richHtmlText(b.html))
+    .map((b) => richHtmlInlineText(b.html))
     .join(' ');
 }
 
@@ -76,15 +76,14 @@ function escapeRegExp(text: string): string {
 /**
  * Встречено ли написание в тексте куска (`lower` - текст в нижнем регистре без диакритики,
  * `normalized`, как у записи об авторе). Подстрокой - ради
- * словоформ («Анна» в «Анны»), короткое - целым словом.
+ * словоформ («Анна» в «Анны»), короткое - целым словом. Цифра справа границей не считается:
+ * сноска `<sup>1</sup>` в тексте куска приклеивается к имени («Li1», `LEGACY-500`, `T193`).
  */
 function wordSeen(lower: string, word: string): boolean {
   const needle = normalized(word.trim());
   if (needle === '') return false;
   if (needle.length >= WHOLE_WORD_BELOW) return lower.includes(needle);
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(needle)}(?![\\p{L}\\p{N}])`, 'u').test(
-    lower,
-  );
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escapeRegExp(needle)}(?![\\p{L}])`, 'u').test(lower);
 }
 
 /**
