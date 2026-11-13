@@ -8,14 +8,16 @@ import {
   SourceCandidate,
   TranslationSource,
 } from './translation-source';
+import { TARGET_VERSION_SELECT, targetVersionState } from './target-version-text';
 
 export interface VersionTranslationSource {
   bookId: string;
   source: TranslationSource;
   /**
    * Одобренные языки анкеты прав (`approvedTargetLanguages`), `null` - списка нет. Причина цели
-   * одна на язык и `VERSION_EXISTS` стоит раньше `NOT_IN_INTAKE`: тому, кто разрешает язык
-   * с версией (сравнение `F05-3`, С5), анкету надо проверять по этому списку.
+   * одна на язык и причины версии (`VERSION_PUBLISHED`, `VERSION_HAS_TEXT`) стоят раньше
+   * `NOT_IN_INTAKE`: тому, кто разрешает язык с версией (сравнение `F05-3`, С5), анкету надо
+   * проверять по этому списку.
    */
   intakeTargets: readonly unknown[] | null;
   /** Версия, чьё досье берёт открытая версия (Р5, В10). */
@@ -44,27 +46,24 @@ export class TranslationSourceService {
             rightsIntake: { select: { targetLanguages: true } },
             // Версия на язык одна (`@@unique([bookId, language])`): строк не больше пяти.
             versions: {
-              select: {
-                id: true,
-                language: true,
-                originalLanguage: true,
-                createdAt: true,
-                _count: { select: { chapters: { where: { content: { not: '' } } } } },
-              },
+              select: { ...TARGET_VERSION_SELECT, originalLanguage: true, createdAt: true },
             },
           },
         },
       },
     });
     if (!version) throw new NotFoundException('Book version not found');
-    const versions: SourceCandidate[] = version.book.versions.map((v) => ({
-      id: v.id,
-      language: v.language,
-      originalLanguage: v.originalLanguage,
-      createdAt: v.createdAt,
-      chaptersWithText: v._count.chapters,
-    }));
     const intakeTargets = approvedTargetLanguages(version.book.rightsIntake?.targetLanguages);
+    const versions: SourceCandidate[] = await Promise.all(
+      version.book.versions.map(async (v) => ({
+        id: v.id,
+        language: v.language,
+        originalLanguage: v.originalLanguage,
+        createdAt: v.createdAt,
+        chaptersWithText: v._count.chapters,
+        ...(await targetVersionState(this.prisma, v, intakeTargets)),
+      })),
+    );
     const inProgress = options.withRunsInProgress
       ? await unfinishedRunLanguages(this.prisma, version.bookId)
       : undefined;

@@ -3,7 +3,6 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskContext } from '../../llm-worker/llm-task.types';
-import { CREATE_FROM_RUN_REJECTIONS } from '../../book-version/create-from-run';
 import { DRAFT_DELETED, NO_CHAPTERS_WRITTEN } from '../draft/draft.constants';
 import { TranslationDraftService } from '../draft/translation-draft.service';
 import {
@@ -72,7 +71,7 @@ function setup() {
   };
   const drafts = {
     nextToWrite: jest.fn().mockResolvedValue({ chapterNumber: 1 }),
-    createDraft: jest.fn(),
+    openDraft: jest.fn(),
     writeChapter: jest.fn().mockResolvedValue('written'),
   };
   const ctx = { renewLease: jest.fn().mockResolvedValue(undefined) };
@@ -120,10 +119,10 @@ describe('MetadataDraftRunStepsService: этап metadata', () => {
 
   it('ответ уже принят - черновик, модель второй раз не оплачивается', async () => {
     const { steps, drafts, ctx } = setup();
-    drafts.createDraft.mockResolvedValue({ kind: 'created', versionId: 'v2' });
+    drafts.openDraft.mockResolvedValue({ kind: 'created', versionId: 'v2' });
     await steps.metadataStep(lang({ metadata: { attempts: [], result: metadata } }), ctx);
     expect(callMock).not.toHaveBeenCalled();
-    expect(drafts.createDraft).toHaveBeenCalledTimes(1);
+    expect(drafts.openDraft).toHaveBeenCalledTimes(1);
   });
 
   it('исходник устарел - пауза до вызова модели', async () => {
@@ -287,7 +286,7 @@ describe('MetadataDraftRunStepsService: черновик', () => {
       expect.objectContaining({ id: 'l1' }),
       NO_CHAPTERS_WRITTEN,
     );
-    expect(drafts.createDraft).not.toHaveBeenCalled();
+    expect(drafts.openDraft).not.toHaveBeenCalled();
   });
 
   it('исходник устарел до создания версии - пауза', async () => {
@@ -295,12 +294,12 @@ describe('MetadataDraftRunStepsService: черновик', () => {
     support.isStale.mockResolvedValue(true);
     await steps.draftStep(lang(), ctx, metadata);
     expect(support.pauseStale).toHaveBeenCalledTimes(1);
-    expect(drafts.createDraft).not.toHaveBeenCalled();
+    expect(drafts.openDraft).not.toHaveBeenCalled();
   });
 
   it('отказ создания версии - failed с кодом и текстом сервиса', async () => {
     const { steps, support, drafts, ctx } = setup();
-    drafts.createDraft.mockResolvedValue({
+    drafts.openDraft.mockResolvedValue({
       kind: 'rejected',
       code: 'CREATE_REJECTED',
       text: 'why',
@@ -314,21 +313,16 @@ describe('MetadataDraftRunStepsService: черновик', () => {
     );
   });
 
-  it('VERSION_EXISTS после потерянной аренды, версия своя - шаг продолжается', async () => {
-    const { steps, support, drafts, db, ctx } = setup();
-    drafts.createDraft.mockResolvedValue({
-      kind: 'rejected',
-      code: CREATE_FROM_RUN_REJECTIONS.VERSION_EXISTS,
-      text: null,
-    });
-    db.translationRunLanguage.findUnique.mockResolvedValue({ bookVersionId: 'v2' });
+  it('версия на языке появилась между чтением и созданием (retry) - шаг продолжается', async () => {
+    const { steps, support, drafts, ctx } = setup();
+    drafts.openDraft.mockResolvedValue({ kind: 'retry' });
     await expect(steps.draftStep(lang(), ctx, metadata)).resolves.toEqual({ kind: 'continue' });
     expect(support.failLanguage).not.toHaveBeenCalled();
   });
 
   it('поля исходника правили после ответа - ответ снимается, попытки остаются', async () => {
     const { steps, drafts, db, ctx } = setup();
-    drafts.createDraft.mockResolvedValue({ kind: 'fields_changed' });
+    drafts.openDraft.mockResolvedValue({ kind: 'fields_changed' });
     const attempts = [{ model: 'm', costUsd: '0.1', outcome: 'pass', remarks: [] }];
     await steps.draftStep(lang({ metadata: { attempts, result: metadata } }), ctx, metadata);
     expect(db.translationRunLanguage.updateMany).toHaveBeenCalledTimes(1);
@@ -346,52 +340,48 @@ describe('MetadataDraftRunStepsService: черновик', () => {
 
   it('создание версии: язык, принятый ответ и отпечаток из состояния языка', async () => {
     const { steps, drafts, lease, ctx } = setup();
-    drafts.createDraft.mockResolvedValue({ kind: 'created', versionId: 'v2' });
+    drafts.openDraft.mockResolvedValue({ kind: 'created', versionId: 'v2' });
     const row = lang({ metadata: { attempts: [], result: metadata, sourceHash: 'h1' } });
     await expect(steps.draftStep(row, ctx, metadata)).resolves.toEqual({ kind: 'continue' });
     expect(lease.renewLease).toHaveBeenCalledTimes(1);
-    expect(drafts.createDraft).toHaveBeenCalledTimes(1);
-    expect(drafts.createDraft).toHaveBeenCalledWith(row, metadata, 'h1');
+    expect(drafts.openDraft).toHaveBeenCalledTimes(1);
+    expect(drafts.openDraft).toHaveBeenCalledWith(row, metadata, 'h1');
   });
 
-  it('ответ принят до 6c, отпечатка нет - createDraft без него', async () => {
+  it('ответ принят до 6c, отпечатка нет - openDraft без него', async () => {
     const { steps, drafts, ctx } = setup();
-    drafts.createDraft.mockResolvedValue({ kind: 'created', versionId: 'v2' });
+    drafts.openDraft.mockResolvedValue({ kind: 'created', versionId: 'v2' });
     const row = lang({ metadata: { attempts: [], result: metadata } });
     await steps.draftStep(row, ctx, metadata);
-    expect(drafts.createDraft).toHaveBeenCalledTimes(1);
-    expect(drafts.createDraft).toHaveBeenCalledWith(row, metadata, undefined);
+    expect(drafts.openDraft).toHaveBeenCalledTimes(1);
+    expect(drafts.openDraft).toHaveBeenCalledWith(row, metadata, undefined);
   });
 
   it('исходник удалили под замком создания - failed DRAFT_DELETED', async () => {
     const { steps, support, drafts, ctx } = setup();
-    drafts.createDraft.mockResolvedValue({ kind: 'deleted' });
+    drafts.openDraft.mockResolvedValue({ kind: 'deleted' });
     const row = lang();
     await steps.draftStep(row, ctx, metadata);
     expect(support.failLanguage).toHaveBeenCalledTimes(1);
     expect(support.failLanguage).toHaveBeenCalledWith(row, DRAFT_DELETED);
   });
 
-  it('VERSION_EXISTS, своей версии у языка нет - failed с кодом и текстом', async () => {
-    const { steps, support, drafts, db, ctx } = setup();
-    drafts.createDraft.mockResolvedValue({
-      kind: 'rejected',
-      code: CREATE_FROM_RUN_REJECTIONS.VERSION_EXISTS,
-      text: 'exists',
-    });
+  it('версию опубликовали посреди записи главы - failed VERSION_PUBLISHED (D9, круг 1 п.1)', async () => {
+    const { steps, support, drafts, ctx } = setup();
+    drafts.writeChapter.mockResolvedValue('version_published');
+    const row = lang({ bookVersionId: 'v1' });
+    await steps.draftStep(row, ctx, metadata);
+    expect(support.failLanguage).toHaveBeenCalledTimes(1);
+    expect(support.failLanguage).toHaveBeenCalledWith(row, 'VERSION_PUBLISHED');
+  });
+
+  it('в версии на языке появился текст до привязки - failed VERSION_HAS_TEXT (D9, Ж)', async () => {
+    const { steps, support, drafts, ctx } = setup();
+    drafts.openDraft.mockResolvedValue({ kind: 'rejected', code: 'VERSION_HAS_TEXT', text: null });
     const row = lang();
     await steps.draftStep(row, ctx, metadata);
-    expect(db.translationRunLanguage.findUnique).toHaveBeenCalledTimes(1);
-    expect(db.translationRunLanguage.findUnique).toHaveBeenCalledWith({
-      where: { id: 'l1' },
-      select: { bookVersionId: true },
-    });
     expect(support.failLanguage).toHaveBeenCalledTimes(1);
-    expect(support.failLanguage).toHaveBeenCalledWith(
-      row,
-      CREATE_FROM_RUN_REJECTIONS.VERSION_EXISTS,
-      'exists',
-    );
+    expect(support.failLanguage).toHaveBeenCalledWith(row, 'VERSION_HAS_TEXT', null);
   });
 
   it('запись главы: язык с версией, следующая глава, названия глав и продление аренды', async () => {

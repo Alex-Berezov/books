@@ -22,11 +22,16 @@ export interface LockedChapterWriter {
   /** Статус версии под замком её строки; `null` - версии нет. */
   versionStatus(): Promise<string | null>;
   /** Строка главы версии под `FOR UPDATE`; `null` - главы нет. */
-  lockChapter(id: string): Promise<{ id: string; content: string } | null>;
+  lockChapter(id: string): Promise<{ id: string; content: string; title: string } | null>;
   /** Номер уже занят главой версии. */
   numberTaken(number: number): Promise<boolean>;
   /** `id` - замена текста существующей главы, без него - новая глава с номером и названием. */
   write(data: { id?: string; number: number; title: string; content: string }): Promise<Chapter>;
+  /**
+   * Название главы версии - только если оно пустое: заполненное редактором не меняется
+   * (перевод в привязанную версию, D9; решение арбитра `F05 | F05-19`, Г).
+   */
+  fillEmptyTitle(id: string, title: string): Promise<void>;
 }
 
 @Injectable()
@@ -187,8 +192,8 @@ export class ChapterService {
             })
           )?.status ?? null,
         lockChapter: async (id) => {
-          const rows = await tx.$queryRaw<Array<{ id: string; content: string }>>`
-            SELECT "id", "content" FROM "Chapter"
+          const rows = await tx.$queryRaw<Array<{ id: string; content: string; title: string }>>`
+            SELECT "id", "content", "title" FROM "Chapter"
             WHERE "id" = ${id} AND "bookVersionId" = ${bookVersionId}
             FOR UPDATE`;
           return rows[0] ?? null;
@@ -217,6 +222,9 @@ export class ChapterService {
             tx,
           );
           return written;
+        },
+        fillEmptyTitle: async (id, title) => {
+          await tx.chapter.updateMany({ where: { id, bookVersionId, title: '' }, data: { title } });
         },
       };
       return body(tx, writer);

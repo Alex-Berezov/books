@@ -1,8 +1,9 @@
-import { Language } from '@prisma/client';
+import { Language, PublicationStatus } from '@prisma/client';
 import {
   dossierSourceVersionId,
   selectTranslationSource,
   SourceCandidate,
+  targetVersionBlock,
 } from './translation-source';
 
 const ALL = ['en', 'es', 'fr', 'pt', 'ru'];
@@ -12,6 +13,7 @@ function version(
   language: Language,
   originalLanguage: string | null,
   chaptersWithText = 3,
+  extra: Partial<Pick<SourceCandidate, 'status' | 'hasContent'>> = {},
 ): SourceCandidate {
   clock += 1;
   return {
@@ -20,6 +22,9 @@ function version(
     originalLanguage,
     createdAt: new Date(2026, 0, clock),
     chaptersWithText,
+    status: PublicationStatus.draft,
+    hasContent: chaptersWithText > 0,
+    ...extra,
   };
 }
 
@@ -49,7 +54,7 @@ describe('selectTranslationSource (D8, product.md §2.1)', () => {
       originalLanguageMismatch: false,
     });
     expect(reasons(fromRu)).toEqual({
-      en: 'VERSION_EXISTS',
+      en: 'VERSION_HAS_TEXT',
       es: 'ok',
       fr: 'ok',
       pt: 'ok',
@@ -95,7 +100,7 @@ describe('selectTranslationSource (D8, product.md §2.1)', () => {
       sourceLanguage: 'en',
       originalLanguageMismatch: false,
     });
-    expect(reasons(fromEn)).toMatchObject({ en: 'IS_SOURCE', ru: 'VERSION_EXISTS', es: 'ok' });
+    expect(reasons(fromEn)).toMatchObject({ en: 'IS_SOURCE', ru: 'VERSION_HAS_TEXT', es: 'ok' });
     expect(select('v-ru', versions)).toMatchObject({
       reason: 'NOT_ENGLISH_VERSION',
       sourceVersionId: 'v-en',
@@ -189,7 +194,7 @@ describe('selectTranslationSource (D8, product.md §2.1)', () => {
       es: 'NOT_IN_INTAKE',
       fr: 'NOT_IN_INTAKE',
       pt: 'NOT_IN_INTAKE',
-      ru: 'VERSION_EXISTS',
+      ru: 'VERSION_HAS_TEXT',
     });
   });
 
@@ -210,8 +215,8 @@ describe('selectTranslationSource (D8, product.md §2.1)', () => {
     });
     expect(reasons(r)).toEqual({
       en: 'IS_SOURCE',
-      es: 'VERSION_EXISTS',
-      fr: 'VERSION_EXISTS',
+      es: 'VERSION_HAS_TEXT',
+      fr: 'VERSION_HAS_TEXT',
       pt: 'NOT_IN_INTAKE',
       ru: 'NOT_IN_INTAKE',
     });
@@ -236,7 +241,7 @@ describe('selectTranslationSource (D8, product.md §2.1)', () => {
     });
     expect(reasons(r)).toEqual({
       en: 'IS_SOURCE',
-      es: 'VERSION_EXISTS',
+      es: 'VERSION_HAS_TEXT',
       fr: 'TRANSLATION_IN_PROGRESS',
       pt: 'NOT_IN_INTAKE',
       // Анкету правили после старта: язык всё равно занят запуском.
@@ -244,6 +249,44 @@ describe('selectTranslationSource (D8, product.md §2.1)', () => {
     });
     // Последний свободный язык занят запуском - переводить не на что.
     expect(r.reason).toBe('NO_AVAILABLE_TARGETS');
+  });
+
+  it('a draft without chapter text does not close its language: the run writes into it (D9)', () => {
+    const versions = [
+      version('en', 'English'),
+      version('ru', 'English', 0),
+      version('es', 'English', 2, { hasContent: false }),
+    ];
+    expect(reasons(select('v-en', versions))).toEqual({
+      en: 'IS_SOURCE',
+      es: 'ok',
+      fr: 'ok',
+      pt: 'ok',
+      ru: 'ok',
+    });
+  });
+
+  it('a published version closes its language even without text (D9, А)', () => {
+    const versions = [
+      version('en', 'English'),
+      version('ru', 'English', 0, { status: PublicationStatus.published }),
+    ];
+    expect(reasons(select('v-en', versions))).toMatchObject({ ru: 'VERSION_PUBLISHED', es: 'ok' });
+  });
+
+  it('every other language with an empty draft: translation stays available (D9)', () => {
+    const versions = [
+      version('en', 'English'),
+      ...(['es', 'fr', 'pt', 'ru'] as Language[]).map((l) => version(l, 'English', 0)),
+    ];
+    expect(select('v-en', versions)).toMatchObject({ canTranslate: true, reason: null });
+  });
+
+  it('targetVersionBlock: published first, then visible text, an empty draft is open', () => {
+    const { draft, published } = PublicationStatus;
+    expect(targetVersionBlock({ status: published, hasContent: true })).toBe('VERSION_PUBLISHED');
+    expect(targetVersionBlock({ status: draft, hasContent: true })).toBe('VERSION_HAS_TEXT');
+    expect(targetVersionBlock({ status: draft, hasContent: false })).toBeNull();
   });
 
   it('dossier source: the D8 source with text, else the version itself (Р5, В10)', () => {

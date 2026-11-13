@@ -296,7 +296,8 @@ export class RunStepSupportService {
 
   /**
    * Язык не доделать (`F05-6`: `metadata` не прошла повтор, вход не влезает в контекст, черновик
-   * не создан - `VERSION_EXISTS`, `CREATE_REJECTED`): `failed`
+   * не создан или не привязан - `VERSION_EXISTS`, `CREATE_REJECTED`, `VERSION_HAS_TEXT`,
+   * `VERSION_PUBLISHED`): `failed`
    * с кодом, прочие языки идут дальше (решение арбитра `F05 | F05-6`, итог языка).
    */
   async failLanguage(

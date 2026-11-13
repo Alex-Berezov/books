@@ -94,8 +94,11 @@ function isPlainText(content: string): boolean {
   return !/<[a-zA-Z/!]/.test(content);
 }
 
-/** Пусто для перевода: ни видимого текста (правило `richHtmlText`), ни картинки. */
-function isBlank(html: string): boolean {
+/**
+ * Пусто для перевода: ни видимого текста (правило `richHtmlText`), ни картинки. Одно правило
+ * на нарезку и на содержимое главы версии цели (D9; решение арбитра `F05 | F05-19`, круг 1 п.2).
+ */
+export function isBlank(html: string): boolean {
   return richHtmlText(html) === '' && !/<img\b/i.test(html);
 }
 

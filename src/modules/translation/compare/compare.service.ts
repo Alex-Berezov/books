@@ -355,7 +355,7 @@ export class TranslationCompareService {
    */
   private async assertTarget(versionId: string, language: Language): Promise<Language> {
     const { source, intakeTargets } = await this.sources.forVersion(versionId);
-    // `NO_AVAILABLE_TARGETS` выводится из `VERSION_EXISTS`, а такой язык сравнению открыт.
+    // `NO_AVAILABLE_TARGETS` выводится и из причин версии (D9), а такой язык сравнению открыт.
     if (source.reason && source.reason !== 'NO_AVAILABLE_TARGETS') {
       throw new ConflictException({
         statusCode: 409,
@@ -374,7 +374,7 @@ export class TranslationCompareService {
         code: 'COMPARE_TARGET_IS_SOURCE',
       });
     }
-    // По списку анкеты, а не по причине цели: у языка с версией причина `VERSION_EXISTS`
+    // По списку анкеты, а не по причине цели: у языка с версией причина версии (D9)
     // закрывает `NOT_IN_INTAKE`, а сравнение такой язык разрешает (С5).
     if (!intakeTargets?.includes(language)) {
       throw llmTaskConflict('NOT_IN_INTAKE', 'The target language is not in the rights intake');

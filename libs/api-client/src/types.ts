@@ -14661,7 +14661,7 @@ export interface components {
       /** Format: uuid */
       glossaryId: string | null;
       language: components['schemas']['Language'];
-      /** @description Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE, DOSSIER_LIMIT_TOO_LOW - the run limit left is lower than the dossier or glossary limit, amount in reasonUsd...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_EXISTS, CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft) */
+      /** @description Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE, DOSSIER_LIMIT_TOO_LOW - the run limit left is lower than the dossier or glossary limit, amount in reasonUsd...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_HAS_TEXT (the existing version of the language got chapter content before the run attached it), VERSION_PUBLISHED (the version was published before the attach or while chapters were written; chapters already written stay), VERSION_EXISTS (runs before 13.11.2026 only), CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft) */
       reason: string | null;
       /** @description Models that all refused by the data policy (NO_COMPLIANT_PROVIDER): pick another one in stageModels; empty otherwise */
       reasonModels: string[];
@@ -14894,7 +14894,13 @@ export interface components {
       available: boolean;
       language: components['schemas']['Language'];
       /** @enum {string|null} */
-      reason: 'IS_SOURCE' | 'VERSION_EXISTS' | 'TRANSLATION_IN_PROGRESS' | 'NOT_IN_INTAKE' | null;
+      reason:
+        | 'IS_SOURCE'
+        | 'VERSION_PUBLISHED'
+        | 'VERSION_HAS_TEXT'
+        | 'TRANSLATION_IN_PROGRESS'
+        | 'NOT_IN_INTAKE'
+        | null;
     };
     UnlinkRightsLicenseResponseDto: {
       /** @example true */
@@ -21167,7 +21173,7 @@ export interface operations {
           'application/json': components['schemas']['DossierStatusDto'];
         };
       };
-      /** @description DOSSIER_FRESH: a fresh dossier exists; DOSSIER_OF_RUN: the version was made by a translation run, its dossier is the run dossier; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again */
+      /** @description DOSSIER_FRESH: a fresh dossier exists; DOSSIER_OF_RUN: the version was made by a translation run or attached to one (an editor draft without chapter content, D9), its dossier is the run dossier; LLM_CEILING_REACHED: the spending ceiling is reached; SOURCE_HAS_NO_CHAPTERS; LLM_NO_PRICE; LLM_STAGE_DISABLED; DOSSIER_BUSY: changed concurrently, try again */
       409: {
         headers: {
           [name: string]: unknown;
@@ -22015,7 +22021,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_EXISTS, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, final_check, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check or final check model of another family than the translate model */
+      /** @description The version is not a translation source by D8 (code = its reason, with sourceVersionId); TRANSLATION_TARGET_UNAVAILABLE (languages[{language, reason}]: IS_SOURCE, VERSION_PUBLISHED - the version of the language is published, VERSION_HAS_TEXT - its chapters have text; a draft without chapter text is open and the run writes into it, TRANSLATION_IN_PROGRESS, NOT_IN_INTAKE); SOURCE_TOO_MANY_CHAPTERS; TRANSLATION_SOURCE_EMPTY: nothing to translate in the chapters; LLM_NO_PRICE; LLM_STAGE_DISABLED (also of check_semantic, final_check, metadata); CHECK_MODEL_SAME_FAMILY: no meaning check or final check model of another family than the translate model */
       409: {
         headers: {
           [name: string]: unknown;

@@ -30,6 +30,7 @@ import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
 import { DossierDemandService } from '../dossier/dossier-demand.service';
 import { assertKnownModels, stageEstimatorFor } from '../llm-model-checks';
 import { TranslationTargetReason } from '../translation-source';
+import { TARGET_VERSION_SELECT, targetVersionReason } from '../target-version-text';
 import { TranslationSourceService } from '../translation-source.service';
 import {
   chapterCheckUsd,
@@ -116,7 +117,8 @@ interface BlockedLanguage {
 /**
  * Запуск перевода (`F05-4`): оценка и старт (`F05-4b`, шаги 2-3), ход и кнопки «пауза»,
  * «продолжить», «отменить» (шаги 6-7), запуски книги. Старт - под замком языка книги, общим
- * с ручным созданием версии (Р6): язык с версией или с незавершённым запуском (Р23) не стартует.
+ * с ручным созданием версии (Р6): язык с опубликованной версией или с текстом глав (D9) или
+ * с незавершённым запуском (Р23) не стартует.
  * Переходы - общими методами операций: отмена закрывает языки (`onCancelled`), «продолжить»
  * ставит задачу на каждый недоделанный язык (`resumeTasks`).
  */
@@ -668,8 +670,9 @@ export class TranslationRunService {
   }
 
   /**
-   * Языки под замком (`F05-4b`, шаг 3): версия появилась, идёт перевод (Р23) или язык убрали
-   * из анкеты - тем же отказом и в том же порядке причин, что и до замка (`translation-source`).
+   * Языки под замком (`F05-4b`, шаг 3): версию опубликовали или в ней появился текст (D9), идёт
+   * перевод (Р23) или язык убрали из анкеты - тем же отказом и в том же порядке причин, что и до
+   * замка (`translation-source`).
    * Язык исходника под замком не перечитывается: его меняет не создание версии и не старт.
    */
   private async assertLanguagesFree(
@@ -680,7 +683,7 @@ export class TranslationRunService {
     const [versions, inProgress, book] = await Promise.all([
       tx.bookVersion.findMany({
         where: { bookId, language: { in: [...languages] } },
-        select: { language: true },
+        select: TARGET_VERSION_SELECT,
       }),
       unfinishedRunLanguages(tx, bookId, languages),
       tx.book.findUnique({
@@ -688,10 +691,16 @@ export class TranslationRunService {
         select: { rightsIntake: { select: { targetLanguages: true } } },
       }),
     ]);
-    const taken = new Set(versions.map((v) => v.language));
     const intake = approvedTargetLanguages(book?.rightsIntake?.targetLanguages);
+    // Содержимое - только у языков анкеты, как в окне (решение арбитра `F05 | F05-19`, круг 1 п.3).
+    const taken = new Map<Language, TranslationTargetReason>();
+    for (const v of versions) {
+      const reason = await targetVersionReason(tx, v, intake);
+      if (reason) taken.set(v.language, reason);
+    }
     const blocked = languages.flatMap((language): BlockedLanguage[] => {
-      if (taken.has(language)) return [{ language, reason: 'VERSION_EXISTS' }];
+      const versionReason = taken.get(language);
+      if (versionReason) return [{ language, reason: versionReason }];
       if (inProgress.includes(language)) return [{ language, reason: 'TRANSLATION_IN_PROGRESS' }];
       if (!intake?.includes(language)) return [{ language, reason: 'NOT_IN_INTAKE' }];
       return [];

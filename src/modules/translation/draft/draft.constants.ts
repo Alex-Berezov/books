@@ -1,3 +1,4 @@
+import type { TargetVersionReason } from '../translation-source';
 import { AssemblyFlagReason } from '../assemble/chapter-assembly';
 import { SeamFindingCode } from '../check/seam-check';
 import { FinalFindingCode } from '../final-check/final-check.constants';
@@ -29,7 +30,13 @@ export type ChapterFlagCode =
 export const DRAFT_DELETED = 'DRAFT_DELETED';
 
 /**
+ * Версию, куда пишутся главы, опубликовали посреди запуска (D9; решение арбитра `F05 | F05-19`,
+ * круг 1 п.1): язык `failed`, записанные главы остаются. Тот же код, что у отказа привязки.
+ */
+export const VERSION_PUBLISHED = 'VERSION_PUBLISHED' satisfies TargetVersionReason;
+
+/**
  * Ни одной главы к записи (все не собрались: Р8, кусок без перевода): черновик не создаётся -
- * пустая версия держала бы язык через `VERSION_EXISTS` (решение арбитра `F05 | F05-6`, круг 5).
+ * пустая версия была бы лишней (решение арбитра `F05 | F05-6`, круг 5; язык она с D9 не держит).
  */
 export const NO_CHAPTERS_WRITTEN = 'NO_CHAPTERS_WRITTEN';

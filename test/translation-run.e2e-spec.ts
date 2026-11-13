@@ -17,6 +17,7 @@ import { lockBookLanguages } from '../src/modules/book-version/book-language-loc
 import { ChapterService } from '../src/modules/chapter/chapter.service';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import { TranslationDraftService } from '../src/modules/translation/draft/translation-draft.service';
+import { MetadataResult } from '../src/modules/translation/metadata/metadata-check';
 import {
   DOSSIER_LIMIT_TOO_LOW,
   RUN_HISTORY_STAGES,
@@ -31,6 +32,7 @@ import { runTaskInput } from '../src/modules/translation/run/translation-run.ser
 import { TranslationRunReportDto } from '../src/modules/translation/dto/translation-run-report-response.dto';
 import { sourceFingerprint } from '../src/modules/translation/source-fingerprint';
 import { corpusChunks, parallelChapters } from '../src/common/testing/language-corpus';
+import { richHtmlText } from '../src/shared/sanitize/rich-html-text';
 import { sentencesOf } from '../src/modules/translation/check/language-detector';
 import { ANALYSIS_WRITE_STAGE_DEFINITIONS } from '../src/modules/translation/analysis-write/analysis-write.constants';
 import {
@@ -2692,9 +2694,21 @@ describe('Translation run (e2e)', () => {
       languages: [{ language: 'en', reason: 'IS_SOURCE' }],
     });
     await manualVersion(bookId, 'ru').expect(201);
-    const taken = await startRun(versionId, { languages: ['es', 'ru'] }).expect(409);
-    expect(taken.body.languages).toEqual([{ language: 'ru', reason: 'VERSION_EXISTS' }]);
     const ru = await prisma.bookVersion.findFirstOrThrow({ where: { bookId, language: 'ru' } });
+    await prisma.chapter.create({
+      data: { bookVersionId: ru.id, number: 1, title: 'Один', content: '<p>Текст</p>' },
+    });
+    await manualVersion(bookId, 'pt').expect(201);
+    await prisma.bookVersion.updateMany({
+      where: { bookId, language: 'pt' },
+      data: { status: 'published' },
+    });
+    // D9: язык закрывает не версия, а текст глав в ней или публикация (решение арбитра `F05 | F05-19`).
+    const taken = await startRun(versionId, { languages: ['es', 'pt', 'ru'] }).expect(409);
+    expect(taken.body.languages).toEqual([
+      { language: 'pt', reason: 'VERSION_PUBLISHED' },
+      { language: 'ru', reason: 'VERSION_HAS_TEXT' },
+    ]);
     const notSource = await startRun(ru.id, { languages: ['es'] }).expect(409);
     expect(notSource.body).toMatchObject({
       code: 'NOT_ORIGINAL_VERSION',
@@ -2860,7 +2874,7 @@ describe('Translation run (e2e)', () => {
     await manualVersion(bookId, 'es').expect(201);
   });
 
-  it('a start and a manual version on one language at once: exactly one passes', async () => {
+  it('a start and a manual version on one language at once: the start always passes, the manual version only before it (D9)', async () => {
     const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
 
     const [started, manual] = await Promise.all([
@@ -2868,13 +2882,13 @@ describe('Translation run (e2e)', () => {
       manualVersion(bookId, 'es'),
     ]);
 
-    // Первым взял замок старт - ручная версия отказывает «идёт перевод»; ручная - старт
-    // отказывает «версия есть».
-    expect([started.status, manual.status]).toEqual(
-      started.status === 202 ? [202, 400] : [409, 201],
-    );
+    // Первым взял замок старт - ручная версия отказывает «идёт перевод»; первой взяла ручная -
+    // её пустой черновик язык не закрывает (D9), старт проходит и пишет в него.
+    expect(started.status).toBe(202);
+    expect([400, 201]).toContain(manual.status);
+    expect(await runsOf(bookId)).toBe(1);
     const versions = await prisma.bookVersion.count({ where: { bookId, language: 'es' } });
-    expect(versions + (await runsOf(bookId))).toBe(1);
+    expect(versions).toBe(manual.status === 201 ? 1 : 0);
   });
 
   it('two crossing starts on the same languages: one passes, the other is refused, no deadlock', async () => {
@@ -3621,32 +3635,280 @@ describe('Translation run (e2e)', () => {
     expect(await prisma.bookVersion.count({ where: { bookId, language: 'fr' } })).toBe(1);
   });
 
-  it('a version of the language created behind the run is a typed refusal: the language fails VERSION_EXISTS without a text', async () => {
-    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
-    const { runId } = await createRun(versionId, ['es']);
-    await prisma.bookVersion.create({
+  /** Версия языка, заведённая редактором до перевода (поток владельца D9). */
+  const editorVersion = (
+    bookId: string,
+    language: Language,
+    chapters: Array<{ number: number; title: string; content: string }> = [],
+    status: 'draft' | 'published' = 'draft',
+  ) =>
+    prisma.bookVersion.create({
       data: {
         bookId,
-        language: 'es',
+        language,
         title: 'Hecha a mano',
         author: 'Autor',
-        description: '',
+        description: 'Descripción del editor',
         coverImageUrl: '',
         type: 'text',
         isFree: true,
-        status: 'draft',
+        status,
+        chapters: { create: chapters },
       },
     });
+
+  it('a draft of the language without chapter text: the run writes into it, the fields of the version stay (D9, В)', async () => {
+    const { bookId, versionId } = await englishBook([
+      { number: 1, title: 'One', content: SHORT },
+      { number: 2, title: 'Two', content: SHORT },
+    ]);
+    // Заготовки редактора: глава 1 пустым HTML с названием, глава 2 без названия (Г, Е).
+    const es = await editorVersion(bookId, 'es', [
+      { number: 1, title: 'Uno del editor', content: '<p></p>' },
+      { number: 2, title: '', content: ' ' },
+    ]);
+    // Хеш прав пересчитывается по итогу главы: к этому моменту пустое название уже заполнено (LEGACY-030).
+    const hashes = app.get(RightsContentHashService);
+    const check = hashes.checkVersionStaleness.bind(
+      hashes,
+    ) as RightsContentHashService['checkVersionStaleness'];
+    const titlesAtCheck: string[] = [];
+    jest.spyOn(hashes, 'checkVersionStaleness').mockImplementation(async (...args) => {
+      const [id, trigger, , , tx] = args;
+      if (id === es.id && trigger === 'CHAPTER_UPDATED' && tx) {
+        const chapter = await tx.chapter.findFirst({ where: { bookVersionId: es.id, number: 2 } });
+        if (chapter) titlesAtCheck.push(chapter.title);
+      }
+      return check(...args);
+    });
+    const source = await auth(http().get(`/admin/versions/${versionId}/translation-source`)).expect(
+      200,
+    );
+    expect(source.body.targets).toContainEqual({ language: 'es', available: true, reason: null });
+    const started = await startRun(versionId, { languages: ['es'] }).expect(202);
+
+    await drain();
+
+    const lang = await langOf(started.body.id as string, 'es');
+    expect(lang).toMatchObject({ status: 'done', bookVersionId: es.id });
+    expect(lang.draftCreatedAt).not.toBeNull();
+    expect(await prisma.bookVersion.count({ where: { bookId, language: 'es' } })).toBe(1);
+    expect(
+      await prisma.bookVersion.findUniqueOrThrow({
+        where: { id: es.id },
+        select: { title: true, author: true, description: true, status: true },
+      }),
+    ).toEqual({
+      title: 'Hecha a mano',
+      author: 'Autor',
+      description: 'Descripción del editor',
+      status: 'draft',
+    });
+    const chapters = await prisma.chapter.findMany({
+      where: { bookVersionId: es.id },
+      orderBy: { number: 'asc' },
+    });
+    expect(chapters.map((c) => c.number)).toEqual([1, 2]);
+    expect(chapters[0].title).toBe('Uno del editor');
+    expect(chapters[1].title).not.toBe('');
+    // Последний пересчёт - запись главы 2: её название к нему уже заполнено.
+    expect(titlesAtCheck.at(-1)).toBe(chapters[1].title);
+    for (const c of chapters) expect(richHtmlText(c.content)).not.toBe('');
+    expect(
+      await prisma.translationChapter.count({
+        where: { runLanguageId: lang.id, status: 'written', writtenHash: { not: null } },
+      }),
+    ).toBe(2);
+  });
+
+  it('text in the version of the language before the attach: the language fails VERSION_HAS_TEXT, the text stays (D9, Ж)', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const es = await editorVersion(bookId, 'es', [
+      { number: 1, title: 'Uno', content: '<p>Texto del editor</p>' },
+    ]);
 
     await drain();
 
     expect(await langOf(runId, 'es')).toMatchObject({
       status: 'failed',
-      reason: 'VERSION_EXISTS',
+      reason: 'VERSION_HAS_TEXT',
       reasonText: null,
       bookVersionId: null,
     });
-    expect(await prisma.bookVersion.count({ where: { bookId, language: 'es' } })).toBe(1);
+    const chapter = await prisma.chapter.findFirstOrThrow({ where: { bookVersionId: es.id } });
+    expect(chapter.content).toBe('<p>Texto del editor</p>');
+  });
+
+  it('a version published before the attach: the language fails VERSION_PUBLISHED, nothing is written (D9, А)', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const { runId } = await createRun(versionId, ['es']);
+    const es = await editorVersion(bookId, 'es', [], 'published');
+
+    await drain();
+
+    expect(await langOf(runId, 'es')).toMatchObject({
+      status: 'failed',
+      reason: 'VERSION_PUBLISHED',
+      bookVersionId: null,
+    });
+    expect(await prisma.chapter.count({ where: { bookVersionId: es.id } })).toBe(0);
+  });
+
+  it('the editor writes an empty chapter after the attach: the chapter is not overwritten (D9, Ж)', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const es = await editorVersion(bookId, 'es', [{ number: 1, title: 'Uno', content: '<p></p>' }]);
+    const chapters = app.get(ChapterService);
+    const rewrite = chapters.rewriteLocked.bind(chapters) as ChapterService['rewriteLocked'];
+    // Ручное сохранение главы между чтением шага и замком записи - замок сверяет итог.
+    jest.spyOn(chapters, 'rewriteLocked').mockImplementationOnce(async (id, body) => {
+      await prisma.chapter.updateMany({
+        where: { bookVersionId: es.id, number: 1 },
+        data: { content: '<p>Escrito a mano</p>' },
+      });
+      return rewrite(id, body);
+    });
+    const { runId } = await createRun(versionId, ['es']);
+
+    await drain();
+
+    const lang = await langOf(runId, 'es');
+    expect(lang).toMatchObject({ status: 'done', bookVersionId: es.id });
+    const chapter = await prisma.chapter.findFirstOrThrow({ where: { bookVersionId: es.id } });
+    expect(chapter.content).toBe('<p>Escrito a mano</p>');
+    expect(
+      await prisma.translationChapter.findFirstOrThrow({ where: { runLanguageId: lang.id } }),
+    ).toMatchObject({ status: 'written', chapterId: chapter.id, writtenHash: null });
+  });
+
+  it('the version is published mid-run: the language fails VERSION_PUBLISHED on both write paths, written chapters stay (D9, круг 1 п.1)', async () => {
+    const chapters = app.get(ChapterService);
+    // Путь новой главы: версию создал запуск, редактор публикует её перед записью главы 2.
+    const created = await englishBook([
+      { number: 1, title: 'One', content: SHORT },
+      { number: 2, title: 'Two', content: SHORT },
+    ]);
+    const create = chapters.createLocked.bind(chapters) as ChapterService['createLocked'];
+    let createCalls = 0;
+    const createSpy = jest
+      .spyOn(chapters, 'createLocked')
+      .mockImplementation(async (id, data, after) => {
+        createCalls += 1;
+        if (createCalls === 2) {
+          await prisma.bookVersion.update({ where: { id }, data: { status: 'published' } });
+        }
+        return create(id, data, after);
+      });
+    const first = await createRun(created.versionId, ['es']);
+    await drain();
+    const es = await langOf(first.runId, 'es');
+    expect(es).toMatchObject({ status: 'failed', reason: 'VERSION_PUBLISHED' });
+    expect(
+      (await prisma.chapter.findMany({ where: { bookVersionId: es.bookVersionId as string } })).map(
+        (c) => c.number,
+      ),
+    ).toEqual([1]);
+    createSpy.mockRestore(); // только своя подмена: ответы модели из `beforeEach` остаются
+
+    // Путь пустой главы: привязанный черновик редактора опубликован перед записью.
+    const attached = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const draft = await editorVersion(attached.bookId, 'es', [
+      { number: 1, title: 'Uno', content: '<p></p>' },
+    ]);
+    const rewrite = chapters.rewriteLocked.bind(chapters) as ChapterService['rewriteLocked'];
+    jest.spyOn(chapters, 'rewriteLocked').mockImplementationOnce(async (id, body) => {
+      await prisma.bookVersion.update({ where: { id }, data: { status: 'published' } });
+      return rewrite(id, body);
+    });
+    const second = await createRun(attached.versionId, ['es']);
+    await drain();
+    expect(await langOf(second.runId, 'es')).toMatchObject({
+      status: 'failed',
+      reason: 'VERSION_PUBLISHED',
+      bookVersionId: draft.id,
+    });
+    expect(
+      (await prisma.chapter.findFirstOrThrow({ where: { bookVersionId: draft.id } })).content,
+    ).toBe('<p></p>');
+  });
+
+  it('a chapter of one picture is content: the language is closed (D9, круг 1 п.2); text outside the intake - NOT_IN_INTAKE in the window and on start alike (п.3)', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    await editorVersion(bookId, 'es', [
+      { number: 1, title: 'Uno', content: '<p><img src="https://example.com/i.jpg"></p>' },
+    ]);
+    await editorVersion(bookId, 'ru', [{ number: 1, title: 'Один', content: '<p>Текст</p>' }]);
+    const { rightsIntakeId } = await prisma.book.findUniqueOrThrow({
+      where: { id: bookId },
+      select: { rightsIntakeId: true },
+    });
+    await prisma.rightsIntake.update({
+      where: { id: rightsIntakeId as string },
+      data: { targetLanguages: ['en', 'es', 'fr'] },
+    });
+
+    const window = await auth(http().get(`/admin/versions/${versionId}/translation-source`)).expect(
+      200,
+    );
+    expect(window.body.targets).toEqual(
+      expect.arrayContaining([
+        { language: 'es', available: false, reason: 'VERSION_HAS_TEXT' },
+        { language: 'ru', available: false, reason: 'NOT_IN_INTAKE' },
+      ]),
+    );
+    const refused = await startRun(versionId, { languages: ['es', 'ru'] }).expect(409);
+    expect(refused.body.languages).toEqual([
+      { language: 'es', reason: 'VERSION_HAS_TEXT' },
+      { language: 'ru', reason: 'NOT_IN_INTAKE' },
+    ]);
+  });
+
+  it('a repeated attach after a lost lease on a stale run: the own link wins over the staleness check (D9, F05-6)', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const es = await editorVersion(bookId, 'es');
+    const { runId, opId } = await createRun(versionId, ['es']);
+    const lang = await prisma.translationRunLanguage.findUniqueOrThrow({
+      where: { runId_language: { runId, language: 'es' } },
+      include: { run: true },
+    });
+    // Прошлый исполнитель привязал версию и потерял аренду; запуск тем временем встал на устаревшем
+    // исходнике. Шаг читал язык до привязки - ссылки у него нет.
+    await prisma.translationRunLanguage.update({
+      where: { id: lang.id },
+      data: { bookVersionId: es.id, draftCreatedAt: new Date() },
+    });
+    await prisma.llmOperation.update({
+      where: { id: opId },
+      data: { status: 'paused', pauseReason: 'DOSSIER_STALE' },
+    });
+    const metadata = { title: 'T', author: 'A', description: 'D', chapterTitles: [] };
+
+    const opened = await app
+      .get(TranslationDraftService)
+      .openDraft({ ...lang, bookVersionId: null }, metadata as unknown as MetadataResult);
+
+    expect(opened).toEqual({ kind: 'created', versionId: es.id });
+  });
+
+  it('a version linked by a finished run and emptied by the editor: the new run takes the link over (D9, Б)', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const es = await editorVersion(bookId, 'es');
+    const first = await createRun(versionId, ['es']);
+    await drain();
+    expect(await langOf(first.runId, 'es')).toMatchObject({ status: 'done', bookVersionId: es.id });
+    await prisma.chapter.deleteMany({ where: { bookVersionId: es.id } });
+
+    const second = await startRun(versionId, { languages: ['es'] }).expect(202);
+    await drain();
+
+    expect(await langOf(second.body.id as string, 'es')).toMatchObject({
+      status: 'done',
+      bookVersionId: es.id,
+    });
+    const old = await langOf(first.runId, 'es');
+    expect(old.bookVersionId).toBeNull();
+    expect(old.draftCreatedAt).not.toBeNull();
+    expect(await prisma.chapter.count({ where: { bookVersionId: es.id } })).toBe(1);
   });
 
   it('continue clears the refusal text together with the reason', async () => {
@@ -4232,7 +4494,7 @@ describe('Translation run (e2e)', () => {
     expect(await prisma.bookVersion.count({ where: { bookId, language: 'es' } })).toBe(0);
   });
 
-  it('VERSION_EXISTS for the own draft (a repeated step after a lost lease) is not a failure', async () => {
+  it('the own draft found again (a repeated step after a lost lease: create says VERSION_EXISTS, the next step sees its own link) is not a failure', async () => {
     const { versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
     const drafts = app.get(TranslationDraftService);
     const create = drafts.createDraft.bind(drafts) as TranslationDraftService['createDraft'];
@@ -4940,6 +5202,44 @@ describe('Translation run (e2e)', () => {
       ['written', null],
     ]);
     expect(done.flaggedChapters).toBe(before + 1);
+  });
+  it('D9: a title missing from the fields answer - an attached chapter keeps the editor title without TITLE_MISSING, an untitled one gets the flag', async () => {
+    const { bookId, versionId } = await englishBook([
+      { number: 1, title: 'One', content: '<p>Bob arrives.</p>' },
+      { number: 2, title: 'Two', content: '<p>Bob stays.</p>' },
+    ]);
+    const es = await editorVersion(bookId, 'es', [
+      { number: 1, title: 'Uno del editor', content: '<p></p>' },
+      { number: 2, title: '', content: '<p></p>' },
+    ]);
+    const { runId } = await createRun(versionId, ['es']);
+    const lang = await langOf(runId, 'es');
+    await drain(async () => (await langOf(runId, 'es')).bookVersionId !== null);
+    const state = (await langOf(runId, 'es')).metadata as { result: Record<string, unknown> };
+    await prisma.translationRunLanguage.update({
+      where: { id: lang.id },
+      data: {
+        metadata: {
+          ...state,
+          result: { ...state.result, chapterTitles: [] },
+        } as Prisma.InputJsonValue,
+      },
+    });
+
+    await drain();
+
+    expect(await langOf(runId, 'es')).toMatchObject({ status: 'done', bookVersionId: es.id });
+    const titles = await prisma.chapter.findMany({
+      where: { bookVersionId: es.id },
+      select: { number: true, title: true },
+      orderBy: { number: 'asc' },
+    });
+    expect(titles).toEqual([
+      { number: 1, title: 'Uno del editor' },
+      { number: 2, title: '' },
+    ]);
+    expect(await findingsOf(lang.id, 1)).not.toContainEqual({ code: 'TITLE_MISSING' });
+    expect(await findingsOf(lang.id, 2)).toContainEqual({ code: 'TITLE_MISSING' });
   });
   it('6c: a piece of a joint translated without a recorded model: independence cannot be told - SEAM_NOT_INDEPENDENT without a call', async () => {
     const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);

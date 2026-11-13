@@ -397,7 +397,7 @@ describe('Translation source and dossier (e2e)', () => {
     it('answers by the original language of the book, over HTTP', async () => {
       const { ids } = await book([
         { language: 'ru', originalLanguage: 'русский', chapters: TWO_CHAPTERS },
-        { language: 'en', originalLanguage: 'Russian' },
+        { language: 'en', originalLanguage: 'Russian', chapters: TWO_CHAPTERS },
       ]);
       const fromRu = await auth(http().get(`/admin/versions/${ids.ru}/translation-source`)).expect(
         200,
@@ -411,7 +411,7 @@ describe('Translation source and dossier (e2e)', () => {
         originalLanguageMismatch: false,
       });
       expect(fromRu.body.targets).toEqual([
-        { language: 'en', available: false, reason: 'VERSION_EXISTS' },
+        { language: 'en', available: false, reason: 'VERSION_HAS_TEXT' },
         { language: 'es', available: true, reason: null },
         { language: 'fr', available: true, reason: null },
         { language: 'pt', available: true, reason: null },

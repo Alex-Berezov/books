@@ -41,7 +41,7 @@ export class TranslationRunLanguageDto {
     type: String,
     nullable: true,
     description:
-      'Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE, DOSSIER_LIMIT_TOO_LOW - the run limit left is lower than the dossier or glossary limit, amount in reasonUsd...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_EXISTS, CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft)',
+      'Code of the last stop of this language: a pause reason or a step failure code (LLM_PROVIDER_ERROR, DOSSIER_STALE, DOSSIER_LIMIT_TOO_LOW - the run limit left is lower than the dossier or glossary limit, amount in reasonUsd...). A failed language: METADATA_INVALID, METADATA_TOO_LONG, VERSION_HAS_TEXT (the existing version of the language got chapter content before the run attached it), VERSION_PUBLISHED (the version was published before the attach or while chapters were written; chapters already written stay), VERSION_EXISTS (runs before 13.11.2026 only), CREATE_REJECTED (text in reasonText), DRAFT_DELETED, NO_CHAPTERS_WRITTEN (no chapter could go to the draft), DOSSIER_STALE (the source changed while another language was writing its draft)',
   })
   reason!: string | null;
 

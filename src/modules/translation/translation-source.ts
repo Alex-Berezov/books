@@ -1,4 +1,4 @@
-import { Language } from '@prisma/client';
+import { Language, PublicationStatus } from '@prisma/client';
 import { OriginalLanguage, resolveOriginalLanguage } from './original-language';
 
 /**
@@ -19,13 +19,17 @@ export const TRANSLATION_BLOCK_REASONS = [
 export type TranslationBlockReason = (typeof TRANSLATION_BLOCK_REASONS)[number];
 
 /**
- * Почему недоступен язык цели. `TRANSLATION_IN_PROGRESS` - на язык идёт перевод: незавершённый
- * запуск (Р23); стоит раньше `NOT_IN_INTAKE` - язык занят запуском, даже если анкету с тех пор
- * правили.
+ * Почему недоступен язык цели. Версия на языке сама язык не закрывает (слово владельца D9,
+ * 13.11.2026): закрывает опубликованная версия (`VERSION_PUBLISHED`, автопубликации нет) и версия
+ * с видимым текстом глав (`VERSION_HAS_TEXT`); черновик без текста получает перевод в себя
+ * (решения арбитра `F05 | F05-19`, А и Д). `TRANSLATION_IN_PROGRESS` - на язык идёт перевод:
+ * незавершённый запуск (Р23); стоит раньше `NOT_IN_INTAKE` - язык занят запуском, даже если
+ * анкету с тех пор правили.
  */
 export const TRANSLATION_TARGET_REASONS = [
   'IS_SOURCE',
-  'VERSION_EXISTS',
+  'VERSION_PUBLISHED',
+  'VERSION_HAS_TEXT',
   'TRANSLATION_IN_PROGRESS',
   'NOT_IN_INTAKE',
 ] as const;
@@ -38,6 +42,28 @@ export interface SourceCandidate {
   createdAt: Date;
   /** Глав с непустым `content`. */
   chaptersWithText: number;
+  status: PublicationStatus;
+  /**
+   * В главах есть содержимое - видимый текст или картинка (`versionHasContent`; решения арбитра
+   * `F05 | F05-19`, Е и круг 1 п.2). Читается только там, где решает цель (`targetVersionState`):
+   * у опубликованной версии, версии без непустых глав и языка вне анкеты - `false` без чтения.
+   */
+  hasContent: boolean;
+}
+
+/** Версия на языке цели в объёме правила цели (D9). */
+export type TargetVersionState = Pick<SourceCandidate, 'status' | 'hasContent'>;
+
+/**
+ * Чем существующая версия закрывает язык цели (D9): одно правило на выбор целей, замок старта
+ * и привязку версии к языку запуска. `null` - черновик без текста, перевод пишется в него.
+ */
+export type TargetVersionReason = 'VERSION_PUBLISHED' | 'VERSION_HAS_TEXT';
+
+export function targetVersionBlock(version: TargetVersionState): TargetVersionReason | null {
+  if (version.status !== PublicationStatus.draft) return 'VERSION_PUBLISHED';
+  if (version.hasContent) return 'VERSION_HAS_TEXT';
+  return null;
 }
 
 export interface TranslationTarget {
@@ -125,10 +151,12 @@ export function selectTranslationSource(input: {
   else if (source.chaptersWithText === 0) reason = 'SOURCE_HAS_NO_CHAPTERS';
   else if (!intakeTargets) reason = 'INTAKE_TARGETS_MISSING';
 
-  const existing = new Set(versions.map((v) => v.language));
+  const byLanguage = new Map(versions.map((v) => [v.language, v]));
   const targetReason = (language: Language): TranslationTargetReason | null => {
     if (language === sourceLanguage) return 'IS_SOURCE';
-    if (existing.has(language)) return 'VERSION_EXISTS';
+    const version = byLanguage.get(language);
+    const blocked = version ? targetVersionBlock(version) : null;
+    if (blocked) return blocked;
     if (inProgress.has(language)) return 'TRANSLATION_IN_PROGRESS';
     if (!intakeTargets?.includes(language)) return 'NOT_IN_INTAKE';
     return null;

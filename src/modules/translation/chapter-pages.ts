@@ -17,8 +17,16 @@ export async function* chapterPages<S extends ChapterPageSelect>(
   db: Prisma.TransactionClient,
   versionId: string,
   select: S,
-  options: { from?: number; to?: number } = {},
+  options: {
+    from?: number;
+    to?: number;
+    /** Только главы с непустым `content`. */
+    nonEmpty?: boolean;
+    /** Страница меньше потолка - когда обычно хватает первых глав; больше потолка не бывает. */
+    pageSize?: number;
+  } = {},
 ): AsyncGenerator<Array<ChapterPageRow<S>>> {
+  const take = Math.min(options.pageSize ?? CHAPTER_PAGE_SIZE, CHAPTER_PAGE_SIZE);
   let after: number | null = null;
   for (;;) {
     const page = (await db.chapter.findMany({
@@ -28,14 +36,15 @@ export async function* chapterPages<S extends ChapterPageSelect>(
           ...(after === null ? { gte: options.from } : { gt: after }),
           lte: options.to,
         },
+        ...(options.nonEmpty ? { content: { not: '' } } : {}),
       },
       select,
       orderBy: { number: 'asc' },
-      take: CHAPTER_PAGE_SIZE,
+      take,
     })) as Array<ChapterPageRow<S>>;
     if (page.length === 0) return;
     yield page;
-    if (page.length < CHAPTER_PAGE_SIZE) return;
+    if (page.length < take) return;
     after = (page[page.length - 1] as { number: number }).number;
   }
 }

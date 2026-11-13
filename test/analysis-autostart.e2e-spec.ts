@@ -16,6 +16,9 @@ import {
   CONTENT_AUTOSTART_TASK_KIND,
 } from '../src/modules/translation/autostart/content-autostart.constants';
 import { RunStepSupportService } from '../src/modules/translation/run/run-step-support.service';
+import { TranslationDraftService } from '../src/modules/translation/draft/translation-draft.service';
+import { MetadataResult } from '../src/modules/translation/metadata/metadata-check';
+import { sourceFingerprint } from '../src/modules/translation/source-fingerprint';
 import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { llmCallName } from './helpers/llm-call-name';
@@ -583,6 +586,73 @@ describe('Analysis autostart from a translation run (e2e)', () => {
     // Строка каждого раздела - траты ровно его операций (автозапуск LLM не зовёт, лимит 0).
     expect(Number(lang.summary.spentUsd)).toBeCloseTo(await spentOf(summaryRow.operationId), 8);
     expect(Number(lang.analysis.spentUsd)).toBeCloseTo(await spentOf(analysisRow.operationId), 8);
+  });
+
+  it('D9, З: a draft of the editor attached by the run with the editor summary and analysis - after done both runs only propose, the editor text stays', async () => {
+    const { run, langs, source } = await translationRun({
+      writeSummary: true,
+      writeAnalysis: true,
+    });
+    const fr = langs.fr;
+    // Черновик редактора: главы-заготовки без текста, ссылки запуска ещё нет - привязка настоящая.
+    await prisma.chapter.updateMany({
+      where: { bookVersionId: fr.versionId },
+      data: { content: '<p></p>' },
+    });
+    await prisma.translationRunLanguage.update({
+      where: { id: fr.id },
+      data: { bookVersionId: null, draftCreatedAt: null },
+    });
+    await prisma.translationRun.update({
+      where: { id: run.id },
+      data: { dossierFingerprint: await sourceFingerprint(prisma, source) },
+    });
+    const lang = await prisma.translationRunLanguage.findUniqueOrThrow({
+      where: { id: fr.id },
+      include: { run: true },
+    });
+    const metadata = { title: 'T', author: 'A', description: 'D', chapterTitles: [] };
+    expect(
+      await app.get(TranslationDraftService).openDraft(lang, metadata as unknown as MetadataResult),
+    ).toEqual({ kind: 'created', versionId: fr.versionId });
+    // Перевод записал главы (за него - текст исходника), редактор заполнил пересказ и анализ.
+    for (const c of CHAPTERS) {
+      await prisma.chapter.updateMany({
+        where: { bookVersionId: fr.versionId, number: c.number },
+        data: { content: c.content },
+      });
+    }
+    await auth(http().put(`/versions/${fr.versionId}/summary`))
+      .send({ summary: '<p>Editor full.</p>' })
+      .expect(200);
+    await auth(http().put(`/versions/${fr.versionId}/analysis`))
+      .send({ language: 'fr', mainIdea: 'Editor idea.' })
+      .expect(200);
+
+    await finish(fr.id);
+    await drain();
+
+    const [summaryRow] = await rowsOf(fr.id, 'summary_write');
+    const [analysisRow] = await rowsOf(fr.id, 'analysis_write');
+    expect(summaryRow).toMatchObject({ status: 'ready' });
+    expect(analysisRow).toMatchObject({ status: 'ready' });
+    expect(
+      (await prisma.bookSummary.findUniqueOrThrow({ where: { bookVersionId: fr.versionId } }))
+        .summary,
+    ).toBe('<p>Editor full.</p>');
+    expect(
+      (await prisma.bookAnalysis.findUniqueOrThrow({ where: { bookVersionId: fr.versionId } }))
+        .mainIdea,
+    ).toBe('Editor idea.');
+    const itemsOf = async (kind: string) =>
+      (await auth(http().get(`/admin/versions/${fr.versionId}/drafts/${kind}`)).expect(200)).body
+        .draft.items as Array<{ target: string; outcome: string }>;
+    expect((await itemsOf('summary_write')).find((i) => i.target === 'full')?.outcome).toBe(
+      'proposed',
+    );
+    expect((await itemsOf('analysis_write')).find((i) => i.target === 'mainIdea')?.outcome).toBe(
+      'proposed',
+    );
   });
 
   it('a repeat autostart task of the analysis: the language already has its analysis run - closed without a reason, no second run; a content_autostart task (old image too) starts the summary', async () => {

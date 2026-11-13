@@ -2,8 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskContext, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
-import { CREATE_FROM_RUN_REJECTIONS } from '../../book-version/create-from-run';
-import { DRAFT_DELETED, NO_CHAPTERS_WRITTEN } from '../draft/draft.constants';
+import { DRAFT_DELETED, NO_CHAPTERS_WRITTEN, VERSION_PUBLISHED } from '../draft/draft.constants';
 import { TranslationDraftService } from '../draft/translation-draft.service';
 import { checkMetadata, MetadataResult } from '../metadata/metadata-check';
 import {
@@ -105,9 +104,10 @@ export class MetadataDraftRunStepsService {
   }
 
   /**
-   * Черновик версии и главы (`F05-6`, 6b): версия создаётся один раз, затем глава за шаг по
-   * порядку номеров; после последней язык доделан. Исходник после создания версии уже не сверяется
-   * на уровне языка - глава сверяет свой отпечаток сама (`SOURCE_CHANGED`, язык идёт дальше).
+   * Черновик версии и главы (`F05-6`, 6b): версия создаётся или привязывается (D9) один раз,
+   * затем глава за шаг по порядку номеров; после последней язык доделан. Исходник после создания
+   * версии уже не сверяется на уровне языка - глава сверяет свой отпечаток сама (`SOURCE_CHANGED`,
+   * язык идёт дальше).
    */
   async draftStep(
     lang: LanguageRow,
@@ -123,19 +123,14 @@ export class MetadataDraftRunStepsService {
       }
       await ctx.renewLease();
       const state = metadataStateOf(lang.metadata);
-      const created = await this.drafts.createDraft(lang, metadata, state?.sourceHash);
+      // Версии на языке нет - создаётся, есть черновик без текста - привязывается (D9).
+      const created = await this.drafts.openDraft(lang, metadata, state?.sourceHash);
       if (!created) return this.support.pauseStale(lang);
-      if (created.kind === 'created') return { kind: 'continue' };
+      // `retry` - версия на языке появилась между чтением и созданием: следующий шаг её привяжет
+      // или, после потерянной аренды, увидит свою ссылку.
+      if (created.kind === 'created' || created.kind === 'retry') return { kind: 'continue' };
       if (created.kind === 'fields_changed') return this.redoMetadata(lang);
       if (created.kind === 'deleted') return this.support.failLanguage(lang, DRAFT_DELETED);
-      // Повтор шага после потерянной аренды: версию создал прошлый исполнитель - она своя.
-      if (created.code === CREATE_FROM_RUN_REJECTIONS.VERSION_EXISTS) {
-        const own = await this.prisma.translationRunLanguage.findUnique({
-          where: { id: lang.id },
-          select: { bookVersionId: true },
-        });
-        if (own?.bookVersionId) return { kind: 'continue' };
-      }
       return this.support.failLanguage(lang, created.code, created.text);
     }
     const next = await this.drafts.nextToWrite(lang.id);
@@ -148,6 +143,9 @@ export class MetadataDraftRunStepsService {
     );
     // Черновик удалили посреди записи главы - тот же исход, что и между шагами.
     if (written === 'draft_deleted') return this.support.failLanguage(lang, DRAFT_DELETED);
+    // Версию опубликовали посреди записи: дальше не пишем, записанное остаётся (решение арбитра
+    // `F05 | F05-19`, круг 1 п.1).
+    if (written === 'version_published') return this.support.failLanguage(lang, VERSION_PUBLISHED);
     return { kind: 'continue' };
   }
 
