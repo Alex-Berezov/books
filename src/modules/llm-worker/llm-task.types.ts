@@ -20,6 +20,15 @@ export const TOO_MANY_ATTEMPTS = 'TOO_MANY_ATTEMPTS';
 export const STEP_ERROR = 'STEP_ERROR';
 
 /**
+ * Причина ожидания шага, чей вызов ждёт ответа батча модели `:batch` (`LlmBatchPendingError`,
+ * решение арбитра 14.11.2026): шаг откладывается без счёта неудачи.
+ */
+export const LLM_BATCH_PENDING = 'LLM_BATCH_PENDING';
+
+/** Через сколько шаг с неготовым батчем спрашивает его снова. */
+export const LLM_BATCH_POLL_MS = 60_000;
+
+/**
  * Итог одного шага. `continue` - та же строка снова `pending`: язык идёт строго по шагу за раз
  * (Р1). `wait` - не статус, а `pending` с `runAfter` в будущем: условие перепроверяет сам
  * обработчик при следующем захвате; `runAfter` не задан - пауза `waitMs` воркера (своя пауза -

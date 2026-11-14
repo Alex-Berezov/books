@@ -16,6 +16,12 @@ export interface LlmModelInfo {
   price: LlmModelPrice;
   /** Модель принимает `response_format` JSON-схемой. */
   structuredOutputs: boolean;
+  /**
+   * Модель обслуживается только асинхронным Batch API (`/api/v1/batches`), а не
+   * `/chat/completions`: варианты `:batch` (живой каталог 14.11.2026). Признак - по `endpoints`
+   * каталога, а не по суффиксу имени (решение арбитра 14.11.2026, `2026-11-14-llm-batch-models`).
+   */
+  batchOnly: boolean;
 }
 
 interface OpenRouterModelsResponse {
@@ -25,7 +31,20 @@ interface OpenRouterModelsResponse {
     context_length?: unknown;
     pricing?: { prompt?: unknown; completion?: unknown };
     supported_parameters?: unknown;
+    endpoints?: unknown;
   }>;
+}
+
+const CHAT_ENDPOINT = '/api/v1/chat/completions';
+const BATCH_ENDPOINT = '/api/v1/batches';
+
+/** Только Batch API: в `endpoints` есть `/api/v1/batches` и нет `/api/v1/chat/completions`. */
+function isBatchOnly(endpoints: unknown): boolean {
+  return (
+    Array.isArray(endpoints) &&
+    endpoints.includes(BATCH_ENDPOINT) &&
+    !endpoints.includes(CHAT_ENDPOINT)
+  );
 }
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
@@ -105,6 +124,7 @@ export class LlmModelsService {
           structuredOutputs:
             Array.isArray(raw.supported_parameters) &&
             raw.supported_parameters.includes('structured_outputs'),
+          batchOnly: isBatchOnly(raw.endpoints),
         },
       ];
     });

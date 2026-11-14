@@ -12,15 +12,31 @@ import { BackgroundJobsRegistry } from '../background-jobs/background-jobs.regis
 import { LlmBudgetService } from '../llm/llm-budget.service';
 import { LlmConfig } from '../llm/llm.config';
 import { LlmStageRegistry } from '../llm/llm-stages.registry';
-import { LlmBudgetExceededError, LlmError } from '../llm/llm.errors';
+import { LlmBatchPendingError, LlmBudgetExceededError, LlmError } from '../llm/llm.errors';
+import { LlmService } from '../llm/llm.service';
 import { LlmTaskHandlerRegistry } from './llm-task-handler.registry';
 import { LlmTaskService } from './llm-task.service';
-import { LlmTaskContext, LlmTaskStepResult, STEP_ERROR, TOO_MANY_ATTEMPTS } from './llm-task.types';
+import {
+  LLM_BATCH_PENDING,
+  LLM_BATCH_POLL_MS,
+  LlmTaskContext,
+  LlmTaskStepResult,
+  STEP_ERROR,
+  TOO_MANY_ATTEMPTS,
+} from './llm-task.types';
 import { httpCode, LlmTaskLeaseLostError } from './llm-worker.errors';
 import { LlmWorkerConfig } from './llm-worker.config';
 
 /** Чистка зависших вызовов и счёт задач без обработчика - не чаще раза в минуту. */
 const HOUSEKEEPING_EVERY_MS = 60_000;
+
+/**
+ * Батч, который не спрашивали дольше этого, опрашивает чистка (брошенный шаг не держит резерв
+ * вечно); живой шаг спрашивает свой батч сам, раз в `LLM_BATCH_POLL_MS`.
+ */
+const BATCH_POLL_STALE_MS = 10 * 60_000;
+/** Батчей за один проход чистки: опрос - поход наружу на каждый. */
+const BATCH_POLL_LIMIT = 20;
 
 /**
  * Код отказа модуля LLM: `LlmError.code` или `code` в теле 503 (`LLM_DISABLED`,
@@ -77,6 +93,7 @@ export class LlmWorkerService implements OnApplicationBootstrap, OnModuleDestroy
     private readonly config: LlmWorkerConfig,
     private readonly backgroundJobs: BackgroundJobsRegistry,
     private readonly stages: LlmStageRegistry,
+    private readonly llm: LlmService,
   ) {}
 
   // Не `onModuleInit`: модули конвейера регистрируют обработчики в своём `onModuleInit` и
@@ -153,6 +170,21 @@ export class LlmWorkerService implements OnApplicationBootstrap, OnModuleDestroy
     if (released > 0) {
       this.logger.warn(`Released ${released} stale LLM call(s) at fact = reserve`);
     }
+    // Батчи чистка выше не трогает (ответ приходит часами): закрывает их только законченный опрос.
+    // Сбой опроса (база, сеть) не останавливает остальную уборку.
+    try {
+      const batches = await this.llm.pollOpenBatches(
+        new Date(Date.now() - BATCH_POLL_STALE_MS),
+        BATCH_POLL_LIMIT,
+        this.abort.signal,
+      );
+      if (batches > 0)
+        this.logger.log(`Settled ${batches} finished LLM batch(es) left by their steps`);
+    } catch (error) {
+      this.logger.warn(
+        `LLM batch poll pass failed: ${error instanceof Error ? error.name : typeof error}`,
+      );
+    }
     const unknown = await this.tasks.countUnknownKinds(this.handlers.kinds());
     if (unknown > 0) {
       this.logger.warn(`${unknown} pending LLM task(s) have no registered handler and wait`);
@@ -198,6 +230,16 @@ export class LlmWorkerService implements OnApplicationBootstrap, OnModuleDestroy
         // возвращается без засчитанного захвата; не успели (база закрывается) - её заберёт
         // захват по истечении аренды.
         await this.tasks.release(task, ownerToken);
+        return;
+      }
+      if (error instanceof LlmBatchPendingError) {
+        // Вызов ушёл батчем и ждёт ответа: шаг откладывается без счёта неудачи, повтор шага
+        // найдёт тот же батч по отпечатку запроса (решение арбитра 14.11.2026).
+        await this.tasks.finish(task, ownerToken, {
+          kind: 'wait',
+          reason: LLM_BATCH_PENDING,
+          runAfter: new Date(Date.now() + LLM_BATCH_POLL_MS),
+        });
         return;
       }
       if (error instanceof LlmError && error.code === 'LLM_OPERATION_NOT_ACTIVE') {

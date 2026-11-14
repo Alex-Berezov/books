@@ -31,6 +31,7 @@ const NOT_MEDIA_REFERENCES: Record<string, string> = {
   'LlmTask.pairKey':
     'ключ пары исполнителя LLM («операция:язык», у досье «операция:строка»), пишет сервер (F05-1w, F05-2)',
   'Page.systemKey': 'идентификатор системной страницы, не адрес',
+  'LlmCall.batchKey': 'отпечаток запроса батча OpenRouter (sha256 этапа, модели и тела), не адрес',
   'RightsLicense.licenseKey': 'идентификатор лицензии, не адрес',
   'RightsIntake.manifestStorageKey':
     'ключ приватного хранилища прав; пишет сервер (rights-intake-manifest.service.ts)',

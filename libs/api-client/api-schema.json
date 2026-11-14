@@ -15009,6 +15009,10 @@
       },
       "LlmModelDto": {
         "properties": {
+          "batchOnly": {
+            "description": "Served only by the asynchronous Batch API (`:batch` variants): answers take minutes to hours, request data is kept by OpenRouter for 30 days without zero data retention",
+            "type": "boolean"
+          },
           "contextLength": {
             "nullable": true,
             "type": "number"
@@ -15045,7 +15049,8 @@
           "contextLength",
           "inputPerMTokUsd",
           "outputPerMTokUsd",
-          "structuredOutputs"
+          "structuredOutputs",
+          "batchOnly"
         ],
         "type": "object"
       },

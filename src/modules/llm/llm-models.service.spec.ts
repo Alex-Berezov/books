@@ -49,6 +49,37 @@ describe('LlmModelsService', () => {
     expect(dynamic.structuredOutputs).toBe(false);
   });
 
+  it('marks a model served only by the Batch API by catalog endpoints, not by its name', async () => {
+    fetchSpy.mockResolvedValueOnce(
+      json({
+        data: [
+          {
+            id: 'o/luna:batch',
+            name: 'Luna (batch)',
+            pricing: { prompt: '0.00000005', completion: '0.00000025' },
+            endpoints: ['/api/v1/batches'],
+          },
+          {
+            id: 'o/luna',
+            name: 'Luna',
+            pricing: { prompt: '0.0000001', completion: '0.0000005' },
+            endpoints: ['/api/v1/chat/completions', '/api/v1/completions', '/api/v1/batches'],
+          },
+          // Имя с суффиксом, но синхронный эндпоинт есть - не батч.
+          { id: 'x/odd:batch', name: 'Odd', endpoints: ['/api/v1/chat/completions'] },
+          { id: 'y/plain', name: 'Plain' },
+        ],
+      }),
+    );
+    const list = await service.list();
+    expect(Object.fromEntries(list.map((m) => [m.id, m.batchOnly]))).toEqual({
+      'o/luna:batch': true,
+      'o/luna': false,
+      'x/odd:batch': false,
+      'y/plain': false,
+    });
+  });
+
   it('caches the list for an hour and shares one request between parallel callers', async () => {
     fetchSpy.mockResolvedValue(json(MODELS));
     await Promise.all([service.list(), service.list()]);

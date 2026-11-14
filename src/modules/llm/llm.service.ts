@@ -160,6 +160,7 @@ export class LlmService implements OnModuleInit {
       inputPerMTokUsd: m.price.input ? moneyUsd(m.price.input.mul(PER_MTOK)) : null,
       outputPerMTokUsd: m.price.output ? moneyUsd(m.price.output.mul(PER_MTOK)) : null,
       structuredOutputs: m.structuredOutputs,
+      batchOnly: m.batchOnly,
     }));
   }
 
@@ -431,6 +432,14 @@ export class LlmService implements OnModuleInit {
     return { primaryId, fallbacks };
   }
 
+  /**
+   * Опрос батчей моделей `:batch`, брошенных своими шагами (уборка исполнителя): законченный -
+   * факт, открытый - отметка опроса. Вход модуля для исполнителя - здесь, а не клиент (ADR-021).
+   */
+  pollOpenBatches(polledBefore: Date, limit: number, signal?: AbortSignal): Promise<number> {
+    return this.client.pollOpenBatches(polledBefore, limit, signal);
+  }
+
   /** Вызов этапа на текущих настройках: смена модели `PUT` действует со следующего вызова. */
   async callStage(
     operationId: string,
@@ -498,6 +507,7 @@ function priced(
       inputPrice: model.price.input as Prisma.Decimal,
       outputPrice: model.price.output as Prisma.Decimal,
       structuredOutputs: model.structuredOutputs,
+      ...(model.batchOnly ? { batch: true as const } : {}),
     };
   }
   if (!maxPricePerMTok) {
@@ -512,6 +522,7 @@ function priced(
     inputPrice: perToken,
     outputPrice: perToken,
     structuredOutputs: model?.structuredOutputs ?? false,
+    ...(model?.batchOnly ? { batch: true as const } : {}),
     maxPricePerMTok,
   };
 }

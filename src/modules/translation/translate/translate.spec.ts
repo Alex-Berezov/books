@@ -1,11 +1,11 @@
 import { Prisma } from '@prisma/client';
-import { LlmBudgetExceededError, LlmError } from '../../llm/llm.errors';
+import { LlmBatchPendingError, LlmBudgetExceededError, LlmError } from '../../llm/llm.errors';
 import { LlmService } from '../../llm/llm.service';
 import { LlmTaskContext } from '../../llm-worker/llm-task.types';
 import { ContestedWindow } from '../chunking/chapter-chunks';
 import { callShaped } from '../llm-shaped-call';
 import { pickBoundary } from './split.stage';
-import { TRANSLATE_REMARKS } from './translate.constants';
+import { SPLIT_STAGE, TRANSLATE_REMARKS, TRANSLATE_STAGE_DEFINITIONS } from './translate.constants';
 import { shapeErrors } from '../dossier/dossier.format';
 import {
   blockText,
@@ -421,6 +421,23 @@ describe('pickBoundary (split stage)', () => {
     expect(llm.callStage).toHaveBeenCalledTimes(2);
   });
 
+  it('the only model failing (default without fallbacks: LLM_UNAVAILABLE) gives the code boundary', async () => {
+    const llm = {
+      callStage: jest.fn().mockRejectedValue(new LlmError('LLM_UNAVAILABLE', 'all failed')),
+    };
+    await expect(pickBoundary(llm as unknown as LlmService, 'op', window, ctx)).resolves.toBe(8);
+  });
+
+  it('a split call waiting for its batch is not swallowed into the code boundary: the step waits', async () => {
+    const llm = {
+      callStage: jest.fn().mockRejectedValue(new LlmBatchPendingError('batch-1', 'in_progress')),
+    };
+    await expect(
+      pickBoundary(llm as unknown as LlmService, 'op', window, ctx),
+    ).rejects.toBeInstanceOf(LlmBatchPendingError);
+    expect(llm.callStage).toHaveBeenCalledTimes(1);
+  });
+
   it('a budget refusal is not swallowed: the operation must pause', async () => {
     const llm = { callStage: jest.fn().mockRejectedValue(new LlmBudgetExceededError('operation')) };
     await expect(
@@ -480,5 +497,16 @@ describe('glossary findings of a translation answer (F05-4)', () => {
     expect(
       glossaryFindingsOf({ glossaryFindings: [{ source: 'Li', target: 'Ли', kind: 'name' }] }),
     ).toEqual([{ source: 'Li', target: 'Ли', kind: 'name', note: '' }]);
+  });
+});
+
+describe('умолчание этапа split', () => {
+  // Бесплатные запасные пропадают из каталога и не принимают запрет хранения (решение арбитра
+  // 14.11.2026, 3а): запасной - сразу код `fallbackBoundary`, экран сохраняет этап без правки.
+  // Поведение без запасной - `pickBoundary` выше: отказ единственной модели даёт границу кодом.
+  it('без запасных моделей: после бесплатной основной - сразу граница кодом', () => {
+    const split = TRANSLATE_STAGE_DEFINITIONS.find((d) => d.stage === SPLIT_STAGE);
+    expect(split?.model).toBe('google/gemma-4-31b-it:free');
+    expect(split?.fallbacks).toEqual([]);
   });
 });

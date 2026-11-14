@@ -52,6 +52,23 @@ export class LlmTruncatedError extends LlmError {
   }
 }
 
+/**
+ * Ответ батча модели `:batch` ещё не готов (решение арбитра 14.11.2026,
+ * `2026-11-14-llm-batch-models`): запрос отправлен, id батча записан в `LlmCall`. Не `LlmError`
+ * нарочно - фильтры `catch` этапов (`instanceof LlmError`) его пропускают, и он доходит до
+ * исполнителя, который откладывает шаг (`wait`) без счёта неудачи. Повтор шага найдёт тот же батч
+ * по отпечатку запроса и второй раз его не отправит.
+ */
+export class LlmBatchPendingError extends Error {
+  constructor(
+    readonly batchId: string,
+    readonly status: string,
+  ) {
+    super(`OpenRouter batch ${batchId} is ${status}`);
+    this.name = 'LlmBatchPendingError';
+  }
+}
+
 /** Уровень, на котором не хватило денег: общий потолок проверяется раньше лимита операции (Р4). */
 export type BudgetLevel = 'ceiling' | 'operation';
 

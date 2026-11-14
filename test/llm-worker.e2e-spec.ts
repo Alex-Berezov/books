@@ -939,6 +939,220 @@ describe('LLM worker (e2e)', () => {
         }),
       ).toBe(false);
     });
+
+    it('a keyed batch row whose id never got written is closed by the stale cleanup (then: fallback)', async () => {
+      const op = await operation();
+      const { callId } = await budget.reserve({
+        operationId: op.id,
+        stage: 'e2e_worker_stage',
+        requestedModel: 'a/priced:batch',
+        attempt: 1,
+        estimateUsd: new Prisma.Decimal('0.25'),
+        batchKey: 'key-lost-id',
+      });
+      await backdate(callId, 24 * 3600);
+
+      expect(await budget.releaseStaleCalls(1_000)).toBeGreaterThanOrEqual(1);
+      const call = await prisma.llmCall.findUniqueOrThrow({ where: { id: callId } });
+      expect(call).toMatchObject({ errorClass: 'stale', batchId: null, batchKey: 'key-lost-id' });
+      expect(call.reserveReleasedAt).not.toBeNull();
+      // Повтор шага найдёт закрытую строку по ключу - и пойдёт к запасной, а не ждать.
+      expect(await budget.findBatchCall(op.id, 'key-lost-id')).toMatchObject({
+        id: callId,
+        errorClass: 'stale',
+      });
+    });
+
+    it('the stale cleanup does not close a row that got its batch id between its SELECT and its write', async () => {
+      const op = await operation();
+      const { callId } = await budget.reserve({
+        operationId: op.id,
+        stage: 'e2e_worker_stage',
+        requestedModel: 'a/priced:batch',
+        attempt: 1,
+        estimateUsd: new Prisma.Decimal('0.01'),
+        batchKey: 'k-race',
+      });
+      await backdate(callId, 24 * 3600);
+      // Порядок гонки: чистка выбрала строку (id ещё нет) -> отправка записала id -> чистка пишет.
+      const [picked] = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT "id" FROM "LlmCall"
+        WHERE "id" = ${callId} AND "reserveReleasedAt" IS NULL AND "batchId" IS NULL`;
+      expect(picked?.id).toBe(callId);
+      expect(
+        await budget.markBatchSubmitted(callId, { batchId: 'b-race', status: 'validating' }),
+      ).toBe(true);
+      expect(
+        await budget.settle(callId, {
+          costUsd: new Prisma.Decimal('0.01'),
+          costEstimated: true,
+          durationMs: 1,
+          errorClass: 'stale',
+          onlyWithoutBatch: true,
+        }),
+      ).toBe(false);
+      expect(await prisma.llmCall.findUniqueOrThrow({ where: { id: callId } })).toMatchObject({
+        reserveReleasedAt: null,
+        batchId: 'b-race',
+        errorClass: null,
+      });
+      // И через сам releaseStaleCalls строку с батчем он не закрывает и не считает.
+      const released = await budget.releaseStaleCalls(1_000);
+      expect(
+        (await prisma.llmCall.findUniqueOrThrow({ where: { id: callId } })).reserveReleasedAt,
+      ).toBeNull();
+      expect(released).toBeGreaterThanOrEqual(0);
+    });
+
+    it('a batch id is written only into an open row: a row closed by the cleanup stays closed', async () => {
+      const op = await operation();
+      const { callId } = await budget.reserve({
+        operationId: op.id,
+        stage: 'e2e_worker_stage',
+        requestedModel: 'a/priced:batch',
+        attempt: 1,
+        estimateUsd: new Prisma.Decimal('0.01'),
+        batchKey: 'k-orphan',
+      });
+      await budget.settle(callId, {
+        costUsd: new Prisma.Decimal('0.01'),
+        costEstimated: true,
+        durationMs: 1,
+        errorClass: 'stale',
+      });
+
+      expect(
+        await budget.markBatchSubmitted(callId, { batchId: 'b-orphan', status: 'validating' }),
+      ).toBe(false);
+      expect(await prisma.llmCall.findUniqueOrThrow({ where: { id: callId } })).toMatchObject({
+        batchId: null,
+        errorClass: 'stale',
+      });
+    });
+
+    it('never polled open batches come first, and a closed row is not touched by a late poll', async () => {
+      const op = await operation();
+      const reserve = (batchKey: string) =>
+        budget.reserve({
+          operationId: op.id,
+          stage: 'e2e_worker_stage',
+          requestedModel: 'a/priced:batch',
+          attempt: 1,
+          estimateUsd: new Prisma.Decimal('0.01'),
+          batchKey,
+        });
+      const polled = await reserve('k-polled');
+      const fresh = await reserve('k-fresh');
+      await budget.markBatchSubmitted(polled.callId, {
+        batchId: 'b-polled',
+        status: 'in_progress',
+      });
+      await budget.markBatchSubmitted(fresh.callId, { batchId: 'b-fresh', status: 'validating' });
+      await prisma.llmCall.update({
+        where: { id: polled.callId },
+        data: { batchPolledAt: new Date(Date.now() - 3600 * 1000) },
+      });
+      await prisma.llmCall.update({ where: { id: fresh.callId }, data: { batchPolledAt: null } });
+
+      const ids = (await budget.openBatchCalls(new Date(), 100)).map((r) => r.id);
+      expect(ids.indexOf(fresh.callId)).toBeGreaterThanOrEqual(0);
+      expect(ids.indexOf(fresh.callId)).toBeLessThan(ids.indexOf(polled.callId));
+
+      await budget.settle(polled.callId, {
+        costUsd: new Prisma.Decimal('0.001'),
+        costEstimated: false,
+        durationMs: 1,
+        batchStatus: 'completed',
+      });
+      await budget.markBatchTaken(polled.callId, 'consumed');
+      expect(await budget.touchBatch(polled.callId, 'in_progress')).toBe(false);
+      expect(
+        (await prisma.llmCall.findUniqueOrThrow({ where: { id: polled.callId } })).batchStatus,
+      ).toBe('consumed');
+      expect(await budget.touchBatch(fresh.callId, null)).toBe(true);
+      expect(
+        (await prisma.llmCall.findUniqueOrThrow({ where: { id: fresh.callId } })).batchStatus,
+      ).toBe('validating');
+    });
+
+    it('an open batch call is never stale, while a sync call of the same age in the same pass is', async () => {
+      const op = await operation();
+      const reserve = (requestedModel: string, batchKey?: string) =>
+        budget.reserve({
+          operationId: op.id,
+          stage: 'e2e_worker_stage',
+          requestedModel,
+          attempt: 1,
+          estimateUsd: new Prisma.Decimal('0.25'),
+          batchKey,
+        });
+      const batch = await reserve('a/priced:batch', 'key-e2e');
+      const sync = await reserve('a/priced');
+      // Отпечаток пишет сам резерв - до отправки батча.
+      expect(
+        (await prisma.llmCall.findUniqueOrThrow({ where: { id: batch.callId } })).batchKey,
+      ).toBe('key-e2e');
+      // Строка с отпечатком, но без id батча (id не записался) находится по ключу.
+      expect(await budget.findBatchCall(op.id, 'key-e2e')).toMatchObject({
+        id: batch.callId,
+        batchId: null,
+      });
+      await budget.markBatchSubmitted(batch.callId, { batchId: 'batch-e2e', status: 'validating' });
+      // Сутки: синхронный вызов уходит в «stale» с фактом = резерв, батч - нет.
+      await backdate(batch.callId, 24 * 3600);
+      await backdate(sync.callId, 24 * 3600);
+      await prisma.llmCall.update({
+        where: { id: batch.callId },
+        data: { batchPolledAt: new Date(Date.now() - 3600 * 1000) },
+      });
+
+      expect(await budget.releaseStaleCalls(1_000)).toBeGreaterThanOrEqual(1);
+      expect(await prisma.llmCall.findUniqueOrThrow({ where: { id: sync.callId } })).toMatchObject({
+        errorClass: 'stale',
+      });
+      expect(await prisma.llmCall.findUniqueOrThrow({ where: { id: batch.callId } })).toMatchObject(
+        {
+          reserveReleasedAt: null,
+          batchStatus: 'validating',
+        },
+      );
+
+      expect(await budget.findBatchCall(op.id, 'key-e2e')).toMatchObject({
+        id: batch.callId,
+        batchId: 'batch-e2e',
+      });
+      expect(await budget.findBatchCall(op.id, 'other-key')).toBeNull();
+      // Повторная отправка того же запроса: находится последняя строка.
+      const again = await reserve('a/priced:batch', 'key-e2e');
+      expect((await budget.findBatchCall(op.id, 'key-e2e'))?.id).toBe(again.callId);
+      await budget.settle(again.callId, {
+        costUsd: new Prisma.Decimal(0),
+        costEstimated: false,
+        durationMs: 1,
+      });
+
+      const stalePoll = () => budget.openBatchCalls(new Date(Date.now() - 600 * 1000), 100);
+      expect((await stalePoll()).map((r) => r.id)).toContain(batch.callId);
+      await budget.touchBatch(batch.callId, 'in_progress');
+      expect((await stalePoll()).map((r) => r.id)).not.toContain(batch.callId);
+
+      // Факт и статус батча - одним UPDATE; закрытая строка опросу больше не нужна.
+      expect(
+        await budget.settle(batch.callId, {
+          costUsd: new Prisma.Decimal('0.0004'),
+          costEstimated: false,
+          durationMs: 1,
+          batchStatus: 'completed',
+        }),
+      ).toBe(true);
+      const closed = await prisma.llmCall.findUniqueOrThrow({ where: { id: batch.callId } });
+      expect(closed.batchStatus).toBe('completed');
+      await prisma.llmCall.update({ where: { id: batch.callId }, data: { batchPolledAt: null } });
+      expect((await stalePoll()).map((r) => r.id)).not.toContain(batch.callId);
+      const opRow = await prisma.llmOperation.findUniqueOrThrow({ where: { id: op.id } });
+      expect(opRow.spentUsd.toString()).toBe('0.2504');
+      expect(opRow.reservedUsd.isZero()).toBe(true);
+    });
   });
 
   it('the worker timer is not running without a key: tasks are not taken (Р25)', async () => {

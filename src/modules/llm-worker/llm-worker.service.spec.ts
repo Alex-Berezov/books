@@ -5,8 +5,10 @@ import { BackgroundJobsRegistry } from '../background-jobs/background-jobs.regis
 import { LlmBudgetService } from '../llm/llm-budget.service';
 import { LlmConfig } from '../llm/llm.config';
 import { LlmStageRegistry } from '../llm/llm-stages.registry';
-import { LlmBudgetExceededError, LlmError } from '../llm/llm.errors';
+import { LlmService } from '../llm/llm.service';
+import { LlmBatchPendingError, LlmBudgetExceededError, LlmError } from '../llm/llm.errors';
 import { LlmTaskHandlerRegistry } from './llm-task-handler.registry';
+import { LLM_BATCH_PENDING } from './llm-task.types';
 import { LlmTaskService } from './llm-task.service';
 import { LlmWorkerConfig } from './llm-worker.config';
 import { LlmWorkerService, stepFailureCode } from './llm-worker.service';
@@ -26,6 +28,7 @@ describe('LlmWorkerService', () => {
     countUnknownKinds: jest.Mock;
   };
   let budget: { releaseStaleCalls: jest.Mock };
+  let llm: { pollOpenBatches: jest.Mock };
   let worker: LlmWorkerService;
 
   const task = { id: 't1', kind: 'k', attempt: 1 } as LlmTask;
@@ -40,6 +43,7 @@ describe('LlmWorkerService', () => {
       new LlmWorkerConfig(config),
       registry,
       stages,
+      llm as unknown as LlmService,
     );
   };
 
@@ -61,6 +65,7 @@ describe('LlmWorkerService', () => {
       countUnknownKinds: jest.fn().mockResolvedValue(0),
     };
     budget = { releaseStaleCalls: jest.fn().mockResolvedValue(0) };
+    llm = { pollOpenBatches: jest.fn().mockResolvedValue(0) };
     handlers.register('k', { run: () => Promise.resolve({ kind: 'done' }) });
     build();
   });
@@ -320,6 +325,45 @@ describe('LlmWorkerService', () => {
     expect(tasks.finish).toHaveBeenCalledWith(task, 'owner', { kind: 'continue' });
     expect(tasks.fail).not.toHaveBeenCalled();
     expect(onFailed).not.toHaveBeenCalled();
+  });
+
+  it('a call waiting for its batch postpones the step without a failure (wait, ~1 min)', async () => {
+    handlers = new LlmTaskHandlerRegistry();
+    const onFailed = jest.fn();
+    handlers.register('k', {
+      run: () => Promise.reject(new LlmBatchPendingError('batch-1', 'in_progress')),
+      onFailed,
+    });
+    build();
+    const before = Date.now();
+
+    await worker.runTask(task, 'owner');
+
+    expect(tasks.fail).not.toHaveBeenCalled();
+    expect(onFailed).not.toHaveBeenCalled();
+    expect(tasks.finish).toHaveBeenCalledTimes(1);
+    const [, , result] = tasks.finish.mock.calls[0] as [
+      unknown,
+      unknown,
+      { kind: string; reason: string; runAfter: Date },
+    ];
+    expect(result).toMatchObject({ kind: 'wait', reason: LLM_BATCH_PENDING });
+    expect(result.runAfter.getTime()).toBeGreaterThanOrEqual(before + 59_000);
+    expect(result.runAfter.getTime()).toBeLessThanOrEqual(Date.now() + 61_000);
+  });
+
+  it('a failing batch poll does not stop the rest of housekeeping', async () => {
+    llm.pollOpenBatches.mockRejectedValueOnce(new Error('db down'));
+    await expect(worker.housekeeping()).resolves.toBeUndefined();
+    expect(tasks.countUnknownKinds).toHaveBeenCalledTimes(1);
+  });
+
+  it('housekeeping polls batches left by their steps', async () => {
+    await worker.housekeeping();
+    expect(llm.pollOpenBatches).toHaveBeenCalledTimes(1);
+    const [polledBefore, limit] = llm.pollOpenBatches.mock.calls[0] as [Date, number];
+    expect(Date.now() - polledBefore.getTime()).toBeGreaterThanOrEqual(10 * 60_000 - 1000);
+    expect(limit).toBe(20);
   });
 
   it('a failing write of the result does not escape the slot', async () => {

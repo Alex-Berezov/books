@@ -18,6 +18,7 @@ const MODELS: LlmModelInfo[] = [
     contextLength: null,
     price: { input: D('0.000001'), output: D('0.000002') },
     structuredOutputs: true,
+    batchOnly: false,
   },
   {
     id: 'b/second',
@@ -25,6 +26,7 @@ const MODELS: LlmModelInfo[] = [
     contextLength: null,
     price: { input: D(0), output: D(0) },
     structuredOutputs: false,
+    batchOnly: false,
   },
   {
     id: 'c/dynamic',
@@ -32,6 +34,7 @@ const MODELS: LlmModelInfo[] = [
     contextLength: null,
     price: { input: null, output: null },
     structuredOutputs: false,
+    batchOnly: false,
   },
 ];
 
@@ -151,6 +154,66 @@ describe('LlmService', () => {
       expect(model.inputPrice.toFixed(8)).toBe('0.00000500');
       expect(model.outputPrice.toFixed(8)).toBe('0.00000500');
       expect(model.maxPricePerMTok?.toFixed(2)).toBe('5.00');
+    });
+
+    it('a model the catalog serves only by Batch API reaches the client marked batch, both as primary and fallback', async () => {
+      models.list.mockResolvedValue([
+        ...MODELS,
+        {
+          id: 'd/cheap:batch',
+          name: 'Cheap (batch)',
+          contextLength: null,
+          price: { input: D('0.00000005'), output: D('0.00000025') },
+          structuredOutputs: true,
+          batchOnly: true,
+        },
+      ]);
+      prisma.llmStageSetting.findUnique.mockResolvedValue(
+        row({ model: 'd/cheap:batch', fallbacks: ['a/priced', 'd/cheap:batch'] }),
+      );
+      await call();
+      const sent = (client.chat.mock.calls[0][0] as { models: LlmCallModel[] }).models;
+      expect(sent.map((m) => [m.id, m.batch ?? false])).toEqual([
+        ['d/cheap:batch', true],
+        ['a/priced', false],
+        ['d/cheap:batch', true],
+      ]);
+    });
+
+    it('a Batch API model without a catalog price, priced by the stage cap, is still marked batch', async () => {
+      models.list.mockResolvedValue([
+        ...MODELS,
+        {
+          id: 'e/cap:batch',
+          name: 'Capped (batch)',
+          contextLength: null,
+          price: { input: null, output: null },
+          structuredOutputs: true,
+          batchOnly: true,
+        },
+      ]);
+      prisma.llmStageSetting.findUnique.mockResolvedValue(
+        row({ model: 'e/cap:batch', maxPricePerMTok: D('5') }),
+      );
+      await call();
+      const [model] = (client.chat.mock.calls[0][0] as { models: LlmCallModel[] }).models;
+      expect(model).toMatchObject({ id: 'e/cap:batch', batch: true });
+      expect(model.maxPricePerMTok?.toFixed(2)).toBe('5.00');
+    });
+
+    it('pollOpenBatches is the module entry for the worker: delegates to the client as is', async () => {
+      const polled = jest.fn().mockResolvedValue(3);
+      (client as unknown as { pollOpenBatches: jest.Mock }).pollOpenBatches = polled;
+      const before = new Date('2026-11-14T10:00:00Z');
+      await expect(service.pollOpenBatches(before, 20)).resolves.toBe(3);
+      expect(polled).toHaveBeenCalledTimes(1);
+      expect(polled.mock.calls[0]).toEqual([before, 20]);
+    });
+
+    it('the catalog flag goes out in the model list for the settings screen', async () => {
+      models.list.mockResolvedValue([{ ...MODELS[0], batchOnly: true }, MODELS[1]]);
+      const list = await service.listModels();
+      expect(list.map((m) => m.batchOnly)).toEqual([true, false]);
     });
 
     it('passes the worker options through to the client: lease renewal, signal, task id', async () => {

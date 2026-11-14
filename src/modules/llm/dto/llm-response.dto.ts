@@ -90,6 +90,14 @@ export class LlmModelDto {
 
   @ApiProperty({ type: Boolean, description: 'Accepts response_format with a JSON schema' })
   structuredOutputs!: boolean;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'Served only by the asynchronous Batch API (`:batch` variants): answers take minutes to hours, ' +
+      'request data is kept by OpenRouter for 30 days without zero data retention',
+  })
+  batchOnly!: boolean;
 }
 
 export class LlmStageSettingDto {

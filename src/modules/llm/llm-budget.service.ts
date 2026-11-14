@@ -27,7 +27,32 @@ export interface ReserveInput {
   estimateUsd: Prisma.Decimal;
   /** Задача исполнителя (`F05-1w`), ради которой сделан вызов. */
   taskId?: string | null;
+  /**
+   * Отпечаток запроса батча: пишется в той же транзакции, что и резерв, - до отправки. Строку,
+   * чей ответ на `POST /batches` потерян или чей id не записался, повтор шага всё равно найдёт
+   * и второй раз батч не отправит (решение арбитра 14.11.2026).
+   */
+  batchKey?: string;
 }
+
+const BATCH_CALL_SELECT = {
+  id: true,
+  operationId: true,
+  stage: true,
+  requestedModel: true,
+  attempt: true,
+  reservedUsd: true,
+  startedAt: true,
+  batchId: true,
+  batchStatus: true,
+  taskId: true,
+  reserveReleasedAt: true,
+  costUsd: true,
+  errorClass: true,
+} as const satisfies Prisma.LlmCallSelect;
+
+/** Строка вызова-батча: что нужно, чтобы спросить батч и записать его факт. */
+export type BatchCallRow = Prisma.LlmCallGetPayload<{ select: typeof BATCH_CALL_SELECT }>;
 
 export interface SettleInput {
   costUsd: Prisma.Decimal;
@@ -38,6 +63,14 @@ export interface SettleInput {
   outputTokens?: number | null;
   durationMs: number;
   errorClass?: string | null;
+  /** Статус батча - тем же `UPDATE`, что и факт: две записи подряд разошлись бы при сбое. */
+  batchStatus?: string;
+  /**
+   * Закрыть, только если у строки нет id батча - условием в самом `UPDATE` (L-019): чистка зависших
+   * не закрывает строку, которой отправка успела записать батч между её выборкой и записью
+   * (решение арбитра 14.11.2026, E).
+   */
+  onlyWithoutBatch?: boolean;
 }
 
 /**
@@ -124,6 +157,7 @@ export class LlmBudgetService {
           attempt: input.attempt,
           reservedUsd: estimate,
           taskId: input.taskId ?? null,
+          batchKey: input.batchKey ?? null,
         },
         select: { id: true },
       });
@@ -148,8 +182,10 @@ export class LlmBudgetService {
             "outputTokens" = ${outcome.outputTokens ?? null}::int,
             "durationMs" = ${Math.max(0, Math.round(outcome.durationMs))}::int,
             "errorClass" = ${outcome.errorClass ?? null},
+            "batchStatus" = COALESCE(${outcome.batchStatus ?? null}, "batchStatus"),
             "reserveReleasedAt" = NOW()
         WHERE "id" = ${callId} AND "reserveReleasedAt" IS NULL
+          AND (${outcome.onlyWithoutBatch !== true} OR "batchId" IS NULL)
         RETURNING "reservedUsd"::text AS "reservedUsd", "operationId"`;
       const row = released[0];
       if (!row) return false;
@@ -167,6 +203,78 @@ export class LlmBudgetService {
         WHERE "id" = ${row.operationId}`;
       return true;
     }, BUDGET_TX_OPTIONS);
+  }
+
+  /** Батч создан: его id - в строку вызова до возврата `wait` (отпечаток записан резервом). */
+  async markBatchSubmitted(
+    callId: string,
+    batch: { batchId: string; status: string },
+  ): Promise<boolean> {
+    // Только в открытую строку - условием в самом UPDATE (L-019): закрытая чисткой строка id не
+    // получает, батч остаётся сиротой, а не тихо пропадает (решение арбитра 14.11.2026, итоговый /qa, B).
+    const marked = await this.prisma.llmCall.updateMany({
+      where: { id: callId, reserveReleasedAt: null },
+      data: { batchId: batch.batchId, batchStatus: batch.status, batchPolledAt: new Date() },
+    });
+    return marked.count > 0;
+  }
+
+  /**
+   * Последний вызов-батч операции с этим отпечатком запроса, в том числе без id батча (ответ на
+   * отправку потерян или id не записался); нет строки - батч не отправлялся.
+   */
+  findBatchCall(operationId: string, batchKey: string): Promise<BatchCallRow | null> {
+    return this.prisma.llmCall.findFirst({
+      where: { operationId, batchKey },
+      orderBy: [{ startedAt: 'desc' }, { id: 'desc' }],
+      select: BATCH_CALL_SELECT,
+    });
+  }
+
+  /** Записанная цена вызова (после факта); `null` - факта ещё нет. */
+  async callCost(callId: string): Promise<Prisma.Decimal | null> {
+    const row = await this.prisma.llmCall.findUnique({
+      where: { id: callId },
+      select: { costUsd: true },
+    });
+    return row?.costUsd ?? null;
+  }
+
+  /**
+   * Отметка опроса открытого батча: время и статус OpenRouter (`null` - опрос не удался, статус
+   * прежний). Только пока строка открыта - условием в самом `UPDATE` (L-019): опрос, прочитавший
+   * строку до её закрытия, не перезаписывает статус закрытой (решение арбитра 14.11.2026, п.5).
+   * `false` - строку уже закрыли.
+   */
+  async touchBatch(callId: string, status: string | null): Promise<boolean> {
+    const touched = await this.prisma.llmCall.updateMany({
+      where: { id: callId, reserveReleasedAt: null },
+      data: { batchPolledAt: new Date(), ...(status === null ? {} : { batchStatus: status }) },
+    });
+    return touched.count > 0;
+  }
+
+  /** Ответ закрытого батча забран этапом: `consumed` - годный, `unusable` - не по форме. */
+  async markBatchTaken(callId: string, status: string): Promise<void> {
+    await this.prisma.llmCall.update({ where: { id: callId }, data: { batchStatus: status } });
+  }
+
+  /**
+   * Открытые батчи (резерв не снят), которые давно не спрашивали: их опрашивает чистка, чтобы
+   * брошенный батч (операцию остановили, вход шага сменился) не держал резерв вечно.
+   */
+  openBatchCalls(polledBefore: Date, limit: number): Promise<BatchCallRow[]> {
+    return this.prisma.llmCall.findMany({
+      where: {
+        reserveReleasedAt: null,
+        batchId: { not: null },
+        OR: [{ batchPolledAt: null }, { batchPolledAt: { lt: polledBefore } }],
+      },
+      // Никогда не опрошенные - первыми: в Postgres NULL при `asc` уходит в конец.
+      orderBy: [{ batchPolledAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
+      take: limit,
+      select: BATCH_CALL_SELECT,
+    });
   }
 
   /**
@@ -191,6 +299,7 @@ export class LlmBudgetService {
       FROM "LlmCall"
       WHERE "reserveReleasedAt" IS NULL
         AND "startedAt" < ${utcTimestamp(threshold)}
+        AND "batchId" IS NULL
       ORDER BY "startedAt"
       LIMIT 100`;
     let released = 0;
@@ -200,6 +309,7 @@ export class LlmBudgetService {
         costEstimated: true,
         durationMs: Math.min(call.ageMs, MAX_DURATION_MS),
         errorClass: 'stale',
+        onlyWithoutBatch: true,
       });
       if (won) released += 1;
     }

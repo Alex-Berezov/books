@@ -10342,6 +10342,8 @@ export interface components {
       updatedAt: string;
     };
     LlmModelDto: {
+      /** @description Served only by the asynchronous Batch API (`:batch` variants): answers take minutes to hours, request data is kept by OpenRouter for 30 days without zero data retention */
+      batchOnly: boolean;
       contextLength: number | null;
       /** @example anthropic/claude-sonnet-5.5 */
       id: string;

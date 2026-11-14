@@ -4179,10 +4179,23 @@ model LlmCall {
   /// Задача исполнителя, ради которой сделан вызов (F05-1w); пусто - вызов вне исполнителя.
   taskId            String?
   task              LlmTask?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  /// Батч OpenRouter (`/api/v1/batches`) вызова модели `:batch`: id пишется до ответа, ответ
+  /// берётся по нему (текст в базе не хранится). Пусто - синхронный вызов.
+  batchId           String?
+  /// Отпечаток запроса (sha256 этапа, модели и тела; ищется в пределах операции): повтор шага
+  /// и «продолжить» находят открытый батч и не отправляют его второй раз - отмены у Batch API нет.
+  batchKey          String?
+  /// Статус батча от OpenRouter (`validating`, `in_progress`, `completed`, ...) или исход строки:
+  /// `not_submitted`, `consumed`, `unusable`, класс отказа (`batch_gone`, `batch_timeout`, ...).
+  batchStatus       String?
+  /// Когда статус батча спрашивали последний раз: чистка опрашивает брошенные батчи не чаще.
+  batchPolledAt     DateTime?
 
   @@index([operationId])
   @@index([reserveReleasedAt, startedAt])
   @@index([taskId])
+  @@index([operationId, batchKey])
+  @@index([batchId])
 }
 
 enum LlmTaskStatus {
