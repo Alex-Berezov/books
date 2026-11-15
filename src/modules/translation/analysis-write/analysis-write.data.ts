@@ -1,12 +1,7 @@
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
-import {
-  oneOf,
-  remarksReader,
-  reviewReader,
-  stableJson,
-  stringOf,
-} from '../draft-quality/draft-record';
+import { oneOf, remarksReader, reviewReader, stringOf } from '../draft-quality/draft-record';
+import { stableJson } from '../../../shared/json/stable-json';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 import {
   BOOK_ANALYSIS_BLOCK_KEYS,

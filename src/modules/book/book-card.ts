@@ -1,6 +1,8 @@
 import { BookType, Prisma } from '@prisma/client';
 import { ClaimBlockScope } from '../rights-claims/rights-claim-interface';
 import { worldwideSettledClaimBlockWhere } from '../rights-claims/settled-claim-block';
+import { WORLD_ENTITY_PUBLIC_WHERE } from '../book-world/world-public';
+import { BOOK_WORLD_LIMITS } from '../book-world/dto/book-world-blocks.dto';
 import { BookCardDto } from './dto/book-card.dto';
 
 /**
@@ -26,6 +28,26 @@ export const SUMMARIES_WITH_TEXT_COUNT = {
 export const ANALYSES_WITH_CORE_COUNT = {
   where: { hasCore: true },
 } as const satisfies Prisma.BookVersionCountOutputTypeCountAnalysesArgs;
+
+/**
+ * Счётчик мира книги для `_count` (F08-1): только публичные сущности — условие
+ * `WORLD_ENTITY_PUBLIC_WHERE` (`isListed`, решение арбитра `F08 | F08-1` R1), одно на карточки,
+ * список книг и обзор. Версия в этих выборках опубликована; второй копии условия здесь нет.
+ */
+export const WORLD_ENTITIES_PUBLIC_COUNT = {
+  where: WORLD_ENTITY_PUBLIC_WHERE,
+} as const satisfies Prisma.BookVersionCountOutputTypeCountWorldEntitiesArgs;
+
+/**
+ * `worldKeys` версии обзора книги (F08-1, `tech.md` §2): ключ, тип, имя и «индексировать» публичных
+ * сущностей — тем же условием, что счётчик. Предел — предел сущностей версии.
+ */
+export const OVERVIEW_WORLD_KEYS = {
+  where: WORLD_ENTITY_PUBLIC_WHERE,
+  select: { key: true, type: true, name: true, isIndexable: true },
+  orderBy: { key: 'asc' },
+  take: BOOK_WORLD_LIMITS.entities,
+} as const satisfies Prisma.BookVersion$worldEntitiesArgs;
 
 /**
  * Разделы пересказа видны читателю (F04, решение арбитра `F04 | F04-1`): у полного пересказа есть
@@ -79,6 +101,7 @@ export const BOOK_CARD_SELECT = {
       audioChapters: true,
       summaries: SUMMARIES_WITH_TEXT_COUNT,
       analyses: ANALYSES_WITH_CORE_COUNT,
+      worldEntities: WORLD_ENTITIES_PUBLIC_COUNT,
     },
   },
   categories: { select: { categoryId: true } },

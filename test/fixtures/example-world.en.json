@@ -1,0 +1,186 @@
+{
+  "language": "en",
+  "entities": [
+    {
+      "key": "raskolnikov",
+      "type": "character",
+      "name": "Rodion Romanovich Raskolnikov",
+      "role": "main",
+      "aliases": [
+        "Raskolnikov",
+        "Raskolnikov's",
+        "Rodion Romanovich",
+        "Rodion",
+        "Rodya",
+        "Rodya's",
+        "Rodka"
+      ],
+      "short": "A former student living in desperate poverty in a tiny garret under the roof of a Petersburg tenement, behind with his rent and hiding from his landlady. Proud, withdrawn and painfully sensitive to the humiliation of others, he is nursing an idea he is afraid to name even to himself.",
+      "profile": {
+        "position": "former law student who left the university for lack of money; rents a garret in S. Place"
+      },
+      "appearance": "Dostoevsky gives his portrait in the very first chapter and sets it against his clothes: Raskolnikov is strikingly good-looking, tall, slim and dark-eyed, yet dressed in rags so shabby that anyone else would be ashamed to go out in them by day (chapter 1). Beauty and destitution in one figure announce his doubleness at once: a man capable of much, reduced to not caring how he looks.\n\nFever and sleeplessness change him visibly: after the dream of the horse (chapter 5) and on the eve of the deed (chapter 6) he moves through the streets as if in delirium.",
+      "character": "At the heart of Raskolnikov is a split between thought and feeling. His thought is cold and bold: in the tavern conversation between a student and an officer (chapter 6) he hears his own idea, one death in exchange for a hundred lives, and takes the coincidence for a sign. His feeling is alive and resists: in the first chapter he goes to the pawnbroker to rehearse his plan and is disgusted with himself, and after the dream of the beaten horse (chapter 5) he is ready to renounce the dream he now curses.\n\nThe second trait is a pride that cannot bear another person’s sacrifice. His mother’s letter about Dounia’s engagement to Luzhin (chapters 3–4) reads to him as the story of a sister selling herself for his sake, and he answers it with fury rather than gratitude: to accept such help would be to admit he is nothing.\n\nYet he is capable of sudden, almost reckless kindness: he leaves his last coppers on the Marmeladovs’ window (chapter 2) and gives a policeman twenty copecks to take a drunken girl off the boulevard (chapter 4), then is angry with himself for it. This inability to become fully what he has designed himself to be drives his whole path.",
+      "arc": {
+        "from": "a destitute, proud loner who has convinced himself that the right to crime can be calculated",
+        "to": "a convict in Siberia who, through Sonya’s love, steps out of his theory into life for the first time",
+        "stages": [
+          {
+            "title": "The rehearsal",
+            "text": "He visits the pawnbroker on the pretext of pawning a watch to rehearse the deed. He counts his steps, memorises the flat and leaves in self-loathing: resolve and revulsion at his own idea live in him side by side.",
+            "chapter": 1
+          },
+          {
+            "title": "Another’s sacrifice",
+            "text": "His mother’s letter reveals that Dounia is marrying Luzhin for her brother’s sake. Raskolnikov refuses the sacrifice, and the refusal pushes him toward his own plan: now it seems to him he can wait no longer.",
+            "chapter": 4
+          },
+          {
+            "title": "The decision",
+            "text": "A tavern talk he once overheard, in which one death was weighed against a hundred lives as a simple sum, and the hour when the old woman will be alone, learned by chance the day before, strike him as a verdict of fate. He sews a noose for the axe and goes as if led not by his will but by chance.",
+            "chapter": 6
+          }
+        ]
+      },
+      "scenes": [
+        {
+          "chapter": 1,
+          "title": "The rehearsal at the pawnbroker’s",
+          "text": "Raskolnikov brings his father’s watch to pawn while in fact inspecting Alyona Ivanovna’s flat. The scene shows how far he has gone in his mind and how deeply he is ashamed of it."
+        },
+        {
+          "chapter": 5,
+          "title": "The dream of the beaten horse",
+          "text": "In a dream the boy Rodya watches drunken Mikolka flog a mare to death and rushes to kiss her muzzle. On waking, Raskolnikov asks in horror whether he will really take an axe: the child’s compassion is still alive in him."
+        },
+        {
+          "chapter": 6,
+          "title": "The talk in the tavern",
+          "text": "A student tells an officer that killing the pawnbroker to save a hundred lives is simple arithmetic. Raskolnikov hears his own thought in a stranger’s mouth and from that moment acts as if the decision were not his."
+        }
+      ],
+      "relations": [
+        {
+          "to": "sonya",
+          "label": "loves"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "exceptionally handsome, above the average in height, slim, well-built, with beautiful dark eyes and dark brown hair",
+          "chapter": 1,
+          "interpretation": "The narrator’s portrait, placed next to the description of his rags. Beauty put to no use is the first sign of a man who could do much but has shut himself up in a garret with his idea."
+        },
+        {
+          "text": "all is in a man’s hands and he lets it all slip from cowardice, that’s an axiom",
+          "chapter": 1,
+          "speakerKey": "raskolnikov",
+          "interpretation": "His thought on the way to the pawnbroker, right after he scolds himself for being afraid of meeting his landlady. His whole inner conflict is already here: he calls the fear mere cowardice that ruins great undertakings, without noticing that it may be the voice of conscience."
+        },
+        {
+          "text": "can it be, can it be, that I shall really take an axe, that I shall strike her on the head, split her skull open",
+          "chapter": 5,
+          "speakerKey": "raskolnikov",
+          "interpretation": "His first words after the dream of the horse. For the first time the plan is named outright, and named with horror: his feeling rebels against the theory before the crime is committed."
+        },
+        {
+          "text": "One death, and a hundred lives in exchange--it’s simple arithmetic!",
+          "chapter": 6,
+          "interpretation": "Spoken by a student in the tavern, not by Raskolnikov, but it is his own idea in another’s mouth. The coincidence persuades him that the thought is not his madness but something “in the air”, and that makes it easier to act on."
+        }
+      ],
+      "faq": [
+        {
+          "question": "Why does his mother’s letter upset Raskolnikov so much?",
+          "answer": "From the letter (chapters 3–4) he understands that Dounia is marrying Luzhin for his sake, to help her brother with his studies and career. For a proud man, accepting such a sacrifice means agreeing that he is nothing; so he resolves that the marriage will not happen, and that resolve pushes him further toward his plan."
+        },
+        {
+          "question": "What does Raskolnikov’s dream about the horse mean?",
+          "answer": "The dream in chapter 5 takes him back to childhood, where he weeps over a beaten mare. It shows that compassion in him is stronger than theory: on waking he nearly gives up his plan. The dream works as a last warning before the crime."
+        }
+      ]
+    },
+    {
+      "key": "sonya",
+      "type": "character",
+      "name": "Sonya Marmeladova",
+      "role": "main",
+      "aliases": ["Sonia", "Sonia's", "Sonya", "Sofya Semyonovna", "Sonia Marmeladov"],
+      "short": "The daughter of the drunken clerk Marmeladov by his first marriage. To keep her stepmother and the little children from starving, she has been forced to live on the yellow ticket. Quiet and timid, she is held up by a faith no one around her can take away.",
+      "profile": {
+        "position": "daughter of a titular counsellor who has lost his post; forced to take the yellow ticket to feed the family",
+        "relationToMain": "the one Raskolnikov will confide in and who will follow him"
+      },
+      "appearance": "In the opening chapters Sonya does not appear herself: we see her through her father’s eyes, in Marmeladov’s confession in the tavern (chapter 2), a silent girl who lies down with her face to the wall, wrapped in a shawl, only her shoulders trembling. A gesture takes the place of a portrait: almost nothing is said about her looks, and everything about how she carries her shame.",
+      "character": "At the heart of Sonya is sacrifice that asks for no thanks. In Marmeladov’s story (chapter 2), answering her stepmother’s reproach, she silently leaves the house and at nine o’clock silently lays thirty roubles on the table, and never says a word of complaint. Her act is not discussed or explained, and that is her strength: she oversteps herself, not another person.\n\nThe second trait is a meekness that never turns into bitterness. Marmeladov tells how Sonya does not refuse him even money for drink, and how Katerina Ivanovna, who wounded her with a word, kisses her feet that same night. Around Sonya people become better than they are.\n\nFor Raskolnikov she is a measure from the first chapters. Reading his mother’s letter (chapter 4), he sets Sonya beside Dounia as a victim for all time: both sacrifice themselves for those they love. So, before the two have even met, Sonya becomes the answer to his question about the price of another’s sacrifice.",
+      "arc": {
+        "from": "a humiliated girl, ashamed of herself, known to the reader only from her father’s confession",
+        "to": "Raskolnikov’s companion in Siberia, loved by the convicts, whose love brings him back to life",
+        "stages": [
+          {
+            "title": "Sacrifice for the family",
+            "text": "In her father’s account, Sonya leaves the house after her stepmother’s reproach and returns with thirty roubles. This is the first thing the reader learns about her: she sacrifices herself silently and without reproach.",
+            "chapter": 2
+          },
+          {
+            "title": "An image in the hero’s mind",
+            "text": "Raskolnikov, who has never seen her, sets her beside his sister as a victim for all time. Sonya becomes for him the sign of every sacrifice the strong accept from the weak.",
+            "chapter": 4
+          }
+        ]
+      },
+      "scenes": [
+        {
+          "chapter": 2,
+          "title": "Marmeladov’s confession",
+          "text": "Her drunken father tells in the tavern how Sonya went out on the yellow ticket and silently laid the money on the table. Through another’s story Sonya enters the novel as the embodiment of sacrifice, and Raskolnikov, after seeing Marmeladov home, leaves his last coins on the window."
+        },
+        {
+          "chapter": 4,
+          "title": "Brooding over the mother’s letter",
+          "text": "Raskolnikov compares Dounia’s sacrifice with Sonya’s and sees that his sister is making the same sacrifice, only in the guise of a lawful marriage. From this scene Sonya is his measure of the sacrifice he refuses to accept."
+        }
+      ],
+      "relations": [
+        {
+          "to": "raskolnikov",
+          "label": "companion"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "Do you understand, sir, do you understand what it means when you have absolutely nowhere to turn?",
+          "chapter": 2,
+          "interpretation": "Marmeladov opens the story of his daughter with a question about the last limit. Sonya reached it first in the family, and her path is defined by this “nowhere to turn”."
+        },
+        {
+          "text": "she laid thirty roubles on the table before her in silence",
+          "chapter": 2,
+          "interpretation": "Sonya’s key act, told by her father. “In silence” matters more than the sum: she asks for neither pity nor thanks, and this silence becomes her language throughout the novel."
+        },
+        {
+          "text": "Man grows used to everything, the scoundrel!",
+          "chapter": 2,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskolnikov reflects on how the Marmeladovs have grown used to living on Sonya’s money. Her sacrifice first makes him put into words the thought of human baseness from which he will build his theory."
+        },
+        {
+          "text": "Sonia, Sonia Marmeladov, the eternal victim so long as the world lasts.",
+          "chapter": 4,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskolnikov turns Sonya into an image: “eternal” means such sacrifices will last as long as some accept them from others. Before meeting her, he sees in Sonya not a fallen woman but one who gives herself up."
+        }
+      ],
+      "faq": [
+        {
+          "question": "Why did Sonya take the yellow ticket?",
+          "answer": "From Marmeladov’s confession (chapter 2): her father drinks away everything, her stepmother Katerina Ivanovna is ill with consumption, and the little children are starving. After a bitter reproach from her stepmother, Sonya leaves the house and brings back thirty roubles. It is not a fall but a sacrifice for the family, and that is how Raskolnikov reads it in chapter 4."
+        },
+        {
+          "question": "When does Sonya first appear in the novel?",
+          "answer": "At first only in her father’s story in the tavern (chapter 2) and in Raskolnikov’s thoughts over his mother’s letter (chapter 4). The reader learns of her act before seeing her: Dostoevsky gives the sacrifice first and the person afterwards."
+        }
+      ]
+    }
+  ]
+}

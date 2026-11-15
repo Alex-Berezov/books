@@ -1,5 +1,5 @@
 import { EMPTY_BOOK_ANALYSIS } from '../../book-analysis/book-analysis-data';
-import { stableJson } from '../draft-quality/draft-record';
+import { stableJson } from '../../../shared/json/stable-json';
 import {
   analysisDataJson,
   AnalysisItem,

@@ -1,5 +1,5 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
-import { stableJson } from '../draft-quality/draft-record';
+import { stableJson } from '../../../shared/json/stable-json';
 import { ContentDraft, Language, Prisma } from '@prisma/client';
 import { lockVersionRow } from '../version-lock';
 import { PrismaService } from '../../../prisma/prisma.service';

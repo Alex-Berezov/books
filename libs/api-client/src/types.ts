@@ -4643,6 +4643,77 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/versions/{bookVersionId}/world': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** World of a book version: public entities for readers, every entity with marks for editors (drafts are visible to editors only) */
+    get: operations['BookWorldController_list'];
+    /** Import the world of a version (JSON import format, merge by entity key; entities absent from the body are kept); dryRun=true writes nothing; 409 RECORD_CHANGED when the version world is not what the tab saw (expectedUpdatedAt = latest entity updatedAt, expectedCount = number of entities, expectedAbsent = no entities) */
+    put: operations['BookWorldController_saveVersion'];
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/world/{key}': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** World entity page; 404 for readers when the version is a draft or the entity is not public */
+    get: operations['BookWorldController_get'];
+    /** Create or merge one world entity (body key, if present, must equal the path); dryRun=true writes nothing; 409 RECORD_CHANGED when the entity is not what the tab saw */
+    put: operations['BookWorldController_saveEntity'];
+    post?: never;
+    /** Delete a world entity; 409 WORLD_ENTITY_PUBLISHED once it has been on the site (hide it instead), 409 WORLD_ENTITY_REFERENCED while other entities refer to it */
+    delete: operations['BookWorldController_remove'];
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/world/{key}/flags': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    /** Set "show" (isVisible) and "index" (isIndexable) of a world entity */
+    patch: operations['BookWorldController_setFlags'];
+    trace?: never;
+  };
+  '/versions/{bookVersionId}/world/{key}/read': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Mark the model text of a world entity as read (admin only); 409 AUTO_TEXT_NONE without model text, 409 WORLD_TEXT_CHANGED when autoTextAt is not the latest one */
+    post: operations['BookWorldController_markRead'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/versions/{id}': {
     parameters: {
       query?: never;
@@ -6768,10 +6839,21 @@ export interface components {
       type: 'text' | 'audio' | 'referral';
       /** Format: date-time */
       updatedAt: string;
+      /** @description Public world entities of the version (same rule as `_count.worldEntities`), by key */
+      worldKeys: components['schemas']['BookOverviewWorldKeyDto'][];
     };
     BookOverviewVersionIdsDto: {
       audio?: string | null;
       text?: string | null;
+    };
+    BookOverviewWorldKeyDto: {
+      /** @description false — noindex, out of sitemap and hreflang */
+      isIndexable: boolean;
+      /** @example oblomov */
+      key: string;
+      /** @example Ilya Ilyich Oblomov */
+      name: string;
+      type: components['schemas']['WorldEntityType'];
     };
     BookRatingDto: {
       bookId: string;
@@ -7346,6 +7428,8 @@ export interface components {
       summaries: number;
       /** @description Summary sections open to readers (full summary has text, no settled rights-claim block in any country); book overview only */
       summarySections?: number;
+      /** @description Public world entities of the version (F08: isListed — core, shown, read; secondary characters also by the chapter threshold) */
+      worldEntities: number;
     };
     BookVersionContributorResponseDto: {
       bookVersionId: string;
@@ -7547,6 +7631,184 @@ export interface components {
     };
     BookVersionTagLinkDto: {
       tag: components['schemas']['BookTagWithTranslationsDto'];
+    };
+    BookWorldAdaptationDto: {
+      actor?: string | null;
+      differences: string;
+      title: string;
+      year?: number | null;
+    };
+    BookWorldArcDto: {
+      from: string;
+      stages?: components['schemas']['BookWorldArcStageDto'][] | null;
+      to: string;
+    };
+    BookWorldArcStageDto: {
+      chapter: number;
+      text: string;
+      title: string;
+    };
+    BookWorldEditorDto: {
+      /** Format: date-time */
+      autoTextAt: string | null;
+      /**
+       * Format: date-time
+       * @description First time on the site; after it the entity cannot be deleted
+       */
+      firstPublishedAt: string | null;
+      isVisible: boolean;
+      /** @description Core parts still missing (world-core.ts), e.g. "quotes", "mentions" */
+      missing: string[];
+      /** Format: date-time */
+      readAt: string | null;
+    };
+    BookWorldEntityDto: {
+      adaptations: components['schemas']['BookWorldAdaptationDto'][] | null;
+      aliases: string[] | null;
+      appearance: string | null;
+      arc: components['schemas']['BookWorldArcDto'] | null;
+      character: string | null;
+      /** Format: date-time */
+      createdAt: string;
+      critique: string | null;
+      /** @description Editors only; absent for readers */
+      editor?: components['schemas']['BookWorldEditorDto'];
+      faq: components['schemas']['BookAnalysisFaqDto'][] | null;
+      /** @description Core of the entity is filled (product.md §3) */
+      hasCore: boolean;
+      isIndexable: boolean;
+      key: string;
+      mentions: components['schemas']['BookWorldMentionsDto'] | null;
+      name: string;
+      profile: components['schemas']['BookWorldProfileDto'] | null;
+      prototypes: string | null;
+      quotes: components['schemas']['BookWorldQuoteDto'][] | null;
+      relations: components['schemas']['BookWorldRelationDto'][] | null;
+      /** @enum {string|null} */
+      role: 'main' | 'secondary' | 'minor' | null;
+      scenes: components['schemas']['BookWorldSceneDto'][] | null;
+      short: string | null;
+      sources: components['schemas']['BookAnalysisSourceDto'][] | null;
+      type: components['schemas']['WorldEntityType'];
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookWorldEntityInputDto: {
+      adaptations?: components['schemas']['BookWorldAdaptationDto'][] | null;
+      /** @description Name forms for mention search (F08-2) */
+      aliases?: string[] | null;
+      appearance?: string | null;
+      arc?: components['schemas']['BookWorldArcDto'] | null;
+      character?: string | null;
+      critique?: string | null;
+      faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
+      key: string;
+      /** @description Required for a new entity */
+      name?: string;
+      profile?: components['schemas']['BookWorldProfileDto'] | null;
+      prototypes?: string | null;
+      quotes?: components['schemas']['BookWorldQuoteDto'][] | null;
+      relations?: components['schemas']['BookWorldRelationDto'][] | null;
+      /** @enum {string|null} */
+      role?: 'main' | 'secondary' | 'minor' | null;
+      scenes?: components['schemas']['BookWorldSceneDto'][] | null;
+      short?: string | null;
+      sources?: components['schemas']['BookAnalysisSourceDto'][] | null;
+      /**
+       * @description Only character for now; other entity types come with their own batches
+       * @enum {string}
+       */
+      type: 'character';
+    };
+    BookWorldEntityResponseDto: {
+      /** @description Chapter numbers of the version, ascending; chapter links are rendered only for these (empty without text) */
+      chapterNumbers: number[];
+      entity: components['schemas']['BookWorldEntityDto'];
+      /**
+       * @description Language of the version
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+    };
+    BookWorldEntitySaveResponseDto: {
+      /** @description Saved entity; null on dryRun (nothing is written) */
+      entity: components['schemas']['BookWorldEntityDto'] | null;
+      /** @description Core of the merged entity */
+      hasCore: boolean;
+      warnings: components['schemas']['BookWorldWarningDto'][];
+    };
+    BookWorldEntitySummaryDto: {
+      /** @description Editors only; absent for readers */
+      editor?: components['schemas']['BookWorldEditorDto'];
+      /** @description Core of the entity is filled (product.md §3) */
+      hasCore: boolean;
+      isIndexable: boolean;
+      key: string;
+      name: string;
+      /** @enum {string|null} */
+      role: 'main' | 'secondary' | 'minor' | null;
+      short: string | null;
+      type: components['schemas']['WorldEntityType'];
+      /** Format: date-time */
+      updatedAt: string;
+    };
+    BookWorldListResponseDto: {
+      /** @description Readers: public entities only; editors: every entity of the version */
+      entities: components['schemas']['BookWorldEntitySummaryDto'][];
+      /**
+       * @description Language of the version
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+    };
+    BookWorldMentionsDto: {
+      /** @description Chapters the entity is found in, ascending */
+      chapters: number[];
+      /** @description First chapter it is found in */
+      first: number | null;
+    };
+    BookWorldProfileDto: {
+      position?: string | null;
+      relationToMain?: string | null;
+    };
+    BookWorldQuoteDto: {
+      chapter: number;
+      interpretation: string;
+      speakerKey?: string | null;
+      text: string;
+    };
+    BookWorldRelationDto: {
+      label: string;
+      /** @description Key of a world entity or an analysis character of this version */
+      to: string;
+    };
+    BookWorldSaveResponseDto: {
+      /** @description Entities of the body, in body order */
+      entities: components['schemas']['BookWorldSavedEntityDto'][];
+      /** @description Every entity of the version after the save; null on dryRun (nothing is written) */
+      world: components['schemas']['BookWorldListResponseDto'] | null;
+    };
+    BookWorldSavedEntityDto: {
+      /** @description The entity did not exist before this save */
+      created: boolean;
+      /** @description Core of the merged entity */
+      hasCore: boolean;
+      key: string;
+      warnings: components['schemas']['BookWorldWarningDto'][];
+    };
+    BookWorldSceneDto: {
+      chapter: number;
+      /** @description Paragraph index in the chapter (F08-10); optional */
+      paragraph?: number | null;
+      text: string;
+      title: string;
+    };
+    BookWorldWarningDto: {
+      /** @enum {string} */
+      code: 'core_incomplete';
+      message: string;
+      /** @description Field path, e.g. "entities.0.quotes" or "mentions" */
+      path: string;
     };
     BookshelfBookDto: {
       id: string;
@@ -10544,6 +10806,13 @@ export interface components {
        */
       autoTextAt: string;
     };
+    MarkWorldReadDto: {
+      /**
+       * Format: date-time
+       * @description autoTextAt the editor saw; another one - 409 WORLD_TEXT_CHANGED; no model text at all - 409 AUTO_TEXT_NONE
+       */
+      autoTextAt: string | null;
+    };
     MediaAssetResponseDto: {
       contentType: string | null;
       /** Format: date-time */
@@ -13485,6 +13754,10 @@ export interface components {
       /** Format: date-time */
       updatedAt: string;
     };
+    SetWorldFlagsDto: {
+      isIndexable?: boolean;
+      isVisible?: boolean;
+    };
     SlugRedirectResponseDto: {
       /** @description Current slug the retired one redirects to, null when there is none */
       newSlug: string | null;
@@ -15184,6 +15457,47 @@ export interface components {
        */
       type?: 'text' | 'audio' | 'referral';
     };
+    UpdateBookWorldDto: {
+      entities: components['schemas']['BookWorldEntityInputDto'][];
+      /**
+       * @description Must equal the language of the version
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+    };
+    UpdateBookWorldEntityDto: {
+      adaptations?: components['schemas']['BookWorldAdaptationDto'][] | null;
+      /** @description Name forms for mention search (F08-2) */
+      aliases?: string[] | null;
+      appearance?: string | null;
+      arc?: components['schemas']['BookWorldArcDto'] | null;
+      character?: string | null;
+      critique?: string | null;
+      faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
+      /** @description Optional; must equal the key in the path */
+      key?: string;
+      /**
+       * @description Must equal the language of the version
+       * @enum {string}
+       */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Required for a new entity */
+      name?: string;
+      profile?: components['schemas']['BookWorldProfileDto'] | null;
+      prototypes?: string | null;
+      quotes?: components['schemas']['BookWorldQuoteDto'][] | null;
+      relations?: components['schemas']['BookWorldRelationDto'][] | null;
+      /** @enum {string|null} */
+      role?: 'main' | 'secondary' | 'minor' | null;
+      scenes?: components['schemas']['BookWorldSceneDto'][] | null;
+      short?: string | null;
+      sources?: components['schemas']['BookAnalysisSourceDto'][] | null;
+      /**
+       * @description Only character for now; other entity types come with their own batches
+       * @enum {string}
+       */
+      type: 'character';
+    };
     UpdateCategoryDto: {
       /** @description Whether the page is indexable by search engines */
       indexable?: boolean;
@@ -16005,6 +16319,8 @@ export interface components {
     WithdrawLawyerReviewDto: {
       reasonRu: string;
     };
+    /** @enum {string} */
+    WorldEntityType: 'character' | 'pair' | 'place' | 'object' | 'term' | 'event';
   };
   responses: never;
   parameters: never;
@@ -25116,6 +25432,185 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['BookSummaryResponseDto'];
+        };
+      };
+    };
+  };
+  BookWorldController_list: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookWorldListResponseDto'];
+        };
+      };
+    };
+  };
+  BookWorldController_saveVersion: {
+    parameters: {
+      query?: {
+        expectedUpdatedAt?: string;
+        expectedAbsent?: 'true';
+        /** @description Validate and merge exactly as a save would (references, chapters, verbatim quotes), write nothing, return hasCore and warnings; expectedUpdatedAt and expectedAbsent are not checked */
+        dryRun?: 'true' | 'false';
+        /** @description Number of entities of the version the tab saw; another number - 409 RECORD_CHANGED; with expectedAbsent - 400 */
+        expectedCount?: number;
+      };
+      header?: never;
+      path: {
+        bookVersionId: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateBookWorldDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookWorldSaveResponseDto'];
+        };
+      };
+    };
+  };
+  BookWorldController_get: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookWorldEntityResponseDto'];
+        };
+      };
+    };
+  };
+  BookWorldController_saveEntity: {
+    parameters: {
+      query?: {
+        expectedUpdatedAt?: string;
+        expectedAbsent?: 'true';
+        /** @description Validate and merge exactly as a save would (references, chapters, verbatim quotes), write nothing, return hasCore and warnings; expectedUpdatedAt and expectedAbsent are not checked */
+        dryRun?: 'true' | 'false';
+      };
+      header?: never;
+      path: {
+        bookVersionId: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['UpdateBookWorldEntityDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookWorldEntitySaveResponseDto'];
+        };
+      };
+    };
+  };
+  BookWorldController_remove: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      /** @description Deleted */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  BookWorldController_setFlags: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['SetWorldFlagsDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookWorldEntitySummaryDto'];
+        };
+      };
+    };
+  };
+  BookWorldController_markRead: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        bookVersionId: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['MarkWorldReadDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['BookWorldEntitySummaryDto'];
         };
       };
     };

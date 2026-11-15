@@ -78,6 +78,8 @@ model BookVersion {
   /// Разбор и анализ (F03): одна запись на версию (`@unique` на стороне анализа); списком —
   /// ради `_count.analyses` в карточке, списке книг (карта сайта) и обзоре.
   analyses        BookAnalysis[]
+  /// Мир книги (F08): сущности версии; списком — ради `_count.worldEntities` и `worldKeys` обзора.
+  worldEntities   BookWorldEntity[]
   /// Разделы пересказа (F04): плоский список с номерами подряд с 1, номера ставит сервис.
   summarySections BookSummarySection[]
   llmOperations   LlmOperation[]
@@ -298,6 +300,59 @@ model BookAnalysis {
   createdAt           DateTime    @default(now())
   updatedAt           DateTime    @updatedAt
   bookVersion         BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+}
+
+/// Тип сущности мира книги (F08, `books-app-docs/features/F08-book-wiki/tech.md` §2). В F08-1
+/// импорт принимает только `character`; остальные типы — пачками своего типа.
+enum WorldEntityType {
+  character
+  pair
+  place
+  object
+  term
+  event
+}
+
+/// Сущность мира книги (F08-1): одна строка на ключ в версии. Поля страницы по типу — в `blocks`
+/// (плоский JSON импорта, решение арбитра `F08 | F08-1` R7), источники — в `sources`.
+model BookWorldEntity {
+  id               String          @id @default(uuid())
+  bookVersionId    String
+  /// `BOOK_ANALYSIS_KEY_REGEX`; часть публичного адреса, ручки меняют сущность только по ключу.
+  key              String
+  type             WorldEntityType
+  name             String
+  /// «Коротко» героя — колонкой, а не в `blocks`: список сущностей читает только поля сводки.
+  short            String?
+  /// Для `character`: main | secondary | minor (как анализ).
+  role             String?
+  aliases          Json?
+  aliasExclusions  Json?
+  blocks           Json?
+  sources          Json?
+  /// Посчитанное присутствие по главам (`F08-2`): `{ chapters: number[], ... }`.
+  mentions         Json?
+  mentionsAt       DateTime?
+  /// Ядро заполнено (`world-core.ts`), пересчитывается каждой записью.
+  hasCore          Boolean         @default(false)
+  /// Чего не хватает до ядра (`computeWorldCore().missing`), пишется вместе с `hasCore`.
+  coreMissing      String[]        @default([])
+  /// Условие публичности без версии (`computeWorldListed`, решение арбитра `F08 | F08-1` R1):
+  /// пишет только эта функция, в каждой транзакции записи; по нему `_count` и `worldKeys`.
+  isListed         Boolean         @default(false)
+  isVisible        Boolean         @default(true)
+  isIndexable      Boolean         @default(true)
+  readAt           DateTime?
+  autoTextAt       DateTime?
+  /// Первый показ на сайте (R2): ставится записью и публикацией версии, не сбрасывается.
+  firstPublishedAt DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  bookVersion      BookVersion     @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([bookVersionId, key])
+  @@index([bookVersionId, type])
+  @@index([bookVersionId, isListed])
 }
 
 model Chapter {

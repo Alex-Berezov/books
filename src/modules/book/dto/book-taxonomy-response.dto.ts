@@ -159,6 +159,13 @@ export class BookVersionContentCountDto {
   })
   analyses!: number;
 
+  @ApiProperty({
+    type: Number,
+    description:
+      'Public world entities of the version (F08: isListed — core, shown, read; secondary characters also by the chapter threshold)',
+  })
+  worldEntities!: number;
+
   @ApiPropertyOptional({
     type: Number,
     description:

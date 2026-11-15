@@ -23,10 +23,12 @@ import {
   BookAnalysisSymbolDto,
   BookAnalysisThemeDto,
   BookAnalysisTimelineEventDto,
+} from './book-analysis-blocks.dto';
+import {
   Nested,
   NestedList,
   OptionalText,
-} from './book-analysis-blocks.dto';
+} from '../../../shared/validators/block-fields.decorator';
 
 /**
  * Тело `PUT versions/:bookVersionId/analysis` — JSON импорта на язык версии (`tech.md` §3).

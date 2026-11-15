@@ -5177,6 +5177,13 @@
           "updatedAt": {
             "format": "date-time",
             "type": "string"
+          },
+          "worldKeys": {
+            "description": "Public world entities of the version (same rule as `_count.worldEntities`), by key",
+            "items": {
+              "$ref": "#/components/schemas/BookOverviewWorldKeyDto"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -5193,6 +5200,7 @@
           "createdAt",
           "updatedAt",
           "_count",
+          "worldKeys",
           "coverUrl",
           "translators"
         ],
@@ -5209,6 +5217,36 @@
             "type": "string"
           }
         },
+        "type": "object"
+      },
+      "BookOverviewWorldKeyDto": {
+        "properties": {
+          "isIndexable": {
+            "description": "false — noindex, out of sitemap and hreflang",
+            "type": "boolean"
+          },
+          "key": {
+            "example": "oblomov",
+            "type": "string"
+          },
+          "name": {
+            "example": "Ilya Ilyich Oblomov",
+            "type": "string"
+          },
+          "type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldEntityType"
+              }
+            ]
+          }
+        },
+        "required": [
+          "key",
+          "type",
+          "name",
+          "isIndexable"
+        ],
         "type": "object"
       },
       "BookRatingDto": {
@@ -7052,13 +7090,18 @@
           "summarySections": {
             "description": "Summary sections open to readers (full summary has text, no settled rights-claim block in any country); book overview only",
             "type": "number"
+          },
+          "worldEntities": {
+            "description": "Public world entities of the version (F08: isListed — core, shown, read; secondary characters also by the chapter threshold)",
+            "type": "number"
           }
         },
         "required": [
           "chapters",
           "audioChapters",
           "summaries",
-          "analyses"
+          "analyses",
+          "worldEntities"
         ],
         "type": "object"
       },
@@ -7694,6 +7737,748 @@
         },
         "required": [
           "tag"
+        ],
+        "type": "object"
+      },
+      "BookWorldAdaptationDto": {
+        "properties": {
+          "actor": {
+            "maxLength": 300,
+            "nullable": true,
+            "type": "string"
+          },
+          "differences": {
+            "maxLength": 1500,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "type": "string"
+          },
+          "year": {
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "title",
+          "differences"
+        ],
+        "type": "object"
+      },
+      "BookWorldArcDto": {
+        "properties": {
+          "from": {
+            "maxLength": 1500,
+            "type": "string"
+          },
+          "stages": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldArcStageDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "to": {
+            "maxLength": 1500,
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to"
+        ],
+        "type": "object"
+      },
+      "BookWorldArcStageDto": {
+        "properties": {
+          "chapter": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 1500,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "text",
+          "chapter"
+        ],
+        "type": "object"
+      },
+      "BookWorldEditorDto": {
+        "properties": {
+          "autoTextAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "firstPublishedAt": {
+            "description": "First time on the site; after it the entity cannot be deleted",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "isVisible": {
+            "type": "boolean"
+          },
+          "missing": {
+            "description": "Core parts still missing (world-core.ts), e.g. \"quotes\", \"mentions\"",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "readAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "isVisible",
+          "readAt",
+          "autoTextAt",
+          "firstPublishedAt",
+          "missing"
+        ],
+        "type": "object"
+      },
+      "BookWorldEntityDto": {
+        "properties": {
+          "adaptations": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "appearance": {
+            "nullable": true,
+            "type": "string"
+          },
+          "arc": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldArcDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "character": {
+            "nullable": true,
+            "type": "string"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "critique": {
+            "nullable": true,
+            "type": "string"
+          },
+          "editor": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldEditorDto"
+              }
+            ],
+            "description": "Editors only; absent for readers"
+          },
+          "faq": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisFaqDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "hasCore": {
+            "description": "Core of the entity is filled (product.md §3)",
+            "type": "boolean"
+          },
+          "isIndexable": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "mentions": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldMentionsDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "name": {
+            "type": "string"
+          },
+          "profile": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldProfileDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "prototypes": {
+            "nullable": true,
+            "type": "string"
+          },
+          "quotes": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldQuoteDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldRelationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "role": {
+            "enum": [
+              "main",
+              "secondary",
+              "minor"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "scenes": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldSceneDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "short": {
+            "nullable": true,
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisSourceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldEntityType"
+              }
+            ]
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "type",
+          "name",
+          "role",
+          "short",
+          "hasCore",
+          "isIndexable",
+          "updatedAt",
+          "aliases",
+          "profile",
+          "appearance",
+          "character",
+          "arc",
+          "scenes",
+          "relations",
+          "quotes",
+          "critique",
+          "prototypes",
+          "adaptations",
+          "faq",
+          "sources",
+          "mentions",
+          "createdAt"
+        ],
+        "type": "object"
+      },
+      "BookWorldEntityInputDto": {
+        "properties": {
+          "adaptations": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "aliases": {
+            "description": "Name forms for mention search (F08-2)",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "appearance": {
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
+          "arc": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldArcDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "character": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "critique": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "faq": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisFaqDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "key": {
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          },
+          "name": {
+            "description": "Required for a new entity",
+            "maxLength": 300,
+            "type": "string"
+          },
+          "profile": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldProfileDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "prototypes": {
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
+          "quotes": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldQuoteDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldRelationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "role": {
+            "enum": [
+              "main",
+              "secondary",
+              "minor"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "scenes": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldSceneDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "short": {
+            "maxLength": 600,
+            "nullable": true,
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisSourceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "type": {
+            "description": "Only character for now; other entity types come with their own batches",
+            "enum": [
+              "character"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "type"
+        ],
+        "type": "object"
+      },
+      "BookWorldEntityResponseDto": {
+        "properties": {
+          "chapterNumbers": {
+            "description": "Chapter numbers of the version, ascending; chapter links are rendered only for these (empty without text)",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "entity": {
+            "$ref": "#/components/schemas/BookWorldEntityDto"
+          },
+          "language": {
+            "description": "Language of the version",
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "language",
+          "chapterNumbers",
+          "entity"
+        ],
+        "type": "object"
+      },
+      "BookWorldEntitySaveResponseDto": {
+        "properties": {
+          "entity": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldEntityDto"
+              }
+            ],
+            "description": "Saved entity; null on dryRun (nothing is written)",
+            "nullable": true,
+            "type": "object"
+          },
+          "hasCore": {
+            "description": "Core of the merged entity",
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldWarningDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "entity",
+          "hasCore",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "BookWorldEntitySummaryDto": {
+        "properties": {
+          "editor": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldEditorDto"
+              }
+            ],
+            "description": "Editors only; absent for readers"
+          },
+          "hasCore": {
+            "description": "Core of the entity is filled (product.md §3)",
+            "type": "boolean"
+          },
+          "isIndexable": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "main",
+              "secondary",
+              "minor"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "short": {
+            "nullable": true,
+            "type": "string"
+          },
+          "type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldEntityType"
+              }
+            ]
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "type",
+          "name",
+          "role",
+          "short",
+          "hasCore",
+          "isIndexable",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "BookWorldListResponseDto": {
+        "properties": {
+          "entities": {
+            "description": "Readers: public entities only; editors: every entity of the version",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldEntitySummaryDto"
+            },
+            "type": "array"
+          },
+          "language": {
+            "description": "Language of the version",
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "language",
+          "entities"
+        ],
+        "type": "object"
+      },
+      "BookWorldMentionsDto": {
+        "properties": {
+          "chapters": {
+            "description": "Chapters the entity is found in, ascending",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "first": {
+            "description": "First chapter it is found in",
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "chapters",
+          "first"
+        ],
+        "type": "object"
+      },
+      "BookWorldProfileDto": {
+        "properties": {
+          "position": {
+            "maxLength": 300,
+            "nullable": true,
+            "type": "string"
+          },
+          "relationToMain": {
+            "maxLength": 300,
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
+      "BookWorldQuoteDto": {
+        "properties": {
+          "chapter": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "interpretation": {
+            "maxLength": 3000,
+            "type": "string"
+          },
+          "speakerKey": {
+            "nullable": true,
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 500,
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "chapter",
+          "interpretation"
+        ],
+        "type": "object"
+      },
+      "BookWorldRelationDto": {
+        "properties": {
+          "label": {
+            "maxLength": 100,
+            "type": "string"
+          },
+          "to": {
+            "description": "Key of a world entity or an analysis character of this version",
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "to",
+          "label"
+        ],
+        "type": "object"
+      },
+      "BookWorldSaveResponseDto": {
+        "properties": {
+          "entities": {
+            "description": "Entities of the body, in body order",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldSavedEntityDto"
+            },
+            "type": "array"
+          },
+          "world": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldListResponseDto"
+              }
+            ],
+            "description": "Every entity of the version after the save; null on dryRun (nothing is written)",
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "world",
+          "entities"
+        ],
+        "type": "object"
+      },
+      "BookWorldSavedEntityDto": {
+        "properties": {
+          "created": {
+            "description": "The entity did not exist before this save",
+            "type": "boolean"
+          },
+          "hasCore": {
+            "description": "Core of the merged entity",
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "warnings": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldWarningDto"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "key",
+          "created",
+          "hasCore",
+          "warnings"
+        ],
+        "type": "object"
+      },
+      "BookWorldSceneDto": {
+        "properties": {
+          "chapter": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "paragraph": {
+            "description": "Paragraph index in the chapter (F08-10); optional",
+            "minimum": 0,
+            "nullable": true,
+            "type": "number"
+          },
+          "text": {
+            "maxLength": 1500,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "chapter",
+          "title",
+          "text"
+        ],
+        "type": "object"
+      },
+      "BookWorldWarningDto": {
+        "properties": {
+          "code": {
+            "enum": [
+              "core_incomplete"
+            ],
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "path": {
+            "description": "Field path, e.g. \"entities.0.quotes\" or \"mentions\"",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "path",
+          "message"
         ],
         "type": "object"
       },
@@ -15573,6 +16358,20 @@
           "autoTextAt": {
             "description": "autoTextAt the editor saw (from GET .../read); another one - 409 AUTO_TEXT_CHANGED",
             "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "autoTextAt"
+        ],
+        "type": "object"
+      },
+      "MarkWorldReadDto": {
+        "properties": {
+          "autoTextAt": {
+            "description": "autoTextAt the editor saw; another one - 409 WORLD_TEXT_CHANGED; no model text at all - 409 AUTO_TEXT_NONE",
+            "format": "date-time",
+            "nullable": true,
             "type": "string"
           }
         },
@@ -25150,6 +25949,17 @@
         ],
         "type": "object"
       },
+      "SetWorldFlagsDto": {
+        "properties": {
+          "isIndexable": {
+            "type": "boolean"
+          },
+          "isVisible": {
+            "type": "boolean"
+          }
+        },
+        "type": "object"
+      },
       "SlugRedirectResponseDto": {
         "properties": {
           "newSlug": {
@@ -29760,6 +30570,171 @@
         },
         "type": "object"
       },
+      "UpdateBookWorldDto": {
+        "properties": {
+          "entities": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldEntityInputDto"
+            },
+            "type": "array"
+          },
+          "language": {
+            "description": "Must equal the language of the version",
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "language",
+          "entities"
+        ],
+        "type": "object"
+      },
+      "UpdateBookWorldEntityDto": {
+        "properties": {
+          "adaptations": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "aliases": {
+            "description": "Name forms for mention search (F08-2)",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "appearance": {
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
+          "arc": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldArcDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "character": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "critique": {
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "faq": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisFaqDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "key": {
+            "description": "Optional; must equal the key in the path",
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          },
+          "language": {
+            "description": "Must equal the language of the version",
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "description": "Required for a new entity",
+            "maxLength": 300,
+            "type": "string"
+          },
+          "profile": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldProfileDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "prototypes": {
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
+          "quotes": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldQuoteDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldRelationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "role": {
+            "enum": [
+              "main",
+              "secondary",
+              "minor"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "scenes": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldSceneDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "short": {
+            "maxLength": 600,
+            "nullable": true,
+            "type": "string"
+          },
+          "sources": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisSourceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "type": {
+            "description": "Only character for now; other entity types come with their own batches",
+            "enum": [
+              "character"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "language"
+        ],
+        "type": "object"
+      },
       "UpdateCategoryDto": {
         "properties": {
           "indexable": {
@@ -31624,6 +32599,17 @@
           "reasonRu"
         ],
         "type": "object"
+      },
+      "WorldEntityType": {
+        "enum": [
+          "character",
+          "pair",
+          "place",
+          "object",
+          "term",
+          "event"
+        ],
+        "type": "string"
       }
     },
     "securitySchemes": {
@@ -48658,6 +49644,402 @@
         "summary": "Set the very short summary of a version (the key is required; null or \"\" clears it); 409 without a full summary or when expectedUpdatedAt differs from the stored updatedAt",
         "tags": [
           "summaries"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/world": {
+      "get": {
+        "operationId": "BookWorldController_list",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookWorldListResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "World of a book version: public entities for readers, every entity with marks for editors (drafts are visible to editors only)",
+        "tags": [
+          "world"
+        ]
+      },
+      "put": {
+        "operationId": "BookWorldController_saveVersion",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expectedUpdatedAt",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expectedAbsent",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Validate and merge exactly as a save would (references, chapters, verbatim quotes), write nothing, return hasCore and warnings; expectedUpdatedAt and expectedAbsent are not checked",
+            "in": "query",
+            "name": "dryRun",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Number of entities of the version the tab saw; another number - 409 RECORD_CHANGED; with expectedAbsent - 400",
+            "in": "query",
+            "name": "expectedCount",
+            "required": false,
+            "schema": {
+              "maximum": 100,
+              "minimum": 0,
+              "type": "number"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBookWorldDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookWorldSaveResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Import the world of a version (JSON import format, merge by entity key; entities absent from the body are kept); dryRun=true writes nothing; 409 RECORD_CHANGED when the version world is not what the tab saw (expectedUpdatedAt = latest entity updatedAt, expectedCount = number of entities, expectedAbsent = no entities)",
+        "tags": [
+          "world"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/world/{key}": {
+      "delete": {
+        "operationId": "BookWorldController_remove",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Delete a world entity; 409 WORLD_ENTITY_PUBLISHED once it has been on the site (hide it instead), 409 WORLD_ENTITY_REFERENCED while other entities refer to it",
+        "tags": [
+          "world"
+        ]
+      },
+      "get": {
+        "operationId": "BookWorldController_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookWorldEntityResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "World entity page; 404 for readers when the version is a draft or the entity is not public",
+        "tags": [
+          "world"
+        ]
+      },
+      "put": {
+        "operationId": "BookWorldController_saveEntity",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expectedUpdatedAt",
+            "required": false,
+            "schema": {
+              "format": "date-time",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "expectedAbsent",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Validate and merge exactly as a save would (references, chapters, verbatim quotes), write nothing, return hasCore and warnings; expectedUpdatedAt and expectedAbsent are not checked",
+            "in": "query",
+            "name": "dryRun",
+            "required": false,
+            "schema": {
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateBookWorldEntityDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookWorldEntitySaveResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Create or merge one world entity (body key, if present, must equal the path); dryRun=true writes nothing; 409 RECORD_CHANGED when the entity is not what the tab saw",
+        "tags": [
+          "world"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/world/{key}/flags": {
+      "patch": {
+        "operationId": "BookWorldController_setFlags",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetWorldFlagsDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookWorldEntitySummaryDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Set \"show\" (isVisible) and \"index\" (isIndexable) of a world entity",
+        "tags": [
+          "world"
+        ]
+      }
+    },
+    "/versions/{bookVersionId}/world/{key}/read": {
+      "post": {
+        "operationId": "BookWorldController_markRead",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "bookVersionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MarkWorldReadDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BookWorldEntitySummaryDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Mark the model text of a world entity as read (admin only); 409 AUTO_TEXT_NONE without model text, 409 WORLD_TEXT_CHANGED when autoTextAt is not the latest one",
+        "tags": [
+          "world"
         ]
       }
     },

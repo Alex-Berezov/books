@@ -21,6 +21,8 @@ import {
   loadBookCardRatings,
   SUMMARIES_WITH_TEXT_COUNT,
   ANALYSES_WITH_CORE_COUNT,
+  OVERVIEW_WORLD_KEYS,
+  WORLD_ENTITIES_PUBLIC_COUNT,
   summarySectionsCount,
   toBookCardDto,
 } from './book-card';
@@ -171,6 +173,7 @@ export class BookService {
                   audioChapters: true,
                   summaries: SUMMARIES_WITH_TEXT_COUNT,
                   analyses: ANALYSES_WITH_CORE_COUNT,
+                  worldEntities: WORLD_ENTITIES_PUBLIC_COUNT,
                 },
               },
               tags: {
@@ -433,9 +436,12 @@ export class BookService {
             audioChapters: true,
             summaries: SUMMARIES_WITH_TEXT_COUNT,
             analyses: ANALYSES_WITH_CORE_COUNT,
+            worldEntities: WORLD_ENTITIES_PUBLIC_COUNT,
             summarySections: summarySectionsCount(new Date()),
           },
         },
+        // F08-1: публичные сущности мира книги — навигации, карте сайта и ссылкам без второго запроса.
+        worldEntities: OVERVIEW_WORLD_KEYS,
       },
     });
 
@@ -742,8 +748,10 @@ export class BookService {
       primaryCategory,
       // Что выбрано, то и отдано: `versions` собран по белому списку и вычитать
       // из него ничего не нужно (`LEGACY-090`).
-      versions: versions.map(({ contributors, ...v }) => ({
+      versions: versions.map(({ contributors, worldEntities, ...v }) => ({
         ...v,
+        // F08-1: сырое имя связи наружу не уходит — только `worldKeys`.
+        worldKeys: worldEntities,
         coverUrl: v.coverImageUrl, // compatibility alias
         authorSlug: authorSlugOf(v),
         // F01-5: сырые `contributors` вычитаются здесь и в ответ не уходят, только имена.

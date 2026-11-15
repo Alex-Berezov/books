@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { AUTO_TEXT_MARKS_SELECT, AutoTextKind } from '../../book-version/auto-text-marks';
-import { stableJson } from '../draft-quality/draft-record';
+import { stableJson } from '../../../shared/json/stable-json';
 import { lockVersionRow } from '../version-lock';
 
 /**

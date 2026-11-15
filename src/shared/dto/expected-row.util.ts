@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
+import { codedConflict } from '../errors/coded-conflict';
 
 /** Код 409 ручной записи: запись изменили после того, как её видела вкладка. */
 const RECORD_CHANGED = 'RECORD_CHANGED';
@@ -26,12 +27,10 @@ export function assertRowAsExpected(
     : existing !== null &&
       expected.expectedUpdatedAt !== undefined &&
       existing.updatedAt.getTime() !== new Date(expected.expectedUpdatedAt).getTime();
-  if (changed) {
-    throw new ConflictException({
-      statusCode: 409,
-      error: 'Conflict',
-      code: RECORD_CHANGED,
-      message,
-    });
-  }
+  if (changed) throw recordChanged(message);
+}
+
+/** 409 `RECORD_CHANGED` — тот же ответ, что у `assertRowAsExpected`, для своих правил сверки. */
+export function recordChanged(message: string): ConflictException {
+  return codedConflict(RECORD_CHANGED, message);
 }

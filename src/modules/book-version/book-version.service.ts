@@ -75,6 +75,7 @@ import {
   CreateFromRun,
   CreateFromRunRejectedError,
 } from './create-from-run';
+import { stampWorldFirstPublished } from '../book-world/world-public';
 
 interface BookWithRights {
   id: string;
@@ -1508,6 +1509,12 @@ export class BookVersionService {
         });
 
         await this.rightsContentHashService.finalizeBaselineOnPublish(id, null, tx);
+
+        // F08-1 (решение арбитра `F08 | F08-1` R2): сущности мира книги, которые с этой публикацией
+        // впервые на сайте, получают `firstPublishedAt` той же транзакцией, без сдвига `updatedAt`.
+        // Запись мира берёт замок этой же строки версии (`lockVersionRow`), поэтому закоммиченный
+        // `isListed` здесь окончательный.
+        await stampWorldFirstPublished(tx, id);
 
         // Пишется общим писателем и тем же `tx`, что и статус: событие, пережившее
         // откат своей транзакции, утверждает публикацию, которой не было (`LEGACY-036`).

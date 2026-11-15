@@ -9,14 +9,21 @@ import {
   IsString,
   Matches,
   Max,
-  MaxLength,
   Min,
   ValidateIf,
-  ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { applyDecorators } from '@nestjs/common';
 import { IsAbsoluteHttpsUrl } from '../../../shared/validators/absolute-http-url.decorator';
+import {
+  BLOCK_KEY_REGEX,
+  Key,
+  Nested,
+  NestedList,
+  OptionalText,
+  RequiredText,
+  isAbsent,
+} from '../../../shared/validators/block-fields.decorator';
 import { Trim } from '../../../shared/validators/trim.decorator';
 
 /**
@@ -63,7 +70,7 @@ export const BOOK_ANALYSIS_LIMITS = {
 } as const;
 
 /** Ключ темы или героя: на него ссылаются `themeKeys`, `speakerKey`, `relations[].to`. */
-export const BOOK_ANALYSIS_KEY_REGEX = /^[a-z0-9-]{1,60}$/;
+export const BOOK_ANALYSIS_KEY_REGEX = BLOCK_KEY_REGEX;
 
 export const BOOK_ANALYSIS_ROLES = ['main', 'secondary', 'minor'] as const;
 export type BookAnalysisRole = (typeof BOOK_ANALYSIS_ROLES)[number];
@@ -73,28 +80,6 @@ export type BookAnalysisTimelineKind = (typeof BOOK_ANALYSIS_TIMELINE_KINDS)[num
 
 export const BOOK_ANALYSIS_ADAPTATION_KINDS = ['film', 'series', 'stage', 'other'] as const;
 export type BookAnalysisAdaptationKind = (typeof BOOK_ANALYSIS_ADAPTATION_KINDS)[number];
-
-const isAbsent = (value: unknown) => value === undefined || value === null || value === '';
-
-/** Обязательная непустая (после обрезки) строка с пределом длины. */
-const RequiredText = (max: number) =>
-  applyDecorators(Trim(), IsString(), IsNotEmpty(), MaxLength(max));
-
-/** Необязательная строка: `undefined`, `null` и `''` (в том числе из пробелов) — «нет значения». */
-export const OptionalText = (max: number) =>
-  applyDecorators(
-    Trim(),
-    ValidateIf((_o, value) => !isAbsent(value)),
-    IsString(),
-    MaxLength(max),
-  );
-
-const Key = () =>
-  applyDecorators(
-    Trim(),
-    IsString(),
-    Matches(BOOK_ANALYSIS_KEY_REGEX, { message: '$property must match ^[a-z0-9-]{1,60}$' }),
-  );
 
 const OptionalChapter = () =>
   applyDecorators(IsOptional(), IsInt(), Min(1), Max(BOOK_ANALYSIS_LIMITS.chapter));
@@ -120,18 +105,6 @@ const KeyList = () =>
       message: '$property must contain keys matching ^[a-z0-9-]{1,60}$',
     }),
   );
-
-export const NestedList = (cls: () => new () => object, max: number) =>
-  applyDecorators(
-    IsOptional(),
-    IsArray(),
-    ArrayMaxSize(max),
-    ValidateNested({ each: true }),
-    Type(cls),
-  );
-
-export const Nested = (cls: () => new () => object) =>
-  applyDecorators(IsOptional(), ValidateNested(), Type(cls));
 
 export class BookAnalysisFactsDto {
   @ApiPropertyOptional({ type: String, nullable: true })

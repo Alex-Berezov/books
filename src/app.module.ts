@@ -15,6 +15,7 @@ import { AudioChapterModule } from './modules/audio-chapter/audio-chapter.module
 import { SeoModule } from './modules/seo/seo.module';
 import { BookSummaryModule } from './modules/book-summary/book-summary.module';
 import { BookAnalysisModule } from './modules/book-analysis/book-analysis.module';
+import { BookWorldModule } from './modules/book-world/book-world.module';
 import { LlmModule } from './modules/llm/llm.module';
 import { LlmWorkerModule } from './modules/llm-worker/llm-worker.module';
 import { TranslationModule } from './modules/translation/translation.module';
@@ -85,6 +86,7 @@ console.log(`[AppModule] Serving static files from: ${staticRoot}`);
     SeoModule,
     BookSummaryModule,
     BookAnalysisModule,
+    BookWorldModule,
     LlmModule,
     LlmWorkerModule,
     TranslationModule,

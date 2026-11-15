@@ -14,6 +14,8 @@ import {
   type ExpectedRow,
 } from '../../shared/dto/expected-row.util';
 import { pickSlugOwner } from '../../shared/slug/book-slug-owner';
+import { loadChapterNumbers } from '../../shared/chapters/chapter-numbers';
+import { readableVersion, writableVersionLanguage } from '../../common/roles/readable-version';
 import {
   BOOK_ANALYSIS_SELECT,
   EMPTY_BOOK_ANALYSIS,
@@ -39,12 +41,6 @@ import type {
 /** Порция списка закрытий разделов пересказа (`listClaimClosures`, порог `id > последний`) и предел порций - граница памяти. */
 export const CLAIM_CLOSURES_BATCH = 1000;
 export const CLAIM_CLOSURES_MAX_BATCHES = 20;
-/**
- * Предел выборки номеров глав (`chapterNumbers`): тот же, что у списка названий глав админки
- * (`chapter-titles`, 5 000). Выборка целиком в память идёт с ограничением строк.
- */
-export const CHAPTER_NUMBERS_LIMIT = 5000;
-
 type AnalysisRow = Prisma.BookAnalysisGetPayload<{ select: typeof BOOK_ANALYSIS_SELECT }>;
 
 /**
@@ -80,16 +76,12 @@ export class BookAnalysisService {
     bookVersionId: string,
     actor: { userId: string; email: string } | undefined,
   ): Promise<BookAnalysisResponseDto | null> {
-    const version = await this.prisma.bookVersion.findUnique({
-      where: { id: bookVersionId },
-      select: { status: true, language: true },
-    });
-    if (!version) throw new NotFoundException('BookVersion not found');
-
-    const editor = await this.moderatorRoles.isModerator(actor);
-    if (!editor && version.status !== 'published') {
-      throw new NotFoundException('BookVersion not found');
-    }
+    const { language, editor } = await readableVersion(
+      this.prisma,
+      this.moderatorRoles,
+      bookVersionId,
+      actor,
+    );
 
     // Номера глав читаются параллельно с анализом (F03-3): на ответе `null` запрос глав лишний,
     // но дешевле второго последовательного обхода базы на каждом читаемом анализе.
@@ -102,7 +94,7 @@ export class BookAnalysisService {
     ]);
     // Без ядра анализа для читателя нет (`product.md` §2): незаконченные блоки видит только редактор.
     if (!row || (!editor && !row.hasCore)) return null;
-    return toResponse(row, version.language, chapterNumbers);
+    return toResponse(row, language, chapterNumbers);
   }
 
   /**
@@ -169,16 +161,7 @@ export class BookAnalysisService {
     dryRun: boolean,
     expected: ExpectedRow = {},
   ): Promise<BookAnalysisSaveResponseDto> {
-    const version = await this.prisma.bookVersion.findUnique({
-      where: { id: bookVersionId },
-      select: { language: true },
-    });
-    if (!version) throw new NotFoundException('BookVersion not found');
-    if (dto.language !== version.language) {
-      throw new BadRequestException(
-        `language: JSON is "${dto.language}", the version is "${version.language}"`,
-      );
-    }
+    const language = await writableVersionLanguage(this.prisma, bookVersionId, dto.language);
 
     if (dryRun) {
       const existing = await this.prisma.bookAnalysis.findUnique({
@@ -195,7 +178,7 @@ export class BookAnalysisService {
     // записал», чтение глав версии запись не защищает и замок не удлиняет.
     const { row, ...summary } = saved;
     const chapterNumbers = await loadChapterNumbers(this.prisma, bookVersionId);
-    return { analysis: toResponse(row, version.language, chapterNumbers), ...summary };
+    return { analysis: toResponse(row, language, chapterNumbers), ...summary };
   }
 
   /**
@@ -457,23 +440,6 @@ function toClaimClosure(
 
 function uniqueSlugs(slugs: Array<string | null>): string[] {
   return [...new Set(slugs.filter((slug): slug is string => Boolean(slug)))];
-}
-
-/**
- * Номера глав версии — чтобы страница ставила ссылку «глава N» только на существующую главу
- * (`product.md` §1.6, решение арбитра `F03 | F03-2`). Только `number`: ни заголовков, ни текста.
- */
-async function loadChapterNumbers(
-  db: Prisma.TransactionClient,
-  bookVersionId: string,
-): Promise<number[]> {
-  const chapters = await db.chapter.findMany({
-    where: { bookVersionId },
-    select: { number: true },
-    orderBy: { number: 'asc' },
-    take: CHAPTER_NUMBERS_LIMIT,
-  });
-  return chapters.map((chapter) => chapter.number);
 }
 
 function toResponse(

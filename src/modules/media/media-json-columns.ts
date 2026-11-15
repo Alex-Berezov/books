@@ -57,6 +57,8 @@ export const MEDIA_JSON_COLUMNS: readonly MediaSearchedColumn[] = [
     'faq',
     'sources',
   ].map((field) => ({ model: 'BookAnalysis', field })),
+  // F08-1: блоки и источники мира книги — пишет админка импортом JSON, адрес в них возможен.
+  ...['blocks', 'sources'].map((field) => ({ model: 'BookWorldEntity', field })),
   // F02-2: подпись к портрету (`sourceUrl` может указывать на файл хранилища).
   { model: 'Author', field: 'photoCredit' },
   { model: 'CategoryTranslation', field: 'faq' },

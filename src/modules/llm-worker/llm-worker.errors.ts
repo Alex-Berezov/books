@@ -1,4 +1,5 @@
-import { ConflictException, HttpException } from '@nestjs/common';
+import { HttpException } from '@nestjs/common';
+import { codedConflict } from '../../shared/errors/coded-conflict';
 import { isRecord } from '../../shared/prisma/json-record.util';
 
 /**
@@ -12,14 +13,11 @@ export function httpCode(error: HttpException): string {
   return typeof code === 'string' && code ? code : `HTTP_${error.getStatus()}`;
 }
 
-/** 409 с кодом в теле: объект, а не строка - иначе кода не видно (как `llmDisabled`). */
-export function llmTaskConflict(
-  code: string,
-  message: string,
-  extra: Record<string, unknown> = {},
-): ConflictException {
-  return new ConflictException({ ...extra, statusCode: 409, error: 'Conflict', message, code });
-}
+/**
+ * 409 с кодом в теле: объект, а не строка - иначе кода не видно (как `llmDisabled`). Тело одно
+ * на все модули - `codedConflict` из `shared/errors`; прежнее имя оставлено для вызовов хода.
+ */
+export const llmTaskConflict = codedConflict;
 
 /** Аренда задачи ушла другому владельцу: попытка не делается, результат не пишется. */
 export class LlmTaskLeaseLostError extends Error {

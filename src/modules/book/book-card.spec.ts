@@ -4,6 +4,8 @@ import {
   type BookCardRow,
   SUMMARIES_WITH_TEXT_COUNT,
   ANALYSES_WITH_CORE_COUNT,
+  OVERVIEW_WORLD_KEYS,
+  WORLD_ENTITIES_PUBLIC_COUNT,
   summarySectionsCount,
   toBookCardDto,
 } from './book-card';
@@ -19,7 +21,7 @@ describe('toBookCardDto', () => {
     coverImageUrl: 'cover.jpg',
     type: BookType.text,
     publishedAt: null,
-    _count: { chapters: 1, audioChapters: 0, summaries: 0, analyses: 0 },
+    _count: { chapters: 1, audioChapters: 0, summaries: 0, analyses: 0, worldEntities: 0 },
     categories: [],
     book: { slug: 'christmas-carol' },
     ...over,
@@ -42,7 +44,7 @@ describe('toBookCardDto', () => {
   it('hasSummary - по пересказу этой версии', () => {
     expect(toBookCardDto(row(), undefined, null).hasSummary).toBe(false);
     const withSummary = row({
-      _count: { chapters: 1, audioChapters: 0, summaries: 1, analyses: 0 },
+      _count: { chapters: 1, audioChapters: 0, summaries: 1, analyses: 0, worldEntities: 0 },
     });
     expect(toBookCardDto(withSummary, undefined, null).hasSummary).toBe(true);
   });
@@ -81,6 +83,16 @@ describe('toBookCardDto', () => {
     const expected = { where: { hasCore: true } };
     expect(ANALYSES_WITH_CORE_COUNT).toEqual(expected);
     expect(BOOK_CARD_SELECT._count.select.analyses).toEqual(expected);
+  });
+
+  // F08-1: мир книги считается одним условием публичности (`WORLD_ENTITY_PUBLIC_WHERE`, решение
+  // арбитра `F08 | F08-1` R1) — в карточке, списке книг и обзоре, и им же отбираются `worldKeys`.
+  // Счётчик без условия звал бы на страницу сущности, которая отвечает 404.
+  it('BOOK_CARD_SELECT и обзор считают мир книги только по isListed', () => {
+    const expected = { where: { isListed: true } };
+    expect(WORLD_ENTITIES_PUBLIC_COUNT).toEqual(expected);
+    expect(BOOK_CARD_SELECT._count.select.worldEntities).toEqual(expected);
+    expect(OVERVIEW_WORLD_KEYS.where).toEqual({ isListed: true });
   });
 
   // Разделы пересказа закрывает только блок окончённой претензии на весь мир (`countryCode: null`):

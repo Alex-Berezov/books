@@ -1,3 +1,4 @@
+import { CHAPTER_NUMBERS_LIMIT } from '../../shared/chapters/chapter-numbers';
 import {
   BadRequestException,
   ConflictException,
@@ -10,7 +11,6 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import {
   BookAnalysisService,
-  CHAPTER_NUMBERS_LIMIT,
   CLAIM_CLOSURES_BATCH,
   CLAIM_CLOSURES_MAX_BATCHES,
 } from './book-analysis.service';

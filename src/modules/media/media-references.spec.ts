@@ -28,6 +28,8 @@ const NOT_MEDIA_REFERENCES: Record<string, string> = {
   'MediaAsset.key': 'собственный ключ ассета, а не ссылка на него',
   'Category.key': 'идентификатор записи, не адрес',
   'Tag.key': 'идентификатор записи, не адрес',
+  'BookWorldEntity.key':
+    'ключ сущности мира книги, ^[a-z0-9-]{1,60}$ (BOOK_WORLD_KEY_REGEX в DTO и сервисе), не адрес (F08-1)',
   'LlmTask.pairKey':
     'ключ пары исполнителя LLM («операция:язык», у досье «операция:строка»), пишет сервер (F05-1w, F05-2)',
   'Page.systemKey': 'идентификатор системной страницы, не адрес',
@@ -97,6 +99,12 @@ const NOT_MEDIA_JSON_REFERENCES: Record<string, string> = {
   'BookVersion.rightsContentHashInput':
     'снимок для правового хеша, пишет сервер (rights-content-hash.service.ts); источники проверяются своими колонками',
   'RightsActionEvent.payload': 'журнал событий, пишет сервер',
+  'BookWorldEntity.aliases':
+    'формы имени для поиска упоминаний (F08-2): строки до 300 знаков, страница их не выводит ни ссылкой, ни картинкой',
+  'BookWorldEntity.aliasExclusions':
+    'формы имени, давшие ложные упоминания; пишет сервер подсчёта (F08-2), в DTO поля нет',
+  'BookWorldEntity.mentions':
+    'посчитанное присутствие по главам (номера глав), пишет сервер подсчёта (F08-2), в DTO поля нет',
   'LlmStageSetting.fallbacks': 'список идентификаторов моделей OpenRouter, не медиа (F05-1)',
   'LlmOperation.settingsSnapshot': 'снимок настроек этапов и цен моделей, пишет сервер (F05-1)',
   'LlmTask.payload': 'параметры задачи исполнителя LLM без текста книги, пишет сервер (F05-1w)',

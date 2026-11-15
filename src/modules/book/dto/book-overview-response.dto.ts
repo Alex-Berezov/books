@@ -5,7 +5,7 @@ import {
   BookVersionSymbolDto,
 } from '../../../shared/dto/book-version-json.dto';
 import { FaqItemDto } from '../../../shared/dto/faq-item.dto';
-import { Language } from '@prisma/client';
+import { Language, WorldEntityType } from '@prisma/client';
 import { PublicBookVersionDto } from './book-detail-response.dto';
 import {
   BookCategoryWithTranslationsDto,
@@ -26,6 +26,21 @@ import {
 export class BookOverviewTranslatorDto {
   @ApiProperty({ type: String, example: 'Constance Garnett' })
   name!: string;
+}
+
+/** Public world entity of the version (F08-1): enough for navigation, sitemap and links. */
+export class BookOverviewWorldKeyDto {
+  @ApiProperty({ type: String, example: 'oblomov' })
+  key!: string;
+
+  @ApiProperty({ enum: WorldEntityType, enumName: 'WorldEntityType' })
+  type!: WorldEntityType;
+
+  @ApiProperty({ type: String, example: 'Ilya Ilyich Oblomov' })
+  name!: string;
+
+  @ApiProperty({ type: Boolean, description: 'false — noindex, out of sitemap and hreflang' })
+  isIndexable!: boolean;
 }
 
 /**
@@ -128,6 +143,13 @@ export class BookOverviewVersionDto extends PublicBookVersionDto {
 
   @ApiProperty({ type: BookVersionContentCountDto })
   _count!: BookVersionContentCountDto;
+
+  @ApiProperty({
+    type: [BookOverviewWorldKeyDto],
+    description:
+      'Public world entities of the version (same rule as `_count.worldEntities`), by key',
+  })
+  worldKeys!: BookOverviewWorldKeyDto[];
 
   @ApiProperty({ type: String, description: 'Compatibility alias of `coverImageUrl`' })
   coverUrl!: string;

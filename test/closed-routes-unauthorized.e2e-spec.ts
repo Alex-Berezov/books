@@ -80,6 +80,8 @@ const PUBLIC_ROUTES: ReadonlyArray<readonly [HttpVerb, string]> = [
   ['get', '/versions/:bookVersionId/summary'],
   ['get', '/versions/:bookVersionId/summary-sections'],
   ['get', '/versions/:bookVersionId/summary-sections/:number'],
+  ['get', '/versions/:bookVersionId/world'],
+  ['get', '/versions/:bookVersionId/world/:key'],
   ['get', '/versions/:id'],
   ['get', '/versions/:id/preview'],
   ['get', '/views/aggregate'],

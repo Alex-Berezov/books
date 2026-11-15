@@ -116,6 +116,9 @@ interface PrismaStub {
   translationRunLanguage: {
     findMany: jest.Mock;
   };
+  // F08-1: публикация ставит `firstPublishedAt` сущностям мира книги сырым `UPDATE` той же
+  // транзакцией (`stampWorldFirstPublished`).
+  $executeRaw: jest.Mock;
   $queryRaw: jest.Mock;
   $transaction: <T>(fn: (tx: PrismaStub) => Promise<T> | T) => Promise<T>;
 }
@@ -189,6 +192,7 @@ const createPrismaStub = (): PrismaStub => {
     translationRunLanguage: {
       findMany: jest.fn().mockResolvedValue([]),
     },
+    $executeRaw: jest.fn().mockResolvedValue(0),
     // Снимок под замком: `unpublish` читает его внутри транзакции сырым запросом.
     // Стенд отдаёт одну строку — иначе метод сочтёт версию удалённой.
     $queryRaw: jest.fn().mockImplementation((parts: readonly string[]) =>
@@ -1641,6 +1645,15 @@ describe('BookVersionService', () => {
     expect(finalizeBaselineOnPublish).toHaveBeenCalledWith('v1', null, prisma);
   });
 
+  // F08-1 (R2): гейт отказал — версия не опубликована, и `firstPublishedAt` мира книги не ставится.
+  it('publish не ставит firstPublishedAt миру книги, когда гейт отказал', async () => {
+    (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
+    gateService.assertVersionCanPublish.mockRejectedValue(new BadRequestException('blocked'));
+
+    await expect(service.publish('v1', 'admin-7')).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
+  });
+
   it('publish does not fix the baseline when the gate blocks', async () => {
     (prisma.bookVersion.findUnique as jest.Mock).mockResolvedValue({ id: 'v1' });
     gateService.assertVersionCanPublish.mockRejectedValue(new BadRequestException('blocked'));
@@ -1702,6 +1715,7 @@ describe('BookVersionService', () => {
       ]);
       const txClient = {
         bookVersion: { update: txUpdate, findUnique: noAutoText() },
+        $executeRaw: jest.fn().mockResolvedValue(0),
         $queryRaw: txQueryRaw,
       };
       let transactionOptions: unknown;
@@ -1788,6 +1802,7 @@ describe('BookVersionService', () => {
         Promise.resolve(
           fn({
             bookVersion: { update: txUpdate, findUnique: noAutoText() },
+            $executeRaw: jest.fn().mockResolvedValue(0),
             $queryRaw: txQueryRaw,
           }),
         ),
@@ -1871,6 +1886,7 @@ describe('BookVersionService', () => {
         Promise.resolve(
           fn({
             bookVersion: { update: txUpdate, findUnique: noAutoText() },
+            $executeRaw: jest.fn().mockResolvedValue(0),
             $queryRaw: txQueryRaw,
           }),
         ),
@@ -1913,6 +1929,7 @@ describe('BookVersionService', () => {
         Promise.resolve(
           fn({
             bookVersion: { update: txUpdate, findUnique: noAutoText() },
+            $executeRaw: jest.fn().mockResolvedValue(0),
             $queryRaw: txQueryRaw,
           }),
         ),
@@ -1936,6 +1953,7 @@ describe('BookVersionService', () => {
         Promise.resolve(
           fn({
             bookVersion: { update: txUpdate, findUnique: noAutoText() },
+            $executeRaw: jest.fn().mockResolvedValue(0),
             $queryRaw: jest.fn().mockResolvedValue([]),
           }),
         ),
@@ -2088,8 +2106,10 @@ describe('BookVersionService', () => {
         rightsLicenseUncoveredCountryCodes: null,
       },
     ]);
+    const txExecuteRaw = jest.fn().mockResolvedValue(0);
     const txClient = {
       bookVersion: { update: txUpdate, findUnique: noAutoText() },
+      $executeRaw: txExecuteRaw,
       $queryRaw: txQueryRaw,
     };
     let transactionOptions: unknown;
@@ -2130,6 +2150,17 @@ describe('BookVersionService', () => {
     // Запись идёт клиентом транзакции, а не корневым `this.prisma`.
     expect(prisma.adminAuditEvent.create).not.toHaveBeenCalled();
     expect(prisma.bookVersion.update).not.toHaveBeenCalled();
+
+    // F08-1 (решение арбитра `F08 | F08-1` R2): `firstPublishedAt` сущностям мира книги — сырым
+    // `UPDATE` клиентом транзакции (без сдвига `updatedAt`), только публичным и ещё без отметки.
+    expect(txExecuteRaw).toHaveBeenCalledTimes(1);
+    const [stampSql, ...stampValues] = txExecuteRaw.mock.calls[0] as [string[], ...unknown[]];
+    const stampText = stampSql.join('?');
+    expect(stampText).toContain('UPDATE "BookWorldEntity" SET "firstPublishedAt"');
+    expect(stampText).toContain('"firstPublishedAt" IS NULL');
+    expect(stampText).not.toContain('updatedAt');
+    expect(stampValues).toContain('v1');
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 
   /**
@@ -2167,6 +2198,7 @@ describe('BookVersionService', () => {
     ]);
     const txClient = {
       bookVersion: { update: txUpdate, findUnique: noAutoText() },
+      $executeRaw: jest.fn().mockResolvedValue(0),
       $queryRaw: txQueryRaw,
     };
     jest
@@ -2228,6 +2260,7 @@ describe('BookVersionService', () => {
     ]);
     const txClient = {
       bookVersion: { update: txUpdate, findUnique: noAutoText() },
+      $executeRaw: jest.fn().mockResolvedValue(0),
       $queryRaw: txQueryRaw,
     };
     jest
