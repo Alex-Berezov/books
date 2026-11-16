@@ -42,6 +42,45 @@ export class BookWorldEditorDto {
     description: 'Core parts still missing (world-core.ts), e.g. "quotes", "mentions"',
   })
   missing!: string[];
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description: 'Chapters the entity is found in (F08-2); null — not counted yet',
+  })
+  mentionChapters!: number | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    nullable: true,
+    description: 'Entity page only: name forms excluded from mention search (F08-2)',
+  })
+  aliasExclusions?: string[] | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Entity page only: items that no longer match the text of the version on the last recount, ' +
+      'e.g. "quotes.2" (not verbatim or no such chapter), "scenes.0", "arc.stages.1" (no such chapter); ' +
+      'not counted in the core and not shown to readers',
+  })
+  stale?: string[];
+
+  @ApiPropertyOptional({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    description:
+      'Entity page only: when the counted mentions last changed; not a freshness mark — a recount that changes nothing does not move it (use recountPending)',
+  })
+  mentionsAt?: Date | null;
+
+  @ApiPropertyOptional({
+    type: Boolean,
+    description:
+      'Entity page only: a presence recount is queued for the version and has not run yet (F08-2)',
+  })
+  recountPending?: boolean;
 }
 
 export class BookWorldEntitySummaryDto {
@@ -87,9 +126,25 @@ export class BookWorldListResponseDto {
   entities!: BookWorldEntitySummaryDto[];
 }
 
+export class BookWorldChapterCountDto {
+  @ApiProperty({ type: Number })
+  chapter!: number;
+
+  @ApiProperty({ type: Number, description: 'Mentions of any name form in the chapter' })
+  count!: number;
+}
+
+export class BookWorldCoPresenceDto {
+  @ApiProperty({ type: String, description: 'Key of the other character' })
+  key!: string;
+
+  @ApiProperty({ type: [Number], description: 'Chapters where both are found, ascending' })
+  chapters!: number[];
+}
+
 /**
- * Посчитанное присутствие по главам (`F08-2`); в F08-1 только читается. Наружу — только эти поля
- * (белый список `readMentions`): счёт по главам и совместное присутствие добавит пачка подсчёта.
+ * Посчитанное присутствие по главам (`F08-2`, `world-mentions.ts`). Наружу — только эти поля
+ * (белый список `readMentions`): номера абзацев и несошедшиеся пункты хранятся, но не отдаются.
  */
 export class BookWorldMentionsDto {
   @ApiProperty({ type: [Number], description: 'Chapters the entity is found in, ascending' })
@@ -97,6 +152,19 @@ export class BookWorldMentionsDto {
 
   @ApiProperty({ type: Number, nullable: true, description: 'First chapter it is found in' })
   first!: number | null;
+
+  @ApiProperty({
+    type: () => [BookWorldChapterCountDto],
+    description: 'Mentions per chapter, ascending by chapter',
+  })
+  perChapter!: BookWorldChapterCountDto[];
+
+  @ApiProperty({
+    type: () => [BookWorldCoPresenceDto],
+    description:
+      'Characters only: other characters found in the same chapters; readers see public neighbours only',
+  })
+  coPresence!: BookWorldCoPresenceDto[];
 }
 
 export class BookWorldEntityDto extends BookWorldEntitySummaryDto {
@@ -221,4 +289,11 @@ export class BookWorldEntitySaveResponseDto {
 
   @ApiProperty({ type: [BookWorldWarningDto] })
   warnings!: BookWorldWarningDto[];
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'The save queued a presence recount (a new entity, or its search forms — name, name forms and exclusions together — or type changed); false on dryRun',
+  })
+  recountQueued!: boolean;
 }

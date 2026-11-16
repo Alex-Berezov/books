@@ -1,10 +1,5 @@
 import type { StoredWorldEntity } from './book-world-data';
-import {
-  checkWorldRefs,
-  collectWorldChapterRefs,
-  duplicateWorldKeys,
-  worldEntityRefs,
-} from './world-refs';
+import { checkWorldRefs, duplicateWorldKeys, worldEntityRefs } from './world-refs';
 
 /** F08-1: ссылки на слитой сущности (`tech.md` §3, решение арбитра `F08 | F08-1` R7). */
 const entity = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
@@ -109,21 +104,6 @@ describe('duplicateWorldKeys (F08-1)', () => {
   it('дубль ключа в теле — путь второго', () => {
     expect(duplicateWorldKeys([{ key: 'a' }, { key: 'b' }, { key: 'a' }])).toEqual([
       { path: 'entities.2.key', message: 'duplicate key "a"' },
-    ]);
-  });
-});
-
-describe('collectWorldChapterRefs (F08-1, R4)', () => {
-  it('главы этапов, сцен и цитат с путями', () => {
-    const e = entity({
-      arc: { from: 'a', to: 'b', stages: [{ title: 't', text: 'x', chapter: 4 }] },
-      scenes: [{ chapter: 2, title: 't', text: 's' }],
-      quotes: [quote()],
-    });
-    expect(collectWorldChapterRefs(e)).toEqual([
-      { path: 'arc.stages.0.chapter', chapter: 4 },
-      { path: 'scenes.0.chapter', chapter: 2 },
-      { path: 'quotes.0.chapter', chapter: 1 },
     ]);
   });
 });

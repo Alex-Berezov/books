@@ -24,6 +24,8 @@ interface PrismaStub {
     delete: (args: Prisma.ChapterDeleteArgs) => Promise<Chapter>;
   };
   $transaction: (arg: unknown) => Promise<unknown>;
+  /** Очередь пересчёта мира книги (F08-2, `markWorldMentionsDirty`). */
+  $executeRaw: jest.Mock;
 }
 
 const createPrismaStub = (): PrismaStub => {
@@ -40,6 +42,7 @@ const createPrismaStub = (): PrismaStub => {
       update: jest.fn(),
       delete: jest.fn(),
     },
+    $executeRaw: jest.fn().mockResolvedValue(1),
     // Массив — пакетная форма (`$transaction([...])`), функция — интерактивная.
     $transaction: (arg: unknown) =>
       Array.isArray(arg)
@@ -48,6 +51,12 @@ const createPrismaStub = (): PrismaStub => {
   };
   return stub;
 };
+
+/** Версии, поставленные в очередь пересчёта мира книги (`markWorldMentionsDirty`) этим клиентом. */
+const worldQueueVersions = (executeRaw: jest.Mock): unknown[] =>
+  executeRaw.mock.calls
+    .filter(([strings]) => (strings as string[]).join('?').includes('"WorldMentionsPending"'))
+    .map(([, versionId]) => versionId as unknown);
 
 describe('ChapterService', () => {
   let service: ChapterService;
@@ -100,13 +109,116 @@ describe('ChapterService', () => {
     });
 
     /**
+     * F08-2: каждый путь записи главы ставит версию в очередь пересчёта мира книги **клиентом
+     * транзакции под замком**, а не корневым: запись мимо `tx` закоммитилась бы до главы и пережила
+     * бы её откат. Клиент транзакции — свой объект, корневой `$executeRaw` не должен звучать.
+     */
+    describe('очередь мира книги (F08-2) — через клиент транзакции', () => {
+      const lockedService = () => {
+        const tx = {
+          chapter: {
+            // Глава, перечитанная под замком: с ней сравнивается правка (очередь мира, R4).
+            findUnique: jest.fn().mockResolvedValue({ content: '<p>old</p>', number: 1 }),
+            update: jest.fn().mockResolvedValue({ id: 'c1' }),
+            delete: jest.fn().mockResolvedValue({ id: 'c1' }),
+            create: jest.fn().mockResolvedValue({ id: 'c2' }),
+          },
+          bookVersion: { findUnique: jest.fn().mockResolvedValue({ status: 'draft' }) },
+          $executeRaw: jest.fn().mockResolvedValue(1),
+          // Глава под замком (`lockChapter`): с её текстом сравнивается перезапись.
+          $queryRaw: jest.fn().mockResolvedValue([{ id: 'c1', content: '<p>old</p>', title: 'T' }]),
+        };
+        (prisma.chapter.findUnique as jest.Mock).mockResolvedValue({
+          id: 'c1',
+          bookVersionId: 'v1',
+          number: 1,
+        });
+        const locked = new ChapterService(
+          prisma as unknown as PrismaService,
+          mockRightsContentHashService,
+          { assertAccess: jest.fn() } as unknown as GeoBlockRuleService,
+          createClearanceLockFake(tx).service,
+          adminAudit as unknown as AdminAuditService,
+        );
+        return { tx, locked };
+      };
+
+      it('update', async () => {
+        const { tx, locked } = lockedService();
+        await locked.update('c1', { content: '<p>new</p>' });
+        expect(worldQueueVersions(tx.$executeRaw)).toEqual(['v1']);
+        expect(worldQueueVersions(prisma.$executeRaw)).toEqual([]);
+      });
+
+      it('update: только название или тот же текст — очереди нет; номер — есть (R4)', async () => {
+        const { tx, locked } = lockedService();
+        tx.chapter.findUnique.mockResolvedValue({ content: '<p>same</p>', number: 1 });
+        await locked.update('c1', { title: 'New title' });
+        await locked.update('c1', { content: '<p>same</p>' });
+        expect(worldQueueVersions(tx.$executeRaw)).toEqual([]);
+        await locked.update('c1', { number: 2 });
+        expect(worldQueueVersions(tx.$executeRaw)).toEqual(['v1']);
+      });
+
+      it('update: сравнение — с главой под замком, а не с чтением до него', async () => {
+        const { tx, locked } = lockedService();
+        // До замка прочитано «X» (как в dto), под замком — уже «Y» от соседа: текст меняется.
+        (prisma.chapter.findUnique as jest.Mock).mockResolvedValue({
+          id: 'c1',
+          bookVersionId: 'v1',
+          number: 1,
+          content: '<p>X</p>',
+        });
+        tx.chapter.findUnique.mockResolvedValue({ content: '<p>Y</p>', number: 1 });
+        await locked.update('c1', { content: '<p>X</p>' });
+        expect(worldQueueVersions(tx.$executeRaw)).toEqual(['v1']);
+      });
+
+      it('remove', async () => {
+        const { tx, locked } = lockedService();
+        await locked.remove('c1', null);
+        expect(worldQueueVersions(tx.$executeRaw)).toEqual(['v1']);
+        expect(worldQueueVersions(prisma.$executeRaw)).toEqual([]);
+      });
+
+      it('rewriteLocked: замена текста и новая глава перевода', async () => {
+        const { tx, locked } = lockedService();
+        await locked.rewriteLocked('v1', async (_tx, writer) => {
+          await writer.write({ id: 'c1', number: 1, title: 'T', content: '<p>x</p>' });
+          await writer.write({ number: 2, title: 'T2', content: '<p>y</p>' });
+        });
+        expect(worldQueueVersions(tx.$executeRaw)).toEqual(['v1', 'v1']);
+        expect(worldQueueVersions(prisma.$executeRaw)).toEqual([]);
+      });
+
+      it('rewriteLocked: перезапись тем же текстом очередь не ставит (R4, R3)', async () => {
+        const { tx, locked } = lockedService();
+        await locked.rewriteLocked('v1', async (_tx, writer) => {
+          await writer.lockChapter('c1');
+          await writer.write({ id: 'c1', number: 1, title: 'T', content: '<p>old</p>' });
+          await writer.write({ id: 'c1', number: 1, title: 'T', content: '<p>new</p>' });
+        });
+        expect(tx.chapter.update).toHaveBeenCalledTimes(2);
+        // Только вторая запись (другой текст) ставит очередь.
+        expect(worldQueueVersions(tx.$executeRaw)).toEqual(['v1']);
+      });
+
+      it('update: правка одного названия главу под замком не перечитывает', async () => {
+        const { tx, locked } = lockedService();
+        await locked.update('c1', { title: 'New title' });
+        expect(tx.chapter.findUnique).not.toHaveBeenCalled();
+        expect(worldQueueVersions(tx.$executeRaw)).toEqual([]);
+      });
+    });
+
+    /**
      * `F05-6`, 6b: общий путь ручной главы и главы запуска перевода - запись, пометка свежести
      * прав и колбэк вызывающего одной транзакцией под замком.
      */
     it('createLocked: staleness and the caller callback in the same locked transaction', async () => {
       // Клиент транзакции - свой объект, а не корневой клиент сервиса: запись мимо `tx`
       // (через `this.prisma`) спека отличает.
-      const tx = { chapter: { create: jest.fn() } };
+      const tx = { chapter: { create: jest.fn() }, $executeRaw: jest.fn().mockResolvedValue(1) };
       const lock = createClearanceLockFake(tx);
       const staleness = jest.fn();
       const locked = new ChapterService(
@@ -134,6 +246,8 @@ describe('ChapterService', () => {
       expect(staleness).toHaveBeenCalledWith('v1', 'CHAPTER_CREATED', null, true, tx);
       expect(afterCreate).toHaveBeenCalledTimes(1);
       expect(afterCreate).toHaveBeenCalledWith(tx, { id: 'c1' });
+      // Мир книги (F08-2): версия встаёт в очередь пересчёта в той же транзакции.
+      expect(worldQueueVersions(tx.$executeRaw)).toEqual(['v1']);
     });
 
     it('update', async () => {

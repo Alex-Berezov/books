@@ -1,6 +1,7 @@
 import { isFilled } from '../book-analysis/book-analysis-core';
 import { isRecord } from '../../shared/prisma/json-record.util';
 import type { StoredWorldEntity } from './book-world-data';
+import { worldItemKey } from './world-quote-check';
 
 /**
  * Ядро героя (`books-app-docs/features/F08-book-wiki/product.md` §3, `tech.md` §3): «Коротко»,
@@ -19,7 +20,7 @@ export interface WorldCoreResult {
 }
 
 type CoreInput = Pick<StoredWorldEntity, 'short' | 'character' | 'arc' | 'quotes' | 'scenes'> & {
-  /** Колонка `mentions` как есть (`{ chapters: number[] }`, пишет подсчёт `F08-2`). */
+  /** Колонка `mentions` как есть (`WorldMentions` подсчёта `F08-2`, `world-mentions.ts`). */
   mentions: unknown;
 };
 
@@ -31,12 +32,24 @@ export function mentionChapters(mentions: unknown): number[] {
   return mentions.chapters.filter((n): n is number => typeof n === 'number');
 }
 
+/**
+ * Пункты, не сошедшиеся с текстом версии на последнем пересчёте (`mentions.stale`, решение арбитра
+ * `F08 | F08-2` Q2): цитата не стоит дословно в своей главе или главы нет, сцена или этап пути —
+ * главы нет. Хранятся ключами по содержанию (`worldItemKey`, S1). В ядро не идут, читателю не
+ * отдаются.
+ */
+export function mentionStale(mentions: unknown): Set<string> {
+  if (!isRecord(mentions) || !Array.isArray(mentions.stale)) return new Set();
+  return new Set(mentions.stale.filter((p): p is string => typeof p === 'string'));
+}
+
 export function computeWorldCore(entity: CoreInput): WorldCoreResult {
+  const stale = mentionStale(entity.mentions);
   const quotes = (entity.quotes ?? []).filter(
-    (q) => isFilled(q.text) && hasChapter(q.chapter),
+    (q) => isFilled(q.text) && hasChapter(q.chapter) && !stale.has(worldItemKey('quotes', q)),
   ).length;
   const scenes = (entity.scenes ?? []).filter(
-    (s) => isFilled(s.text) && hasChapter(s.chapter),
+    (s) => isFilled(s.text) && hasChapter(s.chapter) && !stale.has(worldItemKey('scenes', s)),
   ).length;
   const chapters = mentionChapters(entity.mentions).length;
 

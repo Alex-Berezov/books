@@ -80,6 +80,8 @@ model BookVersion {
   analyses        BookAnalysis[]
   /// Мир книги (F08): сущности версии; списком — ради `_count.worldEntities` и `worldKeys` обзора.
   worldEntities   BookWorldEntity[]
+  /// Очередь пересчёта присутствия мира книги (F08-2): строка есть — главы или формы менялись.
+  worldMentionsPending WorldMentionsPending?
   /// Разделы пересказа (F04): плоский список с номерами подряд с 1, номера ставит сервис.
   summarySections BookSummarySection[]
   llmOperations   LlmOperation[]
@@ -333,6 +335,8 @@ model BookWorldEntity {
   /// Посчитанное присутствие по главам (`F08-2`): `{ chapters: number[], ... }`.
   mentions         Json?
   mentionsAt       DateTime?
+  /// Число глав присутствия (`mentions.chapters`, F08-2) — колонкой: список редактора без Json.
+  mentionChapters  Int?
   /// Ядро заполнено (`world-core.ts`), пересчитывается каждой записью.
   hasCore          Boolean         @default(false)
   /// Чего не хватает до ядра (`computeWorldCore().missing`), пишется вместе с `hasCore`.
@@ -353,6 +357,23 @@ model BookWorldEntity {
   @@unique([bookVersionId, key])
   @@index([bookVersionId, type])
   @@index([bookVersionId, isListed])
+}
+
+/// Очередь пересчёта присутствия мира книги (F08-2, решение арбитра `F08 | F08-2` Q1): строка на версию,
+/// ставится в транзакции правки главы и записи сущности (`markWorldMentionsDirty`), снимается
+/// планировщиком `WorldMentionsSchedulerService` только при том же `generation`, что он взял.
+model WorldMentionsPending {
+  bookVersionId String      @id
+  dirtyAt       DateTime
+  /// Номер постановки из последовательности базы (монотонный и после снятия строки, решение арбитра
+  /// `F08 | F08-2` круга 3): снимается строка только с тем `generation`, что взял пересчёт.
+  generation    Int         @default(autoincrement())
+  /// Неудачных пересчётов подряд (решение арбитра `F08 | F08-2` R3): пауза до следующей попытки
+  /// растёт; новая постановка сбрасывает в 0.
+  attempts      Int         @default(0)
+  bookVersion   BookVersion @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  @@index([dirtyAt])
 }
 
 model Chapter {

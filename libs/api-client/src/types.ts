@@ -7648,7 +7648,20 @@ export interface components {
       text: string;
       title: string;
     };
+    BookWorldChapterCountDto: {
+      chapter: number;
+      /** @description Mentions of any name form in the chapter */
+      count: number;
+    };
+    BookWorldCoPresenceDto: {
+      /** @description Chapters where both are found, ascending */
+      chapters: number[];
+      /** @description Key of the other character */
+      key: string;
+    };
     BookWorldEditorDto: {
+      /** @description Entity page only: name forms excluded from mention search (F08-2) */
+      aliasExclusions?: string[] | null;
       /** Format: date-time */
       autoTextAt: string | null;
       /**
@@ -7657,10 +7670,21 @@ export interface components {
        */
       firstPublishedAt: string | null;
       isVisible: boolean;
+      /** @description Chapters the entity is found in (F08-2); null — not counted yet */
+      mentionChapters: number | null;
+      /**
+       * Format: date-time
+       * @description Entity page only: when the counted mentions last changed; not a freshness mark — a recount that changes nothing does not move it (use recountPending)
+       */
+      mentionsAt?: string | null;
       /** @description Core parts still missing (world-core.ts), e.g. "quotes", "mentions" */
       missing: string[];
       /** Format: date-time */
       readAt: string | null;
+      /** @description Entity page only: a presence recount is queued for the version and has not run yet (F08-2) */
+      recountPending?: boolean;
+      /** @description Entity page only: items that no longer match the text of the version on the last recount, e.g. "quotes.2" (not verbatim or no such chapter), "scenes.0", "arc.stages.1" (no such chapter); not counted in the core and not shown to readers */
+      stale?: string[];
     };
     BookWorldEntityDto: {
       adaptations: components['schemas']['BookWorldAdaptationDto'][] | null;
@@ -7695,6 +7719,8 @@ export interface components {
     };
     BookWorldEntityInputDto: {
       adaptations?: components['schemas']['BookWorldAdaptationDto'][] | null;
+      /** @description Name forms excluded from mention search: false matches with ordinary words (F08-2) */
+      aliasExclusions?: string[] | null;
       /** @description Name forms for mention search (F08-2) */
       aliases?: string[] | null;
       appearance?: string | null;
@@ -7735,6 +7761,8 @@ export interface components {
       entity: components['schemas']['BookWorldEntityDto'] | null;
       /** @description Core of the merged entity */
       hasCore: boolean;
+      /** @description The save queued a presence recount (a new entity, or its search forms — name, name forms and exclusions together — or type changed); false on dryRun */
+      recountQueued: boolean;
       warnings: components['schemas']['BookWorldWarningDto'][];
     };
     BookWorldEntitySummaryDto: {
@@ -7764,8 +7792,12 @@ export interface components {
     BookWorldMentionsDto: {
       /** @description Chapters the entity is found in, ascending */
       chapters: number[];
+      /** @description Characters only: other characters found in the same chapters; readers see public neighbours only */
+      coPresence: components['schemas']['BookWorldCoPresenceDto'][];
       /** @description First chapter it is found in */
       first: number | null;
+      /** @description Mentions per chapter, ascending by chapter */
+      perChapter: components['schemas']['BookWorldChapterCountDto'][];
     };
     BookWorldProfileDto: {
       position?: string | null;
@@ -15467,6 +15499,8 @@ export interface components {
     };
     UpdateBookWorldEntityDto: {
       adaptations?: components['schemas']['BookWorldAdaptationDto'][] | null;
+      /** @description Name forms excluded from mention search: false matches with ordinary words (F08-2) */
+      aliasExclusions?: string[] | null;
       /** @description Name forms for mention search (F08-2) */
       aliases?: string[] | null;
       appearance?: string | null;

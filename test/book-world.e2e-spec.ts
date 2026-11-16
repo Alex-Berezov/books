@@ -9,6 +9,11 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import { computeWorldListed } from '../src/modules/book-world/world-public';
+import {
+  WorldMentionsService,
+  type WorldRecountOutcome,
+} from '../src/modules/book-world/world-mentions.service';
+import { WorldMentionsSchedulerService } from '../src/modules/book-world/world-mentions-scheduler.service';
 import { BOOK_WORLD_LIMITS } from '../src/modules/book-world/dto/book-world-blocks.dto';
 import { createBookFixture } from './helpers/book-fixture';
 import { createBookWithRights } from './helpers/book-with-rights';
@@ -28,6 +33,7 @@ describe('BookWorld e2e', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let rightsContentHash: RightsContentHashService;
+  let worldMentions: WorldMentionsService;
   let userAccess: string;
   let adminAccess: string;
   let managerAccess: string;
@@ -144,12 +150,30 @@ describe('BookWorld e2e', () => {
     }
   };
 
-  /** Присутствие пишет подсчёт `F08-2`; здесь — подготовка данных, затем запись пересчитывает ядро. */
-  const setMentions = (versionId: string, key: string, chapters: number[]) =>
-    prisma.bookWorldEntity.update({
-      where: { bookVersionId_key: { bookVersionId: versionId, key } },
-      data: { mentions: { chapters, first: chapters[0] ?? null } },
+  /**
+   * Присутствие — настоящим подсчётом `F08-2`: имя сущности дописывается отдельным абзацем в главы
+   * `chapters` версии (цитаты `TEXT` остаются дословными), затем пересчёт версии. Фоновый
+   * планировщик посчитал бы то же самое — подготовка не расходится с ним.
+   */
+  const presence = new Map<string, Map<string, { name: string; chapters: number[] }>>();
+  const setMentions = async (versionId: string, key: string, chapters: number[]) => {
+    const byKey =
+      presence.get(versionId) ?? new Map<string, { name: string; chapters: number[] }>();
+    byKey.set(key, { name: (await row(versionId, key)).name, chapters });
+    presence.set(versionId, byKey);
+    for (const [number, paragraphs] of Object.entries(TEXT)) {
+      const names = [...byKey.values()]
+        .filter((e) => e.chapters.includes(Number(number)))
+        .map((e) => e.name);
+      await prisma.chapter.update({
+        where: { bookVersionId_number: { bookVersionId: versionId, number: Number(number) } },
+        data: { content: [...paragraphs, ...names].map((p) => `<p>${p}</p>`).join('') },
+      });
+    }
+    await expect(worldMentions.recountVersion(versionId)).resolves.toMatchObject({
+      status: 'done',
     });
+  };
 
   /** «Прочитано» последнего текста импорта (R9: импорт — текст модели, без отметки не на сайте). */
   const readLatest = async (versionId: string, key: string) => {
@@ -181,6 +205,10 @@ describe('BookWorld e2e', () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
     prisma = moduleRef.get(PrismaService);
     rightsContentHash = moduleRef.get(RightsContentHashService);
+    worldMentions = moduleRef.get(WorldMentionsService);
+    // Пересчёт в спеке зовётся руками: фоновый такт планировщика не должен забирать строки
+    // очереди между подготовкой теста и его вызовом.
+    await moduleRef.get(WorldMentionsSchedulerService).onModuleDestroy();
     app = moduleRef.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
@@ -199,7 +227,7 @@ describe('BookWorld e2e', () => {
     await app.close();
   });
 
-  it('эталоны ru/en сохраняются: 200, ядра нет только из-за присутствия (F08-2)', async () => {
+  it('эталоны ru/en сохраняются: 200; ядро по присутствию — после пересчёта очереди (F08-2, R2)', async () => {
     const book = await createBookFixture(prisma, `book-world-ref-${unique()}`);
     for (const language of [Language.ru, Language.en]) {
       const body = JSON.parse(
@@ -232,12 +260,22 @@ describe('BookWorld e2e', () => {
         status: 200,
         body: null,
       });
+      // F08-2 (R2): запись присутствие не считает — у новых сущностей ядра нет только из-за него.
       for (const [i, e] of (res.body.entities as Body[]).entries()) {
         expect(e).toMatchObject({ created: true, hasCore: false });
         expect(e.warnings).toEqual([
           { code: 'core_incomplete', path: `entities.${i}.mentions`, message: MENTIONS_MISSING },
         ]);
       }
+      // Пересчёт по тексту глав — это строки цитат эталона. Имя Сони стоит в её цитате
+      // («Сонечка», «Sonia»): ядро полное. Имени Раскольникова в его цитатах нет.
+      await drain(version.id);
+      const sonya = await row(version.id, 'sonya');
+      expect(sonya.hasCore).toBe(true);
+      expect((sonya.mentions as { chapters: number[] }).chapters).toContain(4);
+      const raskolnikov = await row(version.id, 'raskolnikov');
+      expect(raskolnikov.hasCore).toBe(false);
+      expect(raskolnikov.coreMissing).toEqual(['mentions']);
       await expectListedConsistent(version.id);
     }
   });
@@ -462,7 +500,16 @@ describe('BookWorld e2e', () => {
       ].sort(),
     );
     expect(res.body.entity.hasCore).toBe(true);
-    expect(res.body.entity.mentions).toEqual({ chapters: [1, 2, 3], first: 1 });
+    expect(res.body.entity.mentions).toEqual({
+      chapters: [1, 2, 3],
+      first: 1,
+      perChapter: [
+        { chapter: 1, count: 1 },
+        { chapter: 2, count: 1 },
+        { chapter: 3, count: 1 },
+      ],
+      coPresence: [],
+    });
     const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
     expect(list.body.entities).toHaveLength(1);
     expect(list.body.entities[0].editor).toBeUndefined();
@@ -609,9 +656,10 @@ describe('BookWorld e2e', () => {
     expect(none.body.code).toBe('AUTO_TEXT_NONE');
 
     const autoTextAt = new Date('2026-11-14T10:00:00.000Z');
+    await setMentions(versionId, 'oblomov', [1]);
     await prisma.bookWorldEntity.update({
       where: { bookVersionId_key: { bookVersionId: versionId, key: 'oblomov' } },
-      data: { autoTextAt, mentions: { chapters: [1] } },
+      data: { autoTextAt },
     });
     // Запись без изменений пересчитала ядро, `autoTextAt` не тронут: ядро полное, текст не прочитан.
     await put(versionId, {
@@ -744,10 +792,19 @@ describe('BookWorld e2e', () => {
       .get(`/versions/${versionId}/world`)
       .set('Authorization', `Bearer ${adminAccess}`)
       .expect(200);
+    // F08-2: в строке списка редактору — число глав присутствия (колонка), без Json `mentions`.
     expect(Object.keys(editor.body.entities[0].editor).sort()).toEqual(
-      ['isVisible', 'readAt', 'autoTextAt', 'firstPublishedAt', 'missing'].sort(),
+      [
+        'isVisible',
+        'readAt',
+        'autoTextAt',
+        'firstPublishedAt',
+        'missing',
+        'mentionChapters',
+      ].sort(),
     );
     expect(editor.body.entities[0].editor.missing).toEqual([]);
+    expect(editor.body.entities[0].editor.mentionChapters).toBe(3);
   });
 
   it('роли записи: без токена 401, user 403, content_manager 200', async () => {
@@ -901,6 +958,492 @@ describe('BookWorld e2e', () => {
       `?expectedUpdatedAt=${seen.toISOString()}`,
     ).expect(200);
     expect((await row(versionId, 'oblomov')).short).toBe('From the second tab.');
+  });
+
+  // ---- F08-2: формы имени и присутствие по главам (`batches.md` F08-2 «Посадка»; Q1–Q4) ----
+
+  const chapterId = async (versionId: string, number: number) =>
+    (
+      await prisma.chapter.findUniqueOrThrow({
+        where: { bookVersionId_number: { bookVersionId: versionId, number } },
+        select: { id: true },
+      })
+    ).id;
+  const pending = (versionId: string) =>
+    prisma.worldMentionsPending.findUnique({ where: { bookVersionId: versionId } });
+  /** Очередь общая на набор: проходы, пока строка версии не снята (проход берёт старшие пять). */
+  const drain = async (versionId: string) => {
+    for (let i = 0; i < 100 && (await pending(versionId)); i++) {
+      await worldMentions.recountPending(0);
+    }
+  };
+
+  it('F08-2: запись ставит версию в очередь; присутствие по формам имени считает пересчёт (R2)', async () => {
+    const { versionId } = await createVersion();
+    const res = await put(versionId, {
+      language: 'en',
+      entities: [hero('olga', { name: 'Olga', aliases: ['Olga Ilyinskaya'] })],
+    }).expect(200);
+    expect(res.body.entities[0].hasCore).toBe(false);
+    expect((await row(versionId, 'olga')).mentions).toBeNull();
+    expect(await pending(versionId)).not.toBeNull();
+    await drain(versionId);
+    const saved = await row(versionId, 'olga');
+    expect(saved.mentions).toMatchObject({ chapters: [2], first: 2, perChapter: { '2': 1 } });
+    expect(saved.mentionsAt).toBeInstanceOf(Date);
+    expect(saved.mentionChapters).toBe(1);
+    expect(saved.hasCore).toBe(true);
+  });
+
+  it('F08-2: правка во время пересчёта не теряется — generation растёт, строка остаётся (R1)', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, { language: 'en', entities: [hero('olga', { name: 'Olga' })] }).expect(
+      200,
+    );
+    const before = (await pending(versionId))!;
+    const real = worldMentions.recountVersion.bind(worldMentions);
+    const spy = jest.spyOn(worldMentions, 'recountVersion').mockImplementationOnce(async (id) => {
+      const outcome: WorldRecountOutcome = await real(id);
+      // Правка главы, закоммиченная между подсчётом и снятием строки.
+      await request(http())
+        .patch(`/chapters/${await chapterId(versionId, 1)}`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .send({ content: '<p>Olga came back.</p>' })
+        .expect(200);
+      return outcome;
+    });
+    try {
+      await worldMentions.recountPending(0);
+    } finally {
+      spy.mockRestore();
+    }
+    const after = await pending(versionId);
+    expect(after).not.toBeNull();
+    // Номер постановки — из последовательности базы: только растёт.
+    expect(after!.generation).toBeGreaterThan(before.generation);
+    await drain(versionId);
+    expect((await row(versionId, 'olga')).mentions).toMatchObject({ chapters: [1, 2] });
+  });
+
+  it('F08-2: неудачный пересчёт откладывается нарастающей паузой; новая правка сбрасывает её (R3)', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, { language: 'en', entities: [hero('olga', { name: 'Olga' })] }).expect(
+      200,
+    );
+    const spy = jest
+      .spyOn(worldMentions, 'recountVersion')
+      .mockRejectedValue(new Error('broken version'));
+    try {
+      for (const attempts of [1, 2]) {
+        await prisma.worldMentionsPending.update({
+          where: { bookVersionId: versionId },
+          data: { dirtyAt: new Date(Date.now() - 60_000) },
+        });
+        await worldMentions.recountPending(0);
+        const row = (await pending(versionId))!;
+        expect(row.attempts).toBe(attempts);
+        // 15 с · 2^(attempts-1) вперёд от часов базы.
+        const ahead = row.dirtyAt.getTime() - Date.now();
+        expect(ahead).toBeGreaterThan(15_000 * 2 ** (attempts - 1) - 5_000);
+        expect(ahead).toBeLessThan(15_000 * 2 ** (attempts - 1) + 5_000);
+      }
+      // Потолок паузы — час, и после многих попыток подряд степень не переполняется.
+      await prisma.worldMentionsPending.update({
+        where: { bookVersionId: versionId },
+        data: { dirtyAt: new Date(Date.now() - 60_000), attempts: 2000 },
+      });
+      await worldMentions.recountPending(0);
+      const capped = (await pending(versionId))!;
+      expect(capped.attempts).toBe(2001);
+      const ahead = capped.dirtyAt.getTime() - Date.now();
+      expect(ahead).toBeGreaterThan(3_600_000 - 5_000);
+      expect(ahead).toBeLessThan(3_600_000 + 5_000);
+    } finally {
+      spy.mockRestore();
+    }
+    await request(http())
+      .patch(`/chapters/${await chapterId(versionId, 1)}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ content: '<p>Olga again.</p>' })
+      .expect(200);
+    expect((await pending(versionId))!.attempts).toBe(0);
+  });
+
+  it('F08-2: проход берёт только осевшие строки: свежая и отложенная ждут (часы базы)', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, { language: 'en', entities: [hero('olga', { name: 'Olga' })] }).expect(
+      200,
+    );
+    // Строка только что поставлена: при осадке 10 с проход её не берёт.
+    await worldMentions.recountPending(10_000);
+    expect(await pending(versionId)).not.toBeNull();
+    expect((await row(versionId, 'olga')).mentions).toBeNull();
+    // Отложенная после сбоя (dirtyAt в будущем) не берётся и без осадки.
+    await prisma.worldMentionsPending.update({
+      where: { bookVersionId: versionId },
+      data: { dirtyAt: new Date(Date.now() + 60_000) },
+    });
+    await worldMentions.recountPending(0);
+    expect(await pending(versionId)).not.toBeNull();
+    // Осела — берётся.
+    await prisma.worldMentionsPending.update({
+      where: { bookVersionId: versionId },
+      data: { dirtyAt: new Date(Date.now() - 60_000) },
+    });
+    await drain(versionId);
+    expect(await pending(versionId)).toBeNull();
+    expect((await row(versionId, 'olga')).mentions).not.toBeNull();
+  });
+
+  it('F08-2: сдвиг во время подсчёта перепоставляет строку на осадку без роста попыток (R3a)', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, { language: 'en', entities: [hero('olga', { name: 'Olga' })] }).expect(
+      200,
+    );
+    await prisma.worldMentionsPending.update({
+      where: { bookVersionId: versionId },
+      data: { dirtyAt: new Date(Date.now() - 60_000), attempts: 3 },
+    });
+    const before = (await pending(versionId))!;
+    const spy = jest
+      .spyOn(worldMentions, 'recountVersion')
+      .mockResolvedValue({ status: 'retry' } satisfies WorldRecountOutcome);
+    try {
+      await worldMentions.recountPending(0);
+    } finally {
+      spy.mockRestore();
+    }
+    const after = (await pending(versionId))!;
+    expect(after.attempts).toBe(3);
+    expect(after.generation).toBe(before.generation);
+    // Осадка от часов базы «сейчас», а не пауза вперёд.
+    expect(Math.abs(after.dirtyAt.getTime() - Date.now())).toBeLessThan(5_000);
+  });
+
+  it('F08-2: миграция ставит в очередь версии, у которых сущности мира уже есть (R5)', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, { language: 'en', entities: [hero('olga', { name: 'Olga' })] }).expect(
+      200,
+    );
+    await prisma.worldMentionsPending.deleteMany({ where: { bookVersionId: versionId } });
+    const sql = readFileSync(
+      join(
+        __dirname,
+        '..',
+        'prisma',
+        'migrations',
+        '20261115120000_f08_world_mentions_pending',
+        'migration.sql',
+      ),
+      'utf8',
+    );
+    const insert = sql.slice(sql.indexOf('INSERT INTO "WorldMentionsPending"'));
+    expect(insert).toContain('ON CONFLICT');
+    await prisma.$executeRawUnsafe(insert.slice(0, insert.indexOf(';') + 1));
+    expect(await pending(versionId)).not.toBeNull();
+    // Повторный накат ничего не ломает.
+    await prisma.$executeRawUnsafe(insert.slice(0, insert.indexOf(';') + 1));
+  });
+
+  it('F08-2: исключение формы снимает ложное присутствие, autoTextAt не двигает (Q4)', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, {
+      language: 'en',
+      entities: [hero('letter', { name: 'Letter' })],
+    }).expect(200);
+    await drain(versionId);
+    const before = await row(versionId, 'letter');
+    expect(before.mentions).toMatchObject({ chapters: [2] });
+    await putEntity(versionId, 'letter', {
+      language: 'en',
+      type: 'character',
+      aliasExclusions: ['letter'],
+    }).expect(200);
+    await drain(versionId);
+    const after = await row(versionId, 'letter');
+    expect(after.mentions).toMatchObject({ chapters: [] });
+    expect(after.aliasExclusions).toEqual(['letter']);
+    expect(after.autoTextAt).toEqual(before.autoTextAt);
+    expect(after.coreMissing).toContain('mentions');
+
+    const editor = await request(http())
+      .get(`/versions/${versionId}/world/letter`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(editor.body.entity.editor.aliasExclusions).toEqual(['letter']);
+    expect(editor.body.entity.editor.stale).toEqual([]);
+  });
+
+  it('F08-2: правка главы ставит задачу; пересчёт обновляет mentions с прежним updatedAt, вкладка без 409', async () => {
+    const { versionId } = await createVersion();
+    await makeListed(versionId);
+    await prisma.worldMentionsPending.deleteMany({ where: { bookVersionId: versionId } });
+    const seen = await row(versionId, 'oblomov');
+
+    await request(http())
+      .patch(`/chapters/${await chapterId(versionId, 2)}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ content: `<p>The letter from the estate was still unread.</p>` })
+      .expect(200);
+    expect(await pending(versionId)).not.toBeNull();
+    await drain(versionId);
+    expect(await pending(versionId)).toBeNull();
+    const after = await row(versionId, 'oblomov');
+    expect(after.mentions).toMatchObject({ chapters: [1, 3], first: 1 });
+    expect(after.updatedAt).toEqual(seen.updatedAt);
+    expect(after.isListed).toBe(true);
+
+    await putEntity(
+      versionId,
+      'oblomov',
+      { language: 'en', type: 'character', short: 'After the recount.' },
+      `?expectedUpdatedAt=${seen.updatedAt.toISOString()}`,
+    ).expect(200);
+  });
+
+  it('F08-2: герой исчез из всех глав — ядро падает, страница уходит с сайта', async () => {
+    const { versionId } = await createVersion();
+    await makeListed(versionId);
+    await setMentions(versionId, 'oblomov', []);
+    const after = await row(versionId, 'oblomov');
+    expect(after.mentions).toMatchObject({ chapters: [], first: null });
+    expect(after.hasCore).toBe(false);
+    expect(after.coreMissing).toContain('mentions');
+    expect(after.isListed).toBe(false);
+    await request(http()).get(`/versions/${versionId}/world/oblomov`).expect(404);
+    await expectListedConsistent(versionId);
+  });
+
+  it('F08-2: удалённая глава — цитата и сцена в stale, ядро падает; редактор видит флаг (Q2)', async () => {
+    const { versionId } = await createVersion();
+    await makeListed(versionId);
+    await request(http())
+      .delete(`/chapters/${await chapterId(versionId, 3)}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(204);
+    await drain(versionId);
+    const after = await row(versionId, 'oblomov');
+    // В колонке — ключи по содержанию (S1); редактору ниже — пути от текущих блоков.
+    expect((after.mentions as { stale: string[] }).stale).toHaveLength(2);
+    expect(after.hasCore).toBe(false);
+    expect(after.isListed).toBe(false);
+    // Данные не удаляются (Q2): цитата и сцена на месте, редактор видит пути.
+    const editor = await request(http())
+      .get(`/versions/${versionId}/world/oblomov`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(editor.body.entity.quotes).toHaveLength(3);
+    expect(editor.body.entity.scenes).toHaveLength(2);
+    expect(editor.body.entity.editor.stale).toEqual(['quotes.2', 'scenes.1']);
+  });
+
+  it('F08-2: цитата, которой нет дословно, не отдаётся читателю, но страница с ядром остаётся (Q2)', async () => {
+    const { versionId } = await createVersion();
+    await makeListed(
+      versionId,
+      'oblomov',
+      hero('oblomov', {
+        quotes: [
+          ...(hero().quotes as Body[]),
+          { text: 'Zakhar grumbled in the hall.', chapter: 1, interpretation: 'Servant.' },
+        ],
+      }),
+    );
+    await request(http())
+      .patch(`/chapters/${await chapterId(versionId, 1)}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ content: '<p>He lay on the sofa all morning.</p><p>Ilya Oblomov</p>' })
+      .expect(200);
+    await drain(versionId);
+    expect((await row(versionId, 'oblomov')).isListed).toBe(true);
+
+    const reader = await request(http()).get(`/versions/${versionId}/world/oblomov`).expect(200);
+    expect(reader.body.entity.quotes.map((q: Body) => q.text)).not.toContain(
+      'Zakhar grumbled in the hall.',
+    );
+    expect(reader.body.entity.quotes).toHaveLength(3);
+    expect(reader.body.entity.editor).toBeUndefined();
+    expect(reader.body.entity).not.toHaveProperty('aliasExclusions');
+  });
+
+  it('F08-2: удаление несошедшейся цитаты не прячет соседнюю — stale по содержанию, без пересчёта (S1)', async () => {
+    const { versionId } = await createVersion();
+    const quotes = hero().quotes as Body[];
+    const zakhar = { text: 'Zakhar grumbled in the hall.', chapter: 1, interpretation: 'Servant.' };
+    await makeListed(versionId, 'oblomov', hero('oblomov', { quotes: [zakhar, ...quotes] }));
+    // Глава 1 без строки Захара: его цитата — несошедшаяся, ядро держат три остальные.
+    await request(http())
+      .patch(`/chapters/${await chapterId(versionId, 1)}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ content: '<p>He lay on the sofa all morning.</p><p>Ilya Oblomov</p>' })
+      .expect(200);
+    await drain(versionId);
+    expect((await row(versionId, 'oblomov')).isListed).toBe(true);
+    const before = await request(http()).get(`/versions/${versionId}/world/oblomov`).expect(200);
+    expect(before.body.entity.quotes.map((q: Body) => q.text)).toEqual(quotes.map((q) => q.text));
+
+    // Редактор убирает несошедшуюся цитату: бывшая quotes.1 становится quotes.0 и видна сразу.
+    await putEntity(versionId, 'oblomov', { language: 'en', type: 'character', quotes }).expect(
+      200,
+    );
+    await readLatest(versionId, 'oblomov');
+    const saved = await row(versionId, 'oblomov');
+    expect(saved.hasCore).toBe(true);
+    expect(saved.isListed).toBe(true);
+    const reader = await request(http()).get(`/versions/${versionId}/world/oblomov`).expect(200);
+    expect(reader.body.entity.quotes.map((q: Body) => q.text)).toEqual(quotes.map((q) => q.text));
+  });
+
+  it('F08-2: сцена и этап пути из удалённой главы не отдаются читателю; служебное присутствие наружу не идёт (Q2)', async () => {
+    const { versionId } = await createVersion();
+    await makeListed(
+      versionId,
+      'oblomov',
+      hero('oblomov', {
+        arc: {
+          from: 'A dreamer on the sofa',
+          to: 'A dreamer at rest',
+          stages: [{ title: 'Dream', text: 'He dreams.', chapter: 3 }],
+        },
+        scenes: [
+          { chapter: 1, title: 'Morning', text: 'He does not get up.' },
+          { chapter: 2, title: 'The letter', text: 'He does not read it.' },
+          { chapter: 3, title: 'The dream', text: 'He dreams of his childhood.' },
+        ],
+        quotes: [
+          { text: 'He lay on the sofa all morning.', chapter: 1, interpretation: 'Idleness.' },
+          { text: 'Zakhar grumbled in the hall.', chapter: 1, interpretation: 'Servant.' },
+          {
+            text: 'The letter from the estate was still unread.',
+            chapter: 2,
+            interpretation: 'Neglect.',
+          },
+        ],
+      }),
+    );
+    await request(http())
+      .delete(`/chapters/${await chapterId(versionId, 3)}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(204);
+    await drain(versionId);
+    const after = await row(versionId, 'oblomov');
+    expect((after.mentions as { stale: string[] }).stale).toHaveLength(2);
+    expect(after.isListed).toBe(true);
+    const editorView = await request(http())
+      .get(`/versions/${versionId}/world/oblomov`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(editorView.body.entity.editor.stale).toEqual(['arc.stages.0', 'scenes.2']);
+
+    const reader = await request(http()).get(`/versions/${versionId}/world/oblomov`).expect(200);
+    expect(reader.body.entity.scenes.map((x: Body) => x.chapter)).toEqual([1, 2]);
+    expect(reader.body.entity.arc.stages).toEqual([]);
+    expect(Object.keys(reader.body.entity.mentions).sort()).toEqual(
+      ['chapters', 'coPresence', 'first', 'perChapter'].sort(),
+    );
+    expect(reader.body.entity.editor).toBeUndefined();
+  });
+
+  it('F08-2: recountQueued и editor.recountPending — по строке очереди, не по mentionsAt (S5)', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, {
+      language: 'en',
+      entities: [hero('olga', { name: 'Olga' })],
+    }).expect(200);
+    await drain(versionId);
+    const page = () =>
+      request(http())
+        .get(`/versions/${versionId}/world/olga`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+    expect((await page()).body.entity.editor.recountPending).toBe(false);
+
+    // Правка, которая не меняет вход подсчёта (R4, S2): очереди нет, метки нет.
+    const quiet = await putEntity(versionId, 'olga', {
+      language: 'en',
+      type: 'character',
+      short: 'Not a presence input.',
+    }).expect(200);
+    expect(quiet.body.recountQueued).toBe(false);
+    expect(quiet.body.entity.editor.recountPending).toBe(false);
+    expect(await pending(versionId)).toBeNull();
+
+    // Новая форма имени, которой в тексте нет: очередь стоит, после пересчёта mentions прежние,
+    // mentionsAt не двигается (Q4), а recountPending снимается.
+    const mentionsAt = (await row(versionId, 'olga')).mentionsAt;
+    expect(mentionsAt).toBeInstanceOf(Date);
+    const loud = await putEntity(versionId, 'olga', {
+      language: 'en',
+      type: 'character',
+      aliases: ['Olga Sergeyevna'],
+    }).expect(200);
+    expect(loud.body.recountQueued).toBe(true);
+    expect(loud.body.entity.editor.recountPending).toBe(true);
+    expect((await page()).body.entity.editor.recountPending).toBe(true);
+    await drain(versionId);
+    expect((await row(versionId, 'olga')).mentionsAt).toEqual(mentionsAt);
+    expect((await page()).body.entity.editor.recountPending).toBe(false);
+
+    const dry = await putEntity(
+      versionId,
+      'olga',
+      { language: 'en', type: 'character', aliases: ['Olga I.'] },
+      '?dryRun=true',
+    ).expect(200);
+    expect(dry.body.recountQueued).toBe(false);
+  });
+
+  it('F08-2: удаление сущности ставит версию в очередь (coPresence соседей, Q3)', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, {
+      language: 'en',
+      entities: [hero('oblomov'), hero('zakhar', { name: 'Zakhar' })],
+    }).expect(200);
+    await prisma.worldMentionsPending.deleteMany({ where: { bookVersionId: versionId } });
+    await remove(versionId, 'zakhar').expect(204);
+    expect(await pending(versionId)).not.toBeNull();
+  });
+
+  it('F08-2: coPresence — героям, читателю только публичные соседи (Q3)', async () => {
+    const { versionId } = await createVersion();
+    await makeListed(versionId, 'oblomov');
+    await put(versionId, {
+      language: 'en',
+      entities: [hero('olga', { name: 'Olga', role: 'secondary' })],
+    }).expect(200);
+    await setMentions(versionId, 'oblomov', [1, 2, 3]);
+    expect((await row(versionId, 'oblomov')).mentions).toMatchObject({
+      coPresence: { olga: [2] },
+    });
+    const reader = await request(http()).get(`/versions/${versionId}/world/oblomov`).expect(200);
+    // Ольга — второстепенная в одной главе: не на сайте, её ключа читатель не видит.
+    expect((await row(versionId, 'olga')).isListed).toBe(false);
+    expect(reader.body.entity.mentions.coPresence).toEqual([]);
+
+    // Ольга на сайте (главная, прочитана) — читатель видит её в coPresence Обломова.
+    await putEntity(versionId, 'olga', { language: 'en', type: 'character', role: 'main' }).expect(
+      200,
+    );
+    await drain(versionId);
+    await readLatest(versionId, 'olga');
+    expect((await row(versionId, 'olga')).isListed).toBe(true);
+    const shown = await request(http()).get(`/versions/${versionId}/world/oblomov`).expect(200);
+    expect(shown.body.entity.mentions.coPresence).toEqual([{ key: 'olga', chapters: [2] }]);
+    const editor = await request(http())
+      .get(`/versions/${versionId}/world/oblomov`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(editor.body.entity.mentions.coPresence).toEqual([{ key: 'olga', chapters: [2] }]);
+  });
+
+  it('F08-2: правка главы версии без мира в очередь не ставит', async () => {
+    const { versionId } = await createVersion();
+    await request(http())
+      .patch(`/chapters/${await chapterId(versionId, 1)}`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .send({ content: '<p>Changed.</p>' })
+      .expect(200);
+    expect(await pending(versionId)).toBeNull();
   });
 
   it('версии нет — 404 на чтение и запись', async () => {

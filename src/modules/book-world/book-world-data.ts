@@ -3,6 +3,8 @@ import { compactBlock } from '../../shared/prisma/compact-block.util';
 import { jsonField } from '../../shared/prisma/json-field.util';
 import { isRecord } from '../../shared/prisma/json-record.util';
 import { stableJson } from '../../shared/json/stable-json';
+import { mentionChapters, mentionStale } from './world-core';
+import { stalePaths, worldItemKey } from './world-quote-check';
 import type {
   BookAnalysisFaqDto,
   BookAnalysisRole,
@@ -99,6 +101,8 @@ const WORLD_EDITOR_FIELDS = {
   autoTextAt: true,
   firstPublishedAt: true,
   coreMissing: true,
+  // Число глав присутствия в списке редактора (F08-2, `product.md` §17 п.2) — колонкой, не Json.
+  mentionChapters: true,
 } as const satisfies Prisma.BookWorldEntitySelect;
 
 /** Строка списка редактора: сводка и отметки, тоже без `blocks`. */
@@ -120,10 +124,15 @@ export const BOOK_WORLD_PUBLIC_SELECT = {
   createdAt: true,
 } as const satisfies Prisma.BookWorldEntitySelect;
 
-/** Страница сущности для редактора и выборка записи: читательская плюс отметки. */
+/**
+ * Страница сущности для редактора и выборка записи: читательская плюс отметки, исключения форм
+ * имени и время подсчёта (`F08-2`) — их читает только редактор.
+ */
 export const BOOK_WORLD_SELECT = {
   ...BOOK_WORLD_PUBLIC_SELECT,
   ...WORLD_EDITOR_FIELDS,
+  aliasExclusions: true,
+  mentionsAt: true,
 } as const satisfies Prisma.BookWorldEntitySelect;
 
 export type WorldSummaryRow = Prisma.BookWorldEntityGetPayload<{
@@ -165,14 +174,67 @@ export function readStoredEntity(row: WorldPublicRow): StoredWorldEntity {
   };
 }
 
+const numberList = (v: unknown): number[] =>
+  Array.isArray(v) ? v.filter((n): n is number => typeof n === 'number') : [];
+
+/** Ключи соседей из `mentions.coPresence` — единственный разбор этой формы хранения вне `readMentions`. */
+export function coPresenceKeys(mentions: unknown): string[] {
+  return isRecord(mentions) && isRecord(mentions.coPresence)
+    ? Object.keys(mentions.coPresence)
+    : [];
+}
+
 /**
- * Посчитанное присутствие наружу: главы и первая глава, остальное из колонки не отдаётся.
- * Нет `chapters` — `null` (форму пишет подсчёт `F08-2`).
+ * Посчитанное присутствие наружу (`world-mentions.ts`): главы, первая глава, счёт по главам
+ * и совместное присутствие; номера абзацев и `stale` из колонки не отдаются. `visibleKeys` —
+ * читателю: в `coPresence` только соседи из этого набора (решение арбитра `F08 | F08-2` Q3).
+ * Нет `chapters` — `null` (не посчитано).
  */
-export function readMentions(mentions: unknown): BookWorldMentionsDto | null {
+export function readMentions(
+  mentions: unknown,
+  visibleKeys?: ReadonlySet<string>,
+): BookWorldMentionsDto | null {
   if (!isRecord(mentions) || !Array.isArray(mentions.chapters)) return null;
-  const chapters = mentions.chapters.filter((n): n is number => typeof n === 'number');
-  return { chapters, first: typeof mentions.first === 'number' ? mentions.first : null };
+  const perChapter = isRecord(mentions.perChapter)
+    ? Object.entries(mentions.perChapter)
+        .flatMap(([n, count]) => (typeof count === 'number' ? [{ chapter: Number(n), count }] : []))
+        .sort((a, b) => a.chapter - b.chapter)
+    : [];
+  const coPresence = isRecord(mentions.coPresence)
+    ? Object.entries(mentions.coPresence)
+        .filter(([key]) => !visibleKeys || visibleKeys.has(key))
+        .map(([key, chapters]) => ({ key, chapters: numberList(chapters) }))
+        .sort((a, b) => a.key.localeCompare(b.key))
+    : [];
+  return {
+    chapters: mentionChapters(mentions),
+    first: typeof mentions.first === 'number' ? mentions.first : null,
+    perChapter,
+    coPresence,
+  };
+}
+
+/**
+ * Вход подсчёта присутствия из строки (`F08-2`): формы имени, исключения и пункты с главами.
+ * Одно чтение «строка → формы» на запись сущности и пересчёт версии.
+ */
+export function worldMentionSourceOf(row: WorldEditorRow) {
+  const s = readStoredEntity(row);
+  return {
+    key: s.key,
+    type: s.type,
+    name: s.name,
+    aliases: s.aliases,
+    aliasExclusions: readAliasExclusions(row.aliasExclusions),
+    quotes: s.quotes,
+    scenes: s.scenes,
+    arc: s.arc,
+  };
+}
+
+/** Исключения форм имени из колонки (`F08-2`): только строки. */
+export function readAliasExclusions(value: unknown): string[] | null {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : null;
 }
 
 /**
@@ -244,8 +306,26 @@ export function toSummary(row: WorldSummaryRow): BookWorldEntitySummaryDto {
   };
 }
 
-export function toEntityDto(row: WorldPublicRow): BookWorldEntityDto {
+/**
+ * Страница сущности. Читателю (`reader`) пункты из `mentions.stale` не отдаются — цитата, которой
+ * больше нет дословно в тексте, и сцена или этап пути из удалённой главы (решение арбитра
+ * `F08 | F08-2` Q2); в `coPresence` — только публичные соседи. Редактор видит всё и `editor.stale`.
+ */
+export function toEntityDto(
+  row: WorldPublicRow,
+  reader?: { visibleKeys: ReadonlySet<string> },
+): BookWorldEntityDto {
   const s = readStoredEntity(row);
+  if (reader) {
+    const stale = mentionStale(row.mentions);
+    const fresh =
+      (kind: 'quotes' | 'scenes' | 'arc.stages') =>
+      (item: { chapter: number; title?: string | null; text?: string | null }) =>
+        !stale.has(worldItemKey(kind, item));
+    s.quotes = s.quotes ? s.quotes.filter(fresh('quotes')) : null;
+    s.scenes = s.scenes ? s.scenes.filter(fresh('scenes')) : null;
+    if (s.arc?.stages) s.arc = { ...s.arc, stages: s.arc.stages.filter(fresh('arc.stages')) };
+  }
   return {
     ...toSummary(row),
     aliases: s.aliases,
@@ -261,7 +341,7 @@ export function toEntityDto(row: WorldPublicRow): BookWorldEntityDto {
     adaptations: s.adaptations,
     faq: s.faq,
     sources: s.sources,
-    mentions: readMentions(row.mentions),
+    mentions: readMentions(row.mentions, reader?.visibleKeys),
     createdAt: row.createdAt,
   };
 }
@@ -274,5 +354,20 @@ export function editorOf(row: WorldEditorSummaryRow): BookWorldEditorDto {
     autoTextAt: row.autoTextAt,
     firstPublishedAt: row.firstPublishedAt,
     missing: row.coreMissing,
+    mentionChapters: row.mentionChapters,
+  };
+}
+
+/**
+ * Отметки редактора на странице сущности: плюс исключения форм, несошедшиеся пункты, `mentionsAt`
+ * и `recountPending` — у версии стоит строка очереди пересчёта (решение арбитра `F08 | F08-2` S5).
+ */
+export function entityEditorOf(row: WorldEditorRow, recountPending: boolean): BookWorldEditorDto {
+  return {
+    ...editorOf(row),
+    aliasExclusions: readAliasExclusions(row.aliasExclusions),
+    stale: stalePaths(readStoredEntity(row), mentionStale(row.mentions)),
+    mentionsAt: row.mentionsAt,
+    recountPending,
   };
 }

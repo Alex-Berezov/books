@@ -28,6 +28,29 @@ const errorsOf = (entity: Record<string, unknown>) =>
 const quotes = (n: number, text = 'q') =>
   Array.from({ length: n }, () => ({ text, chapter: 1, interpretation: 'i' }));
 
+describe('aliasExclusions (F08-2): пределы на границе', () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => `form${i}`);
+
+  it('ровно предел проходит, на один больше — отказ с путём', () => {
+    expect(errorsOf(hero({ aliasExclusions: many(L.aliases) }))).toEqual([]);
+    expect(errorsOf(hero({ aliasExclusions: many(L.aliases + 1) }))).toEqual([
+      'entities.0.aliasExclusions',
+    ]);
+  });
+
+  it('пустая строка, слишком длинная форма и не-массив — отказ', () => {
+    expect(errorsOf(hero({ aliasExclusions: [''] }))).toEqual(['entities.0.aliasExclusions']);
+    expect(errorsOf(hero({ aliasExclusions: ['x'.repeat(L.name + 1)] }))).toEqual([
+      'entities.0.aliasExclusions',
+    ]);
+    expect(errorsOf(hero({ aliasExclusions: 'letter' }))).toEqual(['entities.0.aliasExclusions']);
+  });
+
+  it('null — снять исключения — проходит', () => {
+    expect(errorsOf(hero({ aliasExclusions: null }))).toEqual([]);
+  });
+});
+
 describe('UpdateBookWorldDto (F08-1)', () => {
   it('пределы D5 — те же числа, что у анализа', () => {
     expect(L).toMatchObject({ quotes: 12, quote: 500, interpretation: 3000, mediumText: 1500 });

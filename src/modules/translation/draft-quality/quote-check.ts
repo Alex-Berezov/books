@@ -110,8 +110,11 @@ const EDGE_MARKS = /^[^\p{L}\p{N}]+|[^\p{L}\p{N}\p{M}]+$/gu;
  */
 export const foldTitle = (text: string): string => foldQuote(text).replace(EDGE_MARKS, '');
 
-/** Символ абзаца у края куска продолжает слово. */
-function continuesWord(paragraph: string, at: number): boolean {
+/**
+ * Символ абзаца у края куска продолжает слово. Одно правило границы слова на сверку цитат
+ * и подсчёт присутствия мира книги (`book-world/world-mentions.ts`, F08-2).
+ */
+export function continuesWord(paragraph: string, at: number): boolean {
   const ch = paragraph[at];
   return ch !== undefined && WORD_CHAR.test(ch);
 }

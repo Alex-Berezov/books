@@ -44,10 +44,24 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
   const chapterFindMany = jest.fn((args: { where: { number: { in: number[] } } }) =>
     Promise.resolve(args.where.number.in.filter((n) => n in chapters).map((n) => ({ number: n }))),
   );
-  /** Сырые запросы: тексты глав с отпечатком, отпечатки под замком, замки. */
+  /**
+   * Сырые запросы: тексты глав с отпечатком, отпечатки под замком, замки; подсчёт присутствия
+   * (F08-2) — порция глав по номеру после `after` (`ORDER BY ... LIMIT`).
+   */
   const queryRaw = jest.fn((strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join('?');
     if (!sql.includes('md5')) return Promise.resolve([]);
+    if (sql.includes('ORDER BY')) {
+      const [, after, limit] = values as [string, number, number];
+      return Promise.resolve(
+        Object.keys(chapters)
+          .map(Number)
+          .sort((a, b) => a - b)
+          .filter((n) => n > after)
+          .slice(0, limit)
+          .map((n) => ({ number: n, content: chapters[n], digest: md5(chapters[n]) })),
+      );
+    }
     const numbers = (values.find(Array.isArray) as number[]).filter((n) => n in chapters);
     const withContent = sql.includes('"content",');
     return Promise.resolve(
@@ -58,8 +72,14 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
       })),
     );
   });
+  /** Чтения текста глав сверкой цитат (`checkChapters`), без подсчёта присутствия. */
   const textCalls = () =>
-    queryRaw.mock.calls.filter(([strings]) => strings.join('?').includes('"content",'));
+    queryRaw.mock.calls.filter(([strings]) => {
+      const sql = strings.join('?');
+      return sql.includes('"content",') && !sql.includes('ORDER BY');
+    });
+  const countCalls = () =>
+    queryRaw.mock.calls.filter(([strings]) => strings.join('?').includes('ORDER BY'));
   let between: () => void = () => {};
   const prisma = {
     bookVersion: {
@@ -67,19 +87,27 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
     },
     bookAnalysis: { findUnique: jest.fn().mockResolvedValue(null) },
     bookWorldEntity: {
-      findMany: jest.fn((args: { where: { key?: { in: string[] } } }) =>
-        Promise.resolve(
-          args.where.key
-            ? saved.filter((r) => args.where.key!.in.includes(r.key as string))
-            : saved.map((r) => ({ key: r.key })),
-        ),
-      ),
+      // `key.in` — строки тела; `key.notIn` — соседи-герои вне подсчёта (F08-2); без `key` — ключи версии.
+      findMany: jest.fn((args: { where: { key?: { in?: string[]; notIn?: string[] } } }) => {
+        const key = args.where.key;
+        if (key?.in) return Promise.resolve(saved.filter((r) => key.in!.includes(r.key as string)));
+        if (key?.notIn) {
+          return Promise.resolve(
+            saved
+              .filter((r) => r.type === 'character' && !key.notIn!.includes(r.key as string))
+              .map((r) => ({ key: r.key, mentions: r.mentions })),
+          );
+        }
+        return Promise.resolve(saved.map((r) => ({ key: r.key })));
+      }),
       findFirst: jest.fn().mockResolvedValue(null),
       count: jest.fn().mockResolvedValue(saved.length),
       create: jest.fn((args: { data: Row }) => Promise.resolve(savedRow('x', args.data))),
+      update: jest.fn((args: { data: Row }) => Promise.resolve(savedRow('x', args.data))),
     },
     chapter: { findMany: chapterFindMany },
     $queryRaw: queryRaw,
+    $executeRaw: jest.fn().mockResolvedValue(1),
     // Между проверкой до транзакции и транзакцией — `between` (правка главы чужим писателем).
     $transaction: jest.fn((fn: (tx: unknown) => Promise<unknown>) => {
       between();
@@ -108,7 +136,7 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
   const onTransaction = (fn: () => void) => {
     between = fn;
   };
-  return { prisma, chapters, textCalls, save, messages, onTransaction };
+  return { prisma, chapters, textCalls, countCalls, save, messages, onTransaction };
 }
 
 const hero = (key: string, over: Row = {}): Row => ({
@@ -209,5 +237,119 @@ describe('BookWorldService.plan (F08-1)', () => {
     await save([quoted()], false);
     expect(textCalls()).toHaveLength(1);
     expect(prisma.bookWorldEntity.create).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('BookWorldService: запись сущности и присутствие (F08-2, решения арбитра R2, R4)', () => {
+  const dirtyVersions = (prisma: ReturnType<typeof setup>['prisma']): unknown[] =>
+    (prisma.$executeRaw.mock.calls as unknown[][])
+      .filter(([strings]) => (strings as string[]).join('?').includes('"WorldMentionsPending"'))
+      .map(([, id]) => id);
+
+  it('новая сущность: присутствие в записи не считается и не пишется; версия встаёт в очередь', async () => {
+    const { save, prisma, countCalls } = setup({
+      chapters: { 1: '<p>Hero came.</p>', 2: '<p>Hero left.</p>' },
+    });
+    await save([hero('a', { aliasExclusions: ['Herald'] })], false);
+    const data = prisma.bookWorldEntity.create.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty('mentions');
+    expect(data).not.toHaveProperty('mentionsAt');
+    expect(data).not.toHaveProperty('mentionChapters');
+    expect(data.aliasExclusions).toEqual(['Herald']);
+    expect(data.coreMissing).toContain('mentions');
+    expect(countCalls()).toEqual([]);
+    expect(dirtyVersions(prisma)).toEqual(['v1']);
+  });
+
+  it('dryRun ничего не ставит в очередь и глав для присутствия не читает', async () => {
+    const { save, prisma, countCalls } = setup({ chapters: { 1: '<p>Hero came.</p>' } });
+    await save([hero('a')]);
+    expect(dirtyVersions(prisma)).toEqual([]);
+    expect(countCalls()).toEqual([]);
+  });
+
+  it('смена форм имени у посчитанной сущности: прежнее присутствие остаётся до пересчёта', async () => {
+    const mentions = { chapters: [1], first: 1, stale: [] };
+    const { save, prisma } = setup({
+      saved: [savedRow('a', { name: 'Hope', mentions, mentionChapters: 1 })],
+      chapters: { 1: '<p>Hope is a word.</p>' },
+    });
+    await save([{ key: 'a', type: 'character', aliases: ['Hopey'] }], false);
+    const data = prisma.bookWorldEntity.update.mock.calls[0][0].data;
+    expect(data).not.toHaveProperty('mentions');
+    expect(data.coreMissing).not.toContain('mentions');
+    expect(dirtyVersions(prisma)).toEqual(['v1']);
+  });
+
+  it('правка только исключений — не текст модели: autoTextAt не ставится, очередь ставится (Q4, R4)', async () => {
+    const { save, prisma } = setup({
+      saved: [savedRow('a', { name: 'Hope', mentions: { chapters: [1], first: 1 } })],
+      chapters: { 1: '<p>Hope is a word.</p>' },
+    });
+    await save([{ key: 'a', type: 'character', aliasExclusions: ['hope'] }], false);
+    const data = prisma.bookWorldEntity.update.mock.calls[0][0].data;
+    expect(data.aliasExclusions).toEqual(['hope']);
+    expect(data).not.toHaveProperty('autoTextAt');
+    expect(dirtyVersions(prisma)).toEqual(['v1']);
+  });
+
+  it('правка цитаты пишет сущность, но очередь не ставит (R4, S2)', async () => {
+    const { save, prisma } = setup({
+      saved: [savedRow('a', { name: 'Hope', mentions: { chapters: [1], first: 1, stale: [] } })],
+      chapters: { 1: '<p>Hope is a word.</p>' },
+    });
+    await save(
+      [
+        {
+          key: 'a',
+          type: 'character',
+          quotes: [{ text: 'Hope is a word.', chapter: 1, interpretation: 'i' }],
+        },
+      ],
+      false,
+    );
+    expect(prisma.bookWorldEntity.update).toHaveBeenCalledTimes(1);
+    expect(dirtyVersions(prisma)).toEqual([]);
+  });
+
+  it('перестановка форм имени пишет сущность, но очередь не ставит: формы сравниваются без порядка (S7)', async () => {
+    const { save, prisma } = setup({
+      saved: [
+        savedRow('a', {
+          name: 'Hope',
+          aliases: ['Hopey', 'Hopeful'],
+          mentions: { chapters: [1], first: 1, stale: [] },
+        }),
+      ],
+      chapters: { 1: '<p>Hope is a word.</p>' },
+    });
+    await save([{ key: 'a', type: 'character', aliases: ['Hopeful', 'Hopey'] }], false);
+    expect(prisma.bookWorldEntity.update).toHaveBeenCalledTimes(1);
+    expect(dirtyVersions(prisma)).toEqual([]);
+  });
+
+  it('исключение формы, которой среди форм нет, пишется без очереди (S7)', async () => {
+    const { save, prisma } = setup({
+      saved: [savedRow('a', { name: 'Hope', mentions: { chapters: [1], first: 1, stale: [] } })],
+      chapters: { 1: '<p>Hope is a word.</p>' },
+    });
+    await save([{ key: 'a', type: 'character', aliasExclusions: ['Nobody'] }], false);
+    expect(prisma.bookWorldEntity.update.mock.calls[0][0].data.aliasExclusions).toEqual(['Nobody']);
+    expect(dirtyVersions(prisma)).toEqual([]);
+  });
+
+  it('повторный импорт без изменений: записи нет и очереди нет (R4)', async () => {
+    const { save, prisma } = setup({
+      saved: [
+        savedRow('a', {
+          name: 'Hero',
+          type: 'character',
+          coreMissing: ['short', 'character', 'arc', 'quotes', 'scenes', 'mentions'],
+        }),
+      ],
+    });
+    await save([{ key: 'a', type: 'character' }], false);
+    expect(prisma.bookWorldEntity.update).not.toHaveBeenCalled();
+    expect(dirtyVersions(prisma)).toEqual([]);
   });
 });

@@ -1,0 +1,92 @@
+import { Prisma } from '@prisma/client';
+import { htmlToParagraphs } from '../translation/content-draft/content-draft.text';
+import type { StoredWorldEntity } from './book-world-data';
+import { WorldMentionCounter, type WorldMentionSource, type WorldMentions } from './world-mentions';
+import {
+  chapterPage,
+  fingerprintOfChapters,
+  quoteParagraphs,
+  quoteStandsIn,
+  worldChapterIssues,
+  worldQuoteKey,
+} from './world-quote-check';
+
+/** Глав с текстом в одной выборке подсчёта: в памяти одна порция текстов, а не вся книга. */
+export const WORLD_MENTIONS_CHAPTERS_BATCH = 20;
+
+/** Сущность для подсчёта: формы имени и пункты с главами (сверка `stale`). */
+export type WorldCountSource = WorldMentionSource &
+  Pick<StoredWorldEntity, 'type' | 'quotes' | 'scenes' | 'arc'>;
+
+/** Колонка `mentions`: подсчёт плюс несошедшиеся пункты (решение арбитра `F08 | F08-2` Q2). */
+export interface StoredWorldMentions extends WorldMentions {
+  stale: string[];
+}
+
+export interface WorldCountResult {
+  byKey: Map<string, StoredWorldMentions>;
+  /** Отпечаток текста версии на момент подсчёта (`fingerprintOfChapters`) — сверка под замком. */
+  fingerprint: string;
+}
+
+/**
+ * Подсчёт по всем главам версии (`tech.md` §4): главы читаются порциями по номеру, тексты не
+ * держатся, текст главы разбирается один раз на подсчёт и на сверку цитат. Сверка пунктов
+ * с главами — правило записи (`worldChapterIssues`, Q2): несошедшийся пункт идёт в `stale`.
+ * `coPresence` — между героями (`character`) набора.
+ */
+export async function countWorldMentions(
+  client: Pick<Prisma.TransactionClient, '$queryRaw'>,
+  bookVersionId: string,
+  entities: readonly WorldCountSource[],
+): Promise<WorldCountResult> {
+  const characters = new Set(entities.filter((e) => e.type === 'character').map((e) => e.key));
+  const counter = new WorldMentionCounter(entities, characters);
+  const quotesByChapter = new Map<number, string[]>();
+  for (const q of entities.flatMap((e) => e.quotes ?? [])) {
+    const list = quotesByChapter.get(q.chapter);
+    if (list) list.push(q.text);
+    else quotesByChapter.set(q.chapter, [q.text]);
+  }
+  const verbatim = new Map<string, boolean>();
+  const digests = new Map<number, string>();
+
+  for (let after = -1; ; ) {
+    const rows = await chapterPage(client, bookVersionId, after, WORLD_MENTIONS_CHAPTERS_BATCH);
+    if (rows.length === 0) break;
+    for (const row of rows) {
+      digests.set(row.number, row.digest);
+      const text = htmlToParagraphs(row.content);
+      counter.addChapterText(row.number, text);
+      const quotes = quotesByChapter.get(row.number);
+      if (quotes) {
+        const paragraphs = quoteParagraphs(text);
+        for (const q of quotes) {
+          verbatim.set(worldQuoteKey(row.number, q), quoteStandsIn(q, paragraphs));
+        }
+      }
+      // Подсчёт главы — синхронная работа (на 100 сущностях по 31 форме — около 13 мс на главу
+      // в 12 тыс. знаков, замер в деле F08-2): между главами цикл событий отпускается.
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    after = rows[rows.length - 1].number;
+    if (rows.length < WORLD_MENTIONS_CHAPTERS_BATCH) break;
+  }
+
+  const counted = counter.result();
+  const byKey = new Map<string, StoredWorldMentions>();
+  for (const e of entities) {
+    const stale = worldChapterIssues(
+      e,
+      (n) => digests.has(n),
+      (n, text) => verbatim.get(worldQuoteKey(n, text)) === true,
+    ).map((issue) => issue.key);
+    byKey.set(e.key, { ...counted.get(e.key)!, stale: [...new Set(stale)].sort() });
+  }
+  return {
+    byKey,
+    fingerprint: fingerprintOfChapters(
+      [...digests].map(([number, digest]) => ({ number, digest })),
+    ),
+  };
+}

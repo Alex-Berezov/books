@@ -2,9 +2,12 @@ import {
   WORLD_EDITOR_SUMMARY_SELECT,
   WORLD_SUMMARY_SELECT,
   mergeEntity,
+  readMentions,
+  toEntityDto,
   worldContentChanged,
   type StoredWorldEntity,
 } from './book-world-data';
+import { worldItemKey } from './world-quote-check';
 
 /**
  * F08-1, решение арбитра R9: импорт ставит `autoTextAt` только сущности, у которой после слияния
@@ -90,7 +93,87 @@ describe('выборки списка (F08-1)', () => {
         'autoTextAt',
         'firstPublishedAt',
         'coreMissing',
+        // F08-2: число глав присутствия — колонкой Int, не Json `mentions`.
+        'mentionChapters',
       ].sort(),
     );
+  });
+});
+
+describe('присутствие наружу (F08-2, решения арбитра Q2, Q3)', () => {
+  const mentions = {
+    chapters: [1, 2, 3],
+    first: 1,
+    perChapter: { '3': 1, '1': 2, '2': 4 },
+    paragraphs: { '1': [0] },
+    coPresence: { ivan: [2], olga: [1, 3] },
+    // Ключи по содержанию (S1): не номер пункта, а вид, глава, заголовок и текст.
+    stale: [
+      worldItemKey('quotes', { chapter: 1, text: 'gone' }),
+      worldItemKey('scenes', { chapter: 9, title: 'gone', text: 'x' }),
+      worldItemKey('arc.stages', { chapter: 9, title: 'S', text: 'T' }),
+    ],
+  };
+
+  it('readMentions: ровно chapters/first/perChapter/coPresence, списками по порядку', () => {
+    expect(readMentions(mentions)).toEqual({
+      chapters: [1, 2, 3],
+      first: 1,
+      perChapter: [
+        { chapter: 1, count: 2 },
+        { chapter: 2, count: 4 },
+        { chapter: 3, count: 1 },
+      ],
+      coPresence: [
+        { key: 'ivan', chapters: [2] },
+        { key: 'olga', chapters: [1, 3] },
+      ],
+    });
+    expect(readMentions(null)).toBeNull();
+  });
+
+  it('readMentions читателю: в coPresence только публичные соседи', () => {
+    expect(readMentions(mentions, new Set(['olga']))!.coPresence).toEqual([
+      { key: 'olga', chapters: [1, 3] },
+    ]);
+    expect(readMentions(mentions, new Set())!.coPresence).toEqual([]);
+  });
+
+  const row = {
+    key: 'oblomov',
+    type: 'character' as const,
+    name: 'Oblomov',
+    role: 'main',
+    short: 'Who he is.',
+    hasCore: true,
+    isIndexable: true,
+    updatedAt: new Date(),
+    createdAt: new Date(),
+    aliases: null,
+    sources: null,
+    mentions,
+    blocks: {
+      arc: { from: 'A', to: 'B', stages: [{ title: 'S', text: 'T', chapter: 9 }] },
+      scenes: [
+        { chapter: 9, title: 'gone', text: 'x' },
+        { chapter: 1, title: 'kept', text: 'y' },
+      ],
+      quotes: [
+        { text: 'kept', chapter: 1, interpretation: 'i' },
+        { text: 'gone', chapter: 1, interpretation: 'i' },
+      ],
+    },
+  };
+
+  it('toEntityDto читателю: пункты из stale не отдаются; редактору — все', () => {
+    const reader = toEntityDto(row, { visibleKeys: new Set() });
+    expect(reader.quotes!.map((q) => q.text)).toEqual(['kept']);
+    expect(reader.scenes!.map((x) => x.title)).toEqual(['kept']);
+    expect(reader.arc!.stages).toEqual([]);
+    const editor = toEntityDto(row);
+    expect(editor.quotes).toHaveLength(2);
+    expect(editor.scenes).toHaveLength(2);
+    expect(editor.arc!.stages).toHaveLength(1);
+    expect(editor.mentions!.coPresence).toHaveLength(2);
   });
 });

@@ -8,6 +8,7 @@ import { AdminAuditService } from '../../shared/admin-audit/admin-audit.service'
 import { Prisma, AdminAuditAction, AdminAuditTargetType, type Chapter } from '@prisma/client';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
+import { markWorldMentionsDirty } from '../book-world/world-mentions-queue';
 import {
   paginated,
   paginatedAll,
@@ -159,6 +160,8 @@ export class ChapterService {
   ): Promise<Chapter> {
     return this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
       const created = await tx.chapter.create({ data: { bookVersionId, ...data } });
+      // Мир книги (F08-2): присутствие героев пересчитает очередь, не эта транзакция.
+      await markWorldMentionsDirty(tx, bookVersionId);
       await this.rightsContentHashService.checkVersionStaleness(
         bookVersionId,
         'CHAPTER_CREATED',
@@ -183,6 +186,8 @@ export class ChapterService {
     body: (tx: Prisma.TransactionClient, chapters: LockedChapterWriter) => Promise<T>,
   ): Promise<T> {
     return this.clearanceLock.runInLockedClearance(bookVersionId, async (tx) => {
+      // Текст глав, прочитанных `lockChapter` в этой транзакции: перезапись тем же текстом очередь не ставит.
+      const lockedContent = new Map<string, string>();
       const writer: LockedChapterWriter = {
         versionStatus: async () =>
           (
@@ -196,6 +201,7 @@ export class ChapterService {
             SELECT "id", "content", "title" FROM "Chapter"
             WHERE "id" = ${id} AND "bookVersionId" = ${bookVersionId}
             FOR UPDATE`;
+          if (rows[0]) lockedContent.set(rows[0].id, rows[0].content);
           return rows[0] ?? null;
         },
         numberTaken: async (number) =>
@@ -204,6 +210,10 @@ export class ChapterService {
             select: { id: true },
           })) !== null,
         write: async (data) => {
+          // Перезапись тем же текстом — не вход подсчёта (R4): очередь не ставится и не сбрасывает
+          // паузу неудачных пересчётов (R3). Сравнение — с текстом, прочитанным `lockChapter` под
+          // замком строки в этой же транзакции; глава без такого чтения ставит очередь.
+          const sameText = data.id !== undefined && lockedContent.get(data.id) === data.content;
           const written = data.id
             ? await tx.chapter.update({ where: { id: data.id }, data: { content: data.content } })
             : await tx.chapter.create({
@@ -214,6 +224,7 @@ export class ChapterService {
                   content: data.content,
                 },
               });
+          if (!sameText) await markWorldMentionsDirty(tx, bookVersionId);
           await this.rightsContentHashService.checkVersionStaleness(
             bookVersionId,
             data.id ? 'CHAPTER_UPDATED' : 'CHAPTER_CREATED',
@@ -258,7 +269,21 @@ export class ChapterService {
     const updated = await this.clearanceLock.runInLockedClearance(
       chapter.bookVersionId,
       async (tx) => {
+        // Текст и номер главы — вход подсчёта присутствия мира книги (F08-2); правка одного
+        // названия пересчёта не ставит и главу не перечитывает (решение арбитра `F08 | F08-2` R4).
+        // Сравнение — с главой, перечитанной под замком: чтение до него не видит правку соседа.
+        const before =
+          dto.content !== undefined || dto.number !== undefined
+            ? await tx.chapter.findUnique({
+                where: { id },
+                select: { content: true, number: true },
+              })
+            : null;
         const result = await tx.chapter.update({ where: { id }, data: dto });
+        const needsRecount =
+          (dto.content !== undefined && dto.content !== before?.content) ||
+          (dto.number !== undefined && dto.number !== before?.number);
+        if (needsRecount) await markWorldMentionsDirty(tx, chapter.bookVersionId);
         await this.rightsContentHashService.checkVersionStaleness(
           chapter.bookVersionId,
           'CHAPTER_UPDATED',
@@ -291,6 +316,7 @@ export class ChapterService {
         actorUserId,
         payload: { bookVersionId },
       });
+      await markWorldMentionsDirty(tx, bookVersionId);
 
       await this.rightsContentHashService.checkVersionStaleness(
         bookVersionId,

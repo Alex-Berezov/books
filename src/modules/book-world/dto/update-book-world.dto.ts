@@ -90,6 +90,21 @@ export class BookWorldEntityInputDto {
   @MaxLength(BOOK_WORLD_LIMITS.name, { each: true })
   aliases?: string[] | null;
 
+  @ApiPropertyOptional({
+    type: [String],
+    nullable: true,
+    description:
+      'Name forms excluded from mention search: false matches with ordinary words (F08-2)',
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(BOOK_WORLD_LIMITS.aliases)
+  @Transform(trimEach)
+  @IsString({ each: true })
+  @IsNotEmpty({ each: true })
+  @MaxLength(BOOK_WORLD_LIMITS.name, { each: true })
+  aliasExclusions?: string[] | null;
+
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: BOOK_WORLD_LIMITS.short })
   @OptionalText(BOOK_WORLD_LIMITS.short)
   short?: string | null;

@@ -1,4 +1,5 @@
 import { Prisma, PublicationStatus } from '@prisma/client';
+import { stableJson } from '../../shared/json/stable-json';
 import { mentionChapters } from './world-core';
 
 /**
@@ -85,4 +86,21 @@ export function worldListedWrite(
     return { isListed, firstPublishedAt: now };
   }
   return { isListed };
+}
+
+/**
+ * Производные поля записи не изменились — одно условие на запись сущности и пересчёт
+ * присутствия (F08-2): ядро, чего не хватает, `isListed`; `firstPublishedAt` ставить не нужно.
+ */
+export function worldDerivedUnchanged(
+  existing: { hasCore: boolean; coreMissing: string[]; isListed: boolean },
+  next: { hasCore: boolean; coreMissing: string[] },
+  listed: { isListed: boolean; firstPublishedAt?: Date },
+): boolean {
+  return (
+    existing.hasCore === next.hasCore &&
+    stableJson(existing.coreMissing) === stableJson(next.coreMissing) &&
+    existing.isListed === listed.isListed &&
+    listed.firstPublishedAt === undefined
+  );
 }

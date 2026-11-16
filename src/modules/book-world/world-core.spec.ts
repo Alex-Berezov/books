@@ -1,4 +1,5 @@
 import { computeWorldCore, mentionChapters, WORLD_CHARACTER_CORE } from './world-core';
+import { worldItemKey } from './world-quote-check';
 
 /**
  * F08-1: ядро героя на границах (`product.md` §3, `tech.md` §3) — ровно порог проходит, на один
@@ -73,5 +74,29 @@ describe('computeWorldCore (F08-1)', () => {
     expect(mentionChapters({ chapters: [1, 'x', 3] })).toEqual([1, 3]);
     expect(mentionChapters({ chapters: 'no' })).toEqual([]);
     expect(mentionChapters([1, 2])).toEqual([]);
+  });
+});
+
+describe('computeWorldCore: несошедшиеся пункты (F08-2, решение арбитра Q2)', () => {
+  it('цитата из mentions.stale не засчитывается — ядро падает', () => {
+    const r = computeWorldCore({
+      ...full(),
+      mentions: { chapters: [1, 2], first: 1, stale: [worldItemKey('quotes', quote(2))] },
+    });
+    expect(r.hasCore).toBe(false);
+    expect(r.missing).toEqual([{ part: 'quotes', have: 2, need: 3 }]);
+  });
+
+  it('сцена из удалённой главы не засчитывается', () => {
+    const r = computeWorldCore({
+      ...full(),
+      mentions: { chapters: [1, 2], first: 1, stale: [worldItemKey('scenes', scene(1))] },
+    });
+    expect(r.missing).toEqual([{ part: 'scenes', have: 1, need: 2 }]);
+  });
+
+  it('герой исчез из всех глав — ядра нет', () => {
+    const r = computeWorldCore({ ...full(), mentions: { chapters: [], first: null } });
+    expect(r.missing).toEqual([{ part: 'mentions', have: 0, need: 1 }]);
   });
 });

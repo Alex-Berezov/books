@@ -7812,8 +7812,52 @@
         ],
         "type": "object"
       },
+      "BookWorldChapterCountDto": {
+        "properties": {
+          "chapter": {
+            "type": "number"
+          },
+          "count": {
+            "description": "Mentions of any name form in the chapter",
+            "type": "number"
+          }
+        },
+        "required": [
+          "chapter",
+          "count"
+        ],
+        "type": "object"
+      },
+      "BookWorldCoPresenceDto": {
+        "properties": {
+          "chapters": {
+            "description": "Chapters where both are found, ascending",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "key": {
+            "description": "Key of the other character",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "chapters"
+        ],
+        "type": "object"
+      },
       "BookWorldEditorDto": {
         "properties": {
+          "aliasExclusions": {
+            "description": "Entity page only: name forms excluded from mention search (F08-2)",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "autoTextAt": {
             "format": "date-time",
             "nullable": true,
@@ -7828,6 +7872,17 @@
           "isVisible": {
             "type": "boolean"
           },
+          "mentionChapters": {
+            "description": "Chapters the entity is found in (F08-2); null — not counted yet",
+            "nullable": true,
+            "type": "number"
+          },
+          "mentionsAt": {
+            "description": "Entity page only: when the counted mentions last changed; not a freshness mark — a recount that changes nothing does not move it (use recountPending)",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
           "missing": {
             "description": "Core parts still missing (world-core.ts), e.g. \"quotes\", \"mentions\"",
             "items": {
@@ -7839,6 +7894,17 @@
             "format": "date-time",
             "nullable": true,
             "type": "string"
+          },
+          "recountPending": {
+            "description": "Entity page only: a presence recount is queued for the version and has not run yet (F08-2)",
+            "type": "boolean"
+          },
+          "stale": {
+            "description": "Entity page only: items that no longer match the text of the version on the last recount, e.g. \"quotes.2\" (not verbatim or no such chapter), \"scenes.0\", \"arc.stages.1\" (no such chapter); not counted in the core and not shown to readers",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -7846,7 +7912,8 @@
           "readAt",
           "autoTextAt",
           "firstPublishedAt",
-          "missing"
+          "missing",
+          "mentionChapters"
         ],
         "type": "object"
       },
@@ -8030,6 +8097,14 @@
             "nullable": true,
             "type": "array"
           },
+          "aliasExclusions": {
+            "description": "Name forms excluded from mention search: false matches with ordinary words (F08-2)",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "aliases": {
             "description": "Name forms for mention search (F08-2)",
             "items": {
@@ -8195,6 +8270,10 @@
             "description": "Core of the merged entity",
             "type": "boolean"
           },
+          "recountQueued": {
+            "description": "The save queued a presence recount (a new entity, or its search forms — name, name forms and exclusions together — or type changed); false on dryRun",
+            "type": "boolean"
+          },
           "warnings": {
             "items": {
               "$ref": "#/components/schemas/BookWorldWarningDto"
@@ -8205,7 +8284,8 @@
         "required": [
           "entity",
           "hasCore",
-          "warnings"
+          "warnings",
+          "recountQueued"
         ],
         "type": "object"
       },
@@ -8305,15 +8385,31 @@
             },
             "type": "array"
           },
+          "coPresence": {
+            "description": "Characters only: other characters found in the same chapters; readers see public neighbours only",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldCoPresenceDto"
+            },
+            "type": "array"
+          },
           "first": {
             "description": "First chapter it is found in",
             "nullable": true,
             "type": "number"
+          },
+          "perChapter": {
+            "description": "Mentions per chapter, ascending by chapter",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldChapterCountDto"
+            },
+            "type": "array"
           }
         },
         "required": [
           "chapters",
-          "first"
+          "first",
+          "perChapter",
+          "coPresence"
         ],
         "type": "object"
       },
@@ -30601,6 +30697,14 @@
           "adaptations": {
             "items": {
               "$ref": "#/components/schemas/BookWorldAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "aliasExclusions": {
+            "description": "Name forms excluded from mention search: false matches with ordinary words (F08-2)",
+            "items": {
+              "type": "string"
             },
             "nullable": true,
             "type": "array"

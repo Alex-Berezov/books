@@ -78,17 +78,3 @@ export function duplicateWorldKeys(entities: readonly { key: string }[]): WorldR
   });
   return errors;
 }
-
-/** Номера глав сущности с путём поля: глава не из версии — 400 (решение арбитра R4). */
-export function collectWorldChapterRefs(
-  entity: StoredWorldEntity,
-): { path: string; chapter: number }[] {
-  const refs: { path: string; chapter: number }[] = [];
-  const push = (path: string, chapter: number | null | undefined) => {
-    if (typeof chapter === 'number') refs.push({ path, chapter });
-  };
-  (entity.arc?.stages ?? []).forEach((s, j) => push(`arc.stages.${j}.chapter`, s.chapter));
-  (entity.scenes ?? []).forEach((s, j) => push(`scenes.${j}.chapter`, s.chapter));
-  (entity.quotes ?? []).forEach((q, j) => push(`quotes.${j}.chapter`, q.chapter));
-  return refs;
-}
