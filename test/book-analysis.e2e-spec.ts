@@ -73,6 +73,23 @@ describe('BookAnalysis e2e', () => {
     ],
   });
 
+  type ListedBook = { slug: string; versions: { _count: { analyses: number } }[] };
+  /**
+   * Книга в публичном списке `/en/books` — по всем страницам: база e2e своя на воркер и общая для
+   * его спек, книг до этого теста может быть больше страницы, а список идёт по `createdAt asc`.
+   */
+  const findListedBook = async (slug: string): Promise<ListedBook | undefined> => {
+    for (let page = 1, totalPages = 1; page <= totalPages; page++) {
+      const list = await request(http()).get('/en/books').query({ page, limit: 100 }).expect(200);
+      const pagination = list.body.pagination as { totalPages: number } | undefined;
+      if (!pagination) throw new Error('GET /en/books: no pagination in the list response');
+      totalPages = pagination.totalPages;
+      const found = (list.body.items as ListedBook[]).find((b) => b.slug === slug);
+      if (found) return found;
+    }
+    return undefined;
+  };
+
   const put = (versionId: string, body: Record<string, unknown>, query = '') =>
     request(http())
       .put(`/versions/${versionId}/analysis${query}`)
@@ -562,15 +579,10 @@ describe('BookAnalysis e2e', () => {
     const ov2 = await request(http()).get(`/en/books/${noCore.bookSlug}/overview`).expect(200);
     expect(ov2.body.versions[0]._count.analyses).toBe(0);
 
-    const list = await request(http()).get('/en/books').query({ page: 1, limit: 100 }).expect(200);
-    const items = (list.body.items ?? list.body.data) as {
-      slug: string;
-      versions: { _count: { analyses: number } }[];
-    }[];
-    const counts = (slug: string) =>
-      items.find((b) => b.slug === slug)?.versions.map((v) => v._count.analyses);
-    expect(counts(withCore.bookSlug)).toEqual([1]);
-    expect(counts(noCore.bookSlug)).toEqual([0]);
+    const counts = async (slug: string) =>
+      (await findListedBook(slug))?.versions.map((v) => v._count.analyses);
+    expect(await counts(withCore.bookSlug)).toEqual([1]);
+    expect(await counts(noCore.bookSlug)).toEqual([0]);
   });
 
   /**
@@ -601,12 +613,8 @@ describe('BookAnalysis e2e', () => {
     const closed = await createVersion({ slugPrefix: 'book-an-claim' });
     await put(closed.versionId, { language: 'en', ...core() }).expect(200);
     await claimWithBlock(closed, 'CLOSED', { entireBook: true });
-    const list = await request(http()).get('/en/books').query({ page: 1, limit: 100 }).expect(200);
-    const items = (list.body.items ?? list.body.data) as {
-      slug: string;
-      versions: { _count: { analyses: number } }[];
-    }[];
-    expect(items.find((b) => b.slug === closed.bookSlug)?.versions[0]._count.analyses).toBe(1);
+    const found = await findListedBook(closed.bookSlug);
+    expect(found?.versions[0]._count.analyses).toBe(1);
   });
 
   it('chapterNumbers: номера глав версии по возрастанию; без глав — пустой список', async () => {
