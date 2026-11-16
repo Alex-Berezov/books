@@ -120,7 +120,9 @@ describe('BookWorld public e2e (F08-3a)', () => {
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
     );
-    await app.init();
+    // Сервер слушает порт (только loopback): supertest к неслушающему серверу поднимает его на первый
+    // запрос и закрывает после первого ответа — одновременные запросы набора рвались бы `ECONNRESET`.
+    await app.listen(0, '127.0.0.1');
     userAccess = await register(`user_world_public_${Date.now()}@example.com`);
     adminAccess = await register('admin@example.com');
     await grantStaffRoles(app, 'admin@example.com');
@@ -321,16 +323,22 @@ describe('BookWorld public e2e (F08-3a)', () => {
     );
   });
 
+  // Гонка — 12 одновременных запросов к ручке. Сервер набора слушает порт (`app.listen(0)` в
+  // `beforeAll`): иначе supertest поднимает свой сервер на первый запрос и закрывает его после
+  // первого ответа, и остальные запросы рвутся `ECONNRESET` (прогон ci.yml 43910868382).
   it('beacon: одновременные первые события дня — все 204, одна строка с полным счётом', async () => {
     const book = await createBookFixture(prisma, `world-beacon-race-${unique()}`);
     const v = await createVersion(book.id, 'en');
     await entity(v.id, 'oblomov');
-    const codes = await Promise.all(
+    const responses = await Promise.all(
       Array.from({ length: 12 }, () =>
-        beacon({ bookVersionId: v.id, key: 'oblomov', event: 'to_world' }).then((r) => r.status),
+        beacon({ bookVersionId: v.id, key: 'oblomov', event: 'to_world' }),
       ),
     );
-    expect(codes).toEqual(Array(12).fill(204));
+    // Не 204 — со статусом и телом ответа в сообщении.
+    expect(
+      responses.filter((r) => r.status !== 204).map((r) => `${r.status} ${JSON.stringify(r.body)}`),
+    ).toEqual([]);
     const rows = await statRows(v.id);
     expect(rows.map((r) => ({ key: r.key, event: r.event, count: r.count }))).toEqual([
       { key: 'oblomov', event: 'to_world', count: 12 },
