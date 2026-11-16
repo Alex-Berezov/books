@@ -452,7 +452,8 @@ describe('BookWorld e2e', () => {
       .set('Authorization', `Bearer ${userAccess}`)
       .expect(404);
     const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
-    expect(list.body).toEqual({ language: 'en', entities: [] });
+    // F08-3a: без публичных сущностей и кластер hreflang пуст.
+    expect(list.body).toEqual({ language: 'en', entities: [], alternates: [] });
     const editor = await request(http())
       .get(`/versions/${versionId}/world/oblomov`)
       .set('Authorization', `Bearer ${adminAccess}`)
@@ -481,6 +482,8 @@ describe('BookWorld e2e', () => {
         'short',
         'hasCore',
         'isIndexable',
+        // F08-3: «впервые — глава N» колонкой (решение арбитра Q2).
+        'mentionFirst',
         'updatedAt',
         'aliases',
         'profile',
@@ -786,7 +789,17 @@ describe('BookWorld e2e', () => {
     ).toEqual(expected);
     const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
     expect(Object.keys(list.body.entities[0]).sort()).toEqual(
-      ['key', 'type', 'name', 'role', 'short', 'hasCore', 'isIndexable', 'updatedAt'].sort(),
+      [
+        'key',
+        'type',
+        'name',
+        'role',
+        'short',
+        'hasCore',
+        'isIndexable',
+        'mentionFirst',
+        'updatedAt',
+      ].sort(),
     );
     const editor = await request(http())
       .get(`/versions/${versionId}/world`)
@@ -795,6 +808,8 @@ describe('BookWorld e2e', () => {
     // F08-2: в строке списка редактору — число глав присутствия (колонка), без Json `mentions`.
     expect(Object.keys(editor.body.entities[0].editor).sort()).toEqual(
       [
+        // F08-3: публичность без версии — ссылка вкладки на страницу (решение арбитра Q3).
+        'isListed',
         'isVisible',
         'readAt',
         'autoTextAt',

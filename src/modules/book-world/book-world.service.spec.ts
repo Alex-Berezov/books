@@ -84,7 +84,10 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
   const prisma = {
     bookVersion: {
       findUnique: jest.fn().mockResolvedValue({ language: 'en', status: 'published' }),
+      // Кластер hreflang ответа записи (F08-3a, `world-alternates.ts`): соседей нет.
+      findMany: jest.fn().mockResolvedValue([]),
     },
+    seo: { findMany: jest.fn().mockResolvedValue([]) },
     bookAnalysis: { findUnique: jest.fn().mockResolvedValue(null) },
     bookWorldEntity: {
       // `key.in` — строки тела; `key.notIn` — соседи-герои вне подсчёта (F08-2); без `key` — ключи версии.

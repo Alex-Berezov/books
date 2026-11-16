@@ -3,7 +3,6 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Language, Prisma } from '@prisma/client';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
@@ -12,7 +11,7 @@ import { utcTimestamp } from '../../shared/prisma/utc-timestamp';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
 import { GeoBlockScope } from '../geo-block/dto/geo-block.dto';
 import { summarySectionsVisibleWhere } from '../book/book-card';
-import { robotsHasNoindex } from '../../shared/seo/term-indexable.util';
+import { noindexSeoIds, notNoindexWhere } from '../../shared/seo/noindex-seo';
 import { paginated, type PaginatedResult } from '../../shared/dto/paginated-response.dto';
 import { writeUnderSummaryLock } from './book-summary-lock';
 import {
@@ -38,12 +37,6 @@ type Db = Prisma.TransactionClient;
 
 /** Номер раздела в адресе — правило `product.md` §3 (то же, что `?chapter=N` читалки). */
 const SECTION_NUMBER_PATTERN = /^[1-9]\d{0,5}$/;
-/**
- * Предел выборки `Seo` с `noindex` на язык (решение арбитра `F04 | F04-1`, шаг 7 после круга 3): кандидаты
- * собираются в память, поэтому с ограничением строк; дошли до него — отказ, а не урезанный список,
- * который открыл бы закрытые от индекса книги.
- */
-export const SITEMAP_NOINDEX_SEO_LIMIT = 10_000;
 
 const LIST_SELECT = {
   id: true,
@@ -343,17 +336,14 @@ export class BookSummarySectionsService {
     page: number,
     limit: number,
   ): Promise<PaginatedResult<BookSummarySectionsSitemapItemDto>> {
-    const noindexSeoIds = await this.noindexSeoIds(language);
+    const noindexIds = await noindexSeoIds(this.prisma, { language, status: 'published' });
     // Условия — списком `AND`, а не спредом: общее правило видимости может обзавестись своим `OR`,
     // и спред молча затёр бы одно из двух.
     const where: Prisma.BookVersionWhereInput = {
       AND: [
         { language, status: 'published', slug: { not: null }, summarySections: { some: {} } },
         summarySectionsVisibleWhere(new Date()),
-        // `notIn` по nullable-полю отбрасывает строки с `NULL`: версия без `Seo` в карту попадает.
-        noindexSeoIds.length > 0
-          ? { OR: [{ seoId: null }, { seoId: { notIn: noindexSeoIds } }] }
-          : {},
+        notNoindexWhere(noindexIds),
       ],
     };
     const [rows, total] = await Promise.all([
@@ -387,29 +377,6 @@ export class BookSummarySectionsService {
         : [],
     );
     return paginated(items, { page, limit, total });
-  }
-
-  /**
-   * `Seo` версий языка, закрытых от индекса: кандидаты по подстроке, отбор — общим разборщиком
-   * `robotsHasNoindex` (решение арбитра `F04 | F04-1`, п.4; предел — шаг 7 после круга 3): одно правило с остальным бэкендом.
-   */
-  private async noindexSeoIds(language: Language): Promise<number[]> {
-    const candidates = await this.prisma.seo.findMany({
-      where: {
-        bookVersion: { language, status: 'published' },
-        OR: [
-          { robots: { contains: 'noindex', mode: 'insensitive' } },
-          { robots: { contains: 'none', mode: 'insensitive' } },
-        ],
-      },
-      select: { id: true, robots: true },
-      orderBy: { id: 'asc' },
-      take: SITEMAP_NOINDEX_SEO_LIMIT + 1,
-    });
-    if (candidates.length > SITEMAP_NOINDEX_SEO_LIMIT) {
-      throw new ServiceUnavailableException('Too many noindex pages to build the sitemap');
-    }
-    return candidates.filter((seo) => robotsHasNoindex(seo.robots)).map((seo) => seo.id);
   }
 
   /**

@@ -73,6 +73,7 @@ import {
   worldDerivedUnchanged,
   worldListedWrite,
 } from './world-public';
+import { worldAlternates } from './world-alternates';
 import {
   checkWorldRefs,
   duplicateWorldKeys,
@@ -147,22 +148,28 @@ export class BookWorldService {
       bookVersionId,
       actor,
     );
-    if (editor) {
-      const rows = await this.prisma.bookWorldEntity.findMany({
-        where: { bookVersionId },
-        select: WORLD_EDITOR_SUMMARY_SELECT,
-        orderBy: { key: 'asc' },
-        take: BOOK_WORLD_LIMITS.entities,
-      });
-      return { language, entities: rows.map(withEditor) };
-    }
-    const rows = await this.prisma.bookWorldEntity.findMany({
-      where: { bookVersionId, ...WORLD_ENTITY_PUBLIC_WHERE },
-      select: WORLD_SUMMARY_SELECT,
-      orderBy: { key: 'asc' },
-      take: BOOK_WORLD_LIMITS.entities,
-    });
-    return { language, entities: rows.map(toSummary) };
+    // hreflang общей страницы — правилом карты сайта (решение арбитра `F08 | F08-3a`), одно для всех.
+    const [entities, alternates] = await Promise.all([
+      editor
+        ? this.prisma.bookWorldEntity
+            .findMany({
+              where: { bookVersionId },
+              select: WORLD_EDITOR_SUMMARY_SELECT,
+              orderBy: { key: 'asc' },
+              take: BOOK_WORLD_LIMITS.entities,
+            })
+            .then((rows) => rows.map(withEditor))
+        : this.prisma.bookWorldEntity
+            .findMany({
+              where: { bookVersionId, ...WORLD_ENTITY_PUBLIC_WHERE },
+              select: WORLD_SUMMARY_SELECT,
+              orderBy: { key: 'asc' },
+              take: BOOK_WORLD_LIMITS.entities,
+            })
+            .then((rows) => rows.map(toSummary)),
+      worldAlternates(this.prisma, bookVersionId),
+    ]);
+    return { language, entities, alternates };
   }
 
   /** Страница сущности: непубличная не редактору — 404, как и черновик версии. */
@@ -179,7 +186,7 @@ export class BookWorldService {
       actor,
     );
     const where = { bookVersionId_key: { bookVersionId, key } };
-    const [entity, chapterNumbers] = await Promise.all([
+    const [entity, chapterNumbers, alternates] = await Promise.all([
       editor
         ? Promise.all([
             this.prisma.bookWorldEntity.findUnique({ where, select: BOOK_WORLD_SELECT }),
@@ -189,9 +196,10 @@ export class BookWorldService {
           )
         : this.readerEntity(bookVersionId, key),
       loadChapterNumbers(this.prisma, bookVersionId),
+      worldAlternates(this.prisma, bookVersionId, key),
     ]);
     if (!entity) throw notFoundEntity();
-    return { language, chapterNumbers, entity };
+    return { language, chapterNumbers, entity, alternates };
   }
 
   /**
@@ -258,7 +266,11 @@ export class BookWorldService {
       },
     );
     return {
-      world: { language, entities: rows.map(withEditor) },
+      world: {
+        language,
+        entities: rows.map(withEditor),
+        alternates: await worldAlternates(this.prisma, bookVersionId),
+      },
       entities: planned.map(savedSummary),
     };
   }

@@ -33,6 +33,7 @@ const hero = (over: Row = {}): Row => ({
   sources: null,
   mentions: null,
   mentionsAt: null,
+  mentionFirst: null,
   hasCore: false,
   coreMissing: ['mentions'],
   isListed: false,
@@ -155,6 +156,23 @@ describe('WorldMentionsService.recountVersion (F08-2)', () => {
     });
     await expect(service.recountVersion('v1')).resolves.toEqual({ status: 'done', written: 1 });
     const data = update.mock.calls[0][0].data;
+    expect(data.mentionChapters).toBe(2);
+    expect(data).not.toHaveProperty('mentions');
+    expect(data).not.toHaveProperty('mentionsAt');
+  });
+
+  it('F08-3: те же mentions, но колонка первой главы пуста — пишется она, mentionsAt не двигается', async () => {
+    const first = setup({ rows: [hero()], chapters: TEXT });
+    await first.service.recountVersion('v1');
+    const written = first.update.mock.calls[0][0].data;
+    expect(written.mentionFirst).toBe(1);
+    const { service, update } = setup({
+      rows: [hero({ ...written, mentionFirst: null, updatedAt: EDITED })],
+      chapters: TEXT,
+    });
+    await expect(service.recountVersion('v1')).resolves.toEqual({ status: 'done', written: 1 });
+    const data = update.mock.calls[0][0].data;
+    expect(data.mentionFirst).toBe(1);
     expect(data.mentionChapters).toBe(2);
     expect(data).not.toHaveProperty('mentions');
     expect(data).not.toHaveProperty('mentionsAt');

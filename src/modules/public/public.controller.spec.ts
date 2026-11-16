@@ -1,4 +1,6 @@
 import { BookSummarySectionsService } from '../book-summary/book-summary-sections.service';
+import { WorldSitemapService } from '../book-world/world-sitemap.service';
+import { SITEMAP_PAGE_MAX_LIMIT } from '../../shared/dto/sitemap-page-query.dto';
 import { readFileSync } from 'node:fs';
 import { PublicController } from './public.controller';
 import { Language as PrismaLanguage } from '@prisma/client';
@@ -32,6 +34,7 @@ describe('PublicController (unit)', () => {
   const geoIpCountry = { resolveCountry: jest.fn().mockReturnValue(null) };
   const slugRedirects = { resolve: jest.fn().mockResolvedValue(null) };
   const summarySections = { sitemap: jest.fn() };
+  const worlds = { sitemap: jest.fn() };
 
   const controller = new PublicController(
     books as unknown as BookService,
@@ -42,6 +45,7 @@ describe('PublicController (unit)', () => {
     geoIpCountry as unknown as GeoIpCountryService,
     slugRedirects as unknown as SlugRedirectService,
     summarySections as unknown as BookSummarySectionsService,
+    worlds as unknown as WorldSitemapService,
   );
 
   beforeEach(() => {
@@ -103,6 +107,16 @@ describe('PublicController (unit)', () => {
    * аргумента нет и у самого `getOverview`: он читался только безъязыким
    * маршрутом, снятым вместе с ним (`LEGACY-387`).
    */
+  it('worldSitemap: язык пути и разобранные page/limit; без них — 1 и потолок порции (F08-3a)', async () => {
+    worlds.sitemap.mockResolvedValue({ items: [] });
+    await controller.worldSitemap(PrismaLanguage.ru, { page: 3, limit: 7 });
+    await controller.worldSitemap(PrismaLanguage.en, {});
+    expect(worlds.sitemap.mock.calls).toEqual([
+      [PrismaLanguage.ru, 3, 7],
+      [PrismaLanguage.en, 1, SITEMAP_PAGE_MAX_LIMIT],
+    ]);
+  });
+
   it('overview: язык берётся из пути, заголовок в сервис не уходит', async () => {
     books.getOverview.mockResolvedValueOnce({ ok: true });
     const res = await controller.overview(PrismaLanguage.en, 'some-slug');

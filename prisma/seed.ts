@@ -7,6 +7,7 @@ import { seedPageAuthors } from './seed-authors';
 import { addRoleForEmails } from './seed-staff-roles';
 import { seedSummaryAcceptance } from './seed-summaries';
 import { seedTranslationSample } from './seed-translation-sample';
+import { seedWorldAcceptance } from './seed-world';
 
 const connectionString = process.env.DATABASE_URL;
 const pool = new Pool({ connectionString });
@@ -967,6 +968,8 @@ async function main() {
   await seedSummaryAcceptance(prisma, ensureRightsChain);
   // F05-9: книга-образец приёмки автоперевода - вне каталога, черновик под noindex.
   await seedTranslationSample(prisma, ensureRightsChain);
+  // F08-3: служебные книги приёмки мира книги - вне каталога, со своими главами.
+  await seedWorldAcceptance(prisma, ensureRightsChain);
 
   console.log('Seeded categories, a sample book with versions and the SEO catalog');
 }

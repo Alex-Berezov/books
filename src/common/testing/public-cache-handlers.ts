@@ -36,6 +36,8 @@ export const PUBLIC_CACHE_HANDLERS: readonly string[] = [
   'modules/public/public.controller.ts → tagBookCards',
   'modules/public/public.controller.ts → tagsBySlug',
   'modules/public/public.controller.ts → tagsList',
+  // F08-3a: карта мира книги — ни страны, ни роли не читает, как карта разделов пересказа.
+  'modules/public/public.controller.ts → worldSitemap',
   // Второй способ: ручной `@Header('Cache-Control', 'public, max-age=3600')`.
   // Обе схемы отчёта агента публичны по смыслу — это статические JSON Schema,
   // одинаковые для всех, — и от заголовков запроса не зависят.

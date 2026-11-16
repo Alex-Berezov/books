@@ -1,6 +1,7 @@
 import {
   WORLD_EDITOR_SUMMARY_SELECT,
   WORLD_SUMMARY_SELECT,
+  editorOf,
   mergeEntity,
   readMentions,
   toEntityDto,
@@ -82,7 +83,18 @@ describe('выборки списка (F08-1)', () => {
   // Список не тянет тексты страниц: строка — поля сводки, у редактора ещё отметки (`LEGACY-127` класс).
   it('строка списка читателя и редактора — без Json-колонок', () => {
     expect(Object.keys(WORLD_SUMMARY_SELECT).sort()).toEqual(
-      ['key', 'type', 'name', 'role', 'short', 'hasCore', 'isIndexable', 'updatedAt'].sort(),
+      // F08-3: первая глава присутствия — колонкой Int, не Json `mentions` (решение арбитра Q2).
+      [
+        'key',
+        'type',
+        'name',
+        'role',
+        'short',
+        'hasCore',
+        'isIndexable',
+        'mentionFirst',
+        'updatedAt',
+      ].sort(),
     );
     expect(Object.keys(WORLD_EDITOR_SUMMARY_SELECT).sort()).toEqual(
       [
@@ -147,6 +159,7 @@ describe('присутствие наружу (F08-2, решения арбит�
     short: 'Who he is.',
     hasCore: true,
     isIndexable: true,
+    mentionFirst: 1,
     updatedAt: new Date(),
     createdAt: new Date(),
     aliases: null,
@@ -175,5 +188,34 @@ describe('присутствие наружу (F08-2, решения арбит�
     expect(editor.scenes).toHaveLength(2);
     expect(editor.arc!.stages).toHaveLength(1);
     expect(editor.mentions!.coPresence).toHaveLength(2);
+  });
+
+  it('F08-3: первая глава присутствия — в сводке читателя (Q2)', () => {
+    expect(toEntityDto(row, { visibleKeys: new Set() }).mentionFirst).toBe(1);
+  });
+});
+
+describe('отметки редактора (F08-3, решение арбитра Q3)', () => {
+  const marks = {
+    key: 'oblomov',
+    type: 'character' as const,
+    name: 'Oblomov',
+    role: 'main',
+    short: null,
+    hasCore: true,
+    isIndexable: true,
+    mentionFirst: null,
+    updatedAt: new Date(),
+    isVisible: true,
+    readAt: null,
+    autoTextAt: null,
+    firstPublishedAt: null,
+    coreMissing: [],
+    mentionChapters: null,
+  };
+
+  it('editorOf отдаёт isListed как есть — вкладка не повторяет условие публичности', () => {
+    expect(editorOf({ ...marks, isListed: true }).isListed).toBe(true);
+    expect(editorOf({ ...marks, isListed: false }).isListed).toBe(false);
   });
 });

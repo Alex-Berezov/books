@@ -133,9 +133,10 @@ async function writeMentions(
   const coreMissing = core.missing.map((m) => m.part);
   const listed = worldListedWrite({ ...row, mentions, hasCore: core.hasCore }, version, now);
   const mentionsChanged = stableJson(row.mentions) !== stableJson(mentions);
-  // Колонка числа глав — вместе с `mentions`; строка, у которой она пуста при тех же `mentions`
-  // (записана до колонки), получает её без сдвига `mentionsAt`.
-  const chaptersColumnStale = row.mentionChapters !== mentions.chapters.length;
+  // Колонки числа глав и первой главы — вместе с `mentions`; строка, у которой они пусты при тех же
+  // `mentions` (записана до колонки), получает их без сдвига `mentionsAt`.
+  const chaptersColumnStale =
+    row.mentionChapters !== mentions.chapters.length || row.mentionFirst !== mentions.first;
   if (
     !mentionsChanged &&
     !chaptersColumnStale &&
@@ -148,7 +149,7 @@ async function writeMentions(
     data: {
       ...(mentionsChanged ? { mentions: toJsonInput(mentions), mentionsAt: now } : {}),
       ...(mentionsChanged || chaptersColumnStale
-        ? { mentionChapters: mentions.chapters.length }
+        ? { mentionChapters: mentions.chapters.length, mentionFirst: mentions.first }
         : {}),
       hasCore: core.hasCore,
       coreMissing,

@@ -90,6 +90,8 @@ export const WORLD_SUMMARY_SELECT = {
   short: true,
   hasCore: true,
   isIndexable: true,
+  // «Впервые — глава N» карточки общей страницы (`product.md` §4 п.4) — колонкой, не из `mentions`.
+  mentionFirst: true,
   updatedAt: true,
 } as const satisfies Prisma.BookWorldEntitySelect;
 
@@ -302,6 +304,7 @@ export function toSummary(row: WorldSummaryRow): BookWorldEntitySummaryDto {
     short: row.short,
     hasCore: row.hasCore,
     isIndexable: row.isIndexable,
+    mentionFirst: row.mentionFirst,
     updatedAt: row.updatedAt,
   };
 }
@@ -349,6 +352,7 @@ export function toEntityDto(
 /** Отметки редактора: только у выборок с `WORLD_EDITOR_FIELDS`, читателю не отдаются вовсе. */
 export function editorOf(row: WorldEditorSummaryRow): BookWorldEditorDto {
   return {
+    isListed: row.isListed,
     isVisible: row.isVisible,
     readAt: row.readAt,
     autoTextAt: row.autoTextAt,

@@ -3198,6 +3198,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/world/stats': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** World pages report: event sums per version, entity key and event over the last N days (UTC) */
+    get: operations['WorldStatsController_report'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/{lang}/books/{bookId}/versions': {
     parameters: {
       query?: never;
@@ -4906,6 +4923,23 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/world/beacon': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Count an event of a public world page (view or followed link); stores a daily aggregate only, no IP, user or cookie */
+    post: operations['WorldStatsController_beacon'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/{lang}/authors': {
     parameters: {
       query?: never;
@@ -5241,6 +5275,23 @@ export interface paths {
     };
     /** Compact paginated book cards for a tag */
     get: operations['PublicController_tagBookCards'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/{lang}/world/sitemap': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Book world pages for the sitemap: one item per published version with public entities (paged by version) */
+    get: operations['PublicController_worldSitemap'];
     put?: never;
     post?: never;
     delete?: never;
@@ -7669,6 +7720,8 @@ export interface components {
        * @description First time on the site; after it the entity cannot be deleted
        */
       firstPublishedAt: string | null;
+      /** @description The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); the page exists when the version is also published with a slug */
+      isListed: boolean;
       isVisible: boolean;
       /** @description Chapters the entity is found in (F08-2); null — not counted yet */
       mentionChapters: number | null;
@@ -7702,6 +7755,8 @@ export interface components {
       hasCore: boolean;
       isIndexable: boolean;
       key: string;
+      /** @description First chapter the entity is found in (F08-2 count); null — not counted yet or not found */
+      mentionFirst: number | null;
       mentions: components['schemas']['BookWorldMentionsDto'] | null;
       name: string;
       profile: components['schemas']['BookWorldProfileDto'] | null;
@@ -7747,6 +7802,8 @@ export interface components {
       type: 'character';
     };
     BookWorldEntityResponseDto: {
+      /** @description hreflang cluster of this page (same rule as GET /:lang/world/sitemap): languages of the book where the page exists on a published version with a slug and without editorial noindex, this version first; empty when the page is not indexable (entity isIndexable=false, editorial noindex, draft) */
+      alternates: components['schemas']['WorldAlternateDto'][];
       /** @description Chapter numbers of the version, ascending; chapter links are rendered only for these (empty without text) */
       chapterNumbers: number[];
       entity: components['schemas']['BookWorldEntityDto'];
@@ -7772,6 +7829,8 @@ export interface components {
       hasCore: boolean;
       isIndexable: boolean;
       key: string;
+      /** @description First chapter the entity is found in (F08-2 count); null — not counted yet or not found */
+      mentionFirst: number | null;
       name: string;
       /** @enum {string|null} */
       role: 'main' | 'secondary' | 'minor' | null;
@@ -7781,6 +7840,8 @@ export interface components {
       updatedAt: string;
     };
     BookWorldListResponseDto: {
+      /** @description hreflang cluster of this page (same rule as GET /:lang/world/sitemap): languages of the book where the page exists on a published version with a slug and without editorial noindex, this version first; empty when the page is not indexable (entity isIndexable=false, editorial noindex, draft) */
+      alternates: components['schemas']['WorldAlternateDto'][];
       /** @description Readers: public entities only; editors: every entity of the version */
       entities: components['schemas']['BookWorldEntitySummaryDto'][];
       /**
@@ -16353,8 +16414,84 @@ export interface components {
     WithdrawLawyerReviewDto: {
       reasonRu: string;
     };
+    WorldAlternateDto: {
+      language: components['schemas']['Language'];
+      /** @description Version slug */
+      slug: string;
+    };
+    WorldBeaconDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      /** @description view — page view; to_* — a link followed (reader, audio, world, analysis, summary); engaged — the first link followed on this page load, sent once per load */
+      event: components['schemas']['WorldStatEvent'];
+      /** @description Entity key; absent — the /wiki page */
+      key?: string;
+    };
     /** @enum {string} */
     WorldEntityType: 'character' | 'pair' | 'place' | 'object' | 'term' | 'event';
+    WorldSitemapEntityDto: {
+      /** @description Languages where the entity with this key is public and indexable on a published version without editorial noindex; the version itself included */
+      alternates: components['schemas']['WorldAlternateDto'][];
+      key: string;
+      /**
+       * Format: date-time
+       * @description updatedAt of the entity
+       */
+      lastmod: string;
+    };
+    WorldSitemapItemDto: {
+      /** @description Languages where the /wiki page exists on a published version without editorial noindex; the version itself included */
+      alternates: components['schemas']['WorldAlternateDto'][];
+      /** @description Public entities with isIndexable=true; the /wiki page itself is always listed */
+      entities: components['schemas']['WorldSitemapEntityDto'][];
+      /**
+       * Format: date-time
+       * @description Latest updatedAt of the public entities of the version (the /wiki page)
+       */
+      lastmod: string;
+      /** @description Version slug */
+      slug: string;
+    };
+    /**
+     * @description view — page view; to_* — a link followed (reader, audio, world, analysis, summary); engaged — the first link followed on this page load, sent once per load
+     * @enum {string}
+     */
+    WorldStatEvent:
+      | 'view'
+      | 'to_reader'
+      | 'to_audio'
+      | 'to_world'
+      | 'to_analysis'
+      | 'to_summary'
+      | 'engaged';
+    WorldStatsResponseDto: {
+      /**
+       * Format: date
+       * @description First day of the window (UTC)
+       */
+      from: string;
+      /** @description The report hit its row cap; narrow it with bookVersionId or days */
+      isTruncated: boolean;
+      items: components['schemas']['WorldStatsRowDto'][];
+      /**
+       * Format: date
+       * @description Last day of the window (UTC), today
+       */
+      to: string;
+    };
+    WorldStatsRowDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      /** @description Sum over the window */
+      count: number;
+      event: components['schemas']['WorldStatEvent'];
+      /** @description Entity key; null — the /wiki page */
+      key: string | null;
+      /** @description Language of the version; null only if the version was deleted between the sum and the lookup (rows go away with it) */
+      language: components['schemas']['Language'] | null;
+      /** @description Version slug */
+      slug: string | null;
+    };
   };
   responses: never;
   parameters: never;
@@ -22468,6 +22605,29 @@ export interface operations {
       };
     };
   };
+  WorldStatsController_report: {
+    parameters: {
+      query?: {
+        /** @description One version; absent — all */
+        bookVersionId?: string;
+        days?: number;
+      };
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorldStatsResponseDto'];
+        };
+      };
+    };
+  };
   BookVersionController_listAdmin: {
     parameters: {
       query: {
@@ -25960,6 +26120,49 @@ export interface operations {
       };
     };
   };
+  WorldStatsController_beacon: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['WorldBeaconDto'];
+      };
+    };
+    responses: {
+      /** @description Counted, or ignored for bots; no body */
+      204: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Unknown event, malformed key or version id, extra field */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No such public world page (version or entity) */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Too many events from one address; see Retry-After */
+      429: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
   PublicController_authorsList: {
     parameters: {
       query?: {
@@ -26546,6 +26749,34 @@ export interface operations {
         };
         content: {
           'application/json': components['schemas']['TagBookCardsResponseDto'];
+        };
+      };
+    };
+  };
+  PublicController_worldSitemap: {
+    parameters: {
+      query?: {
+        page?: number;
+        limit?: number;
+      };
+      header?: never;
+      path: {
+        /** @description Path language */
+        lang: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': {
+            items: components['schemas']['WorldSitemapItemDto'][];
+            pagination: components['schemas']['PaginationInfoDto'];
+          };
         };
       };
     };

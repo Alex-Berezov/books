@@ -53,6 +53,8 @@ const PUBLIC_ROUTES: ReadonlyArray<readonly [HttpVerb, string]> = [
   ['get', '/:lang/tags'],
   ['get', '/:lang/tags/:slug/books'],
   ['get', '/:lang/tags/:slug/books/cards'],
+  // F08-3a: карта мира книги — публичная, как карта разделов пересказа.
+  ['get', '/:lang/world/sitemap'],
   ['get', '/analyses/claim-closures'],
   ['get', '/audio-chapters/:id'],
   ['get', '/books/:bookId/versions'],
@@ -93,6 +95,8 @@ const PUBLIC_ROUTES: ReadonlyArray<readonly [HttpVerb, string]> = [
   ['post', '/auth/social'],
   ['post', '/rights/agent/submissions'],
   ['post', '/views'],
+  // F08-3a: счётчик страниц мира книги — без входа и без cookie (`product.md` §14).
+  ['post', '/world/beacon'],
 ];
 
 /** Ниже этих чисел обход считается сломанным, а не репозиторий — поредевшим. */

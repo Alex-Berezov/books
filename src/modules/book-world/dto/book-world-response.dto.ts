@@ -20,6 +20,14 @@ import {
  * (`tech.md` §3, риск R3): служебное — только в `editor`, которого у читателя нет вовсе.
  */
 export class BookWorldEditorDto {
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'The entity is public apart from the version: core, read after the model text, visible ' +
+      '(computeWorldListed); the page exists when the version is also published with a slug',
+  })
+  isListed!: boolean;
+
   @ApiProperty({ type: Boolean })
   isVisible!: boolean;
 
@@ -105,6 +113,14 @@ export class BookWorldEntitySummaryDto {
   @ApiProperty({ type: Boolean })
   isIndexable!: boolean;
 
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description:
+      'First chapter the entity is found in (F08-2 count); null — not counted yet or not found',
+  })
+  mentionFirst!: number | null;
+
   @ApiProperty({ type: String, format: 'date-time' })
   updatedAt!: Date;
 
@@ -115,9 +131,27 @@ export class BookWorldEntitySummaryDto {
   editor?: BookWorldEditorDto;
 }
 
+/** Язык кластера hreflang мира книги и слаг версии этого языка (F08-3a). */
+export class WorldAlternateDto {
+  @ApiProperty({ enum: Language, enumName: 'Language' })
+  language!: Language;
+
+  @ApiProperty({ type: String, description: 'Version slug' })
+  slug!: string;
+}
+
 export class BookWorldListResponseDto {
   @ApiProperty({ enum: Language, description: 'Language of the version' })
   language!: Language;
+
+  @ApiProperty({
+    type: [WorldAlternateDto],
+    description:
+      'hreflang cluster of this page (same rule as GET /:lang/world/sitemap): languages of the book where the page ' +
+      'exists on a published version with a slug and without editorial noindex, this version first; empty when ' +
+      'the page is not indexable (entity isIndexable=false, editorial noindex, draft)',
+  })
+  alternates!: WorldAlternateDto[];
 
   @ApiProperty({
     type: [BookWorldEntitySummaryDto],
@@ -227,6 +261,15 @@ export class BookWorldEntityResponseDto {
 
   @ApiProperty({ type: BookWorldEntityDto })
   entity!: BookWorldEntityDto;
+
+  @ApiProperty({
+    type: [WorldAlternateDto],
+    description:
+      'hreflang cluster of this page (same rule as GET /:lang/world/sitemap): languages of the book where the page ' +
+      'exists on a published version with a slug and without editorial noindex, this version first; empty when ' +
+      'the page is not indexable (entity isIndexable=false, editorial noindex, draft)',
+  })
+  alternates!: WorldAlternateDto[];
 }
 
 export const BOOK_WORLD_WARNING_CODES = ['core_incomplete'] as const;

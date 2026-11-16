@@ -75,6 +75,12 @@ import {
 } from '../book-summary/dto/book-summary-sections-sitemap-query.dto';
 import { BookSummarySectionsSitemapItemDto } from '../book-summary/dto/book-summary-section-response.dto';
 import { TagBookCardsResponseDto } from '../book/dto/tag-book-cards-response.dto';
+import { WorldSitemapService } from '../book-world/world-sitemap.service';
+import { WorldSitemapItemDto } from '../book-world/dto/world-sitemap.dto';
+import {
+  SITEMAP_PAGE_MAX_LIMIT,
+  SitemapPageQueryDto,
+} from '../../shared/dto/sitemap-page-query.dto';
 
 // Helper to validate and coerce path lang to enum
 @ApiTags('public-i18n')
@@ -91,6 +97,7 @@ export class PublicController {
     private readonly geoIpCountryService: GeoIpCountryService,
     private readonly slugRedirects: SlugRedirectService,
     private readonly summarySections: BookSummarySectionsService,
+    private readonly worlds: WorldSitemapService,
   ) {}
 
   /**
@@ -213,6 +220,25 @@ export class PublicController {
       query.page ?? 1,
       query.limit ?? SUMMARY_SECTIONS_SITEMAP_MAX_LIMIT,
     );
+  }
+
+  /**
+   * Мир книги для карты сайта (F08-3, решение арбитра `F08 | F08-3` Q1): элемент — версия с общей
+   * страницей `/wiki`, индексируемыми сущностями и кластерами языков. Ни страны, ни роли не читает.
+   */
+  @Get('world/sitemap')
+  @ApiOperation({
+    summary:
+      'Book world pages for the sitemap: one item per published version with public entities (paged by version)',
+  })
+  @ApiExtraModels(WorldSitemapItemDto, PaginationInfoDto)
+  @ApiOkResponse({ schema: paginatedSchema(WorldSitemapItemDto) })
+  @ApiParam({ name: 'lang', description: 'Path language', enum: PrismaLanguage })
+  worldSitemap(
+    @Param('lang', LangParamPipe) pathLang: PrismaLanguage,
+    @Query() query: SitemapPageQueryDto,
+  ): Promise<PaginatedResult<WorldSitemapItemDto>> {
+    return this.worlds.sitemap(pathLang, query.page ?? 1, query.limit ?? SITEMAP_PAGE_MAX_LIMIT);
   }
 
   // Related books (compact BookCard) for a book page: same-author + similar-by-category

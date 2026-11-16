@@ -29,6 +29,11 @@ import {
   summaryAcceptanceBooks,
 } from '../prisma/seed-summaries';
 import { TRANSLATION_SAMPLE_SLUG, sampleChapterHtml } from '../prisma/seed-translation-sample';
+import { WORLD_ACCEPTANCE, worldAcceptanceBooks } from '../prisma/seed-world';
+import { readStoredEntity } from '../src/modules/book-world/book-world-data';
+import { computeWorldCore } from '../src/modules/book-world/world-core';
+import { computeWorldListed } from '../src/modules/book-world/world-public';
+import { WorldMentionsService } from '../src/modules/book-world/world-mentions.service';
 import { httpServerOf } from './http-server';
 import { grantStaffRoles } from './helpers/staff-roles';
 
@@ -1276,5 +1281,110 @@ describe('Seeded dataset (e2e)', () => {
       });
       expect(after[0].chapters).toEqual(en.chapters);
     }, 180_000);
+  });
+
+  describe('мир книги приёмки (F08-3)', () => {
+    const worldVersions = worldAcceptanceBooks().flatMap((b) =>
+      b.versions.map((v) => [b.slug, v.language, v] as const),
+    );
+
+    it.each(worldVersions)(
+      '%s/%s: литералы сида равны настоящему подсчёту — пересчёт версии ничего не пишет',
+      async (slug, language, v) => {
+        const version = await versionOf(slug, language);
+        const result = await app.get(WorldMentionsService).recountVersion(version.id);
+        expect(result).toEqual({ status: 'done', written: 0 });
+        const rows = await prisma.bookWorldEntity.findMany({
+          where: { bookVersionId: version.id },
+          orderBy: { key: 'asc' },
+        });
+        expect(rows.map((r) => r.key)).toEqual(v.entities.map((e) => e.key).sort());
+        for (const row of rows) {
+          const core = computeWorldCore({ ...readStoredEntity(row), mentions: row.mentions });
+          expect({ key: row.key, hasCore: row.hasCore, missing: row.coreMissing }).toEqual({
+            key: row.key,
+            hasCore: core.hasCore,
+            missing: core.missing.map((m) => m.part),
+          });
+          expect({ key: row.key, isListed: row.isListed }).toEqual({
+            key: row.key,
+            isListed: computeWorldListed(row),
+          });
+        }
+      },
+    );
+
+    it.each(worldVersions)(
+      '%s/%s: сущности сида проходит импорт редактора (dryRun): ссылки, источники, цитаты, главы',
+      async (slug, language, v) => {
+        const email = `seed_world_${Date.now()}_${language}@example.com`;
+        const reg = await request(httpServerOf(app))
+          .post('/auth/register')
+          .send({ email, password: 'password123' })
+          .expect(201);
+        const access = (reg.body as { accessToken: string }).accessToken;
+        await grantStaffRoles(app, email);
+        const version = await versionOf(slug, language);
+        const entities = v.entities.map((e) => ({
+          key: e.key,
+          type: 'character',
+          name: e.name,
+          role: 'main',
+          short: e.short,
+          ...e.blocks,
+          ...(e.sources ? { sources: e.sources } : {}),
+        }));
+        const dry = await request(httpServerOf(app))
+          .put(`/versions/${version.id}/world?dryRun=true`)
+          .set('Authorization', `Bearer ${access}`)
+          .send({ language, entities });
+        expect({
+          status: dry.status,
+          body: dry.status === 200 ? null : (dry.body as unknown),
+        }).toEqual({
+          status: 200,
+          body: null,
+        });
+      },
+    );
+
+    it('читатель видит ровно публичные сущности: en — три, ru — одна', async () => {
+      const keysOf = async (language: Language) => {
+        const { id } = await versionOf(WORLD_ACCEPTANCE.book, language);
+        const res = await get(`/versions/${id}/world`).expect(200);
+        const body = res.body as { entities: { key: string }[] };
+        return body.entities.map((e) => e.key).sort();
+      };
+      expect(await keysOf(Language.en)).toEqual(['anna-lark', 'mira-vale', 'tom-reed']);
+      // Мир есть, но скрыт — читателю пусто (`/wiki` — 404, кнопки нет: §19 п.6).
+      const hidden = await versionOf(WORLD_ACCEPTANCE.hidden, Language.en);
+      const hiddenList = await get(`/versions/${hidden.id}/world`).expect(200);
+      expect((hiddenList.body as { entities: unknown[] }).entities).toEqual([]);
+      // Служебные строки ru-версии — на её языке.
+      const ru = await prisma.bookVersion.findFirstOrThrow({
+        where: { book: { slug: WORLD_ACCEPTANCE.book }, language: Language.ru },
+        select: { title: true, chapters: { select: { title: true }, orderBy: { number: 'asc' } } },
+      });
+      expect(ru.title).toBe('Приёмка мира книги');
+      expect(ru.chapters.map((c) => c.title)).toEqual(['Глава 1', 'Глава 2', 'Глава 3']);
+      expect(await keysOf(Language.ru)).toEqual(['anna-lark']);
+    });
+
+    it('карта мира: индексируемые сущности с кластером en+ru; книга с noindex вне карты', async () => {
+      const res = await get('/en/world/sitemap?limit=50').expect(200);
+      type Item = {
+        slug: string;
+        alternates: { language: string }[];
+        entities: { key: string; alternates: { language: string }[] }[];
+      };
+      const { items } = res.body as { items: Item[] };
+      const book = items.find((i) => i.slug === WORLD_ACCEPTANCE.book);
+      expect(book?.alternates.map((a) => a.language)).toEqual(['en', 'ru']);
+      expect(book?.entities.map((e) => e.key)).toEqual(['anna-lark', 'tom-reed']);
+      expect(book?.entities[0].alternates.map((a) => a.language)).toEqual(['en', 'ru']);
+      expect(book?.entities[1].alternates.map((a) => a.language)).toEqual(['en']);
+      expect(items.find((i) => i.slug === WORLD_ACCEPTANCE.noindex)).toBeUndefined();
+      expect(items.find((i) => i.slug === WORLD_ACCEPTANCE.hidden)).toBeUndefined();
+    });
   });
 });

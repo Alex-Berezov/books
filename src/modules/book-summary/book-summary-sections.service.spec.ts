@@ -2,10 +2,8 @@ import { ServiceUnavailableException } from '@nestjs/common';
 import { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeoBlockRuleService } from '../geo-block/geo-block-rule.service';
-import {
-  BookSummarySectionsService,
-  SITEMAP_NOINDEX_SEO_LIMIT,
-} from './book-summary-sections.service';
+import { SITEMAP_NOINDEX_SEO_LIMIT } from '../../shared/seo/noindex-seo';
+import { BookSummarySectionsService } from './book-summary-sections.service';
 
 /**
  * Карта разделов пересказа (F04-1): предел кандидатов `Seo` с `noindex` (решение арбитра

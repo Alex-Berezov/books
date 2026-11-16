@@ -7869,6 +7869,10 @@
             "nullable": true,
             "type": "string"
           },
+          "isListed": {
+            "description": "The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); the page exists when the version is also published with a slug",
+            "type": "boolean"
+          },
           "isVisible": {
             "type": "boolean"
           },
@@ -7908,6 +7912,7 @@
           }
         },
         "required": [
+          "isListed",
           "isVisible",
           "readAt",
           "autoTextAt",
@@ -7982,6 +7987,11 @@
           },
           "key": {
             "type": "string"
+          },
+          "mentionFirst": {
+            "description": "First chapter the entity is found in (F08-2 count); null — not counted yet or not found",
+            "nullable": true,
+            "type": "number"
           },
           "mentions": {
             "allOf": [
@@ -8069,6 +8079,7 @@
           "short",
           "hasCore",
           "isIndexable",
+          "mentionFirst",
           "updatedAt",
           "aliases",
           "profile",
@@ -8225,6 +8236,13 @@
       },
       "BookWorldEntityResponseDto": {
         "properties": {
+          "alternates": {
+            "description": "hreflang cluster of this page (same rule as GET /:lang/world/sitemap): languages of the book where the page exists on a published version with a slug and without editorial noindex, this version first; empty when the page is not indexable (entity isIndexable=false, editorial noindex, draft)",
+            "items": {
+              "$ref": "#/components/schemas/WorldAlternateDto"
+            },
+            "type": "array"
+          },
           "chapterNumbers": {
             "description": "Chapter numbers of the version, ascending; chapter links are rendered only for these (empty without text)",
             "items": {
@@ -8250,7 +8268,8 @@
         "required": [
           "language",
           "chapterNumbers",
-          "entity"
+          "entity",
+          "alternates"
         ],
         "type": "object"
       },
@@ -8309,6 +8328,11 @@
           "key": {
             "type": "string"
           },
+          "mentionFirst": {
+            "description": "First chapter the entity is found in (F08-2 count); null — not counted yet or not found",
+            "nullable": true,
+            "type": "number"
+          },
           "name": {
             "type": "string"
           },
@@ -8345,12 +8369,20 @@
           "short",
           "hasCore",
           "isIndexable",
+          "mentionFirst",
           "updatedAt"
         ],
         "type": "object"
       },
       "BookWorldListResponseDto": {
         "properties": {
+          "alternates": {
+            "description": "hreflang cluster of this page (same rule as GET /:lang/world/sitemap): languages of the book where the page exists on a published version with a slug and without editorial noindex, this version first; empty when the page is not indexable (entity isIndexable=false, editorial noindex, draft)",
+            "items": {
+              "$ref": "#/components/schemas/WorldAlternateDto"
+            },
+            "type": "array"
+          },
           "entities": {
             "description": "Readers: public entities only; editors: every entity of the version",
             "items": {
@@ -8372,6 +8404,7 @@
         },
         "required": [
           "language",
+          "alternates",
           "entities"
         ],
         "type": "object"
@@ -32704,6 +32737,52 @@
         ],
         "type": "object"
       },
+      "WorldAlternateDto": {
+        "properties": {
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "slug": {
+            "description": "Version slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "language",
+          "slug"
+        ],
+        "type": "object"
+      },
+      "WorldBeaconDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "event": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldStatEvent"
+              }
+            ],
+            "description": "view — page view; to_* — a link followed (reader, audio, world, analysis, summary); engaged — the first link followed on this page load, sent once per load"
+          },
+          "key": {
+            "description": "Entity key; absent — the /wiki page",
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "bookVersionId",
+          "event"
+        ],
+        "type": "object"
+      },
       "WorldEntityType": {
         "enum": [
           "character",
@@ -32714,6 +32793,156 @@
           "event"
         ],
         "type": "string"
+      },
+      "WorldSitemapEntityDto": {
+        "properties": {
+          "alternates": {
+            "description": "Languages where the entity with this key is public and indexable on a published version without editorial noindex; the version itself included",
+            "items": {
+              "$ref": "#/components/schemas/WorldAlternateDto"
+            },
+            "type": "array"
+          },
+          "key": {
+            "type": "string"
+          },
+          "lastmod": {
+            "description": "updatedAt of the entity",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "lastmod",
+          "alternates"
+        ],
+        "type": "object"
+      },
+      "WorldSitemapItemDto": {
+        "properties": {
+          "alternates": {
+            "description": "Languages where the /wiki page exists on a published version without editorial noindex; the version itself included",
+            "items": {
+              "$ref": "#/components/schemas/WorldAlternateDto"
+            },
+            "type": "array"
+          },
+          "entities": {
+            "description": "Public entities with isIndexable=true; the /wiki page itself is always listed",
+            "items": {
+              "$ref": "#/components/schemas/WorldSitemapEntityDto"
+            },
+            "type": "array"
+          },
+          "lastmod": {
+            "description": "Latest updatedAt of the public entities of the version (the /wiki page)",
+            "format": "date-time",
+            "type": "string"
+          },
+          "slug": {
+            "description": "Version slug",
+            "type": "string"
+          }
+        },
+        "required": [
+          "slug",
+          "lastmod",
+          "alternates",
+          "entities"
+        ],
+        "type": "object"
+      },
+      "WorldStatEvent": {
+        "description": "view — page view; to_* — a link followed (reader, audio, world, analysis, summary); engaged — the first link followed on this page load, sent once per load",
+        "enum": [
+          "view",
+          "to_reader",
+          "to_audio",
+          "to_world",
+          "to_analysis",
+          "to_summary",
+          "engaged"
+        ],
+        "type": "string"
+      },
+      "WorldStatsResponseDto": {
+        "properties": {
+          "from": {
+            "description": "First day of the window (UTC)",
+            "format": "date",
+            "type": "string"
+          },
+          "isTruncated": {
+            "description": "The report hit its row cap; narrow it with bookVersionId or days",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorldStatsRowDto"
+            },
+            "type": "array"
+          },
+          "to": {
+            "description": "Last day of the window (UTC), today",
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "to",
+          "isTruncated",
+          "items"
+        ],
+        "type": "object"
+      },
+      "WorldStatsRowDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "count": {
+            "description": "Sum over the window",
+            "type": "number"
+          },
+          "event": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldStatEvent"
+              }
+            ]
+          },
+          "key": {
+            "description": "Entity key; null — the /wiki page",
+            "nullable": true,
+            "type": "string"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ],
+            "description": "Language of the version; null only if the version was deleted between the sum and the lookup (rows go away with it)",
+            "nullable": true
+          },
+          "slug": {
+            "description": "Version slug",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "bookVersionId",
+          "language",
+          "slug",
+          "key",
+          "event",
+          "count"
+        ],
+        "type": "object"
       }
     },
     "securitySchemes": {
@@ -44398,6 +44627,55 @@
         ]
       }
     },
+    "/admin/world/stats": {
+      "get": {
+        "operationId": "WorldStatsController_report",
+        "parameters": [
+          {
+            "description": "One version; absent — all",
+            "in": "query",
+            "name": "bookVersionId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "days",
+            "required": false,
+            "schema": {
+              "default": 30,
+              "maximum": 366,
+              "minimum": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldStatsResponseDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "World pages report: event sums per version, entity key and event over the last N days (UTC)",
+        "tags": [
+          "world"
+        ]
+      }
+    },
     "/admin/{lang}/books/{bookId}/versions": {
       "get": {
         "operationId": "BookVersionController_listAdmin",
@@ -50816,6 +51094,40 @@
         ]
       }
     },
+    "/world/beacon": {
+      "post": {
+        "operationId": "WorldStatsController_beacon",
+        "parameters": [],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WorldBeaconDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Counted, or ignored for bots; no body"
+          },
+          "400": {
+            "description": "Unknown event, malformed key or version id, extra field"
+          },
+          "404": {
+            "description": "No such public world page (version or entity)"
+          },
+          "429": {
+            "description": "Too many events from one address; see Retry-After"
+          }
+        },
+        "summary": "Count an event of a public world page (view or followed link); stores a daily aggregate only, no IP, user or cookie",
+        "tags": [
+          "world"
+        ]
+      }
+    },
     "/{lang}/authors": {
       "get": {
         "operationId": "PublicController_authorsList",
@@ -52379,6 +52691,82 @@
           }
         },
         "summary": "Compact paginated book cards for a tag",
+        "tags": [
+          "public-i18n"
+        ]
+      }
+    },
+    "/{lang}/world/sitemap": {
+      "get": {
+        "operationId": "PublicController_worldSitemap",
+        "parameters": [
+          {
+            "description": "Path language",
+            "in": "path",
+            "name": "lang",
+            "required": true,
+            "schema": {
+              "enum": [
+                "en",
+                "es",
+                "fr",
+                "pt",
+                "ru"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "maximum": 10000,
+              "minimum": 1,
+              "type": "number"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 50,
+              "minimum": 1,
+              "type": "number"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "items": {
+                      "items": {
+                        "$ref": "#/components/schemas/WorldSitemapItemDto"
+                      },
+                      "type": "array"
+                    },
+                    "pagination": {
+                      "$ref": "#/components/schemas/PaginationInfoDto"
+                    }
+                  },
+                  "required": [
+                    "items",
+                    "pagination"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "summary": "Book world pages for the sitemap: one item per published version with public entities (paged by version)",
         "tags": [
           "public-i18n"
         ]

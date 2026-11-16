@@ -82,6 +82,8 @@ model BookVersion {
   worldEntities   BookWorldEntity[]
   /// Очередь пересчёта присутствия мира книги (F08-2): строка есть — главы или формы менялись.
   worldMentionsPending WorldMentionsPending?
+  /// Счётчики публичных страниц мира книги по дням (F08-3).
+  worldDailyStats WorldDailyStat[]
   /// Разделы пересказа (F04): плоский список с номерами подряд с 1, номера ставит сервис.
   summarySections BookSummarySection[]
   llmOperations   LlmOperation[]
@@ -337,6 +339,9 @@ model BookWorldEntity {
   mentionsAt       DateTime?
   /// Число глав присутствия (`mentions.chapters`, F08-2) — колонкой: список редактора без Json.
   mentionChapters  Int?
+  /// Первая глава присутствия (`mentions.first`, F08-2) — колонкой: «впервые — глава N» в списке читателя
+  /// без Json (решение арбитра `F08 | F08-3` Q2); пишет тот же пересчёт, что `mentionChapters`.
+  mentionFirst     Int?
   /// Ядро заполнено (`world-core.ts`), пересчитывается каждой записью.
   hasCore          Boolean         @default(false)
   /// Чего не хватает до ядра (`computeWorldCore().missing`), пишется вместе с `hasCore`.
@@ -357,6 +362,34 @@ model BookWorldEntity {
   @@unique([bookVersionId, key])
   @@index([bookVersionId, type])
   @@index([bookVersionId, isListed])
+}
+
+/// Счётчики публичных страниц мира книги (F08-3, `product.md` §14; решение арбитра `F08 | F08-3` Q5):
+/// агрегат по дням без посетителя — ни IP, ни пользователя, ни cookie. `key` — ключ сущности,
+/// пустая строка — общая страница `/wiki` (в составном уникальном ключе `NULL` не равен сам себе).
+model WorldDailyStat {
+  id            String         @id @default(uuid())
+  day           DateTime       @db.Date
+  bookVersionId String
+  key           String         @default("")
+  event         WorldStatEvent
+  count         Int            @default(0)
+  bookVersion   BookVersion    @relation(fields: [bookVersionId], references: [id], onDelete: Cascade)
+
+  @@unique([day, bookVersionId, key, event])
+  @@index([bookVersionId, day])
+  @@index([day])
+}
+
+/// События счётчика мира книги (F08-3): просмотр, переходы по пяти целям, «был хоть один переход».
+enum WorldStatEvent {
+  view
+  to_reader
+  to_audio
+  to_world
+  to_analysis
+  to_summary
+  engaged
 }
 
 /// Очередь пересчёта присутствия мира книги (F08-2, решение арбитра `F08 | F08-2` Q1): строка на версию,

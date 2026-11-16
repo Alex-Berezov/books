@@ -3,6 +3,7 @@ import { PublicController } from './public.controller';
 import { AuthorModule } from '../author/author.module';
 import { BookModule } from '../book/book.module';
 import { BookSummaryModule } from '../book-summary/book-summary.module';
+import { BookWorldModule } from '../book-world/book-world.module';
 import { CategoryModule } from '../category/category.module';
 import { GeoBlockModule } from '../geo-block/geo-block.module';
 import { PagesModule } from '../pages/pages.module';
@@ -16,6 +17,7 @@ import { TagsModule } from '../tags/tags.module';
     AuthorModule,
     BookModule,
     BookSummaryModule,
+    BookWorldModule,
     CategoryModule,
     GeoBlockModule,
     PagesModule,
