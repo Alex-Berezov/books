@@ -799,6 +799,8 @@ describe('BookWorld e2e', () => {
         'isIndexable',
         'mentionFirst',
         'updatedAt',
+        // F08-5a: формы имени для перелинковки — только читателю (решение арбитра `F08 | F08-5` Q2).
+        'forms',
       ].sort(),
     );
     const editor = await request(http())

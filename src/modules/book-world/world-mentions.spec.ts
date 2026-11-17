@@ -4,6 +4,7 @@ import {
   countInParagraph,
   foldMention,
   mentionForms,
+  publicMentionForms,
   type WorldMentionSource,
 } from './world-mentions';
 
@@ -68,6 +69,28 @@ describe('world-mentions', () => {
     };
     expect(mentionForms(vera)).toEqual([]);
     expect(count([vera], [[1, '<p>Его вера крепка.</p>']]).get('vera')!.chapters).toEqual([]);
+  });
+
+  it('формы публичного списка: исходное написание, тот же отбор, что у подсчёта (F08-5 Q2)', () => {
+    const anna: WorldMentionSource = {
+      key: 'anna',
+      name: 'Анна Каренина',
+      aliases: [' Анна ', 'анна', 'Анну', 'Ан', 'Каренина', 'Аннушка'],
+      aliasExclusions: ['каренина'],
+    };
+    // Исключение, короткая форма и повтор по свёрнутому виду уходят; первое написание остаётся.
+    expect(publicMentionForms(anna)).toEqual(['Анна Каренина', 'Анна', 'Анну', 'Аннушка']);
+    expect(publicMentionForms(anna).map(foldMention)).toEqual(mentionForms(anna));
+  });
+
+  it('формы публичного списка: повтор по ё/е и по пробелам — одна форма, первое написание', () => {
+    const fedor: WorldMentionSource = {
+      key: 'fedor',
+      name: 'Фёдор Павлович',
+      aliases: ['Федор  Павлович', 'Фёдор'],
+      aliasExclusions: null,
+    };
+    expect(publicMentionForms(fedor)).toEqual(['Фёдор Павлович', 'Фёдор']);
   });
 
   it('форма короче 3 букв не считается', () => {

@@ -28,17 +28,34 @@ export interface WorldMentionSource {
   aliasExclusions: readonly string[] | null;
 }
 
-/** Формы для поиска: уникальные, в виде `foldMention`, без исключений и коротких. */
-export function mentionForms(entity: WorldMentionSource): string[] {
+/**
+ * Формы, по которым ищется имя: свёрнутый вид → первое написание с таким видом. Одно правило
+ * отбора (без исключений, без коротких, без повторов по свёрнутому виду) на подсчёт присутствия
+ * и на формы публичного списка (`F08-5`, решение арбитра `F08 | F08-5` Q2).
+ */
+function formsOf(entity: WorldMentionSource): Map<string, string> {
   const excluded = new Set((entity.aliasExclusions ?? []).map(foldMention));
-  const forms = new Set<string>();
+  const forms = new Map<string, string>();
   for (const raw of [entity.name ?? '', ...(entity.aliases ?? [])]) {
     const form = foldMention(raw);
-    if (form === '' || excluded.has(form)) continue;
+    if (form === '' || excluded.has(form) || forms.has(form)) continue;
     if ((form.match(LETTER) ?? []).length < WORLD_MIN_FORM_LETTERS) continue;
-    forms.add(form);
+    forms.set(form, raw.trim());
   }
-  return [...forms];
+  return forms;
+}
+
+/** Формы для поиска: уникальные, в виде `foldMention`, без исключений и коротких. */
+export function mentionForms(entity: WorldMentionSource): string[] {
+  return [...formsOf(entity).keys()];
+}
+
+/**
+ * Те же формы в исходном написании — для перелинковки на сайте (`F08-5`): по свёрнутому виду
+ * не найти место в тексте. Исключения наружу не уходят — только то, что прошло отбор.
+ */
+export function publicMentionForms(entity: WorldMentionSource): string[] {
+  return [...formsOf(entity).values()];
 }
 
 /**

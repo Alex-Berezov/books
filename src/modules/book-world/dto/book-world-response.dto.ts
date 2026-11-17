@@ -140,6 +140,16 @@ export class WorldAlternateDto {
   slug!: string;
 }
 
+/** Строка списка мира: сводка и, читателю, формы имени для перелинковки (`F08-5`). Только в списке. */
+export class BookWorldListEntityDto extends BookWorldEntitySummaryDto {
+  @ApiPropertyOptional({
+    type: [String],
+    description:
+      'Readers only: name forms for site cross-links (F08-5) — name and aliases as written, without excluded forms, forms shorter than 3 letters and repeats; absent for editors and on the entity page',
+  })
+  forms?: string[];
+}
+
 export class BookWorldListResponseDto {
   @ApiProperty({ enum: Language, description: 'Language of the version' })
   language!: Language;
@@ -154,10 +164,10 @@ export class BookWorldListResponseDto {
   alternates!: WorldAlternateDto[];
 
   @ApiProperty({
-    type: [BookWorldEntitySummaryDto],
+    type: [BookWorldListEntityDto],
     description: 'Readers: public entities only; editors: every entity of the version',
   })
-  entities!: BookWorldEntitySummaryDto[];
+  entities!: BookWorldListEntityDto[];
 }
 
 export class BookWorldChapterCountDto {

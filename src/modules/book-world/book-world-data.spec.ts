@@ -1,10 +1,12 @@
 import {
   WORLD_EDITOR_SUMMARY_SELECT,
+  WORLD_READER_SUMMARY_SELECT,
   WORLD_SUMMARY_SELECT,
   editorOf,
   mergeEntity,
   readMentions,
   toEntityDto,
+  toReaderSummary,
   worldContentChanged,
   type StoredWorldEntity,
 } from './book-world-data';
@@ -112,6 +114,50 @@ describe('выборки списка (F08-1)', () => {
   });
 });
 
+describe('формы имени в списке читателя (F08-5, решение арбитра Q2)', () => {
+  it('строка читателя берёт колонки форм, но без текстов страницы', () => {
+    expect(Object.keys(WORLD_READER_SUMMARY_SELECT).sort()).toEqual(
+      [...Object.keys(WORLD_SUMMARY_SELECT), 'aliases', 'aliasExclusions'].sort(),
+    );
+  });
+
+  it('forms без исключённых форм, исключения наружу не уходят', () => {
+    const dto = toReaderSummary({
+      key: 'vera',
+      type: 'character',
+      name: 'Вера',
+      role: 'main',
+      short: null,
+      hasCore: true,
+      isIndexable: true,
+      mentionFirst: 1,
+      updatedAt: new Date('2026-11-18T00:00:00Z'),
+      aliases: ['Верочка', 'вера', 7],
+      aliasExclusions: ['Верочка'],
+    });
+    expect(dto.forms).toEqual(['Вера']);
+    expect(dto).not.toHaveProperty('aliasExclusions');
+    expect(dto).not.toHaveProperty('aliases');
+  });
+
+  it('сущность без форм имени в колонке — только имя', () => {
+    const dto = toReaderSummary({
+      key: 'oblomov',
+      type: 'character',
+      name: 'Обломов',
+      role: 'main',
+      short: null,
+      hasCore: true,
+      isIndexable: true,
+      mentionFirst: null,
+      updatedAt: new Date('2026-11-18T00:00:00Z'),
+      aliases: null,
+      aliasExclusions: null,
+    });
+    expect(dto.forms).toEqual(['Обломов']);
+  });
+});
+
 describe('присутствие наружу (F08-2, решения арбитра Q2, Q3)', () => {
   const mentions = {
     chapters: [1, 2, 3],
@@ -192,6 +238,11 @@ describe('присутствие наружу (F08-2, решения арбит�
 
   it('F08-3: первая глава присутствия — в сводке читателя (Q2)', () => {
     expect(toEntityDto(row, { visibleKeys: new Set() }).mentionFirst).toBe(1);
+  });
+
+  it('F08-5a: формы имени читаются одним разбором — нестроковые элементы колонки отбрасываются', () => {
+    const odd = { ...row, aliases: ['Ilya Ilyich', 7, null] };
+    expect(toEntityDto(odd, { visibleKeys: new Set() }).aliases).toEqual(['Ilya Ilyich']);
   });
 });
 

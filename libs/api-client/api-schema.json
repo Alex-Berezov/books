@@ -8374,6 +8374,79 @@
         ],
         "type": "object"
       },
+      "BookWorldListEntityDto": {
+        "properties": {
+          "editor": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldEditorDto"
+              }
+            ],
+            "description": "Editors only; absent for readers"
+          },
+          "forms": {
+            "description": "Readers only: name forms for site cross-links (F08-5) — name and aliases as written, without excluded forms, forms shorter than 3 letters and repeats; absent for editors and on the entity page",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "hasCore": {
+            "description": "Core of the entity is filled (product.md §3)",
+            "type": "boolean"
+          },
+          "isIndexable": {
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "mentionFirst": {
+            "description": "First chapter the entity is found in (F08-2 count); null — not counted yet or not found",
+            "nullable": true,
+            "type": "number"
+          },
+          "name": {
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "main",
+              "secondary",
+              "minor"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "short": {
+            "nullable": true,
+            "type": "string"
+          },
+          "type": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldEntityType"
+              }
+            ]
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "type",
+          "name",
+          "role",
+          "short",
+          "hasCore",
+          "isIndexable",
+          "mentionFirst",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
       "BookWorldListResponseDto": {
         "properties": {
           "alternates": {
@@ -8386,7 +8459,7 @@
           "entities": {
             "description": "Readers: public entities only; editors: every entity of the version",
             "items": {
-              "$ref": "#/components/schemas/BookWorldEntitySummaryDto"
+              "$ref": "#/components/schemas/BookWorldListEntityDto"
             },
             "type": "array"
           },

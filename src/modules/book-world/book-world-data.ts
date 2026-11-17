@@ -5,6 +5,7 @@ import { isRecord } from '../../shared/prisma/json-record.util';
 import { stableJson } from '../../shared/json/stable-json';
 import { mentionChapters, mentionStale } from './world-core';
 import { stalePaths, worldItemKey } from './world-quote-check';
+import { publicMentionForms } from './world-mentions';
 import type {
   BookAnalysisFaqDto,
   BookAnalysisRole,
@@ -23,6 +24,7 @@ import type {
   BookWorldEditorDto,
   BookWorldEntityDto,
   BookWorldEntitySummaryDto,
+  BookWorldListEntityDto,
   BookWorldMentionsDto,
 } from './dto/book-world-response.dto';
 
@@ -95,6 +97,16 @@ export const WORLD_SUMMARY_SELECT = {
   updatedAt: true,
 } as const satisfies Prisma.BookWorldEntitySelect;
 
+/**
+ * Строка списка читателя: сводка плюс колонки форм имени — из них считаются `forms` (`F08-5`).
+ * `aliasExclusions` читается только для отбора форм и наружу не отдаётся (`toReaderSummary`).
+ */
+export const WORLD_READER_SUMMARY_SELECT = {
+  ...WORLD_SUMMARY_SELECT,
+  aliases: true,
+  aliasExclusions: true,
+} as const satisfies Prisma.BookWorldEntitySelect;
+
 /** Отметки редактора — `editor` ответа; читателю не выбираются вовсе. */
 const WORLD_EDITOR_FIELDS = {
   isListed: true,
@@ -140,6 +152,9 @@ export const BOOK_WORLD_SELECT = {
 export type WorldSummaryRow = Prisma.BookWorldEntityGetPayload<{
   select: typeof WORLD_SUMMARY_SELECT;
 }>;
+export type WorldReaderSummaryRow = Prisma.BookWorldEntityGetPayload<{
+  select: typeof WORLD_READER_SUMMARY_SELECT;
+}>;
 export type WorldEditorSummaryRow = Prisma.BookWorldEntityGetPayload<{
   select: typeof WORLD_EDITOR_SUMMARY_SELECT;
 }>;
@@ -169,7 +184,7 @@ export function readStoredEntity(row: WorldPublicRow): StoredWorldEntity {
     type: row.type,
     name: row.name,
     role: (row.role as BookAnalysisRole | null) ?? null,
-    aliases: (row.aliases as string[] | null) ?? null,
+    aliases: readStringList(row.aliases),
     short: row.short,
     sources: (row.sources as BookAnalysisSourceDto[] | null) ?? null,
     ...readStoredBlocks(row.blocks),
@@ -234,10 +249,13 @@ export function worldMentionSourceOf(row: WorldEditorRow) {
   };
 }
 
-/** Исключения форм имени из колонки (`F08-2`): только строки. */
-export function readAliasExclusions(value: unknown): string[] | null {
+/** Список строк из Json-колонки: только строки; не массив — `null`. */
+function readStringList(value: unknown): string[] | null {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : null;
 }
+
+/** Исключения форм имени из колонки (`F08-2`): только строки. */
+export const readAliasExclusions = readStringList;
 
 /**
  * Слияние как `mergeAnalysis`: поля нет в теле — прежнее; `null`, `''` или `[]` — очищено; список
@@ -306,6 +324,22 @@ export function toSummary(row: WorldSummaryRow): BookWorldEntitySummaryDto {
     isIndexable: row.isIndexable,
     mentionFirst: row.mentionFirst,
     updatedAt: row.updatedAt,
+  };
+}
+
+/**
+ * Строка списка читателя: сводка и формы имени для перелинковки (`F08-5`, решение арбитра
+ * `F08 | F08-5` Q2) — исходным написанием, тем же отбором, что у подсчёта присутствия.
+ */
+export function toReaderSummary(row: WorldReaderSummaryRow): BookWorldListEntityDto {
+  return {
+    ...toSummary(row),
+    forms: publicMentionForms({
+      key: row.key,
+      name: row.name,
+      aliases: readStringList(row.aliases),
+      aliasExclusions: readAliasExclusions(row.aliasExclusions),
+    }),
   };
 }
 

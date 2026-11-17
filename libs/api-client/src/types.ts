@@ -7874,11 +7874,30 @@ export interface components {
       /** Format: date-time */
       updatedAt: string;
     };
+    BookWorldListEntityDto: {
+      /** @description Editors only; absent for readers */
+      editor?: components['schemas']['BookWorldEditorDto'];
+      /** @description Readers only: name forms for site cross-links (F08-5) — name and aliases as written, without excluded forms, forms shorter than 3 letters and repeats; absent for editors and on the entity page */
+      forms?: string[];
+      /** @description Core of the entity is filled (product.md §3) */
+      hasCore: boolean;
+      isIndexable: boolean;
+      key: string;
+      /** @description First chapter the entity is found in (F08-2 count); null — not counted yet or not found */
+      mentionFirst: number | null;
+      name: string;
+      /** @enum {string|null} */
+      role: 'main' | 'secondary' | 'minor' | null;
+      short: string | null;
+      type: components['schemas']['WorldEntityType'];
+      /** Format: date-time */
+      updatedAt: string;
+    };
     BookWorldListResponseDto: {
       /** @description hreflang cluster of this page (same rule as GET /:lang/world/sitemap): languages of the book where the page exists on a published version with a slug and without editorial noindex, this version first; empty when the page is not indexable (entity isIndexable=false, editorial noindex, draft) */
       alternates: components['schemas']['WorldAlternateDto'][];
       /** @description Readers: public entities only; editors: every entity of the version */
-      entities: components['schemas']['BookWorldEntitySummaryDto'][];
+      entities: components['schemas']['BookWorldListEntityDto'][];
       /**
        * @description Language of the version
        * @enum {string}

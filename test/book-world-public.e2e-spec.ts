@@ -62,6 +62,8 @@ describe('BookWorld public e2e (F08-3a)', () => {
       isIndexable?: boolean;
       updatedAt?: Date;
       mentionFirst?: number;
+      aliases?: string[];
+      aliasExclusions?: string[];
     } = {},
   ) =>
     prisma.bookWorldEntity.create({
@@ -70,6 +72,8 @@ describe('BookWorld public e2e (F08-3a)', () => {
         key,
         type: 'character',
         name: key,
+        ...(over.aliases ? { aliases: over.aliases } : {}),
+        ...(over.aliasExclusions ? { aliasExclusions: over.aliasExclusions } : {}),
         hasCore: true,
         isListed: over.isListed ?? true,
         isIndexable: over.isIndexable ?? true,
@@ -253,6 +257,27 @@ describe('BookWorld public e2e (F08-3a)', () => {
       ]),
     );
     expect(listed).toEqual({ oblomov: true, olga: false });
+  });
+
+  it('список читателя отдаёт формы имени без исключённых; редактору forms нет (F08-5 Q2)', async () => {
+    const book = await createBookFixture(prisma, `world-forms-${unique()}`);
+    const v = await createVersion(book.id, 'en');
+    await entity(v.id, 'oblomov', {
+      aliases: ['Ilya Ilyich', 'Ilyusha', 'Il'],
+      aliasExclusions: ['ILYUSHA'],
+    });
+    const reader = await request(http()).get(`/versions/${v.id}/world`).expect(200);
+    expect(reader.body.entities[0].forms).toEqual(['oblomov', 'Ilya Ilyich']);
+    expect(reader.body.entities[0]).not.toHaveProperty('aliasExclusions');
+    expect(reader.body.entities[0]).not.toHaveProperty('aliases');
+    const editor = await request(http())
+      .get(`/versions/${v.id}/world`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(editor.body.entities[0]).not.toHaveProperty('forms');
+    // Формы — только в строке списка: страница сущности их не отдаёт (схема — тоже, `BookWorldListEntityDto`).
+    const page = await request(http()).get(`/versions/${v.id}/world/oblomov`).expect(200);
+    expect(page.body.entity).not.toHaveProperty('forms');
   });
 
   it('миграция заполняет первую главу у строк, посчитанных до колонки; повторный накат безопасен', async () => {

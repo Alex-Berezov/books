@@ -21,7 +21,7 @@ import {
   BOOK_WORLD_PUBLIC_SELECT,
   BOOK_WORLD_SELECT,
   WORLD_EDITOR_SUMMARY_SELECT,
-  WORLD_SUMMARY_SELECT,
+  WORLD_READER_SUMMARY_SELECT,
   coPresenceKeys,
   editorOf,
   entityEditorOf,
@@ -32,6 +32,7 @@ import {
   readStoredEntity,
   toEntityDto,
   toEntityWrite,
+  toReaderSummary,
   toSummary,
   worldContentChanged,
   type StoredWorldEntity,
@@ -162,11 +163,11 @@ export class BookWorldService {
         : this.prisma.bookWorldEntity
             .findMany({
               where: { bookVersionId, ...WORLD_ENTITY_PUBLIC_WHERE },
-              select: WORLD_SUMMARY_SELECT,
+              select: WORLD_READER_SUMMARY_SELECT,
               orderBy: { key: 'asc' },
               take: BOOK_WORLD_LIMITS.entities,
             })
-            .then((rows) => rows.map(toSummary)),
+            .then((rows) => rows.map(toReaderSummary)),
       worldAlternates(this.prisma, bookVersionId),
     ]);
     return { language, entities, alternates };
