@@ -5,6 +5,7 @@ import {
   Get,
   HttpCode,
   HttpStatus,
+  NotFoundException,
   Param,
   ParseEnumPipe,
   ParseIntPipe,
@@ -48,6 +49,15 @@ import {
   AnalysisWriteValueDto,
 } from '../dto/analysis-write-response.dto';
 import { AnalysisWriteService } from '../analysis-write/analysis-write.service';
+import {
+  WorldAcceptAllDto,
+  WorldWriteDto,
+  WorldWriteEstimateDto,
+  WorldWriteStateDto,
+  WorldWriteValueDto,
+} from '../dto/world-write-response.dto';
+import { WorldWriteService } from '../world-write/world-write.service';
+import type { RunKind } from '../draft-quality/run-regen';
 import { MarkAutoTextReadDto } from '../dto/auto-text-read-request.dto';
 import { AutoTextReadDto } from '../dto/auto-text-read-response.dto';
 import {
@@ -103,10 +113,40 @@ const ANALYSIS_ESTIMATE_CONFLICTS = [
   STAGE_CONFLICTS,
 ].join('; ');
 
+/**
+ * Отказы старта хода мира (`F08-4a`): общие части ходов и свои - нет анализа с героем `main`
+ * (решение арбитра `F08 | F08-4`, Q4), язык не `ru`/`en` (Q5).
+ */
+const WORLD_CONFLICTS =
+  'WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: only ru and en versions for now';
+
+const WORLD_START_CONFLICTS = [
+  'DRAFT_IN_PROGRESS: a world run is being built',
+  WORLD_CONFLICTS,
+  NO_CHAPTERS_CONFLICT,
+  CONTEXT_CONFLICTS,
+  SPEND_CONFLICTS,
+  STAGE_CONFLICTS,
+].join('; ');
+
+const WORLD_ESTIMATE_CONFLICTS = [
+  WORLD_CONFLICTS,
+  'SOURCE_HAS_NO_CHAPTERS: the version or the dossier source has no chapter text',
+  CONTEXT_CONFLICTS,
+  STAGE_CONFLICTS,
+].join('; ');
+
+const WORLD_ITEM_CONFLICTS =
+  'WORLD_WRITE_NOT_READY: the run is building, failed or discarded; WORLD_REGEN_IN_PROGRESS: this block is being regenerated';
+
 /** Ответ общих ручек решений по ходу: форма зависит от вида строки (`F07-1b`, В6). */
 const RUN_RESPONSE = {
   schema: {
-    oneOf: [{ $ref: getSchemaPath(SummaryWriteDto) }, { $ref: getSchemaPath(AnalysisWriteDto) }],
+    oneOf: [
+      { $ref: getSchemaPath(SummaryWriteDto) },
+      { $ref: getSchemaPath(AnalysisWriteDto) },
+      { $ref: getSchemaPath(WorldWriteDto) },
+    ],
   },
 };
 
@@ -116,6 +156,17 @@ const ACCEPT_ALL_RESPONSE = {
     oneOf: [
       { $ref: getSchemaPath(SummaryWriteDto) },
       { $ref: getSchemaPath(AnalysisAcceptAllDto) },
+      { $ref: getSchemaPath(WorldAcceptAllDto) },
+    ],
+  },
+};
+
+/** Содержимое предложения: ход анализа или ход мира (`F08-4a`). */
+const PROPOSAL_RESPONSE = {
+  schema: {
+    oneOf: [
+      { $ref: getSchemaPath(AnalysisWriteValueDto) },
+      { $ref: getSchemaPath(WorldWriteValueDto) },
     ],
   },
 };
@@ -133,7 +184,8 @@ const ANALYSIS_ITEM_CONFLICTS =
   'ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated';
 
 /**
- * Ходы «Write Summary» (`F06-2`) и «Write Analysis» (`F07-1a`) - только `admin` (U6): оценка,
+ * Ходы «Write Summary» (`F06-2`), «Write Analysis» (`F07-1a`) и «Write World» (`F08-4a`; «Accept» тоже
+ * часть хода - решение арбитра `F08 | F08-4`, Q2) - только `admin` (U6): оценка,
  * старт, ход, предложения, «Accept», «Regenerate», отмена и отметка редактора «прочитано»
  * (`versions/:id/drafts/:kind/read`, `T184`). Заготовки из досье сняты все
  * (Summary `F05-10` в `F06-3`, Analysis `F05-11` в `F07-3a`, решение арбитра `F07 | F07-3`):
@@ -141,7 +193,15 @@ const ANALYSIS_ITEM_CONFLICTS =
  */
 @ApiTags('admin')
 @ApiBearerAuth()
-@ApiExtraModels(SummaryWriteDto, AnalysisWriteDto, AnalysisAcceptAllDto)
+@ApiExtraModels(
+  SummaryWriteDto,
+  AnalysisWriteDto,
+  AnalysisAcceptAllDto,
+  WorldWriteDto,
+  WorldAcceptAllDto,
+  AnalysisWriteValueDto,
+  WorldWriteValueDto,
+)
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(Role.Admin)
 @Controller('admin')
@@ -150,20 +210,71 @@ export class ContentDraftController {
     private readonly drafts: ContentDraftService,
     private readonly summaryWrite: SummaryWriteService,
     private readonly analysisWrite: AnalysisWriteService,
+    private readonly worldWrite: WorldWriteService,
     private readonly autoTextRead: AutoTextReadService,
   ) {}
 
   /**
    * Развилка общих ручек `content-drafts/:id/*` по виду строки хода (`F07-1b`, решение арбитра
-   * `F07 | F07-1`, В6): одна выборка вида, дальше - сервис своего вида; иной вид или нет строки -
-   * 404 (`runKindOf`).
+   * `F07 | F07-1`, В6): одна выборка вида, дальше - сервис своего вида по таблице (решение арбитра
+   * `F08 | F08-4`, Q10: вид без своей записи не собирается); иной вид или нет строки - 404.
    */
-  private async byKind<S, A>(
-    id: string,
-    summary: () => Promise<S>,
-    analysis: () => Promise<A>,
-  ): Promise<S | A> {
-    return (await this.drafts.runKindOf(id)) === 'analysis_write' ? analysis() : summary();
+  private async byKind<R>(id: string, handlers: Record<RunKind, () => Promise<R>>): Promise<R> {
+    return handlers[await this.drafts.runKindOf(id)]();
+  }
+
+  // Ход мира «Write World» (`F08-4a`, `features/F08-book-wiki/tech.md` §5): свои литеральные
+  // маршруты выше `drafts/:kind/read`; предложения, «Accept», «Regenerate» и отмена - общие ручки
+  // `content-drafts/:id/*` ниже, вид строки выбирает `byKind`.
+
+  @Get('versions/:id/drafts/world_write/estimate')
+  @ApiOperation({
+    summary:
+      'Upper cost estimate of the world run: the name forms on the whole version text, then per main character of the analysis the page and the external blocks, plus the reviewer of each step, each step × 2 passes',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: WorldWriteEstimateDto })
+  @ApiNotFoundResponse({ description: 'Book version not found' })
+  @ApiConflictResponse({ description: WORLD_ESTIMATE_CONFLICTS })
+  worldEstimate(@Param('id') id: string): Promise<WorldWriteEstimateDto> {
+    return this.worldWrite.estimate(id);
+  }
+
+  @Get('versions/:id/drafts/world_write')
+  @ApiOperation({
+    summary:
+      'The latest world run that is not discarded, in any status: its characters, steps, flags, dropped quotations and sources, what is written and what is proposed; null - none',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiOkResponse({ type: WorldWriteStateDto })
+  worldLatest(@Param('id') id: string): Promise<WorldWriteStateDto> {
+    return this.worldWrite.latest(id);
+  }
+
+  @Post('versions/:id/drafts/world_write')
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({
+    summary:
+      '«Write World»: the pages of the main characters of the analysis (name forms, page, external blocks with checked sources) in the background under its own operation; new entities and empty blocks of an unpublished entity are written through the world import, the rest become proposals; the previous ready or failed run is discarded',
+  })
+  @ApiParam({ name: 'id', format: 'uuid' })
+  @ApiAcceptedResponse({ type: WorldWriteDto })
+  @ApiBadRequestResponse({
+    description: 'DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first',
+  })
+  @ApiNotFoundResponse({ description: 'Book version not found' })
+  @ApiConflictResponse({ description: WORLD_START_CONFLICTS })
+  @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
+  worldStart(
+    @Param('id') id: string,
+    @Body() dto: StartContentDraftDto,
+    @Req() req: { user: RequestUser },
+  ): Promise<WorldWriteDto> {
+    return this.worldWrite.start(
+      id,
+      dto.limitUsd != null ? new Prisma.Decimal(dto.limitUsd) : undefined,
+      req.user.userId,
+    );
   }
 
   // Ход анализа «Write Analysis» (`F07-1a`, `features/F07-analysis-autofill/tech.md` §5-§6):
@@ -337,26 +448,32 @@ export class ContentDraftController {
   @Get('content-drafts/:id/items/:index')
   @ApiOperation({
     summary:
-      'The content of a proposal of a ready analysis run: one field by the kind of the block, the others null; the run answer does not carry it',
+      'The content of a proposal of a ready analysis or world run: one field by the kind of the block, the others null; the run answer does not carry it',
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiParam({ name: 'index', type: Number })
-  @ApiOkResponse({ type: AnalysisWriteValueDto })
-  @ApiBadRequestResponse({ description: 'ANALYSIS_ITEM_UNKNOWN: the run has no such block' })
+  @ApiOkResponse(PROPOSAL_RESPONSE)
+  @ApiBadRequestResponse({
+    description: 'ANALYSIS_ITEM_UNKNOWN, WORLD_ITEM_UNKNOWN: the run has no such block',
+  })
   @ApiNotFoundResponse({
-    description: 'Analysis run not found (a summary run and a draft of another kind too)',
+    description: 'Run not found (a summary run and a draft of another kind too)',
   })
   @ApiConflictResponse({
     description:
-      'ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED: the block is not a proposal',
+      'ANALYSIS_WRITE_NOT_READY, WORLD_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED, WORLD_ITEM_NOT_PROPOSED: the block is not a proposal',
   })
   async proposal(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('index', ParseIntPipe) index: number,
-  ): Promise<AnalysisWriteValueDto> {
-    // Одна выборка строки - в сервисе анализа: ход пересказа (его текст - в его ответе), заготовка и
-    // иной вид - 404 там же.
-    return this.analysisWrite.proposal(id, index);
+  ): Promise<AnalysisWriteValueDto | WorldWriteValueDto> {
+    // У хода пересказа содержимого предложения нет (текст - в его ответе): 404 сразу после выборки
+    // вида. Анализ и мир читают строку ещё раз в своём сервисе (вид нужен до него).
+    return this.byKind<AnalysisWriteValueDto | WorldWriteValueDto>(id, {
+      summary_write: () => Promise.reject(new NotFoundException('Run not found')),
+      analysis_write: () => this.analysisWrite.proposal(id, index),
+      world_write: () => this.worldWrite.proposal(id, index),
+    });
   }
 
   @Post('content-drafts/:id/items/:index/regenerate')
@@ -373,7 +490,7 @@ export class ContentDraftController {
   })
   @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
   @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_REGENERABLE: theme links and sources are not regenerated on their own; LLM_CEILING_REACHED`,
+    description: `${ITEM_CONFLICTS}; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_REGENERABLE: theme links and sources are not regenerated on their own; ${WORLD_ITEM_CONFLICTS}; WORLD_ITEM_NOT_REGENERABLE: name forms are not regenerated on their own; LLM_CEILING_REACHED`,
   })
   @ApiServiceUnavailableResponse({ description: 'LLM_DISABLED: no OpenRouter key' })
   async regenerate(
@@ -381,12 +498,13 @@ export class ContentDraftController {
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: RegenerateSummaryItemDto,
     @Req() req: { user: RequestUser },
-  ): Promise<SummaryWriteDto | AnalysisWriteDto> {
-    return this.byKind(
-      id,
-      () => this.summaryWrite.regenerate(id, index, dto.remark || null, req.user.userId),
-      () => this.analysisWrite.regenerate(id, index, dto.remark || null, req.user.userId),
-    );
+  ): Promise<SummaryWriteDto | AnalysisWriteDto | WorldWriteDto> {
+    const remark = dto.remark || null;
+    return this.byKind<SummaryWriteDto | AnalysisWriteDto | WorldWriteDto>(id, {
+      summary_write: () => this.summaryWrite.regenerate(id, index, remark, req.user.userId),
+      analysis_write: () => this.analysisWrite.regenerate(id, index, remark, req.user.userId),
+      world_write: () => this.worldWrite.regenerate(id, index, remark, req.user.userId),
+    });
   }
 
   @Post('content-drafts/:id/items/:index/accept')
@@ -403,18 +521,18 @@ export class ContentDraftController {
   })
   @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
   @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint (it was regenerated); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors)`,
+    description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint (it was regenerated); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors); ${WORLD_ITEM_CONFLICTS}; WORLD_ITEM_NOT_PROPOSED: not a proposal; WORLD_BLOCK_CHANGED: the block of the entity changed after the proposal (current - its content); WORLD_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint; WORLD_WRITE_REFUSED: the world import refused the write (errors)`,
   })
   async accept(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('index', ParseIntPipe) index: number,
     @Body() dto: AcceptSummaryItemDto,
-  ): Promise<SummaryWriteDto | AnalysisWriteDto> {
-    return this.byKind(
-      id,
-      () => this.summaryWrite.accept(id, index, dto.confirmChapterChange === true),
-      () => this.analysisWrite.accept(id, index, dto.expectedPrint),
-    );
+  ): Promise<SummaryWriteDto | AnalysisWriteDto | WorldWriteDto> {
+    return this.byKind<SummaryWriteDto | AnalysisWriteDto | WorldWriteDto>(id, {
+      summary_write: () => this.summaryWrite.accept(id, index, dto.confirmChapterChange === true),
+      analysis_write: () => this.analysisWrite.accept(id, index, dto.expectedPrint),
+      world_write: () => this.worldWrite.accept(id, index, dto.expectedPrint),
+    });
   }
 
   @Post('content-drafts/:id/items/:index/discard')
@@ -431,17 +549,17 @@ export class ContentDraftController {
   })
   @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
   @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal`,
+    description: `${ITEM_CONFLICTS}; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ${ANALYSIS_ITEM_CONFLICTS}; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ${WORLD_ITEM_CONFLICTS}; WORLD_ITEM_NOT_PROPOSED: not a proposal`,
   })
   async discardItem(
     @Param('id', ParseUUIDPipe) id: string,
     @Param('index', ParseIntPipe) index: number,
-  ): Promise<SummaryWriteDto | AnalysisWriteDto> {
-    return this.byKind(
-      id,
-      () => this.summaryWrite.discardItem(id, index),
-      () => this.analysisWrite.discardItem(id, index),
-    );
+  ): Promise<SummaryWriteDto | AnalysisWriteDto | WorldWriteDto> {
+    return this.byKind<SummaryWriteDto | AnalysisWriteDto | WorldWriteDto>(id, {
+      summary_write: () => this.summaryWrite.discardItem(id, index),
+      analysis_write: () => this.analysisWrite.discardItem(id, index),
+      world_write: () => this.worldWrite.discardItem(id, index),
+    });
   }
 
   @Post('content-drafts/:id/discard-run')
@@ -455,16 +573,16 @@ export class ContentDraftController {
   @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
   @ApiConflictResponse({
     description:
-      'ANALYSIS_REGEN_IN_PROGRESS: an analysis run - a regeneration of its blocks keeps starting while the run is discarded, discard again',
+      'ANALYSIS_REGEN_IN_PROGRESS, WORLD_REGEN_IN_PROGRESS: an analysis or world run - a regeneration of its blocks keeps starting while the run is discarded, discard again',
   })
   async discardRun(
     @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<SummaryWriteDto | AnalysisWriteDto> {
-    return this.byKind(
-      id,
-      () => this.summaryWrite.discard(id),
-      () => this.analysisWrite.discard(id),
-    );
+  ): Promise<SummaryWriteDto | AnalysisWriteDto | WorldWriteDto> {
+    return this.byKind<SummaryWriteDto | AnalysisWriteDto | WorldWriteDto>(id, {
+      summary_write: () => this.summaryWrite.discard(id),
+      analysis_write: () => this.analysisWrite.discard(id),
+      world_write: () => this.worldWrite.discard(id),
+    });
   }
 
   @Post('content-drafts/:id/accept-all')
@@ -477,15 +595,15 @@ export class ContentDraftController {
   @ApiOkResponse(ACCEPT_ALL_RESPONSE)
   @ApiNotFoundResponse({ description: 'Run not found (a draft of another kind too)' })
   @ApiConflictResponse({
-    description: `${ITEM_CONFLICTS}; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; a refusal in the middle of the pass carries acceptedIndexes and stoppedIndex (the item the pass stopped on); ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (skipped - the items left as proposals before the stop). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code`,
+    description: `${ITEM_CONFLICTS}; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; a refusal in the middle of the pass carries acceptedIndexes and stoppedIndex (the item the pass stopped on); ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (skipped - the items left as proposals before the stop). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code; a world proposal the same way (WORLD_WRITE_REFUSED, WORLD_BLOCK_CHANGED, WORLD_REGEN_IN_PROGRESS), WORLD_WRITE_NOT_READY stops the pass`,
   })
   async acceptAll(
     @Param('id', ParseUUIDPipe) id: string,
-  ): Promise<SummaryWriteDto | AnalysisAcceptAllDto> {
-    return this.byKind(
-      id,
-      () => this.summaryWrite.acceptAll(id),
-      () => this.analysisWrite.acceptAll(id),
-    );
+  ): Promise<SummaryWriteDto | AnalysisAcceptAllDto | WorldAcceptAllDto> {
+    return this.byKind<SummaryWriteDto | AnalysisAcceptAllDto | WorldAcceptAllDto>(id, {
+      summary_write: () => this.summaryWrite.acceptAll(id),
+      analysis_write: () => this.analysisWrite.acceptAll(id),
+      world_write: () => this.worldWrite.acceptAll(id),
+    });
   }
 }

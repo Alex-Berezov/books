@@ -275,13 +275,18 @@ export class BookWorldService {
     };
   }
 
-  /** Импорт одной сущности; ключ тела, если есть, равен адресу. Сверка `expected` — по сущности. */
+  /**
+   * Импорт одной сущности; ключ тела, если есть, равен адресу. Сверка `expected` — по сущности.
+   * `within` — запись вызывающего в той же транзакции после записи сущности (ход мира `F08-4a`:
+   * отметка пункта хода под замком своей строки); отказ в ней откатывает и запись сущности.
+   */
   async saveEntity(
     bookVersionId: string,
     key: string,
     dto: UpdateBookWorldEntityDto,
     dryRun: boolean,
     expected: ExpectedRow = {},
+    within?: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<BookWorldEntitySaveResponseDto> {
     if (!BOOK_WORLD_KEY_REGEX.test(key)) throw notFoundEntity();
     if (dto.key !== undefined && dto.key !== key) {
@@ -316,6 +321,7 @@ export class BookWorldService {
       const recountQueued =
         written.needsRecount && (await markWorldMentionsDirty(tx, bookVersionId));
       const pending = recountQueued || (await isWorldRecountPending(tx, bookVersionId));
+      if (within) await within(tx);
       return { row: written.row, planned: p, recountQueued, pending };
     });
     return {

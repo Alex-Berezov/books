@@ -6,6 +6,7 @@ import { ContentDraftTasksHandler } from './content-draft-tasks.handler';
 import { ContentDraftService } from './content-draft.service';
 import { SummaryWriteHandler } from '../summary-write/summary-write.handler';
 import { AnalysisWriteHandler } from '../analysis-write/analysis-write.handler';
+import { WorldWriteHandler } from '../world-write/world-write.handler';
 
 /**
  * Обработчик операций `draft` на подменённой базе: у задачи `content_draft` своих шагов нет -
@@ -64,14 +65,19 @@ function setup(row: ContentDraft | null) {
     regenResume: jest.fn().mockResolvedValue([]),
     onRegenCancelled: jest.fn().mockResolvedValue(undefined),
   };
+  const worldWrite = {
+    regenResume: jest.fn().mockResolvedValue([]),
+    onRegenCancelled: jest.fn().mockResolvedValue(undefined),
+  };
   const handler = new ContentDraftTasksHandler(
     prisma as unknown as PrismaService,
     tasks as unknown as LlmTaskService,
     drafts as unknown as ContentDraftService,
     summaryWrite as unknown as SummaryWriteHandler,
     analysisWrite as unknown as AnalysisWriteHandler,
+    worldWrite as unknown as WorldWriteHandler,
   );
-  return { handler, prisma, tasks, tx, drafts, summaryWrite, analysisWrite };
+  return { handler, prisma, tasks, tx, drafts, summaryWrite, analysisWrite, worldWrite };
 }
 
 describe('ContentDraftTasksHandler (F06-3, F07-3a)', () => {
@@ -88,7 +94,7 @@ describe('ContentDraftTasksHandler (F06-3, F07-3a)', () => {
     },
   );
 
-  it.each(['summary_write', 'analysis_write'] as const)(
+  it.each(['summary_write', 'analysis_write', 'world_write'] as const)(
     'a %s run row under a draft task - DRAFT_INPUT_MISSING, not discarded as retired',
     async (kind) => {
       const { handler, tx, drafts } = setup(draftRow({ kind }));
@@ -233,5 +239,33 @@ describe('ContentDraftTasksHandler: операция автозапуска (F06
     expect(analysisWrite.onRegenCancelled).toHaveBeenCalledWith(regenOp, expect.anything());
     expect(summaryWrite.onRegenCancelled).toHaveBeenCalledTimes(1);
     expect(summaryWrite.onRegenCancelled).toHaveBeenCalledWith(regenOp, expect.anything());
+  });
+
+  // F08-4a, решение арбитра `F08 | F08-4` Q10: без своей ветки перегенерация мира не продолжалась
+  // бы вовсе, а отмена не снимала бы её отметку - пункт оставался бы «перегенерируется» навсегда.
+  it('перегенерация пункта хода мира (F08-4a): Continue находит его у хода мира, отмена снимает отметку', async () => {
+    const { handler, worldWrite } = setup(null);
+    const input = { kind: 'world_write', operationId: 'op1', payload: { draftId: 'd1', index: 1 } };
+    worldWrite.regenResume.mockResolvedValue([input]);
+    await expect(handler.resumeTasks(regenOp)).resolves.toEqual([input]);
+    await handler.onCancelled(regenOp, tx());
+    expect(worldWrite.onRegenCancelled).toHaveBeenCalledTimes(1);
+    expect(worldWrite.onRegenCancelled).toHaveBeenCalledWith(regenOp, expect.anything());
+  });
+});
+
+// F08-4a, Q10: ход мира продолжается своей задачей - иначе «Continue» ставил бы задачу заготовки,
+// которая отбрасывает строку как чужую (`DRAFT_INPUT_MISSING`).
+describe('ContentDraftTasksHandler: ход мира (F08-4a)', () => {
+  it('«Continue» строящегося хода мира ставит задачу world_write', async () => {
+    const { handler } = setup(draftRow({ kind: 'world_write' }));
+    await expect(handler.resumeTasks({ id: 'op1' } as never)).resolves.toEqual([
+      expect.objectContaining({
+        kind: 'world_write',
+        operationId: 'op1',
+        pairKey: 'op1:d1',
+        payload: { draftId: 'd1' },
+      }),
+    ]);
   });
 });

@@ -4,14 +4,27 @@ import type { PrismaService } from '../../../prisma/prisma.service';
 import type { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 
 /**
- * Общее у ходов пересказа (`F06-2`) и анализа (`F07-1b`): задача хода и перегенерации одного текста
+ * Общее у ходов пересказа (`F06-2`), анализа (`F07-1b`) и мира (`F08-4a`): задача хода и перегенерации одного текста
  * или блока своей операцией, поиск строки хода по отметке перегенерации, снятие отметки, состояние
  * операций перегенераций в ответе и «Accept all» по одному (решение арбитра `F07 | F07-1a`, К2:
  * одна функция вместо копий в двух ходах).
  */
 
-/** Вид строки хода с перегенерациями. */
-export type RunKind = 'summary_write' | 'analysis_write';
+/** Вид строки хода с перегенерациями: пересказ `F06`, анализ `F07`, мир `F08-4`. */
+export type RunKind = 'summary_write' | 'analysis_write' | 'world_write';
+
+/**
+ * Все виды хода - таблицей по виду (решение арбитра `F08 | F08-4`, Q10): развилки общих ручек и
+ * «Continue» строятся по ней, и новый вид, не добавленный сюда, не собирается, а не уходит молча
+ * в ветку по умолчанию.
+ */
+export const RUN_KINDS: Readonly<Record<RunKind, true>> = {
+  summary_write: true,
+  analysis_write: true,
+  world_write: true,
+};
+
+export const isRunKind = (kind: string): kind is RunKind => Object.hasOwn(RUN_KINDS, kind);
 
 type Db = Prisma.TransactionClient | PrismaService;
 

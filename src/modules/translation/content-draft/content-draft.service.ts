@@ -13,7 +13,7 @@ import {
   DRAFT_LIMIT_FACTOR,
   RETIRED_DRAFT_KINDS,
 } from './content-draft.constants';
-import type { RunKind } from '../draft-quality/run-regen';
+import { isRunKind, type RunKind } from '../draft-quality/run-regen';
 
 /**
  * Задача строки снятого вида (`RETIRED_DRAFT_KINDS`): «Continue» её операции ставит задачу, которую
@@ -80,7 +80,7 @@ export function contextLimits(context: DraftContext, stageUsd: Prisma.Decimal) {
 const RETIRED_DRAIN_BATCH = 100;
 
 /**
- * Общее для ходов `summary_write` и `analysis_write`: досье и глоссарий хода, вид хода по строке и
+ * Общее для ходов `summary_write`, `analysis_write` и `world_write`: досье и глоссарий хода, вид хода по строке и
  * дренаж снятых заготовок. Заготовки сняты все: пошаговые Summary `F05-10` в `F06-3`, Analysis
  * «Draft from dossier» `F05-11` в `F07-3a` (решения арбитра `F06 | F06-3`, А1; `F07 | F07-3`):
  * при старте строящиеся отбрасываются, ручек у них нет.
@@ -139,16 +139,15 @@ export class ContentDraftService implements OnApplicationBootstrap {
 
   /**
    * Вид хода для общих ручек `content-drafts/:id/*` (`F07-1b`, решение арбитра `F07 | F07-1`, В6):
-   * одна выборка строки; нет строки или вид не ход (снятая заготовка) - 404.
+   * одна выборка строки; нет строки или вид не ход (снятая заготовка) - 404. Виды хода - таблица
+   * `RUN_KINDS` (решение арбитра `F08 | F08-4`, Q10).
    */
   async runKindOf(id: string): Promise<RunKind> {
     const row = await this.prisma.contentDraft.findUnique({
       where: { id },
       select: { kind: true },
     });
-    if (row?.kind !== 'summary_write' && row?.kind !== 'analysis_write') {
-      throw new NotFoundException('Run not found');
-    }
+    if (!row || !isRunKind(row.kind)) throw new NotFoundException('Run not found');
     return row.kind;
   }
 

@@ -2,15 +2,17 @@ import { NotFoundException } from '@nestjs/common';
 import type { AnalysisWriteService } from '../analysis-write/analysis-write.service';
 import type { AutoTextReadService } from './auto-text-read.service';
 import type { SummaryWriteService } from '../summary-write/summary-write.service';
+import type { WorldWriteService } from '../world-write/world-write.service';
 import { ContentDraftController } from './content-draft.controller';
 import type { ContentDraftService } from './content-draft.service';
 
 /**
  * Развилка общих ручек `content-drafts/:id/*` по виду строки (`F07-1b`, решение арбитра `F07 | F07-1`,
- * В6): пересказ идёт к сервису пересказа, как до `F07`; анализ - к своему; неизвестный вид - 404.
+ * В6): пересказ идёт к сервису пересказа, как до `F07`; анализ и мир (`F08-4a`) - к своему; неизвестный
+ * вид - 404.
  */
 
-type Kind = 'summary_write' | 'analysis_write';
+type Kind = 'summary_write' | 'analysis_write' | 'world_write';
 const user = { user: { userId: 'u1' } };
 
 function setup(kind: Kind | Error) {
@@ -24,6 +26,7 @@ function setup(kind: Kind | Error) {
   });
   const summary = methods();
   const analysis = methods();
+  const world = methods();
   const autoTextRead = {
     state: jest.fn().mockResolvedValue({ read: false }),
     mark: jest.fn().mockResolvedValue({ read: true }),
@@ -37,6 +40,7 @@ function setup(kind: Kind | Error) {
     drafts as unknown as ContentDraftService,
     summary as unknown as SummaryWriteService,
     analysis as unknown as AnalysisWriteService,
+    world as unknown as WorldWriteService,
     autoTextRead as unknown as AutoTextReadService,
   );
   const calls = {
@@ -46,7 +50,7 @@ function setup(kind: Kind | Error) {
     discardRun: () => controller.discardRun('d1'),
     acceptAll: () => controller.acceptAll('d1'),
   };
-  return { controller, summary, analysis, drafts, calls, autoTextRead };
+  return { controller, summary, analysis, world, drafts, calls, autoTextRead };
 }
 
 const ROUTES = [
@@ -70,10 +74,30 @@ describe('ContentDraftController: the fork by the kind of the run (F07-1b)', () 
   );
 
   it.each(ROUTES)('%s of an analysis run goes to the analysis service', async (route, method) => {
-    const { summary, analysis, calls } = setup('analysis_write');
+    const { summary, analysis, world, calls } = setup('analysis_write');
     await calls[route]();
     expect(analysis[method]).toHaveBeenCalledTimes(1);
     expect(summary[method]).not.toHaveBeenCalled();
+    expect(world[method]).not.toHaveBeenCalled();
+  });
+
+  // F08-4a, решение арбитра `F08 | F08-4` Q10: до таблицы по виду ход мира уходил бы в сервис пересказа.
+  it.each(ROUTES)('%s of a world run goes to the world service', async (route, method) => {
+    const { summary, analysis, world, calls } = setup('world_write');
+    await calls[route]();
+    expect(world[method]).toHaveBeenCalledTimes(1);
+    expect(summary[method]).not.toHaveBeenCalled();
+    expect(analysis[method]).not.toHaveBeenCalled();
+  });
+
+  it('the world service gets the print of the proposal, the remark and the user', async () => {
+    const { world, calls } = setup('world_write');
+    await calls.accept();
+    await calls.regenerate();
+    expect(world.accept).toHaveBeenCalledTimes(1);
+    expect(world.accept).toHaveBeenCalledWith('d1', 2, 'p1');
+    expect(world.regenerate).toHaveBeenCalledTimes(1);
+    expect(world.regenerate).toHaveBeenCalledWith('d1', 2, 'shorter', 'u1');
   });
 
   it('the arguments reach the service of the kind: the summary one gets the chapter confirmation, the remark and the user', async () => {
@@ -104,14 +128,41 @@ describe('ContentDraftController: the fork by the kind of the run (F07-1b)', () 
   );
 });
 
-describe('GET content-drafts/:id/items/:index (F07-1b, decision А)', () => {
-  it('goes straight to the analysis service: one read of the row there, the kind of the row decides 404 there', async () => {
-    const { controller, analysis, summary, drafts } = setup('summary_write');
+/**
+ * С хода мира (`F08-4a`) у предложения два владельца - ход анализа и ход мира: вид строки выбирает
+ * общая развилка `byKind`, а не сервис анализа одной выборкой (было `F07-1b`, решение А). Строка
+ * пересказа получает 404 сразу после выборки вида.
+ */
+describe('GET content-drafts/:id/items/:index (F07-1b, decision А; F08-4a)', () => {
+  it('a summary run has no proposal content - 404 as before, no service reads the row again', async () => {
+    const { controller, analysis, summary, world } = setup('summary_write');
+    await expect(controller.proposal('d1', 2)).rejects.toBeInstanceOf(NotFoundException);
+    expect(analysis.proposal).not.toHaveBeenCalled();
+    expect(summary.proposal).not.toHaveBeenCalled();
+    expect(world.proposal).not.toHaveBeenCalled();
+  });
+
+  it('an analysis run goes to the analysis service', async () => {
+    const { controller, analysis, world } = setup('analysis_write');
     await expect(controller.proposal('d1', 2)).resolves.toEqual({ text: 'x' });
     expect(analysis.proposal).toHaveBeenCalledTimes(1);
     expect(analysis.proposal).toHaveBeenCalledWith('d1', 2);
-    expect(summary.proposal).not.toHaveBeenCalled();
-    expect(drafts.runKindOf).not.toHaveBeenCalled();
+    expect(world.proposal).not.toHaveBeenCalled();
+  });
+
+  it('a world run goes to the world service', async () => {
+    const { controller, analysis, world } = setup('world_write');
+    await controller.proposal('d1', 3);
+    expect(world.proposal).toHaveBeenCalledTimes(1);
+    expect(world.proposal).toHaveBeenCalledWith('d1', 3);
+    expect(analysis.proposal).not.toHaveBeenCalled();
+  });
+
+  it('an unknown kind is 404 and no service is touched', async () => {
+    const { controller, analysis, world } = setup(new NotFoundException('Run not found'));
+    await expect(controller.proposal('d1', 2)).rejects.toBeInstanceOf(NotFoundException);
+    expect(analysis.proposal).not.toHaveBeenCalled();
+    expect(world.proposal).not.toHaveBeenCalled();
   });
 });
 

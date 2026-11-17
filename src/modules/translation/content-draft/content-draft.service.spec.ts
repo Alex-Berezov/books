@@ -113,6 +113,9 @@ describe('ContentDraftService.runKindOf (F07-1b, В6)', () => {
     await expect(service.runKindOf('d1')).resolves.toBe('analysis_write');
     prisma.contentDraft.findUnique.mockResolvedValue({ kind: 'summary_write' });
     await expect(service.runKindOf('d1')).resolves.toBe('summary_write');
+    // F08-4a, Q10: ход мира - вид таблицы `RUN_KINDS`; без строки там общие ручки ответили бы 404.
+    prisma.contentDraft.findUnique.mockResolvedValue({ kind: 'world_write' });
+    await expect(service.runKindOf('d1')).resolves.toBe('world_write');
     expect(prisma.contentDraft.findUnique).toHaveBeenCalledWith({
       where: { id: 'd1' },
       select: { kind: true },
@@ -121,7 +124,13 @@ describe('ContentDraftService.runKindOf (F07-1b, В6)', () => {
 
   it('no row, a draft of the analysis kind and a retired kind are 404, not a run of someone else', async () => {
     const { service, prisma } = setup();
-    for (const row of [null, { kind: 'analysis' }, { kind: 'summary_full' }]) {
+    // Ключ прототипа объекта - не вид хода (`Object.hasOwn`, а не `in`).
+    for (const row of [
+      null,
+      { kind: 'analysis' },
+      { kind: 'summary_full' },
+      { kind: 'toString' },
+    ]) {
       prisma.contentDraft.findUnique.mockResolvedValue(row);
       await expect(service.runKindOf('d1')).rejects.toBeInstanceOf(NotFoundException);
     }

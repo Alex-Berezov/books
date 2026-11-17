@@ -11,13 +11,24 @@ import {
 } from './content-draft.constants';
 import { ContentDraftService, draftTaskInput } from './content-draft.service';
 import { summaryWriteTaskInput, SummaryWriteHandler } from '../summary-write/summary-write.handler';
-import { draftRowOf } from '../draft-quality/run-regen';
+import { draftRowOf, isRunKind, RunKind } from '../draft-quality/run-regen';
 import { failRun } from '../draft-quality/run-steps';
 import { pauseOnFailure } from '../pause-by-failure';
 import {
   AnalysisWriteHandler,
   analysisWriteTaskInput,
 } from '../analysis-write/analysis-write.handler';
+import { WorldWriteHandler, worldWriteTaskInput } from '../world-write/world-write.handler';
+
+/** Задача хода своего вида (Л1 `F07-1a`): задача заготовки отбила бы строку чужого вида. */
+const RUN_TASK: Record<RunKind, typeof analysisWriteTaskInput> = {
+  summary_write: summaryWriteTaskInput,
+  analysis_write: analysisWriteTaskInput,
+  world_write: worldWriteTaskInput,
+};
+
+/** Обработчик хода с перегенерациями: «Continue» и отмена её операции. */
+type RegenOwner = Pick<AnalysisWriteHandler, 'regenResume' | 'onRegenCancelled'>;
 
 /** Операция заведена запуском перевода (автозапуск и ход `F06-5`); перегенерации его не несут. */
 const isRunOperation = (op: Pick<LlmOperation, 'translationRunId'>): boolean =>
@@ -37,7 +48,17 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     private readonly drafts: ContentDraftService,
     private readonly summaryWrite: SummaryWriteHandler,
     private readonly analysisWrite: AnalysisWriteHandler,
+    private readonly worldWrite: WorldWriteHandler,
   ) {}
+
+  /** Обработчики ходов по виду (решение арбитра `F08 | F08-4`, Q10): вид без записи не собирается. */
+  private get owners(): Record<RunKind, RegenOwner> {
+    return {
+      summary_write: this.summaryWrite,
+      analysis_write: this.analysisWrite,
+      world_write: this.worldWrite,
+    };
+  }
 
   readonly handler: LlmTaskHandler = {
     run: (task) => this.run(task),
@@ -55,17 +76,17 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     const row = await this.prisma.contentDraft.findUnique({ where: { operationId: op.id } });
     if (!row) return isRunOperation(op) ? [] : this.regenResume(op);
     if (row.status !== 'building') return [];
-    // Ход анализа свой задачей: задача заготовки отбила бы строку чужого вида (Л1 `F07-1a`).
-    if (row.kind === 'analysis_write') return [analysisWriteTaskInput(row, row.operationId)];
-    return row.kind === 'summary_write'
-      ? [summaryWriteTaskInput(row, row.operationId)]
-      : [draftTaskInput(row)];
+    // Ход - своей задачей по таблице вида; строка снятого вида - задачей, которая её отбросит.
+    return isRunKind(row.kind) ? [RUN_TASK[row.kind](row, row.operationId)] : [draftTaskInput(row)];
   }
 
-  /** Перегенерация хода: блок ищется у обоих видов хода по отметке операции. */
+  /** Перегенерация хода: блок ищется у всех видов хода по отметке операции. */
   private async regenResume(op: LlmOperation): Promise<EnqueueTaskInput[]> {
-    const summary = await this.summaryWrite.regenResume(op);
-    return summary.length > 0 ? summary : this.analysisWrite.regenResume(op);
+    for (const owner of Object.values(this.owners)) {
+      const found = await owner.regenResume(op);
+      if (found.length > 0) return found;
+    }
+    return [];
   }
 
   /**
@@ -79,8 +100,7 @@ export class ContentDraftTasksHandler implements LlmOperationKindHandler {
     });
     // Операция запуска (ход и автозапуск `F06-5`) - не перегенерация: отметок текста у неё нет (Р4).
     if (!isRunOperation(op)) {
-      await this.summaryWrite.onRegenCancelled(op, tx);
-      await this.analysisWrite.onRegenCancelled(op, tx);
+      for (const owner of Object.values(this.owners)) await owner.onRegenCancelled(op, tx);
     }
   }
 

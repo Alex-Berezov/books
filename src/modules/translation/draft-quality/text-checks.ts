@@ -75,6 +75,10 @@ export const DRAFT_REMARK_CODES = [
   'SOURCE_UNREACHABLE',
   'SOURCE_UNRELATED',
   'SOURCE_UNVERIFIED',
+  // Ход мира `F08-4a` (`features/F08-book-wiki/tech.md` §5): сцена или этап в главе, где героя
+  // не нашли формы имени (код), и исход в «Коротко» (проверяющая).
+  'SCENE_OUTSIDE_MENTIONS',
+  'SHORT_SPOILER',
 ] as const;
 export type DraftRemarkCode = (typeof DRAFT_REMARK_CODES)[number];
 
@@ -108,6 +112,34 @@ export const ANALYSIS_REMARK_CODES = [
   'SOURCE_UNVERIFIED',
 ] as const satisfies readonly DraftRemarkCode[];
 export type AnalysisRemarkCode = (typeof ANALYSIS_REMARK_CODES)[number];
+
+/**
+ * Коды, которые ставит ход мира `F08-4a`: общие код-проверки текста, код-проверки страницы героя
+ * (импорт, главы, предел, дословность, глава без героя), проверяющая мира и внешний шаг. Перечень
+ * ответа хода мира (`WorldWriteRemarkDto`); полноту держит `world-write.checks.spec.ts`.
+ */
+export const WORLD_REMARK_CODES = [
+  'LANGUAGE_MIXED',
+  'NAME_MISMATCH',
+  'JUNK',
+  'STYLE_POOR',
+  'IMPORT_INVALID',
+  'CHAPTER_UNKNOWN',
+  'LIMIT_OUT',
+  'QUOTE_NOT_VERBATIM',
+  'SCENE_OUTSIDE_MENTIONS',
+  'NOT_IN_TEXT',
+  'GENERIC',
+  'CONTRADICTION',
+  'RETELLING',
+  'SHORT_SPOILER',
+  'EXTERNAL_DOUBT',
+  'EXTERNAL_CHECK',
+  'SOURCE_UNREACHABLE',
+  'SOURCE_UNRELATED',
+  'SOURCE_UNVERIFIED',
+] as const satisfies readonly DraftRemarkCode[];
+export type WorldRemarkCode = (typeof WORLD_REMARK_CODES)[number];
 
 /** Замечание к тексту (`tech.md` §2): место - короткий фрагмент текста или имя части. */
 export interface DraftRemark {

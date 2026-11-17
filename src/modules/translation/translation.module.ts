@@ -70,6 +70,14 @@ import {
 import { AnalysisWriteFields } from './analysis-write/analysis-write.fields';
 import { AnalysisWriteHandler } from './analysis-write/analysis-write.handler';
 import { AnalysisWriteService } from './analysis-write/analysis-write.service';
+import { BookWorldModule } from '../book-world/book-world.module';
+import {
+  registerWorldWriteStages,
+  WORLD_WRITE_TASK_KIND,
+} from './world-write/world-write.constants';
+import { WorldWriteFields } from './world-write/world-write.fields';
+import { WorldWriteHandler } from './world-write/world-write.handler';
+import { WorldWriteService } from './world-write/world-write.service';
 
 /**
  * Автоперевод книги (F05): исходник по D8, блоки главы, отпечаток текста, досье и глоссарий
@@ -91,6 +99,8 @@ import { AnalysisWriteService } from './analysis-write/analysis-write.service';
     BookAnalysisModule,
     // Исходящие запросы к адресам из ответа модели - только через него (`F07-2a`, `tech.md` §4).
     SourceFetchModule,
+    // Запись хода мира `F08-4a` - импортом мира `BookWorldService.saveEntity`, как ручка PUT сущности.
+    BookWorldModule,
   ],
   controllers: [
     DossierController,
@@ -130,6 +140,9 @@ import { AnalysisWriteService } from './analysis-write/analysis-write.service';
     AnalysisWriteFields,
     AnalysisWriteHandler,
     AnalysisWriteService,
+    WorldWriteFields,
+    WorldWriteHandler,
+    WorldWriteService,
     ContentAutostartHandler,
   ],
 })
@@ -145,6 +158,7 @@ export class TranslationModule implements OnModuleInit {
     private readonly draftTasks: ContentDraftTasksHandler,
     private readonly summaryWriteTasks: SummaryWriteHandler,
     private readonly analysisWriteTasks: AnalysisWriteHandler,
+    private readonly worldWriteTasks: WorldWriteHandler,
     private readonly autostartTasks: ContentAutostartHandler,
   ) {}
 
@@ -171,6 +185,9 @@ export class TranslationModule implements OnModuleInit {
     registerAnalysisWriteStages(this.stages);
     // Ход анализа (`F07-1a`): операция вида `draft` - отмена идёт через `draftTasks`; «Continue» - `F07-1b`.
     this.handlers.register(ANALYSIS_WRITE_TASK_KIND, this.analysisWriteTasks.handler);
+    registerWorldWriteStages(this.stages);
+    // Ход мира (`F08-4a`): операция вида `draft` - «Continue» и отмена идут через `draftTasks`.
+    this.handlers.register(WORLD_WRITE_TASK_KIND, this.worldWriteTasks.handler);
     // Автозапуск раздела по `done` языка (`F06-5`): операция вида `draft` - «Continue» и отмена
     // идут через `draftTasks` (решение арбитра `F06 | F06-5`, Р4).
     this.handlers.register(CONTENT_AUTOSTART_TASK_KIND, this.autostartTasks.handler);

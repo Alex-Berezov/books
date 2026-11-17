@@ -32737,6 +32737,143 @@
         ],
         "type": "object"
       },
+      "WorldAcceptAllDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteCandidateDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "droppedQuotes": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteDroppedQuoteDto"
+            },
+            "type": "array"
+          },
+          "droppedSources": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteDroppedSourceDto"
+            },
+            "type": "array"
+          },
+          "failedReason": {
+            "description": "Why the run failed: WORLD_ANALYSIS_MISSING, DRAFT_DATA_INVALID, DRAFT_INPUT_MISSING, DRAFT_CANCELLED",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteItemDto"
+            },
+            "type": "array"
+          },
+          "language": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/LlmOperationDto"
+          },
+          "skipped": {
+            "description": "Proposals left as proposals by their own refusal, with its code",
+            "items": {
+              "$ref": "#/components/schemas/WorldAcceptAllSkippedDto"
+            },
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "building",
+              "ready",
+              "failed",
+              "discarded"
+            ],
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteStepDto"
+            },
+            "type": "array"
+          },
+          "stepsTotal": {
+            "description": "Steps of the run: 1 + 2 per character; null - the characters are not chosen yet",
+            "nullable": true,
+            "type": "number"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "waitingFor": {
+            "enum": [
+              "dossier",
+              "glossary"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "bookVersionId",
+          "status",
+          "language",
+          "failedReason",
+          "waitingFor",
+          "operation",
+          "stepsTotal",
+          "candidates",
+          "steps",
+          "items",
+          "droppedQuotes",
+          "droppedSources",
+          "createdAt",
+          "updatedAt",
+          "skipped"
+        ],
+        "type": "object"
+      },
+      "WorldAcceptAllSkippedDto": {
+        "properties": {
+          "code": {
+            "enum": [
+              "WORLD_WRITE_REFUSED",
+              "WORLD_BLOCK_CHANGED",
+              "WORLD_REGEN_IN_PROGRESS"
+            ],
+            "type": "string"
+          },
+          "index": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "index",
+          "code"
+        ],
+        "type": "object"
+      },
       "WorldAlternateDto": {
         "properties": {
           "language": {
@@ -32941,6 +33078,690 @@
           "key",
           "event",
           "count"
+        ],
+        "type": "object"
+      },
+      "WorldWriteCandidateDto": {
+        "properties": {
+          "aliases": {
+            "description": "Name forms found in the text of the version",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "chapters": {
+            "description": "Chapters where the name forms found the character (counted before the page)",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "aliases",
+          "chapters"
+        ],
+        "type": "object"
+      },
+      "WorldWriteDroppedQuoteDto": {
+        "properties": {
+          "chapter": {
+            "nullable": true,
+            "type": "number"
+          },
+          "key": {
+            "description": "Key of the character",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "QUOTE_NOT_VERBATIM",
+              "CHAPTER_UNKNOWN"
+            ],
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "chapter",
+          "text",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "WorldWriteDroppedSourceDto": {
+        "properties": {
+          "host": {
+            "description": "Host of the address (the address itself is not kept)",
+            "type": "string"
+          },
+          "key": {
+            "description": "Key of the character",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "SOURCE_UNREACHABLE",
+              "SOURCE_UNRELATED"
+            ],
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "host",
+          "reason"
+        ],
+        "type": "object"
+      },
+      "WorldWriteDto": {
+        "properties": {
+          "bookVersionId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteCandidateDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "createdAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "droppedQuotes": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteDroppedQuoteDto"
+            },
+            "type": "array"
+          },
+          "droppedSources": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteDroppedSourceDto"
+            },
+            "type": "array"
+          },
+          "failedReason": {
+            "description": "Why the run failed: WORLD_ANALYSIS_MISSING, DRAFT_DATA_INVALID, DRAFT_INPUT_MISSING, DRAFT_CANCELLED",
+            "nullable": true,
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteItemDto"
+            },
+            "type": "array"
+          },
+          "language": {
+            "enum": [
+              "en",
+              "es",
+              "fr",
+              "pt",
+              "ru"
+            ],
+            "type": "string"
+          },
+          "operation": {
+            "$ref": "#/components/schemas/LlmOperationDto"
+          },
+          "status": {
+            "enum": [
+              "building",
+              "ready",
+              "failed",
+              "discarded"
+            ],
+            "type": "string"
+          },
+          "steps": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteStepDto"
+            },
+            "type": "array"
+          },
+          "stepsTotal": {
+            "description": "Steps of the run: 1 + 2 per character; null - the characters are not chosen yet",
+            "nullable": true,
+            "type": "number"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "waitingFor": {
+            "enum": [
+              "dossier",
+              "glossary"
+            ],
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "bookVersionId",
+          "status",
+          "language",
+          "failedReason",
+          "waitingFor",
+          "operation",
+          "stepsTotal",
+          "candidates",
+          "steps",
+          "items",
+          "droppedQuotes",
+          "droppedSources",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object"
+      },
+      "WorldWriteEstimateDto": {
+        "properties": {
+          "candidates": {
+            "description": "Main characters of the analysis of the version: one page each",
+            "type": "number"
+          },
+          "dossier": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/DossierContextLineDto"
+              }
+            ],
+            "description": "The dossier is built first by its own operation; null - it is ready",
+            "nullable": true,
+            "type": "object"
+          },
+          "glossary": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/CompareContextLineDto"
+              }
+            ],
+            "description": "The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language)",
+            "nullable": true,
+            "type": "object"
+          },
+          "stageUsd": {
+            "description": "Upper estimate: the choice of name forms on the whole version text, then per main character the page on the whole version text and the external blocks, plus the reviewer of each step, each step × 2 passes",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "suggestedLimitUsd": {
+            "description": "Default operation limit: max(steps × 1.5, dossier and glossary limits)",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "upperBound": {
+            "description": "The dossier or the glossary is not ready: their size is taken from their stages",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "dossier",
+          "glossary",
+          "candidates",
+          "stageUsd",
+          "upperBound",
+          "suggestedLimitUsd"
+        ],
+        "type": "object"
+      },
+      "WorldWriteFixDto": {
+        "properties": {
+          "code": {
+            "description": "What the code removed: an element that does not pass the import, a chapter not of the version, a tail over the limit, a quotation not word for word, a name form not in the text, an unknown key, a source that did not open or is not about the book, a statement without a checked source",
+            "enum": [
+              "IMPORT_INVALID",
+              "CHAPTER_UNKNOWN",
+              "LIMIT_OUT",
+              "QUOTE_NOT_VERBATIM",
+              "ALIAS_NOT_IN_TEXT",
+              "KEY_UNKNOWN",
+              "SOURCE_UNREACHABLE",
+              "SOURCE_UNRELATED",
+              "SOURCE_UNVERIFIED"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          },
+          "path": {
+            "description": "Path in the answer of the step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "path",
+          "note"
+        ],
+        "type": "object"
+      },
+      "WorldWriteItemDto": {
+        "properties": {
+          "block": {
+            "enum": [
+              "aliases",
+              "short",
+              "profile",
+              "appearance",
+              "character",
+              "arc",
+              "scenes",
+              "relations",
+              "quotes",
+              "faq",
+              "critique",
+              "prototypes",
+              "adaptations"
+            ],
+            "type": "string"
+          },
+          "failedReason": {
+            "description": "Why the block is not written: IMPORT_INVALID, EXTERNAL_UNVERIFIED (no checked source), WORLD_WRITE_REFUSED (the world import refused)",
+            "nullable": true,
+            "type": "string"
+          },
+          "index": {
+            "type": "number"
+          },
+          "key": {
+            "description": "Key of the world entity",
+            "type": "string"
+          },
+          "outcome": {
+            "description": "waiting - the write is not decided yet; written - in the entity; proposed - a proposal; accepted, discarded - the editor decision; none - not written (failedReason)",
+            "enum": [
+              "waiting",
+              "written",
+              "proposed",
+              "accepted",
+              "discarded",
+              "none"
+            ],
+            "type": "string"
+          },
+          "regenFailedReason": {
+            "nullable": true,
+            "type": "string"
+          },
+          "regenOperationId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "regenOperationStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationStatus"
+              }
+            ],
+            "nullable": true
+          },
+          "regenPauseReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmPauseReason"
+              }
+            ],
+            "nullable": true
+          },
+          "regenerating": {
+            "description": "A regeneration of this block is running",
+            "type": "boolean"
+          },
+          "remarks": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteRemarkDto"
+            },
+            "type": "array"
+          },
+          "review": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldWriteReviewDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "step": {
+            "type": "number"
+          },
+          "verdict": {
+            "enum": [
+              "ok",
+              "flags",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "key",
+          "block",
+          "step",
+          "verdict",
+          "remarks",
+          "review",
+          "outcome",
+          "failedReason",
+          "regenFailedReason",
+          "regenerating",
+          "regenOperationId",
+          "regenOperationStatus",
+          "regenPauseReason"
+        ],
+        "type": "object"
+      },
+      "WorldWriteRemarkDto": {
+        "properties": {
+          "by": {
+            "enum": [
+              "code",
+              "model"
+            ],
+            "type": "string"
+          },
+          "code": {
+            "enum": [
+              "LANGUAGE_MIXED",
+              "NAME_MISMATCH",
+              "JUNK",
+              "STYLE_POOR",
+              "IMPORT_INVALID",
+              "CHAPTER_UNKNOWN",
+              "LIMIT_OUT",
+              "QUOTE_NOT_VERBATIM",
+              "SCENE_OUTSIDE_MENTIONS",
+              "NOT_IN_TEXT",
+              "GENERIC",
+              "CONTRADICTION",
+              "RETELLING",
+              "SHORT_SPOILER",
+              "EXTERNAL_DOUBT",
+              "EXTERNAL_CHECK",
+              "SOURCE_UNREACHABLE",
+              "SOURCE_UNRELATED",
+              "SOURCE_UNVERIFIED"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "description": "What to fix, in English",
+            "type": "string"
+          },
+          "where": {
+            "description": "The field path and a short fragment, or the step",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "where",
+          "note",
+          "by"
+        ],
+        "type": "object"
+      },
+      "WorldWriteReviewDto": {
+        "properties": {
+          "kind": {
+            "description": "answered - the reviewer model checked the step; otherwise why the model check was not done",
+            "enum": [
+              "answered",
+              "not_independent",
+              "too_long",
+              "invalid",
+              "no_provider",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "model": {
+            "description": "The reviewer model (answered)",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "model"
+        ],
+        "type": "object"
+      },
+      "WorldWriteStateDto": {
+        "properties": {
+          "draft": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldWriteDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "draft"
+        ],
+        "type": "object"
+      },
+      "WorldWriteStepDto": {
+        "properties": {
+          "attempt": {
+            "description": "1 - no redo or the redo gave no answer; 2 - the redo",
+            "type": "number"
+          },
+          "authorModel": {
+            "nullable": true,
+            "type": "string"
+          },
+          "dropped": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteFixDto"
+            },
+            "type": "array"
+          },
+          "failedReason": {
+            "description": "Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter)",
+            "nullable": true,
+            "type": "string"
+          },
+          "key": {
+            "description": "Key of the character; null - the choice step",
+            "nullable": true,
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "select",
+              "page",
+              "external"
+            ],
+            "type": "string"
+          },
+          "outcome": {
+            "enum": [
+              "done",
+              "failed"
+            ],
+            "type": "string"
+          },
+          "remarks": {
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteRemarkDto"
+            },
+            "type": "array"
+          },
+          "review": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldWriteReviewDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "source": {
+            "description": "text - the chapters with the character; top - the chapters with the most mentions and the chapter summaries; none - no book text",
+            "enum": [
+              "text",
+              "top",
+              "none"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "step": {
+            "description": "0 - the choice of name forms, then page and external blocks per character",
+            "type": "number"
+          },
+          "verdict": {
+            "enum": [
+              "ok",
+              "flags",
+              "failed"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "kind",
+          "key",
+          "verdict",
+          "remarks",
+          "attempt",
+          "outcome",
+          "failedReason",
+          "authorModel",
+          "review",
+          "source",
+          "dropped"
+        ],
+        "type": "object"
+      },
+      "WorldWriteValueDto": {
+        "properties": {
+          "adaptations": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "aliases": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "arc": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldArcDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "faq": {
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisFaqDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "print": {
+            "description": "Print of the proposal: send it as expectedPrint of «Accept»",
+            "type": "string"
+          },
+          "profile": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldProfileDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "quotes": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldQuoteDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "relations": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldRelationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "scenes": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldSceneDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "sources": {
+            "description": "Checked sources of an external block: «Accept» adds them to the sources of the entity",
+            "items": {
+              "$ref": "#/components/schemas/BookAnalysisSourceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "text": {
+            "description": "short, appearance, character, critique, prototypes",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "text",
+          "aliases",
+          "profile",
+          "arc",
+          "scenes",
+          "relations",
+          "quotes",
+          "faq",
+          "adaptations",
+          "sources",
+          "print"
         ],
         "type": "object"
       }
@@ -34048,6 +34869,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/AnalysisAcceptAllDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorldAcceptAllDto"
                     }
                   ]
                 }
@@ -34059,7 +34883,7 @@
             "description": "Run not found (a draft of another kind too)"
           },
           "409": {
-            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; a refusal in the middle of the pass carries acceptedIndexes and stoppedIndex (the item the pass stopped on); ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (skipped - the items left as proposals before the stop). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code"
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; a refusal in the middle of the pass carries acceptedIndexes and stoppedIndex (the item the pass stopped on); ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (skipped - the items left as proposals before the stop). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code; a world proposal the same way (WORLD_WRITE_REFUSED, WORLD_BLOCK_CHANGED, WORLD_REGEN_IN_PROGRESS), WORLD_WRITE_NOT_READY stops the pass"
           }
         },
         "security": [
@@ -34098,6 +34922,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/AnalysisWriteDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorldWriteDto"
                     }
                   ]
                 }
@@ -34109,7 +34936,7 @@
             "description": "Run not found (a draft of another kind too)"
           },
           "409": {
-            "description": "ANALYSIS_REGEN_IN_PROGRESS: an analysis run - a regeneration of its blocks keeps starting while the run is discarded, discard again"
+            "description": "ANALYSIS_REGEN_IN_PROGRESS, WORLD_REGEN_IN_PROGRESS: an analysis or world run - a regeneration of its blocks keeps starting while the run is discarded, discard again"
           }
         },
         "security": [
@@ -34150,20 +34977,27 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AnalysisWriteValueDto"
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/AnalysisWriteValueDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorldWriteValueDto"
+                    }
+                  ]
                 }
               }
             },
             "description": ""
           },
           "400": {
-            "description": "ANALYSIS_ITEM_UNKNOWN: the run has no such block"
+            "description": "ANALYSIS_ITEM_UNKNOWN, WORLD_ITEM_UNKNOWN: the run has no such block"
           },
           "404": {
-            "description": "Analysis run not found (a summary run and a draft of another kind too)"
+            "description": "Run not found (a summary run and a draft of another kind too)"
           },
           "409": {
-            "description": "ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED: the block is not a proposal"
+            "description": "ANALYSIS_WRITE_NOT_READY, WORLD_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED, WORLD_ITEM_NOT_PROPOSED: the block is not a proposal"
           }
         },
         "security": [
@@ -34171,7 +35005,7 @@
             "bearer": []
           }
         ],
-        "summary": "The content of a proposal of a ready analysis run: one field by the kind of the block, the others null; the run answer does not carry it",
+        "summary": "The content of a proposal of a ready analysis or world run: one field by the kind of the block, the others null; the run answer does not carry it",
         "tags": [
           "admin"
         ]
@@ -34220,6 +35054,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/AnalysisWriteDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorldWriteDto"
                     }
                   ]
                 }
@@ -34234,7 +35071,7 @@
             "description": "Run not found (a draft of another kind too)"
           },
           "409": {
-            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint (it was regenerated); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors)"
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint (it was regenerated); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors); WORLD_WRITE_NOT_READY: the run is building, failed or discarded; WORLD_REGEN_IN_PROGRESS: this block is being regenerated; WORLD_ITEM_NOT_PROPOSED: not a proposal; WORLD_BLOCK_CHANGED: the block of the entity changed after the proposal (current - its content); WORLD_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint; WORLD_WRITE_REFUSED: the world import refused the write (errors)"
           }
         },
         "security": [
@@ -34281,6 +35118,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/AnalysisWriteDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorldWriteDto"
                     }
                   ]
                 }
@@ -34295,7 +35135,7 @@
             "description": "Run not found (a draft of another kind too)"
           },
           "409": {
-            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal"
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; WORLD_WRITE_NOT_READY: the run is building, failed or discarded; WORLD_REGEN_IN_PROGRESS: this block is being regenerated; WORLD_ITEM_NOT_PROPOSED: not a proposal"
           }
         },
         "security": [
@@ -34352,6 +35192,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/AnalysisWriteDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WorldWriteDto"
                     }
                   ]
                 }
@@ -34366,7 +35209,7 @@
             "description": "Run not found (a draft of another kind too)"
           },
           "409": {
-            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_REGENERABLE: theme links and sources are not regenerated on their own; LLM_CEILING_REACHED"
+            "description": "SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_REGENERABLE: theme links and sources are not regenerated on their own; WORLD_WRITE_NOT_READY: the run is building, failed or discarded; WORLD_REGEN_IN_PROGRESS: this block is being regenerated; WORLD_ITEM_NOT_REGENERABLE: name forms are not regenerated on their own; LLM_CEILING_REACHED"
           },
           "503": {
             "description": "LLM_DISABLED: no OpenRouter key"
@@ -43507,6 +44350,143 @@
           }
         ],
         "summary": "Upper cost estimate of the summary run: every section of the dossier plan, the full and the very short summary, each text × 2 passes of the author and the reviewer",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/drafts/world_write": {
+      "get": {
+        "operationId": "ContentDraftController_worldLatest",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldWriteStateDto"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "The latest world run that is not discarded, in any status: its characters, steps, flags, dropped quotations and sources, what is written and what is proposed; null - none",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "ContentDraftController_worldStart",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StartContentDraftDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldWriteDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first"
+          },
+          "404": {
+            "description": "Book version not found"
+          },
+          "409": {
+            "description": "DRAFT_IN_PROGRESS: a world run is being built; WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: only ru and en versions for now; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          },
+          "503": {
+            "description": "LLM_DISABLED: no OpenRouter key"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "«Write World»: the pages of the main characters of the analysis (name forms, page, external blocks with checked sources) in the background under its own operation; new entities and empty blocks of an unpublished entity are written through the world import, the rest become proposals; the previous ready or failed run is discarded",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/drafts/world_write/estimate": {
+      "get": {
+        "operationId": "ContentDraftController_worldEstimate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldWriteEstimateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "Book version not found"
+          },
+          "409": {
+            "description": "WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: only ru and en versions for now; SOURCE_HAS_NO_CHAPTERS: the version or the dossier source has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_NO_PRICE; LLM_STAGE_DISABLED"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upper cost estimate of the world run: the name forms on the whole version text, then per main character of the analysis the page and the external blocks, plus the reviewer of each step, each step × 2 passes",
         "tags": [
           "admin"
         ]

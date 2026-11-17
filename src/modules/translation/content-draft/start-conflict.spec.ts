@@ -50,6 +50,13 @@ describe('startConflict', () => {
     );
   });
 
+  // F08-4a: вид хода мира - в тексте отказа; `RUN_OF` по `RunKind`, а не по виду автозапуска.
+  it('ход мира: строящийся - DRAFT_IN_PROGRESS «A world run is already being built»', () => {
+    const building = startConflict(p2002('ContentDraft_building_key'), false, 'world_write');
+    expect(codeOf(building)).toBe('DRAFT_IN_PROGRESS');
+    expect((building as ConflictException).message).toBe('A world run is already being built');
+  });
+
   it('не P2002 - как есть', () => {
     const other = new Error('x');
     expect(startConflict(other, true, 'summary_write')).toBe(other);

@@ -315,7 +315,7 @@ export interface paths {
       path?: never;
       cookie?: never;
     };
-    /** The content of a proposal of a ready analysis run: one field by the kind of the block, the others null; the run answer does not carry it */
+    /** The content of a proposal of a ready analysis or world run: one field by the kind of the block, the others null; the run answer does not carry it */
     get: operations['ContentDraftController_proposal'];
     put?: never;
     post?: never;
@@ -2826,6 +2826,41 @@ export interface paths {
     };
     /** Upper cost estimate of the summary run: every section of the dossier plan, the full and the very short summary, each text × 2 passes of the author and the reviewer */
     get: operations['ContentDraftController_writeEstimate'];
+    put?: never;
+    post?: never;
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/drafts/world_write': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** The latest world run that is not discarded, in any status: its characters, steps, flags, dropped quotations and sources, what is written and what is proposed; null - none */
+    get: operations['ContentDraftController_worldLatest'];
+    put?: never;
+    /** «Write World»: the pages of the main characters of the analysis (name forms, page, external blocks with checked sources) in the background under its own operation; new entities and empty blocks of an unpublished entity are written through the world import, the rest become proposals; the previous ready or failed run is discarded */
+    post: operations['ContentDraftController_worldStart'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/drafts/world_write/estimate': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Upper cost estimate of the world run: the name forms on the whole version text, then per main character of the analysis the page and the external blocks, plus the reviewer of each step, each step × 2 passes */
+    get: operations['ContentDraftController_worldEstimate'];
     put?: never;
     post?: never;
     delete?: never;
@@ -16414,6 +16449,39 @@ export interface components {
     WithdrawLawyerReviewDto: {
       reasonRu: string;
     };
+    WorldAcceptAllDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      candidates: components['schemas']['WorldWriteCandidateDto'][] | null;
+      /** Format: date-time */
+      createdAt: string;
+      droppedQuotes: components['schemas']['WorldWriteDroppedQuoteDto'][];
+      droppedSources: components['schemas']['WorldWriteDroppedSourceDto'][];
+      /** @description Why the run failed: WORLD_ANALYSIS_MISSING, DRAFT_DATA_INVALID, DRAFT_INPUT_MISSING, DRAFT_CANCELLED */
+      failedReason: string | null;
+      /** Format: uuid */
+      id: string;
+      items: components['schemas']['WorldWriteItemDto'][];
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      operation: components['schemas']['LlmOperationDto'];
+      /** @description Proposals left as proposals by their own refusal, with its code */
+      skipped: components['schemas']['WorldAcceptAllSkippedDto'][];
+      /** @enum {string} */
+      status: 'building' | 'ready' | 'failed' | 'discarded';
+      steps: components['schemas']['WorldWriteStepDto'][];
+      /** @description Steps of the run: 1 + 2 per character; null - the characters are not chosen yet */
+      stepsTotal: number | null;
+      /** Format: date-time */
+      updatedAt: string;
+      /** @enum {string|null} */
+      waitingFor: 'dossier' | 'glossary' | null;
+    };
+    WorldAcceptAllSkippedDto: {
+      /** @enum {string} */
+      code: 'WORLD_WRITE_REFUSED' | 'WORLD_BLOCK_CHANGED' | 'WORLD_REGEN_IN_PROGRESS';
+      index: number;
+    };
     WorldAlternateDto: {
       language: components['schemas']['Language'];
       /** @description Version slug */
@@ -16491,6 +16559,219 @@ export interface components {
       language: components['schemas']['Language'] | null;
       /** @description Version slug */
       slug: string | null;
+    };
+    WorldWriteCandidateDto: {
+      /** @description Name forms found in the text of the version */
+      aliases: string[];
+      /** @description Chapters where the name forms found the character (counted before the page) */
+      chapters: number[];
+      key: string;
+      name: string;
+    };
+    WorldWriteDroppedQuoteDto: {
+      chapter: number | null;
+      /** @description Key of the character */
+      key: string;
+      /** @enum {string} */
+      reason: 'QUOTE_NOT_VERBATIM' | 'CHAPTER_UNKNOWN';
+      text: string;
+    };
+    WorldWriteDroppedSourceDto: {
+      /** @description Host of the address (the address itself is not kept) */
+      host: string;
+      /** @description Key of the character */
+      key: string;
+      /** @enum {string} */
+      reason: 'SOURCE_UNREACHABLE' | 'SOURCE_UNRELATED';
+      title: string;
+    };
+    WorldWriteDto: {
+      /** Format: uuid */
+      bookVersionId: string;
+      candidates: components['schemas']['WorldWriteCandidateDto'][] | null;
+      /** Format: date-time */
+      createdAt: string;
+      droppedQuotes: components['schemas']['WorldWriteDroppedQuoteDto'][];
+      droppedSources: components['schemas']['WorldWriteDroppedSourceDto'][];
+      /** @description Why the run failed: WORLD_ANALYSIS_MISSING, DRAFT_DATA_INVALID, DRAFT_INPUT_MISSING, DRAFT_CANCELLED */
+      failedReason: string | null;
+      /** Format: uuid */
+      id: string;
+      items: components['schemas']['WorldWriteItemDto'][];
+      /** @enum {string} */
+      language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      operation: components['schemas']['LlmOperationDto'];
+      /** @enum {string} */
+      status: 'building' | 'ready' | 'failed' | 'discarded';
+      steps: components['schemas']['WorldWriteStepDto'][];
+      /** @description Steps of the run: 1 + 2 per character; null - the characters are not chosen yet */
+      stepsTotal: number | null;
+      /** Format: date-time */
+      updatedAt: string;
+      /** @enum {string|null} */
+      waitingFor: 'dossier' | 'glossary' | null;
+    };
+    WorldWriteEstimateDto: {
+      /** @description Main characters of the analysis of the version: one page each */
+      candidates: number;
+      /** @description The dossier is built first by its own operation; null - it is ready */
+      dossier: components['schemas']['DossierContextLineDto'] | null;
+      /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
+      glossary: components['schemas']['CompareContextLineDto'] | null;
+      /**
+       * Format: decimal
+       * @description Upper estimate: the choice of name forms on the whole version text, then per main character the page on the whole version text and the external blocks, plus the reviewer of each step, each step × 2 passes
+       * @example 100.00000000
+       */
+      stageUsd: string;
+      /**
+       * Format: decimal
+       * @description Default operation limit: max(steps × 1.5, dossier and glossary limits)
+       * @example 100.00000000
+       */
+      suggestedLimitUsd: string;
+      /** @description The dossier or the glossary is not ready: their size is taken from their stages */
+      upperBound: boolean;
+    };
+    WorldWriteFixDto: {
+      /**
+       * @description What the code removed: an element that does not pass the import, a chapter not of the version, a tail over the limit, a quotation not word for word, a name form not in the text, an unknown key, a source that did not open or is not about the book, a statement without a checked source
+       * @enum {string}
+       */
+      code:
+        | 'IMPORT_INVALID'
+        | 'CHAPTER_UNKNOWN'
+        | 'LIMIT_OUT'
+        | 'QUOTE_NOT_VERBATIM'
+        | 'ALIAS_NOT_IN_TEXT'
+        | 'KEY_UNKNOWN'
+        | 'SOURCE_UNREACHABLE'
+        | 'SOURCE_UNRELATED'
+        | 'SOURCE_UNVERIFIED';
+      note: string;
+      /** @description Path in the answer of the step */
+      path: string;
+    };
+    WorldWriteItemDto: {
+      /** @enum {string} */
+      block:
+        | 'aliases'
+        | 'short'
+        | 'profile'
+        | 'appearance'
+        | 'character'
+        | 'arc'
+        | 'scenes'
+        | 'relations'
+        | 'quotes'
+        | 'faq'
+        | 'critique'
+        | 'prototypes'
+        | 'adaptations';
+      /** @description Why the block is not written: IMPORT_INVALID, EXTERNAL_UNVERIFIED (no checked source), WORLD_WRITE_REFUSED (the world import refused) */
+      failedReason: string | null;
+      index: number;
+      /** @description Key of the world entity */
+      key: string;
+      /**
+       * @description waiting - the write is not decided yet; written - in the entity; proposed - a proposal; accepted, discarded - the editor decision; none - not written (failedReason)
+       * @enum {string}
+       */
+      outcome: 'waiting' | 'written' | 'proposed' | 'accepted' | 'discarded' | 'none';
+      regenFailedReason: string | null;
+      /** Format: uuid */
+      regenOperationId: string | null;
+      regenOperationStatus: components['schemas']['LlmOperationStatus'] | null;
+      regenPauseReason: components['schemas']['LlmPauseReason'] | null;
+      /** @description A regeneration of this block is running */
+      regenerating: boolean;
+      remarks: components['schemas']['WorldWriteRemarkDto'][];
+      review: components['schemas']['WorldWriteReviewDto'] | null;
+      step: number;
+      /** @enum {string} */
+      verdict: 'ok' | 'flags' | 'failed';
+    };
+    WorldWriteRemarkDto: {
+      /** @enum {string} */
+      by: 'code' | 'model';
+      /** @enum {string} */
+      code:
+        | 'LANGUAGE_MIXED'
+        | 'NAME_MISMATCH'
+        | 'JUNK'
+        | 'STYLE_POOR'
+        | 'IMPORT_INVALID'
+        | 'CHAPTER_UNKNOWN'
+        | 'LIMIT_OUT'
+        | 'QUOTE_NOT_VERBATIM'
+        | 'SCENE_OUTSIDE_MENTIONS'
+        | 'NOT_IN_TEXT'
+        | 'GENERIC'
+        | 'CONTRADICTION'
+        | 'RETELLING'
+        | 'SHORT_SPOILER'
+        | 'EXTERNAL_DOUBT'
+        | 'EXTERNAL_CHECK'
+        | 'SOURCE_UNREACHABLE'
+        | 'SOURCE_UNRELATED'
+        | 'SOURCE_UNVERIFIED';
+      /** @description What to fix, in English */
+      note: string;
+      /** @description The field path and a short fragment, or the step */
+      where: string;
+    };
+    WorldWriteReviewDto: {
+      /**
+       * @description answered - the reviewer model checked the step; otherwise why the model check was not done
+       * @enum {string}
+       */
+      kind: 'answered' | 'not_independent' | 'too_long' | 'invalid' | 'no_provider' | 'unavailable';
+      /** @description The reviewer model (answered) */
+      model: string | null;
+    };
+    WorldWriteStateDto: {
+      draft: components['schemas']['WorldWriteDto'] | null;
+    };
+    WorldWriteStepDto: {
+      /** @description 1 - no redo or the redo gave no answer; 2 - the redo */
+      attempt: number;
+      authorModel: string | null;
+      dropped: components['schemas']['WorldWriteFixDto'][];
+      /** @description Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter) */
+      failedReason: string | null;
+      /** @description Key of the character; null - the choice step */
+      key: string | null;
+      /** @enum {string} */
+      kind: 'select' | 'page' | 'external';
+      /** @enum {string} */
+      outcome: 'done' | 'failed';
+      remarks: components['schemas']['WorldWriteRemarkDto'][];
+      review: components['schemas']['WorldWriteReviewDto'] | null;
+      /**
+       * @description text - the chapters with the character; top - the chapters with the most mentions and the chapter summaries; none - no book text
+       * @enum {string|null}
+       */
+      source: 'text' | 'top' | 'none' | null;
+      /** @description 0 - the choice of name forms, then page and external blocks per character */
+      step: number;
+      /** @enum {string} */
+      verdict: 'ok' | 'flags' | 'failed';
+    };
+    WorldWriteValueDto: {
+      adaptations: components['schemas']['BookWorldAdaptationDto'][] | null;
+      aliases: string[] | null;
+      arc: components['schemas']['BookWorldArcDto'] | null;
+      faq: components['schemas']['BookAnalysisFaqDto'][] | null;
+      /** @description Print of the proposal: send it as expectedPrint of «Accept» */
+      print: string;
+      profile: components['schemas']['BookWorldProfileDto'] | null;
+      quotes: components['schemas']['BookWorldQuoteDto'][] | null;
+      relations: components['schemas']['BookWorldRelationDto'][] | null;
+      scenes: components['schemas']['BookWorldSceneDto'][] | null;
+      /** @description Checked sources of an external block: «Accept» adds them to the sources of the entity */
+      sources: components['schemas']['BookAnalysisSourceDto'][] | null;
+      /** @description short, appearance, character, critique, prototypes */
+      text: string | null;
     };
   };
   responses: never;
@@ -17031,7 +17312,8 @@ export interface operations {
         content: {
           'application/json':
             | components['schemas']['SummaryWriteDto']
-            | components['schemas']['AnalysisAcceptAllDto'];
+            | components['schemas']['AnalysisAcceptAllDto']
+            | components['schemas']['WorldAcceptAllDto'];
         };
       };
       /** @description Run not found (a draft of another kind too) */
@@ -17041,7 +17323,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; a refusal in the middle of the pass carries acceptedIndexes and stoppedIndex (the item the pass stopped on); ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (skipped - the items left as proposals before the stop). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; ACCEPT_ALL_CHAPTER_CHANGE: a section moves to other reader chapters, accept it alone; SUMMARY_FIELD_CHANGED: a field changed after its proposal; a refusal in the middle of the pass carries acceptedIndexes and stoppedIndex (the item the pass stopped on); ANALYSIS_WRITE_NOT_READY: the analysis run is not ready (skipped - the items left as proposals before the stop). An analysis proposal refused on its own (ANALYSIS_WRITE_REFUSED, ANALYSIS_BLOCK_CHANGED, ANALYSIS_REGEN_IN_PROGRESS) is skipped: it stays a proposal, the answer is 200 and lists it in skipped with its code; a world proposal the same way (WORLD_WRITE_REFUSED, WORLD_BLOCK_CHANGED, WORLD_REGEN_IN_PROGRESS), WORLD_WRITE_NOT_READY stops the pass */
       409: {
         headers: {
           [name: string]: unknown;
@@ -17068,7 +17350,8 @@ export interface operations {
         content: {
           'application/json':
             | components['schemas']['SummaryWriteDto']
-            | components['schemas']['AnalysisWriteDto'];
+            | components['schemas']['AnalysisWriteDto']
+            | components['schemas']['WorldWriteDto'];
         };
       };
       /** @description Run not found (a draft of another kind too) */
@@ -17078,7 +17361,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description ANALYSIS_REGEN_IN_PROGRESS: an analysis run - a regeneration of its blocks keeps starting while the run is discarded, discard again */
+      /** @description ANALYSIS_REGEN_IN_PROGRESS, WORLD_REGEN_IN_PROGRESS: an analysis or world run - a regeneration of its blocks keeps starting while the run is discarded, discard again */
       409: {
         headers: {
           [name: string]: unknown;
@@ -17104,24 +17387,26 @@ export interface operations {
           [name: string]: unknown;
         };
         content: {
-          'application/json': components['schemas']['AnalysisWriteValueDto'];
+          'application/json':
+            | components['schemas']['AnalysisWriteValueDto']
+            | components['schemas']['WorldWriteValueDto'];
         };
       };
-      /** @description ANALYSIS_ITEM_UNKNOWN: the run has no such block */
+      /** @description ANALYSIS_ITEM_UNKNOWN, WORLD_ITEM_UNKNOWN: the run has no such block */
       400: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description Analysis run not found (a summary run and a draft of another kind too) */
+      /** @description Run not found (a summary run and a draft of another kind too) */
       404: {
         headers: {
           [name: string]: unknown;
         };
         content?: never;
       };
-      /** @description ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED: the block is not a proposal */
+      /** @description ANALYSIS_WRITE_NOT_READY, WORLD_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_ITEM_NOT_PROPOSED, WORLD_ITEM_NOT_PROPOSED: the block is not a proposal */
       409: {
         headers: {
           [name: string]: unknown;
@@ -17153,7 +17438,8 @@ export interface operations {
         content: {
           'application/json':
             | components['schemas']['SummaryWriteDto']
-            | components['schemas']['AnalysisWriteDto'];
+            | components['schemas']['AnalysisWriteDto']
+            | components['schemas']['WorldWriteDto'];
         };
       };
       /** @description SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block */
@@ -17170,7 +17456,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint (it was regenerated); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors) */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; SUMMARY_FIELD_CHANGED: the field changed after the proposal (current - its content); SUMMARY_CHAPTER_CHANGE: the section moves to other reader chapters, repeat with confirmChapterChange; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_BLOCK_CHANGED: the block changed after the proposal (current - its content); ANALYSIS_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint (it was regenerated); ANALYSIS_WRITE_REFUSED: the analysis refused the write, the references do not fit (errors); WORLD_WRITE_NOT_READY: the run is building, failed or discarded; WORLD_REGEN_IN_PROGRESS: this block is being regenerated; WORLD_ITEM_NOT_PROPOSED: not a proposal; WORLD_BLOCK_CHANGED: the block of the entity changed after the proposal (current - its content); WORLD_PROPOSAL_CHANGED: the proposal is not the one with expectedPrint; WORLD_WRITE_REFUSED: the world import refused the write (errors) */
       409: {
         headers: {
           [name: string]: unknown;
@@ -17198,7 +17484,8 @@ export interface operations {
         content: {
           'application/json':
             | components['schemas']['SummaryWriteDto']
-            | components['schemas']['AnalysisWriteDto'];
+            | components['schemas']['AnalysisWriteDto']
+            | components['schemas']['WorldWriteDto'];
         };
       };
       /** @description SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block */
@@ -17215,7 +17502,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_ITEM_NOT_PROPOSED: not a proposal; ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_PROPOSED: not a proposal; WORLD_WRITE_NOT_READY: the run is building, failed or discarded; WORLD_REGEN_IN_PROGRESS: this block is being regenerated; WORLD_ITEM_NOT_PROPOSED: not a proposal */
       409: {
         headers: {
           [name: string]: unknown;
@@ -17247,7 +17534,8 @@ export interface operations {
         content: {
           'application/json':
             | components['schemas']['SummaryWriteDto']
-            | components['schemas']['AnalysisWriteDto'];
+            | components['schemas']['AnalysisWriteDto']
+            | components['schemas']['WorldWriteDto'];
         };
       };
       /** @description SUMMARY_ITEM_UNKNOWN, ANALYSIS_ITEM_UNKNOWN: the run has no such text or block */
@@ -17264,7 +17552,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_REGENERABLE: theme links and sources are not regenerated on their own; LLM_CEILING_REACHED */
+      /** @description SUMMARY_WRITE_NOT_READY: the run is building, failed or discarded; SUMMARY_REGEN_IN_PROGRESS: this text is being regenerated; SUMMARY_SECTIONS_UNFINISHED: not every section has a text (full); SUMMARY_FULL_UNFINISHED: no full summary with a text (brief); ANALYSIS_WRITE_NOT_READY: the run is building, failed or discarded; ANALYSIS_REGEN_IN_PROGRESS: this block is being regenerated; ANALYSIS_ITEM_NOT_REGENERABLE: theme links and sources are not regenerated on their own; WORLD_WRITE_NOT_READY: the run is building, failed or discarded; WORLD_REGEN_IN_PROGRESS: this block is being regenerated; WORLD_ITEM_NOT_REGENERABLE: name forms are not regenerated on their own; LLM_CEILING_REACHED */
       409: {
         headers: {
           [name: string]: unknown;
@@ -21916,6 +22204,115 @@ export interface operations {
         content?: never;
       };
       /** @description DRAFT_IN_PROGRESS: a summary run is being built; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_worldLatest: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorldWriteStateDto'];
+        };
+      };
+    };
+  };
+  ContentDraftController_worldStart: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['StartContentDraftDto'];
+      };
+    };
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorldWriteDto'];
+        };
+      };
+      /** @description DRAFT_LIMIT_TOO_LOW: below the limits of the dossier and glossary built first */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description DRAFT_IN_PROGRESS: a world run is being built; WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: only ru and en versions for now; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description LLM_DISABLED: no OpenRouter key */
+      503: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  ContentDraftController_worldEstimate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorldWriteEstimateDto'];
+        };
+      };
+      /** @description Book version not found */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: only ru and en versions for now; SOURCE_HAS_NO_CHAPTERS: the version or the dossier source has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_NO_PRICE; LLM_STAGE_DISABLED */
       409: {
         headers: {
           [name: string]: unknown;
