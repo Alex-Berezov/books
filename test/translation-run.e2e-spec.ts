@@ -3245,6 +3245,22 @@ describe('Translation run (e2e)', () => {
     ).expect(200);
     // Стоимость - все операции запуска (досье, глоссарий), как итог отчёта (§7 п.8).
     expect(done.costUsd).toBe((report.body as TranslationRunReportDto).totalUsd);
+    // Разбивка экрана отчёта: перевод и глоссарий языка, досье и остаток сходятся с итогом до цента;
+    // язык вызова - через задачу исполнителя, перевод и глоссарий es не пусты.
+    const { breakdown, totalUsd } = report.body as TranslationRunReportDto;
+    expect(breakdown.languages.map((l) => l.language)).toEqual(['es']);
+    const [es] = breakdown.languages;
+    expect(new Prisma.Decimal(es.translationUsd).gt(0)).toBe(true);
+    expect(new Prisma.Decimal(es.glossaryUsd).gt(0)).toBe(true);
+    // Досье запуска (задача без языка) - своей строкой, а не в остатке.
+    expect(new Prisma.Decimal(breakdown.dossierUsd).gt(0)).toBe(true);
+    expect(
+      new Prisma.Decimal(es.translationUsd)
+        .add(es.glossaryUsd)
+        .add(breakdown.dossierUsd)
+        .add(breakdown.unattributedUsd)
+        .toFixed(8),
+    ).toBe(new Prisma.Decimal(totalUsd).toFixed(8));
     expect(
       new Prisma.Decimal(done.costUsd as string).gt(
         (done.operation as { spentUsd: string }).spentUsd,

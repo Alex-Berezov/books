@@ -7,7 +7,7 @@ import { TranslationRunSummaryDto } from './translation-run-summary.dto';
 /**
  * Отчёт запуска перевода (`F05-6`, шаг 8): по языкам - куски, повторы, флаги кусков и глав
  * с причинами, итоговая проверка, ссылка на черновик; стоимость - по этапам и моделям на весь
- * запуск (у вызова LLM языка нет - решение арбитра `F05 | F05-6`, 6c В8). Причины - кодами:
+ * запуск и `breakdown` по языкам (язык вызова - через задачу исполнителя). Причины - кодами:
  * подписи на пяти языках - экран `F05-7`.
  */
 
@@ -261,6 +261,44 @@ export class TranslationReportInFlightDto {
   reservedUsd!: string;
 }
 
+export class TranslationReportLanguageCostDto {
+  @ApiProperty({ enum: Language, enumName: 'Language' })
+  language!: Language;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Spent on translating this language: calls of the run and of its piece retries made for this language',
+  })
+  translationUsd!: string;
+
+  @ApiProperty({ ...LLM_MONEY_PROPERTY, description: 'Spent on the glossary of this language' })
+  glossaryUsd!: string;
+}
+
+export class TranslationReportBreakdownDto {
+  @ApiProperty({
+    type: () => [TranslationReportLanguageCostDto],
+    description:
+      'Per language, in the order of languages; Write Summary and Write Analysis of a language - summary.spentUsd and analysis.spentUsd of its language row',
+  })
+  languages!: TranslationReportLanguageCostDto[];
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Spent on the dossier: dossier operations without a language and glossaries of languages outside the run',
+  })
+  dossierUsd!: string;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'The rest of totalUsd that no line shows: calls without a task of a run language, other operation kinds, Write Summary and Write Analysis spending not shown in a language row. The report reads one snapshot, so lines plus this add up to totalUsd; a negative rest (never expected) is returned as zero',
+  })
+  unattributedUsd!: string;
+}
+
 export class TranslationRunReportDto {
   @ApiProperty({ type: String, format: 'uuid' })
   id!: string;
@@ -277,6 +315,13 @@ export class TranslationRunReportDto {
       'Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary and Write Analysis - their spending is summary.spentUsd and analysis.spentUsd of each language; totalUsd covers all',
   })
   costs!: TranslationReportCostDto[];
+
+  @ApiProperty({
+    type: () => TranslationReportBreakdownDto,
+    description:
+      'Spending split for the report screen: translation and glossary per language, dossier, the rest; with summary.spentUsd and analysis.spentUsd of the languages it adds up to totalUsd (the rest takes the difference)',
+  })
+  breakdown!: TranslationReportBreakdownDto;
 
   @ApiProperty({ type: () => TranslationReportInFlightDto })
   inFlight!: TranslationReportInFlightDto;

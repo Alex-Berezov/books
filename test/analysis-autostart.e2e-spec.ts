@@ -586,6 +586,51 @@ describe('Analysis autostart from a translation run (e2e)', () => {
     // Строка каждого раздела - траты ровно его операций (автозапуск LLM не зовёт, лимит 0).
     expect(Number(lang.summary.spentUsd)).toBeCloseTo(await spentOf(summaryRow.operationId), 8);
     expect(Number(lang.analysis.spentUsd)).toBeCloseTo(await spentOf(analysisRow.operationId), 8);
+    // Разбивка трат запуска (экран перевода): вызов операции пересказа - с задачей языка запуска
+    // и с ценой, оплаченный (spentUsd операции растёт, как при settle) - уходит в summary.spentUsd
+    // языка, а не в перевод языка и не в остаток: строки по-прежнему сходятся с итогом.
+    type Breakdown = {
+      languages: Array<{ language: string; translationUsd: string; glossaryUsd: string }>;
+      dossierUsd: string;
+      unattributedUsd: string;
+    };
+    const before = (report.body as { breakdown: Breakdown }).breakdown;
+    const task = await prisma.llmTask.create({
+      data: {
+        kind: 'summary_write',
+        operationId: summaryRow.operationId,
+        language: 'fr',
+      },
+    });
+    await prisma.$transaction([
+      prisma.llmCall.create({
+        data: {
+          operationId: summaryRow.operationId,
+          taskId: task.id,
+          stage: 'summary_full',
+          requestedModel: 'test/model',
+          attempt: 1,
+          reservedUsd: 0,
+          costUsd: 0.5,
+        },
+      }),
+      prisma.llmOperation.update({
+        where: { id: summaryRow.operationId },
+        data: { spentUsd: { increment: 0.5 } },
+      }),
+    ]);
+    const after = await auth(http().get(`/admin/translation-runs/${both.run.id}/report`)).expect(
+      200,
+    );
+    const afterBody = after.body as {
+      breakdown: Breakdown;
+      languages: Array<{ summary: { spentUsd: string } }>;
+    };
+    expect(afterBody.breakdown).toEqual(before);
+    expect(Number(afterBody.languages[0].summary.spentUsd)).toBeCloseTo(
+      Number(lang.summary.spentUsd) + 0.5,
+      8,
+    );
   });
 
   it('D9, З: a draft of the editor attached by the run with the editor summary and analysis - after done both runs only propose, the editor text stays', async () => {

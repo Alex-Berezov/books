@@ -28890,6 +28890,35 @@
         ],
         "type": "string"
       },
+      "TranslationReportBreakdownDto": {
+        "properties": {
+          "dossierUsd": {
+            "description": "Spent on the dossier: dossier operations without a language and glossaries of languages outside the run",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "languages": {
+            "description": "Per language, in the order of languages; Write Summary and Write Analysis of a language - summary.spentUsd and analysis.spentUsd of its language row",
+            "items": {
+              "$ref": "#/components/schemas/TranslationReportLanguageCostDto"
+            },
+            "type": "array"
+          },
+          "unattributedUsd": {
+            "description": "The rest of totalUsd that no line shows: calls without a task of a run language, other operation kinds, Write Summary and Write Analysis spending not shown in a language row. The report reads one snapshot, so lines plus this add up to totalUsd; a negative rest (never expected) is returned as zero",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "languages",
+          "dossierUsd",
+          "unattributedUsd"
+        ],
+        "type": "object"
+      },
       "TranslationReportChapterDto": {
         "properties": {
           "chapterId": {
@@ -29128,6 +29157,35 @@
         "required": [
           "calls",
           "reservedUsd"
+        ],
+        "type": "object"
+      },
+      "TranslationReportLanguageCostDto": {
+        "properties": {
+          "glossaryUsd": {
+            "description": "Spent on the glossary of this language",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "language": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Language"
+              }
+            ]
+          },
+          "translationUsd": {
+            "description": "Spent on translating this language: calls of the run and of its piece retries made for this language",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          }
+        },
+        "required": [
+          "language",
+          "translationUsd",
+          "glossaryUsd"
         ],
         "type": "object"
       },
@@ -29937,6 +29995,14 @@
             "format": "uuid",
             "type": "string"
           },
+          "breakdown": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationReportBreakdownDto"
+              }
+            ],
+            "description": "Spending split for the report screen: translation and glossary per language, dossier, the rest; with summary.spentUsd and analysis.spentUsd of the languages it adds up to totalUsd (the rest takes the difference)"
+          },
           "costs": {
             "description": "Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary and Write Analysis - their spending is summary.spentUsd and analysis.spentUsd of each language; totalUsd covers all",
             "items": {
@@ -29969,6 +30035,7 @@
           "bookVersionId",
           "languages",
           "costs",
+          "breakdown",
           "inFlight",
           "totalUsd"
         ],

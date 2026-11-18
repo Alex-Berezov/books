@@ -14822,6 +14822,22 @@ export interface components {
      * @enum {string}
      */
     TranslationCompareModelStatus: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+    TranslationReportBreakdownDto: {
+      /**
+       * Format: decimal
+       * @description Spent on the dossier: dossier operations without a language and glossaries of languages outside the run
+       * @example 100.00000000
+       */
+      dossierUsd: string;
+      /** @description Per language, in the order of languages; Write Summary and Write Analysis of a language - summary.spentUsd and analysis.spentUsd of its language row */
+      languages: components['schemas']['TranslationReportLanguageCostDto'][];
+      /**
+       * Format: decimal
+       * @description The rest of totalUsd that no line shows: calls without a task of a run language, other operation kinds, Write Summary and Write Analysis spending not shown in a language row. The report reads one snapshot, so lines plus this add up to totalUsd; a negative rest (never expected) is returned as zero
+       * @example 100.00000000
+       */
+      unattributedUsd: string;
+    };
     TranslationReportChapterDto: {
       /**
        * Format: uuid
@@ -14911,6 +14927,21 @@ export interface components {
        * @example 100.00000000
        */
       reservedUsd: string;
+    };
+    TranslationReportLanguageCostDto: {
+      /**
+       * Format: decimal
+       * @description Spent on the glossary of this language
+       * @example 100.00000000
+       */
+      glossaryUsd: string;
+      language: components['schemas']['Language'];
+      /**
+       * Format: decimal
+       * @description Spent on translating this language: calls of the run and of its piece retries made for this language
+       * @example 100.00000000
+       */
+      translationUsd: string;
     };
     TranslationReportLanguageDto: {
       /** @description Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done */
@@ -15216,6 +15247,8 @@ export interface components {
     TranslationRunReportDto: {
       /** Format: uuid */
       bookVersionId: string;
+      /** @description Spending split for the report screen: translation and glossary per language, dossier, the rest; with summary.spentUsd and analysis.spentUsd of the languages it adds up to totalUsd (the rest takes the difference) */
+      breakdown: components['schemas']['TranslationReportBreakdownDto'];
       /** @description Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary and Write Analysis - their spending is summary.spentUsd and analysis.spentUsd of each language; totalUsd covers all */
       costs: components['schemas']['TranslationReportCostDto'][];
       /** Format: uuid */

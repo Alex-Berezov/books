@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, TranslationRunLanguageStatus } from '@prisma/client';
+import { runCostBreakdown, runCostRows, sectionsSpent } from './run-cost-breakdown';
 import { runSections } from './run-sections';
 import { PrismaService } from '../../../prisma/prisma.service';
 import { isRecord } from '../../../shared/prisma/json-record.util';
@@ -83,9 +84,23 @@ function finalCheckStatus(
  * Отчёт запуска перевода (`F05-6`, шаг 8). Стоимость - по этапам и моделям на весь запуск: вызовы
  * всех операций с `translationRunId` запуска (сам запуск, досье, глоссарии), итог - сумма `spentUsd`
  * тех же операций; вызовы без итоговой стоимости - отдельной строкой «в полёте» вне итога (решение
- * арбитра `F05 | F05-6`, 6c В8). Денег перевода по языкам нет: у вызова LLM языка нет; траты раздела
- * «Write Summary» (`F06-5`) - `summary.spentUsd` языка по операциям его хода, в `costs` не входят.
+ * арбитра `F05 | F05-6`, 6c В8). Деньги по языкам - `breakdown` (экран перевода, 18.11.2026, запрос
+ * владельца; снимает «денег по языкам нет» из 6c В8): язык вызова - через задачу исполнителя.
+ * Траты разделов «Write Summary» (`F06-5`) и «Write Analysis» (`F07-3b`) - `summary.spentUsd`
+ * и `analysis.spentUsd` языка; в `costs` и строки языков `breakdown` не входят, а не показанные
+ * в строке языка (черновик удалён) - в остатке `breakdown.unattributedUsd`.
  */
+/**
+ * Снимок чтений отчёта: RepeatableRead (итог и строки разбивки из одного момента) и сроки, как
+ * у остальных транзакций модуля (L-020): умолчания Prisma (5 с, ожидание соединения 2 с) малы для
+ * девяти чтений подряд на одном соединении при занятом шагами перевода пуле.
+ */
+export const REPORT_TX_OPTIONS = {
+  isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead,
+  timeout: 10_000,
+  maxWait: 5_000,
+} as const;
+
 @Injectable()
 export class TranslationRunReportService {
   constructor(private readonly prisma: PrismaService) {}
@@ -100,70 +115,77 @@ export class TranslationRunReportService {
     // траты - строки «Summary» и «Analysis» языка; итог `totalUsd` - все операции запуска, каждая
     // один раз.
     const ofRun = { operation: { translationRunId: id, kind: { not: 'draft' as const } } };
-    const [languages, chunks, chapters, calls, inFlight, spent] = await Promise.all([
-      this.prisma.translationRunLanguage.findMany({
-        where: { runId: id },
-        select: {
-          id: true,
-          language: true,
-          status: true,
-          reason: true,
-          reasonText: true,
-          bookVersionId: true,
-          draftCreatedAt: true,
-          flaggedChunks: true,
-          flaggedChapters: true,
-          metadata: true,
-          finalCheck: true,
-        },
-        orderBy: { language: 'asc' },
-        take: RUN_LANGUAGES_MAX,
-      }),
-      // Строк не больше, чем языков × статусов × причин × попыток: группировка, а не выборка кусков.
-      this.prisma.translationChunk.groupBy({
-        by: ['runLanguageId', 'status', 'flagReason', 'attempts'],
-        where: { runLanguage: { runId: id } },
-        _count: { _all: true },
-      }),
-      this.prisma.translationChapter.findMany({
-        where: { runLanguage: { runId: id } },
-        select: {
-          runLanguageId: true,
-          chapterNumber: true,
-          status: true,
-          flagReason: true,
-          seamIndex: true,
-          length: true,
-          lengthLimit: true,
-          chapterId: true,
-          writtenHash: true,
-          rewriteRefusal: true,
-          findings: true,
-        },
-        orderBy: { chapterNumber: 'asc' },
-        take: RUN_MAX_CHAPTERS * RUN_LANGUAGES_MAX,
-      }),
-      // Строк не больше, чем этапов × моделей: группировка, а не выборка вызовов.
-      this.prisma.llmCall.groupBy({
-        by: ['stage', 'actualModel'],
-        where: { ...ofRun, costUsd: { not: null } },
-        _sum: { costUsd: true },
-        _count: { _all: true },
-      }),
-      this.prisma.llmCall.aggregate({
-        where: { operation: { translationRunId: id }, costUsd: null },
-        _sum: { reservedUsd: true },
-        _count: { _all: true },
-      }),
-      this.prisma.llmOperation.aggregate({
-        where: { translationRunId: id },
-        _sum: { spentUsd: true },
-      }),
-    ]);
-    const sections = await runSections(
-      this.prisma,
-      languages.map((l) => ({ id: l.id, runId: id, bookVersionId: l.bookVersionId })),
-    );
+    // Один снимок на все чтения (RepeatableRead): итог, строки разбивки и разделы - один момент,
+    // иначе вызов, закрытый между чтениями, ломает остаток `breakdown`. Внутри - только чтения.
+    const { languages, chunks, chapters, calls, inFlight, spent, costRows, sections } =
+      await this.prisma.$transaction(async (tx) => {
+        const [languages, chunks, chapters, calls, inFlight, spent, costRows] = await Promise.all([
+          tx.translationRunLanguage.findMany({
+            where: { runId: id },
+            select: {
+              id: true,
+              language: true,
+              status: true,
+              reason: true,
+              reasonText: true,
+              bookVersionId: true,
+              draftCreatedAt: true,
+              flaggedChunks: true,
+              flaggedChapters: true,
+              metadata: true,
+              finalCheck: true,
+            },
+            orderBy: { language: 'asc' },
+            take: RUN_LANGUAGES_MAX,
+          }),
+          // Строк не больше, чем языков × статусов × причин × попыток: группировка, а не выборка кусков.
+          tx.translationChunk.groupBy({
+            by: ['runLanguageId', 'status', 'flagReason', 'attempts'],
+            where: { runLanguage: { runId: id } },
+            _count: { _all: true },
+          }),
+          tx.translationChapter.findMany({
+            where: { runLanguage: { runId: id } },
+            select: {
+              runLanguageId: true,
+              chapterNumber: true,
+              status: true,
+              flagReason: true,
+              seamIndex: true,
+              length: true,
+              lengthLimit: true,
+              chapterId: true,
+              writtenHash: true,
+              rewriteRefusal: true,
+              findings: true,
+            },
+            orderBy: { chapterNumber: 'asc' },
+            take: RUN_MAX_CHAPTERS * RUN_LANGUAGES_MAX,
+          }),
+          // Строк не больше, чем этапов × моделей: группировка, а не выборка вызовов.
+          tx.llmCall.groupBy({
+            by: ['stage', 'actualModel'],
+            where: { ...ofRun, costUsd: { not: null } },
+            _sum: { costUsd: true },
+            _count: { _all: true },
+          }),
+          tx.llmCall.aggregate({
+            where: { operation: { translationRunId: id }, costUsd: null },
+            _sum: { reservedUsd: true },
+            _count: { _all: true },
+          }),
+          tx.llmOperation.aggregate({
+            where: { translationRunId: id },
+            _sum: { spentUsd: true },
+          }),
+          runCostRows(tx, id),
+        ]);
+        const sections = await runSections(
+          tx,
+          languages.map((l) => ({ id: l.id, runId: id, bookVersionId: l.bookVersionId })),
+        );
+        return { languages, chunks, chapters, calls, inFlight, spent, costRows, sections };
+      }, REPORT_TX_OPTIONS);
     const zero = new Prisma.Decimal(0);
     const costs: TranslationReportCostDto[] = calls
       .map((c) => ({
@@ -233,6 +255,11 @@ export class TranslationRunReportService {
         };
       }),
       costs,
+      breakdown: runCostBreakdown(
+        costRows,
+        languages.map((l) => l.language),
+        { totalUsd: spent._sum.spentUsd ?? zero, sectionsUsd: sectionsSpent(sections) },
+      ),
       inFlight: {
         calls: inFlight._count._all,
         reservedUsd: moneyUsd(inFlight._sum.reservedUsd ?? zero),

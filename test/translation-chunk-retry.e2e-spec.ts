@@ -411,6 +411,15 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
     const { opId, lang, chunks, draftId } = await translatedBook();
     const runSpent = (await prisma.llmOperation.findUniqueOrThrow({ where: { id: opId } }))
       .spentUsd;
+    type Breakdown = { languages: Array<{ language: string; translationUsd: string }> };
+    const translationOf = async () =>
+      new Prisma.Decimal(
+        (
+          (await auth(http().get(`/admin/translation-runs/${lang.runId}/report`)).expect(200))
+            .body as { breakdown: Breakdown }
+        ).breakdown.languages.find((l) => l.language === 'es')!.translationUsd,
+      );
+    const translationBefore = await translationOf();
     mark = 'R1';
     const res = await auth(http().post(`/admin/translation-chunks/${chunks[0].id}/retry`))
       .send({ model: ALT, limitUsd: '1' })
@@ -429,6 +438,8 @@ describe('Translation chunks: view, retry, edit (e2e)', () => {
     const retryOp = await prisma.llmOperation.findUniqueOrThrow({ where: { id: retryOpId } });
     expect(retryOp).toMatchObject({ status: 'done', translationRunId: lang.runId });
     expect(retryOp.spentUsd.gt(0)).toBe(true);
+    // Траты повтора - в переводе своего языка в разбивке отчёта (экран перевода).
+    expect((await translationOf()).sub(translationBefore).eq(retryOp.spentUsd)).toBe(true);
     // Повтор платит своей операцией: траты запуска не выросли.
     expect((await prisma.llmOperation.findUniqueOrThrow({ where: { id: opId } })).spentUsd).toEqual(
       runSpent,

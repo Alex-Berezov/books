@@ -1,5 +1,4 @@
 import { ContentDraftKind, LlmOperationStatus, Prisma } from '@prisma/client';
-import { PrismaService } from '../../../prisma/prisma.service';
 import { moneyUsd } from '../../llm/dto/llm-money';
 import { AnalysisItem, readAnalysisData } from '../analysis-write/analysis-write.data';
 import {
@@ -196,7 +195,8 @@ export interface RunSections {
  * запросов на страницу, а не на язык.
  */
 export async function runSections(
-  db: PrismaService,
+  // Клиент или транзакция: отчёт читает разделы в одном снимке с итогом.
+  db: Pick<Prisma.TransactionClient, 'llmOperation' | 'contentDraft' | 'bookAnalysis'>,
   languages: readonly RunLanguageRef[],
 ): Promise<Map<string, RunSections>> {
   const result = new Map<string, RunSections>();
