@@ -161,3 +161,81 @@ describe('world-mentions', () => {
     expect(r.get('town')!.coPresence).toEqual({});
   });
 });
+
+/**
+ * Общая фикстура свёртки форм (F08-5b, batches.md §F08-5): та же таблица лежит во фронте
+ * (`books-front/__tests__/lib/book-world/link-entities.test.ts`, describe «foldMention: общая фикстура с бэкендом (F08-5b)»). Фронт получает
+ * `publicMentionForms` полем `forms` и сворачивает своей копией `foldMention` - набор должен совпасть
+ * с `mentionForms`. Меняешь свёртку или отбор - правь таблицу на обеих сторонах.
+ */
+const SHARED_FOLD_FIXTURE: {
+  entity: WorldMentionSource;
+  forms: string[];
+  folded: string[];
+}[] = [
+  {
+    entity: {
+      key: 'anna',
+      name: 'Анна Каренина',
+      aliases: ['Анны', '  Анна  ', 'Аня', 'Ли', 'АННЫ'],
+      aliasExclusions: ['аня'],
+    },
+    forms: ['Анна Каренина', 'Анны', 'Анна'],
+    folded: ['анна каренина', 'анны', 'анна'],
+  },
+  {
+    entity: { key: 'petr', name: 'Пётр', aliases: ['ПЕТР', 'Петра'], aliasExclusions: null },
+    forms: ['Пётр', 'Петра'],
+    folded: ['петр', 'петра'],
+  },
+  {
+    entity: {
+      key: 'ship',
+      name: '«Наутилус»',
+      aliases: ['О’Брайен', 'Анна  Каренина'],
+      aliasExclusions: null,
+    },
+    forms: ['«Наутилус»', 'О’Брайен', 'Анна  Каренина'],
+    folded: ['"наутилус"', "о'брайен", 'анна каренина'],
+  },
+  {
+    // Остальные кавычки и апострофы класса, неразрывный пробел.
+    entity: {
+      key: 'quotes',
+      name: '“Ковчег”',
+      aliases: ['„Ладья‟', '‘Ли‚ Бо‛', 'Анна\u00a0Ли'],
+      aliasExclusions: null,
+    },
+    forms: ['“Ковчег”', '„Ладья‟', '‘Ли‚ Бо‛', 'Анна\u00a0Ли'],
+    folded: ['"ковчег"', '"ладья"', "'ли' бо'", 'анна ли'],
+  },
+  {
+    // Заглавная Ё и разложенный вид (NFD): исходное написание наружу как есть.
+    entity: { key: 'yo', name: 'ЁЖИК', aliases: ['Але\u0308на'], aliasExclusions: null },
+    forms: ['ЁЖИК', 'Але\u0308на'],
+    folded: ['ежик', 'алена'],
+  },
+  {
+    // Сущность без имени: формы только из aliases.
+    entity: { key: 'noname', name: null, aliases: ['Безымянный'], aliasExclusions: null },
+    forms: ['Безымянный'],
+    folded: ['безымянный'],
+  },
+  {
+    // Нижний регистр всей строки: İ -> i + U+0307 (длина растёт), конечная Σ -> ς.
+    entity: { key: 'case', name: 'İstanbul', aliases: ['ΟΔΟΣ'], aliasExclusions: null },
+    forms: ['İstanbul', 'ΟΔΟΣ'],
+    folded: ['i\u0307stanbul', 'οδος'],
+  },
+];
+
+describe('общая фикстура свёртки форм с фронтом (F08-5b)', () => {
+  it.each(SHARED_FOLD_FIXTURE.map((row) => [row.entity.key, row] as const))(
+    '%s: publicMentionForms и mentionForms по таблице',
+    (_key, row) => {
+      expect(publicMentionForms(row.entity)).toEqual(row.forms);
+      expect(mentionForms(row.entity)).toEqual(row.folded);
+      expect(row.forms.map(foldMention)).toEqual(row.folded);
+    },
+  );
+});
