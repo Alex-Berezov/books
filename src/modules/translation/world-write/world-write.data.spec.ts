@@ -1,3 +1,4 @@
+import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
 import { LlmStageRegistry } from '../../llm/llm-stages.registry';
 import {
   ANALYSIS_WRITE_TASK_KIND,
@@ -19,6 +20,7 @@ import {
   valuePrint,
   worldDataJson,
 } from './world-write.data';
+import { mainCharacters, worldCharacters } from './world-write.steps';
 
 describe('world run steps', () => {
   it('step 0 chooses the characters, then each candidate gets a page and its external blocks', () => {
@@ -33,7 +35,13 @@ describe('world run steps', () => {
     expect(
       stepsTotalOf({
         candidates: [
-          { key: 'a', name: 'A', aliases: [], mentions: { chapters: [], perChapter: {} } },
+          {
+            key: 'a',
+            role: 'main',
+            name: 'A',
+            aliases: [],
+            mentions: { chapters: [], perChapter: {} },
+          },
         ],
       }),
     ).toBe(3);
@@ -136,5 +144,63 @@ describe('world run languages', () => {
       false,
       false,
     ]);
+  });
+});
+
+describe('world run candidates: the role (F08-8b)', () => {
+  const candidate = { key: 'anna', name: 'Anna', aliases: [], mentions: { chapters: [1] } };
+
+  it('keeps the role secondary through the stored run data', () => {
+    const data = readWorldData(
+      worldDataJson({
+        ...emptyWorldData(),
+        candidates: [
+          { ...candidate, role: 'secondary', mentions: { chapters: [1], perChapter: {} } },
+        ],
+      }),
+    );
+    expect(data.candidates?.map((c) => c.role)).toEqual(['secondary']);
+  });
+
+  it('a run stored before F08-8b (no role) took only main heroes: its candidate reads as main', () => {
+    const data = readWorldData({
+      ...(worldDataJson(emptyWorldData()) as object),
+      candidates: [candidate],
+    });
+    expect(data.candidates?.map((c) => c.role)).toEqual(['main']);
+  });
+});
+
+describe('world run candidates: an unknown role (F08-8b)', () => {
+  it('a candidate with a role other than main or secondary is not read: it never becomes main', () => {
+    const raw = {
+      key: 'vera',
+      name: 'Vera',
+      aliases: [],
+      mentions: { chapters: [1] },
+      role: 'minor',
+    };
+    const data = readWorldData({
+      ...(worldDataJson(emptyWorldData()) as object),
+      candidates: [raw],
+    });
+    expect(data.candidates).toEqual([]);
+  });
+});
+
+describe('world run candidates: who goes into the run (F08-8b)', () => {
+  it('main heroes first, then secondary ones; minor heroes are never candidates', () => {
+    const analysis = {
+      characters: [
+        { key: 'boris', name: 'Boris', role: 'secondary' },
+        { key: 'vera', name: 'Vera', role: 'minor' },
+        { key: 'anna', name: 'Anna', role: 'main' },
+      ],
+    } as unknown as StoredBookAnalysis;
+    expect(worldCharacters(analysis)).toEqual([
+      { key: 'anna', name: 'Anna', role: 'main' },
+      { key: 'boris', name: 'Boris', role: 'secondary' },
+    ]);
+    expect(mainCharacters(analysis).map((c) => c.key)).toEqual(['anna']);
   });
 });

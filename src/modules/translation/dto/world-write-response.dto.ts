@@ -61,14 +61,15 @@ export class WorldWriteEstimateDto {
 
   @ApiProperty({
     type: Number,
-    description: 'Main characters of the analysis of the version: one page each',
+    description:
+      'Up to N candidates: the main and the secondary characters of the analysis of the version, before the chapter threshold of the secondary ones (an upper bound even when upperBound is false); one page each',
   })
   candidates!: number;
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'Upper estimate: the choice of name forms on the whole version text, then per main character the page on the whole version text and the external blocks, plus the reviewer of each step, each step × 2 passes',
+      'Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, plus the reviewer of each step, each step × 2 passes',
   })
   stageUsd!: string;
 

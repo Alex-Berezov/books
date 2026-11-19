@@ -79,6 +79,7 @@ import {
   mainCharacters,
   pageBook,
   pageInput,
+  worldCharacters,
   WorldEstimators,
   worldPipelineUsd,
   worldStepUsd,
@@ -426,8 +427,8 @@ export class WorldWriteService {
   }
 
   /**
-   * Оценка (`tech.md` §5) по числу героев `main` анализа и главам версии; досье или глоссария ещё
-   * нет - вход сверху потолком их этапов. Отказы: нет глав, язык не `ru`/`en` (Q5), нет анализа
+   * Оценка (`tech.md` §5) по числу героев `main` и `secondary` анализа (верхняя граница до порога
+   * глав) и главам версии; досье или глоссария ещё нет - вход сверху потолком их этапов. Отказы: нет глав, язык не `ru`/`en` (Q5), нет анализа
    * или в нём нет героя `main` (Q4).
    */
   private async estimateOf(versionId: string) {
@@ -447,8 +448,8 @@ export class WorldWriteService {
       select: BOOK_ANALYSIS_SELECT,
     });
     const analysis = analysisRow ? readStoredAnalysis(analysisRow) : null;
-    const candidates = analysis ? mainCharacters(analysis) : [];
-    if (!analysis || candidates.length === 0) {
+    const mains = analysis ? mainCharacters(analysis) : [];
+    if (!analysis || mains.length === 0) {
       throw llmTaskConflict(
         WORLD_ANALYSIS_MISSING,
         'The version has no analysis with a main character: write the analysis first',
@@ -489,7 +490,7 @@ export class WorldWriteService {
       dto: {
         dossier: lines.dossier,
         glossary: lines.glossary,
-        candidates: candidates.length,
+        candidates: worldCharacters(analysis).length,
         stageUsd: moneyUsd(usd),
         upperBound,
         suggestedLimitUsd: moneyUsd(lines.suggestedLimitUsd),

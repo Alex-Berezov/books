@@ -13,6 +13,7 @@ import {
 } from '../../book-world/book-world-data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { WorldMentionCounter, type WorldChapterExclusion } from '../../book-world/world-mentions';
+import { worldRolePasses } from '../../book-world/world-public';
 import { LlmService } from '../../llm/llm.service';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
@@ -109,7 +110,9 @@ import {
   pageBook,
   pageInput,
   selectInput,
+  WorldBaseCharacter,
   WorldContext,
+  worldCharacters,
   worldInputFits,
   worldLoopSpec,
   WorldStepInput,
@@ -509,7 +512,7 @@ export class WorldWriteHandler {
     const empty = { droppedQuotes: [], droppedSources: [] };
 
     if (kind === 'select') {
-      const base = mainCharacters(context.analysis);
+      const base = worldCharacters(context.analysis);
       const index = quotes();
       const make = (count: number) =>
         selectInput(context, base, index, {
@@ -732,7 +735,7 @@ export class WorldWriteHandler {
   private async candidatesOf(
     bookVersionId: string,
     context: WorldContext,
-    base: ReadonlyArray<{ key: string; name: string }>,
+    base: ReadonlyArray<WorldBaseCharacter>,
     answer: WorldSelectDraft | null,
     index: ChapterIndex,
   ): Promise<WorldCandidate[]> {
@@ -767,6 +770,7 @@ export class WorldWriteHandler {
       );
       return {
         key: c.key,
+        role: c.role,
         name: found?.name ?? stored?.name ?? c.name,
         // Сохранённые формы (их мог дописать редактор) - первыми: ответ модели их не вытесняет.
         aliases: [
@@ -777,12 +781,18 @@ export class WorldWriteHandler {
       };
     });
     const mentions = countCandidates(context.chapters, named);
-    return named.map((c) => ({
-      key: c.key,
-      name: c.name,
-      aliases: c.aliases,
-      mentions: mentions.get(c.key) ?? { chapters: [], perChapter: {} },
-    }));
+    return (
+      named
+        .map((c) => ({
+          key: c.key,
+          role: c.role,
+          name: c.name,
+          aliases: c.aliases,
+          mentions: mentions.get(c.key) ?? { chapters: [], perChapter: {} },
+        }))
+        // Второстепенный ниже порога глав на сайт не выйдет (`F08-8b`): страницу ему не пишут.
+        .filter((c) => worldRolePasses(c.role, c.mentions.chapters.length))
+    );
   }
 
   /**

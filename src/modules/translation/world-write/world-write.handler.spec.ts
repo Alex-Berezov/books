@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../../../prisma/prisma.service';
 import { droppedOfBlock, WorldWriteHandler } from './world-write.handler';
+import { indexChapters } from '../draft-quality/quote-check';
 import { emptyWorldData, worldDataJson } from './world-write.data';
 
 /**
@@ -281,5 +282,63 @@ describe('WorldWriteHandler: a step written by another attempt; dropped sources 
     expect(droppedOfBlock(verdict, draft, 'critique')).toEqual([verdict.droppedSources[0]]);
     expect(droppedOfBlock(verdict, draft, 'prototypes')).toEqual([verdict.droppedSources[1]]);
     expect(droppedOfBlock(verdict, draft, 'adaptations')).toEqual([verdict.droppedSources[2]]);
+  });
+});
+
+describe('WorldWriteHandler: second-tier heroes (F08-8b)', () => {
+  const chapter = (number: number, text: string) => ({
+    number,
+    title: `C${number}`,
+    content: `<p>${text}</p>`,
+  });
+  const run = async (chapters: ReturnType<typeof chapter>[], stored: unknown[] = []) => {
+    const store = { bookWorldEntity: { findMany: jest.fn().mockResolvedValue(stored) } };
+    const handler = new WorldWriteHandler(
+      store as unknown as PrismaService,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const base = [
+      { key: 'anna', name: 'Anna', role: 'main' as const },
+      { key: 'boris', name: 'Boris', role: 'secondary' as const },
+    ];
+    const context = { chapters, dossier: null, glossary: null, entities: new Map() };
+    const index = indexChapters(new Map(chapters.map((c) => [c.number, c.content])));
+    // Отбор кандидатов - приватный шаг выбора: весь ход ради него поднимать дороже, чем сам отбор.
+    const found = await (
+      handler as unknown as {
+        candidatesOf: (...a: unknown[]) => Promise<Array<{ key: string; role: string }>>;
+      }
+    ).candidatesOf('v1', context, base, null, index);
+    expect(store.bookWorldEntity.findMany).toHaveBeenCalledTimes(1);
+    return found.map((c) => `${c.key}:${c.role}`);
+  };
+  const both = (n: number) => chapter(n, 'Anna and Boris');
+
+  it('a secondary hero in exactly 3 chapters is a candidate with its role', async () => {
+    expect(await run([1, 2, 3].map(both))).toEqual(['anna:main', 'boris:secondary']);
+  });
+
+  it('a secondary hero in 2 chapters is not a candidate', async () => {
+    expect(await run([both(1), both(2), chapter(3, 'Anna')])).toEqual(['anna:main']);
+  });
+
+  it('the main hero stays a candidate in any number of chapters, even none', async () => {
+    expect(await run([chapter(1, 'Boris')])).toEqual(['anna:main']);
+  });
+
+  it('excluded chapters of a form (F08-8a) take a secondary hero below the threshold', async () => {
+    const stored = [
+      {
+        key: 'boris',
+        aliasExclusions: [],
+        aliasChapterExclusions: [{ form: 'Boris', chapters: [3] }],
+      },
+    ];
+    expect(await run([1, 2, 3].map(both), stored)).toEqual(['anna:main']);
   });
 });

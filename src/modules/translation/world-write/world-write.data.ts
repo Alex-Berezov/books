@@ -61,9 +61,11 @@ export interface CandidateMentions {
   perChapter: Record<string, number>;
 }
 
-/** Кандидат хода: герой `main` анализа версии (решение арбитра `F08 | F08-4`, Q3). */
+/** Кандидат хода: герой `main` или `secondary` анализа версии (`F08-4` Q3, `F08-8b`). */
 export interface WorldCandidate {
   key: string;
+  /** Роль в анализе на шаге выбора - роль новой сущности; ходы до `F08-8b` брали только `main`. */
+  role: 'main' | 'secondary';
   /** Имя героя: из ответа выбора героев, иначе сохранённой сущности, иначе анализа версии. */
   name: string;
   /** Формы имени после проверки по тексту версии (выбор героев). */
@@ -309,7 +311,10 @@ function candidatesOf(v: unknown): WorldCandidate[] | null {
     const key = stringOf(c.key);
     const name = stringOf(c.name);
     if (key === null || name === null) return [];
-    return [{ key, name, aliases: stringsOf(c.aliases), mentions: mentionsOf(c.mentions) }];
+    // Роли нет - ход до `F08-8b`, он брал только `main`; неизвестная роль - кандидат не читается.
+    const role = c.role === undefined ? 'main' : c.role;
+    if (role !== 'main' && role !== 'secondary') return [];
+    return [{ key, role, name, aliases: stringsOf(c.aliases), mentions: mentionsOf(c.mentions) }];
   });
 }
 

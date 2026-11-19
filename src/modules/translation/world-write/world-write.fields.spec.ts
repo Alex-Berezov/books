@@ -46,8 +46,17 @@ const item = (
   ...patch,
 });
 
-function setup(items: WorldItem[], entity: Record<string, unknown> | null, initial = 'building') {
-  let data: WorldWriteData = { ...emptyWorldData(), items };
+function setup(
+  items: WorldItem[],
+  entity: Record<string, unknown> | null,
+  initial = 'building',
+  role: 'main' | 'secondary' | null = 'main',
+) {
+  // Кандидат хода с ролью из анализа на шаге выбора (`F08-8b`); `null` - ключа нет среди кандидатов.
+  const candidates = role
+    ? [{ key: 'anna', role, name: 'Anna', aliases: [], mentions: { chapters: [], perChapter: {} } }]
+    : [];
+  let data: WorldWriteData = { ...emptyWorldData(), candidates, items };
   let status = initial;
   const row = (): ContentDraft =>
     ({
@@ -133,6 +142,20 @@ describe('WorldWriteFields.settleStep', () => {
       expect.any(Function),
     );
     expect(data().items.map((i) => i.outcome)).toEqual(['written', 'written']);
+  });
+
+  it('no entity and a secondary candidate: the entity is created with the role of the candidate (F08-8b)', async () => {
+    const { fields, world, row } = setup([item('short', 'Short.')], null, 'building', 'secondary');
+    await fields.settleStep(row(), worldRunGate('op1'), 1);
+    expect(world.saveEntity).toHaveBeenCalledTimes(1);
+    expect(world.saveEntity).toHaveBeenCalledWith(
+      'v1',
+      'anna',
+      expect.objectContaining({ role: 'secondary' }),
+      false,
+      { expectedAbsent: 'true' },
+      expect.any(Function),
+    );
   });
 
   it('an unpublished entity: an empty block is written, a filled one becomes a proposal with the print of the block', async () => {
@@ -285,6 +308,13 @@ describe('WorldWriteFields: one transaction for the entity and the run', () => {
     );
     expect(world.saveEntity).toHaveBeenCalledTimes(3);
     expect(data().items[0].outcome).toBe('waiting');
+  });
+
+  it('a new entity whose key is not a candidate of the run is not created, not made main: the items are refused (F08-8b)', async () => {
+    const { fields, world, row, data } = setup([item('short', 'Short.')], null, 'building', null);
+    await fields.settleStep(row(), worldRunGate('op1'), 1);
+    expect(world.saveEntity).not.toHaveBeenCalled();
+    expect(data().items[0]).toMatchObject({ outcome: 'none', failedReason: 'WORLD_WRITE_REFUSED' });
   });
 
   it('a new entity without a name is not created: the items are refused', async () => {

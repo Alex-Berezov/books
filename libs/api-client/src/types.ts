@@ -16676,7 +16676,7 @@ export interface components {
       waitingFor: 'dossier' | 'glossary' | null;
     };
     WorldWriteEstimateDto: {
-      /** @description Main characters of the analysis of the version: one page each */
+      /** @description Up to N candidates: the main and the secondary characters of the analysis of the version, before the chapter threshold of the secondary ones (an upper bound even when upperBound is false); one page each */
       candidates: number;
       /** @description The dossier is built first by its own operation; null - it is ready */
       dossier: components['schemas']['DossierContextLineDto'] | null;
@@ -16684,7 +16684,7 @@ export interface components {
       glossary: components['schemas']['CompareContextLineDto'] | null;
       /**
        * Format: decimal
-       * @description Upper estimate: the choice of name forms on the whole version text, then per main character the page on the whole version text and the external blocks, plus the reviewer of each step, each step × 2 passes
+       * @description Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, plus the reviewer of each step, each step × 2 passes
        * @example 100.00000000
        */
       stageUsd: string;

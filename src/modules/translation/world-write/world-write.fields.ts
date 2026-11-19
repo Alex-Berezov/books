@@ -28,6 +28,7 @@ import {
   readWorldData,
   valuePrint,
   withItem,
+  WorldCandidate,
   WorldItem,
   WorldSource,
   WorldWriteData,
@@ -173,7 +174,8 @@ export class WorldWriteFields {
     let outcome: SettleOutcome = 'settled';
     for (const key of new Set(waiting.map((w) => w.item.key))) {
       const own = waiting.filter((w) => w.item.key === key);
-      const settled = await this.settleEntity(row, gate, key, own, only !== null);
+      const role = data.candidates?.find((c) => c.key === key)?.role ?? null;
+      const settled = await this.settleEntity(row, gate, key, role, own, only !== null);
       if (settled === 'gone') return 'gone';
       if (settled === 'refused') outcome = 'refused';
     }
@@ -184,6 +186,7 @@ export class WorldWriteFields {
     row: ContentDraft,
     gate: WorldGate,
     key: string,
+    role: WorldCandidate['role'] | null,
     own: ReadonlyArray<{ item: WorldItem; index: number }>,
     regen: boolean,
   ): Promise<SettleOutcome> {
@@ -207,7 +210,7 @@ export class WorldWriteFields {
         return (await this.mutate(row, gate, apply)) ? 'settled' : 'gone';
       }
       try {
-        await this.write(row.bookVersionId, key, row.language, state, writes, async (tx) => {
+        await this.write(row.bookVersionId, key, role, row.language, state, writes, async (tx) => {
           const current = await lockedData(tx, row, gate);
           if (!current) throw new RunGone();
           await saveData(tx, row, apply(current));
@@ -236,12 +239,14 @@ export class WorldWriteFields {
   }
 
   /**
-   * Запись пунктов одной сущности импортом мира; новая сущность - с именем и ролью `main` (без имени
-   * её не создать - отказ). `within` - итог хода в той же транзакции.
+   * Запись пунктов одной сущности импортом мира; новая сущность - с именем и ролью кандидата, взятой
+   * из анализа на шаге выбора (`F08-8b`); без имени или не кандидат хода - отказ. `within` - итог хода
+   * в той же транзакции.
    */
   private async write(
     bookVersionId: string,
     key: string,
+    role: WorldCandidate['role'] | null,
     language: Language,
     state: EntityState | null,
     items: readonly WorldItem[],
@@ -251,8 +256,10 @@ export class WorldWriteFields {
     if (!state) {
       const name = items.find((i) => i.name)?.name;
       if (!name) throw new BadRequestException(['name: a new entity needs a name']);
+      if (!role)
+        throw new BadRequestException(['role: a new entity must be a candidate of the run']);
       body.name = name;
-      body.role = 'main';
+      body.role = role;
     }
     let sources = state?.entity.sources ?? null;
     for (const item of items) {
@@ -321,7 +328,16 @@ export class WorldWriteFields {
         });
       }
       try {
-        await this.write(row.bookVersionId, item.key, row.language, state, [item], markAccepted);
+        const role = data.candidates?.find((c) => c.key === item.key)?.role ?? null;
+        await this.write(
+          row.bookVersionId,
+          item.key,
+          role,
+          row.language,
+          state,
+          [item],
+          markAccepted,
+        );
         return;
       } catch (error) {
         if (isRecordChanged(error) && attempt < WRITE_ATTEMPTS) continue;

@@ -18,18 +18,27 @@ export interface WorldListedInput {
 }
 
 /**
+ * Роль и присутствие (`product.md` §2): `main` проходит при любом числе глав, `secondary` - от
+ * `WORLD_MIN_CHAPTERS` глав, `minor` и без роли - никогда. Единственная копия условия: его
+ * читают публичность (`computeWorldListed`) и отбор кандидатов хода мира (`F08-8b`).
+ */
+export function worldRolePasses(role: string | null, chapters: number): boolean {
+  if (role === 'main') return true;
+  if (role === 'secondary') return chapters >= WORLD_MIN_CHAPTERS;
+  return false;
+}
+
+/**
  * Публичность сущности без версии (решения арбитра `F08 | F08-1` R1 и PM-3): ядро, «показывать»,
- * «прочитано» не раньше последнего текста модели (или текста модели нет); `main` — этого
- * достаточно, `secondary` — ещё порог глав, `minor` и без роли — никогда. Пишется столбцом
+ * «прочитано» не раньше последнего текста модели (или текста модели нет); роль и главы —
+ * `worldRolePasses`. Пишется столбцом
  * `isListed` только этой функцией (через `worldListedWrite`), в каждой транзакции записи; второй
  * копии условия нет нигде — выборки читают `WORLD_ENTITY_PUBLIC_WHERE`.
  */
 export function computeWorldListed(e: WorldListedInput): boolean {
   if (!e.hasCore || !e.isVisible) return false;
   if (e.autoTextAt && (!e.readAt || e.readAt.getTime() < e.autoTextAt.getTime())) return false;
-  if (e.role === 'main') return true;
-  if (e.role === 'secondary') return mentionChapters(e.mentions).length >= WORLD_MIN_CHAPTERS;
-  return false;
+  return worldRolePasses(e.role, mentionChapters(e.mentions).length);
 }
 
 /** Сущность на сайте: версия опубликована и `isListed` (`tech.md` §2). */

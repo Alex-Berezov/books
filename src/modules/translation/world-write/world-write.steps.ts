@@ -57,11 +57,30 @@ export interface WorldContext extends PartContext {
   names: { titles: string[]; authors: string[] };
 }
 
-/** Герои `main` анализа версии - кандидаты хода (решение арбитра `F08 | F08-4`, Q3). */
-export function mainCharacters(analysis: StoredBookAnalysis): Array<{ key: string; name: string }> {
+/** Герой анализа версии - кандидат хода: роль нужна, чтобы отсеять второстепенных по порогу глав. */
+export interface WorldBaseCharacter {
+  key: string;
+  name: string;
+  role: 'main' | 'secondary';
+}
+
+/** Герои `main` анализа версии: без них ход не стартует (решение арбитра `F08 | F08-4`, Q3, Q4). */
+export function mainCharacters(analysis: StoredBookAnalysis): WorldBaseCharacter[] {
   return (analysis.characters ?? [])
     .filter((c) => c.role === 'main')
-    .map((c) => ({ key: c.key, name: c.name }));
+    .map((c) => ({ key: c.key, name: c.name, role: 'main' as const }));
+}
+
+/**
+ * Кандидаты хода (`F08-8b`): герои `main`, затем `secondary` анализа. Второстепенный остаётся
+ * в ходе, только если стоит не меньше чем в `WORLD_MIN_CHAPTERS` главах (отсев - `candidatesOf`
+ * обработчика после подсчёта присутствия); `minor` в ход не попадает.
+ */
+export function worldCharacters(analysis: StoredBookAnalysis): WorldBaseCharacter[] {
+  const secondary = (analysis.characters ?? [])
+    .filter((c) => c.role === 'secondary')
+    .map((c) => ({ key: c.key, name: c.name, role: 'secondary' as const }));
+  return [...mainCharacters(analysis), ...secondary];
 }
 
 /** Вход шага: запрос автора, запрос проверяющей, разбор ответа и проверки кода. */
@@ -407,15 +426,15 @@ export function worldStepUsd<T>(
 
 /**
  * Оценка хода сверху (`tech.md` §5): выбор героев по всему тексту версии, затем на каждого героя
- * `main` страница по всему тексту версии (сверху: ход берёт только главы с героем) и внешние блоки,
- * каждый шаг с проверяющей × 2 прохода. Итог страницы во входе внешнего шага - сверху выходом этапа.
+ * `main` и `secondary` (до порога глав, решение арбитра `F08 | F08-8b` Q1) страница по всему
+ * тексту версии (сверху: ход берёт только главы с героем) и внешние блоки, каждый шаг с проверяющей × 2 прохода. Итог страницы во входе внешнего шага - сверху выходом этапа.
  */
 export function worldPipelineUsd(
   calls: WorldEstimators,
   context: WorldContext,
   extraInputTokens: number,
 ): Prisma.Decimal {
-  const candidates = mainCharacters(context.analysis);
+  const candidates = worldCharacters(context.analysis);
   const whole: WorldBook = { text: chaptersText(context.chapters) || NONE, partial: false };
   const quotes: ChapterIndex = new Map();
   let usd = worldStepUsd(
