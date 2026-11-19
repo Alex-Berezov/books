@@ -1,0 +1,59 @@
+{
+  "language": "en",
+  "entities": [
+    {
+      "key": "raskolnikov--sonya",
+      "type": "pair",
+      "name": "Raskolnikov and Sonya",
+      "short": "A proud former student nursing a dangerous idea, and the daughter of a drunken clerk whom he first knows only from her father’s confession. Dostoevsky sets them side by side as two answers to the same poverty: one tries to calculate his way out of it, the other gives herself away to save her family.",
+      "compare": [
+        {
+          "feature": "Place in the world",
+          "a": "A former law student who left the university for lack of money and hides from his landlady in a garret under the roof.",
+          "chapterA": 1,
+          "b": "The daughter of the clerk Marmeladov by his first marriage, living with a consumptive stepmother and starving little children.",
+          "chapterB": 2
+        },
+        {
+          "feature": "Answer to poverty",
+          "a": "He turns his own destitution into a theory: in the tavern talk he hears that one death may buy a hundred lives and takes it as a sign.",
+          "chapterA": 6,
+          "b": "She leaves the house after her stepmother’s reproach and comes back with thirty roubles, silently laid on the table: a sacrifice, not a theory.",
+          "chapterB": 2
+        },
+        {
+          "feature": "Sacrifice of others",
+          "a": "He refuses to accept his sister’s sacrifice for him and thinks of Sonya as the measure of such sacrifices.",
+          "chapterA": 4,
+          "b": "She is the sacrifice others accept: her father drinks away the money she earns and confesses it in a tavern.",
+          "chapterB": 2
+        },
+        {
+          "feature": "Relation to the central conflict",
+          "a": "On the eve of the deed he moves as if carried by a mechanism toward the crime he has argued himself into.",
+          "chapterA": 6,
+          "b": "In her father’s confession she goes to her shame for the hungry children and silently lays the money on the table, with no idea of any right behind it; this lets her be read as the counterweight to his plan.",
+          "chapterB": 2
+        }
+      ],
+      "bonds": "One reading: both are crushed by the same Petersburg poverty, and both do what the world forbids. Raskolnikov himself sets his case against Sonya’s: reading his mother’s letter, he measures his sister’s sacrifice by her fate (chapter 4).",
+      "differences": "In Part One the difference is in the motive: he nurses his deed for an idea and to test himself, she sacrifices herself for her family and proves nothing to herself.",
+      "quotes": [
+        {
+          "text": "Sonia, Sonia Marmeladov, the eternal victim so long as the world lasts.",
+          "chapter": 4,
+          "speakerKey": "raskolnikov",
+          "aboutKey": "sonya",
+          "interpretation": "Reading his mother’s letter, he measures his sister’s marriage by Sonya’s fate: for him Sonya is the image of a sacrifice he refuses to accept."
+        }
+      ],
+      "conclusion": "The pair can be read as the book’s central question put from two sides: may a person step over another for an idea. Raskolnikov’s calculation and Sonya’s uncalculated sacrifice show two answers to the same poverty.",
+      "faq": [
+        {
+          "question": "Why does Dostoevsky compare Raskolnikov with Sonya?",
+          "answer": "Both are pushed by poverty to cross a forbidden line, which lets the author contrast a crime committed for an idea with a sacrifice made for others. Already in Part One Raskolnikov measures his own situation by Sonya’s fate (chapters 2 and 4)."
+        }
+      ]
+    }
+  ]
+}

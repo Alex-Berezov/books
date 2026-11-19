@@ -32,7 +32,7 @@ import { TRANSLATION_SAMPLE_SLUG, sampleChapterHtml } from '../prisma/seed-trans
 import { WORLD_ACCEPTANCE, worldAcceptanceBooks } from '../prisma/seed-world';
 import { readStoredEntity } from '../src/modules/book-world/book-world-data';
 import { computeWorldCore } from '../src/modules/book-world/world-core';
-import { computeWorldListed } from '../src/modules/book-world/world-public';
+import { computeWorldListed, pairMembersIn } from '../src/modules/book-world/world-public';
 import { WorldMentionsService } from '../src/modules/book-world/world-mentions.service';
 import { httpServerOf } from './http-server';
 import { grantStaffRoles } from './helpers/staff-roles';
@@ -1299,6 +1299,10 @@ describe('Seeded dataset (e2e)', () => {
           orderBy: { key: 'asc' },
         });
         expect(rows.map((r) => r.key)).toEqual(v.entities.map((e) => e.key).sort());
+        // Пара (F08-8c): оба героя ключа на сайте — по тем же строкам сида.
+        const listedHeroes = new Set(
+          rows.filter((r) => r.type === 'character' && r.isListed).map((r) => r.key),
+        );
         for (const row of rows) {
           const core = computeWorldCore({ ...readStoredEntity(row), mentions: row.mentions });
           expect({ key: row.key, hasCore: row.hasCore, missing: row.coreMissing }).toEqual({
@@ -1308,7 +1312,11 @@ describe('Seeded dataset (e2e)', () => {
           });
           expect({ key: row.key, isListed: row.isListed }).toEqual({
             key: row.key,
-            isListed: computeWorldListed(row),
+            isListed: computeWorldListed({
+              ...row,
+              hasListedMembers:
+                row.type === 'pair' ? pairMembersIn(row.key, listedHeroes) : undefined,
+            }),
           });
         }
       },
@@ -1327,9 +1335,9 @@ describe('Seeded dataset (e2e)', () => {
         const version = await versionOf(slug, language);
         const entities = v.entities.map((e) => ({
           key: e.key,
-          type: 'character',
+          type: e.type ?? 'character',
           name: e.name,
-          role: 'main',
+          ...(e.type === 'pair' ? {} : { role: 'main' }),
           short: e.short,
           ...e.blocks,
           ...(e.sources ? { sources: e.sources } : {}),
@@ -1348,7 +1356,7 @@ describe('Seeded dataset (e2e)', () => {
       },
     );
 
-    it('читатель видит ровно публичные сущности: en — три, ru — одна', async () => {
+    it('читатель видит ровно публичные сущности: en — три, ru — одна (пара — после F08-8c-2)', async () => {
       const keysOf = async (language: Language) => {
         const { id } = await versionOf(WORLD_ACCEPTANCE.book, language);
         const res = await get(`/versions/${id}/world`).expect(200);

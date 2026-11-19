@@ -31,6 +31,7 @@ import {
   BookWorldAdaptationDto,
   BookWorldArcDto,
   BookWorldChapterExclusionDto,
+  BookWorldCompareDto,
   BookWorldProfileDto,
   BookWorldQuoteDto,
   BookWorldRelationDto,
@@ -56,10 +57,12 @@ export class BookWorldEntityInputDto {
 
   @ApiProperty({
     enum: BOOK_WORLD_IMPORT_TYPES,
-    description: 'Only character for now; other entity types come with their own batches',
+    description:
+      'character or pair (F08-8c); other entity types come with their own batches. ' +
+      'A pair key is {a}--{b}: two character keys of the version in alphabetical order',
   })
   @IsIn(BOOK_WORLD_IMPORT_TYPES, {
-    message: '$property must be character (other types are not supported yet)',
+    message: '$property must be character or pair (other types are not supported yet)',
   })
   type!: BookWorldImportType;
 
@@ -159,6 +162,41 @@ export class BookWorldEntityInputDto {
   @ApiPropertyOptional({ type: [BookWorldAdaptationDto], nullable: true })
   @NestedList(() => BookWorldAdaptationDto, BOOK_WORLD_LIMITS.adaptations)
   adaptations?: BookWorldAdaptationDto[] | null;
+
+  @ApiPropertyOptional({
+    type: [BookWorldCompareDto],
+    nullable: true,
+    description: 'Pairs only (F08-8c): comparison table, at least 4 rows for the page core',
+  })
+  @NestedList(() => BookWorldCompareDto, BOOK_WORLD_LIMITS.compare)
+  compare?: BookWorldCompareDto[] | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: BOOK_WORLD_LIMITS.mediumText,
+    description: 'Pairs only: what binds the two characters',
+  })
+  @OptionalText(BOOK_WORLD_LIMITS.mediumText)
+  bonds?: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: BOOK_WORLD_LIMITS.mediumText,
+    description: 'Pairs only: what sets the two characters apart',
+  })
+  @OptionalText(BOOK_WORLD_LIMITS.mediumText)
+  differences?: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: BOOK_WORLD_LIMITS.mediumText,
+    description: 'Pairs only: conclusion of the comparison; required for the page core',
+  })
+  @OptionalText(BOOK_WORLD_LIMITS.mediumText)
+  conclusion?: string | null;
 
   @ApiPropertyOptional({ type: [BookAnalysisFaqDto], nullable: true })
   @NestedList(() => BookAnalysisFaqDto, BOOK_WORLD_LIMITS.faq)

@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { htmlToParagraphs } from '../translation/content-draft/content-draft.text';
-import type { StoredWorldEntity } from './book-world-data';
+import { coPresenceWith, type StoredWorldEntity } from './book-world-data';
+import { pairMembers } from './world-refs';
 import { WorldMentionCounter, type WorldMentionSource, type WorldMentions } from './world-mentions';
 import {
   chapterPage,
@@ -16,7 +17,8 @@ export const WORLD_MENTIONS_CHAPTERS_BATCH = 20;
 
 /** Сущность для подсчёта: формы имени и пункты с главами (сверка `stale`). */
 export type WorldCountSource = WorldMentionSource &
-  Pick<StoredWorldEntity, 'type' | 'quotes' | 'scenes' | 'arc'>;
+  Pick<StoredWorldEntity, 'type' | 'quotes' | 'scenes' | 'arc'> &
+  Partial<Pick<StoredWorldEntity, 'compare'>>;
 
 /** Колонка `mentions`: подсчёт плюс несошедшиеся пункты (решение арбитра `F08 | F08-2` Q2). */
 export interface StoredWorldMentions extends WorldMentions {
@@ -41,7 +43,11 @@ export async function countWorldMentions(
   entities: readonly WorldCountSource[],
 ): Promise<WorldCountResult> {
   const characters = new Set(entities.filter((e) => e.type === 'character').map((e) => e.key));
-  const counter = new WorldMentionCounter(entities, characters);
+  // Пара в тексте не ищется (решение арбитра `F08 | F08-8c` Q6): её главы — общие главы героев.
+  const counter = new WorldMentionCounter(
+    entities.filter((e) => e.type !== 'pair'),
+    characters,
+  );
   const quotesByChapter = new Map<number, string[]>();
   for (const q of entities.flatMap((e) => e.quotes ?? [])) {
     const list = quotesByChapter.get(q.chapter);
@@ -81,7 +87,8 @@ export async function countWorldMentions(
       (n) => digests.has(n),
       (n, text) => verbatim.get(worldQuoteKey(n, text)) === true,
     ).map((issue) => issue.key);
-    byKey.set(e.key, { ...counted.get(e.key)!, stale: [...new Set(stale)].sort() });
+    const own = e.type === 'pair' ? pairMentions(e.key, counted) : counted.get(e.key)!;
+    byKey.set(e.key, { ...own, stale: [...new Set(stale)].sort() });
   }
   return {
     byKey,
@@ -89,4 +96,17 @@ export async function countWorldMentions(
       [...digests].map(([number, digest]) => ({ number, digest })),
     ),
   };
+}
+
+/**
+ * Присутствие пары (Q6): главы, где оба героя ключа, — `coPresence` первого со вторым; счёта по
+ * главам, абзацев и соседей у пары нет. Героя нет в подсчёте — глав нет.
+ */
+export function pairMentions(
+  key: string,
+  counted: ReadonlyMap<string, WorldMentions>,
+): WorldMentions {
+  const members = pairMembers(key);
+  const chapters = members ? coPresenceWith(counted.get(members[0]), members[1]) : [];
+  return { chapters, first: chapters[0] ?? null, perChapter: {}, paragraphs: {}, coPresence: {} };
 }

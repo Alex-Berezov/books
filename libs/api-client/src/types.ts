@@ -7751,6 +7751,16 @@ export interface components {
       /** @description Key of the other character */
       key: string;
     };
+    BookWorldCompareDto: {
+      /** @description The first member of the key */
+      a: string;
+      /** @description The second member of the key */
+      b: string;
+      chapterA: number;
+      chapterB: number;
+      /** @description Feature compared, e.g. origin */
+      feature: string;
+    };
     BookWorldEditorDto: {
       /** @description Entity page only: chapters where a name form is not counted (F08-8a) */
       aliasChapterExclusions?: components['schemas']['BookWorldChapterExclusionDto'][] | null;
@@ -7763,7 +7773,7 @@ export interface components {
        * @description First time on the site; after it the entity cannot be deleted
        */
       firstPublishedAt: string | null;
-      /** @description The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); the page exists when the version is also published with a slug */
+      /** @description The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); a pair also needs both its characters listed (F08-8c); the page exists when the version is also published with a slug */
       isListed: boolean;
       isVisible: boolean;
       /** @description Chapters the entity is found in (F08-2); null — not counted yet */
@@ -7787,10 +7797,18 @@ export interface components {
       aliases: string[] | null;
       appearance: string | null;
       arc: components['schemas']['BookWorldArcDto'] | null;
+      /** @description Pairs only (F08-8c) */
+      bonds: string | null;
       character: string | null;
+      /** @description Pairs only (F08-8c) */
+      compare: components['schemas']['BookWorldCompareDto'][] | null;
+      /** @description Pairs only (F08-8c) */
+      conclusion: string | null;
       /** Format: date-time */
       createdAt: string;
       critique: string | null;
+      /** @description Pairs only (F08-8c) */
+      differences: string | null;
       /** @description Editors only; absent for readers */
       editor?: components['schemas']['BookWorldEditorDto'];
       faq: components['schemas']['BookAnalysisFaqDto'][] | null;
@@ -7825,8 +7843,16 @@ export interface components {
       aliases?: string[] | null;
       appearance?: string | null;
       arc?: components['schemas']['BookWorldArcDto'] | null;
+      /** @description Pairs only: what binds the two characters */
+      bonds?: string | null;
       character?: string | null;
+      /** @description Pairs only (F08-8c): comparison table, at least 4 rows for the page core */
+      compare?: components['schemas']['BookWorldCompareDto'][] | null;
+      /** @description Pairs only: conclusion of the comparison; required for the page core */
+      conclusion?: string | null;
       critique?: string | null;
+      /** @description Pairs only: what sets the two characters apart */
+      differences?: string | null;
       faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
       key: string;
       /** @description Required for a new entity */
@@ -7841,10 +7867,10 @@ export interface components {
       short?: string | null;
       sources?: components['schemas']['BookAnalysisSourceDto'][] | null;
       /**
-       * @description Only character for now; other entity types come with their own batches
+       * @description character or pair (F08-8c); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order
        * @enum {string}
        */
-      type: 'character';
+      type: 'character' | 'pair';
     };
     BookWorldEntityResponseDto: {
       /** @description hreflang cluster of this page (same rule as GET /:lang/world/sitemap): languages of the book where the page exists on a published version with a slug and without editorial noindex, this version first; empty when the page is not indexable (entity isIndexable=false, editorial noindex, draft) */
@@ -7915,7 +7941,7 @@ export interface components {
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
     };
     BookWorldMentionsDto: {
-      /** @description Chapters the entity is found in, ascending */
+      /** @description Chapters the entity is found in, ascending; for a pair (F08-8c) — chapters where both characters are found */
       chapters: number[];
       /** @description Characters only: other characters found in the same chapters; readers see public neighbours only */
       coPresence: components['schemas']['BookWorldCoPresenceDto'][];
@@ -7929,6 +7955,8 @@ export interface components {
       relationToMain?: string | null;
     };
     BookWorldQuoteDto: {
+      /** @description Pairs only (F08-8c): the member of the pair the quote is about; with speakerKey, both are members and differ */
+      aboutKey?: string | null;
       chapter: number;
       interpretation: string;
       speakerKey?: string | null;
@@ -15665,8 +15693,16 @@ export interface components {
       aliases?: string[] | null;
       appearance?: string | null;
       arc?: components['schemas']['BookWorldArcDto'] | null;
+      /** @description Pairs only: what binds the two characters */
+      bonds?: string | null;
       character?: string | null;
+      /** @description Pairs only (F08-8c): comparison table, at least 4 rows for the page core */
+      compare?: components['schemas']['BookWorldCompareDto'][] | null;
+      /** @description Pairs only: conclusion of the comparison; required for the page core */
+      conclusion?: string | null;
       critique?: string | null;
+      /** @description Pairs only: what sets the two characters apart */
+      differences?: string | null;
       faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
       /** @description Optional; must equal the key in the path */
       key?: string;
@@ -15687,10 +15723,10 @@ export interface components {
       short?: string | null;
       sources?: components['schemas']['BookAnalysisSourceDto'][] | null;
       /**
-       * @description Only character for now; other entity types come with their own batches
+       * @description character or pair (F08-8c); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order
        * @enum {string}
        */
-      type: 'character';
+      type: 'character' | 'pair';
     };
     UpdateCategoryDto: {
       /** @description Whether the page is indexable by search engines */

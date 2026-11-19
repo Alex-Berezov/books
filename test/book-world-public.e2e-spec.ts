@@ -58,6 +58,7 @@ describe('BookWorld public e2e (F08-3a)', () => {
     bookVersionId: string,
     key: string,
     over: {
+      type?: 'character' | 'pair';
       isListed?: boolean;
       isIndexable?: boolean;
       updatedAt?: Date;
@@ -70,7 +71,7 @@ describe('BookWorld public e2e (F08-3a)', () => {
       data: {
         bookVersionId,
         key,
-        type: 'character',
+        type: over.type ?? 'character',
         name: key,
         ...(over.aliases ? { aliases: over.aliases } : {}),
         ...(over.aliasExclusions ? { aliasExclusions: over.aliasExclusions } : {}),
@@ -225,6 +226,29 @@ describe('BookWorld public e2e (F08-3a)', () => {
     await entity(noSlug.id, 'oblomov');
     const item = await sitemapItem('en', en.slug!);
     expect(item!.alternates).toEqual([{ language: 'en', slug: en.slug }]);
+  });
+
+  it('F08-8c: пара на сайте — в карте сайта и в hreflang тем же правилом, что герой (Q3)', async () => {
+    const book = await createBookFixture(prisma, `world-pair-map-${unique()}`);
+    const en = await createVersion(book.id, 'en');
+    const ru = await createVersion(book.id, 'ru');
+    for (const v of [en, ru]) {
+      await entity(v.id, 'anna');
+      await entity(v.id, 'tom');
+      await entity(v.id, 'anna--tom', { type: 'pair' });
+    }
+    await entity(en.id, 'anna--olga', { type: 'pair', isListed: false });
+
+    const item = await sitemapItem('en', en.slug!);
+    expect(item!.entities.map((e) => e.key)).toEqual(['anna', 'anna--tom', 'tom']);
+    const cluster = [
+      { language: 'en', slug: en.slug },
+      { language: 'ru', slug: ru.slug },
+    ];
+    expect(item!.entities.find((e) => e.key === 'anna--tom')!.alternates).toEqual(cluster);
+    const page = await request(http()).get(`/versions/${en.id}/world/anna--tom`).expect(200);
+    expect(page.body.alternates).toEqual(cluster);
+    await request(http()).get(`/versions/${en.id}/world/anna--olga`).expect(404);
   });
 
   it('карта: limit сверх потолка 400, огромный page — пустая страница', async () => {

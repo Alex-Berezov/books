@@ -4,6 +4,10 @@ import {
   WORLD_ENTITY_PUBLIC_SQL,
   WORLD_ENTITY_PUBLIC_WHERE,
   WORLD_MIN_CHAPTERS,
+  WORLD_PAIRS,
+  heroesFirst,
+  pairMembersIn,
+  relistWorldPairs,
   worldListedWrite,
   type WorldListedInput,
 } from './world-public';
@@ -117,5 +121,146 @@ describe('worldListedWrite (F08-1, R2)', () => {
     expect(
       worldListedWrite({ ...main(), firstPublishedAt: first }, { status: 'published' }, now),
     ).toEqual({ isListed: true });
+  });
+});
+
+describe('пара героев (F08-8c, решение арбитра `F08 | F08-8c` Q3)', () => {
+  const pair = (over: Partial<WorldListedInput> = {}) =>
+    main({ type: 'pair', role: null, hasListedMembers: true, ...over });
+  // Рубильник R2 (`F08 | F08-8c-1`): до фронта `F08-8c-2` пара не публична; здесь — включён.
+  beforeEach(() => {
+    WORLD_PAIRS.public = true;
+  });
+  afterEach(() => {
+    WORLD_PAIRS.public = false;
+  });
+
+  it('рубильник выключен (по умолчанию до F08-8c-2) — пара не на сайте, герой — на сайте', () => {
+    WORLD_PAIRS.public = false;
+    expect(computeWorldListed(pair())).toBe(false);
+    expect(computeWorldListed(main())).toBe(true);
+  });
+
+  it('pairMembersIn: оба героя ключа в наборе; один, ни одного или не ключ пары — нет', () => {
+    const listed = new Set(['anna', 'tom']);
+    expect(pairMembersIn('anna--tom', listed)).toBe(true);
+    expect(pairMembersIn('anna--olga', listed)).toBe(false);
+    expect(pairMembersIn('olga--zed', listed)).toBe(false);
+    expect(pairMembersIn('anna', listed)).toBe(false);
+  });
+
+  it('heroesFirst: герои раньше пар, порядок внутри типа не меняется', () => {
+    const rows = [
+      { key: 'a--b', type: 'pair' },
+      { key: 'b', type: 'character' },
+      { key: 'c--d', type: 'pair' },
+      { key: 'a', type: 'character' },
+    ];
+    expect([...rows].sort(heroesFirst).map((r) => r.key)).toEqual(['b', 'a', 'a--b', 'c--d']);
+  });
+
+  it('пара с ядром, прочитанная, оба героя на сайте — на сайте без роли', () => {
+    expect(computeWorldListed(pair())).toBe(true);
+  });
+
+  it('герой пары не на сайте или не прочитан — пары нет; своё ядро и «показывать» — тоже', () => {
+    expect(computeWorldListed(pair({ hasListedMembers: false }))).toBe(false);
+    expect(computeWorldListed(pair({ hasListedMembers: undefined }))).toBe(false);
+    expect(computeWorldListed(pair({ hasCore: false }))).toBe(false);
+    expect(computeWorldListed(pair({ isVisible: false }))).toBe(false);
+    const autoTextAt = at('2026-11-19T10:00:00.000Z');
+    expect(computeWorldListed(pair({ autoTextAt, readAt: null }))).toBe(false);
+  });
+
+  it('герой с ролью не читает hasListedMembers', () => {
+    expect(computeWorldListed(main({ hasListedMembers: false }))).toBe(true);
+  });
+
+  it('relistWorldPairs: пишет только пары со сменившимся isListed, с прежним updatedAt', async () => {
+    const updatedAt = at('2026-11-19T09:00:00.000Z');
+    const row = (key: string, isListed: boolean) => ({
+      key,
+      type: 'pair',
+      role: null,
+      hasCore: true,
+      isVisible: true,
+      readAt: null,
+      autoTextAt: null,
+      mentions: { chapters: [1] },
+      isListed,
+      firstPublishedAt: at('2026-11-18T00:00:00.000Z'),
+      updatedAt,
+    });
+    const findMany = jest
+      .fn()
+      .mockResolvedValueOnce([
+        row('anna--tom', true),
+        row('anna--olga', false),
+        row('olga--tom', false),
+      ])
+      .mockResolvedValueOnce([{ key: 'anna' }, { key: 'olga' }]);
+    const update = jest.fn().mockResolvedValue({});
+    const tx = { bookWorldEntity: { findMany, update } } as unknown as Parameters<
+      typeof relistWorldPairs
+    >[0];
+
+    const written = await relistWorldPairs(
+      tx,
+      'v1',
+      { status: 'published' },
+      at('2026-11-19T10:00:00.000Z'),
+    );
+
+    // anna--tom: Том не на сайте — уходит; anna--olga: оба на сайте — приходит; olga--tom — без изменений.
+    expect(written).toBe(2);
+    expect(update.mock.calls.map(([args]: [unknown]) => args)).toEqual([
+      {
+        where: { bookVersionId_key: { bookVersionId: 'v1', key: 'anna--tom' } },
+        data: { isListed: false, updatedAt },
+      },
+      {
+        where: { bookVersionId_key: { bookVersionId: 'v1', key: 'anna--olga' } },
+        data: { isListed: true, updatedAt },
+      },
+    ]);
+    expect(findMany.mock.calls[0][0]).toMatchObject({
+      where: { bookVersionId: 'v1', type: 'pair' },
+    });
+    expect(findMany.mock.calls[1][0]).toMatchObject({
+      where: { bookVersionId: 'v1', type: 'character', isListed: true },
+    });
+  });
+
+  it('relistWorldPairs: пара впервые на сайте опубликованной версии — пишется и firstPublishedAt (R2 F08-1)', async () => {
+    const now = at('2026-11-19T10:00:00.000Z');
+    const updatedAt = at('2026-11-19T09:00:00.000Z');
+    const pairRow = (key: string, isListed: boolean) => ({
+      key,
+      type: 'pair',
+      role: null,
+      hasCore: true,
+      isVisible: true,
+      readAt: null,
+      autoTextAt: null,
+      mentions: { chapters: [1] },
+      isListed,
+      firstPublishedAt: null,
+      updatedAt,
+    });
+    const findMany = jest
+      .fn()
+      .mockResolvedValueOnce([pairRow('anna--tom', false), pairRow('anna--olga', true)])
+      .mockResolvedValueOnce([{ key: 'anna' }, { key: 'tom' }, { key: 'olga' }]);
+    const update = jest.fn().mockResolvedValue({});
+    const tx = { bookWorldEntity: { findMany, update } } as unknown as Parameters<
+      typeof relistWorldPairs
+    >[0];
+
+    // anna--tom приходит на сайт; anna--olga уже isListed, но без отметки первого показа — получает её.
+    expect(await relistWorldPairs(tx, 'v1', { status: 'published' }, now)).toBe(2);
+    expect(update.mock.calls.map(([args]: [{ data: unknown }]) => args.data)).toEqual([
+      { isListed: true, firstPublishedAt: now, updatedAt },
+      { isListed: true, firstPublishedAt: now, updatedAt },
+    ]);
   });
 });

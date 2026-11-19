@@ -20,6 +20,8 @@ import {
  *   - `ned-fox` — ядро и «прочитано», но `isVisible=false` — 404;
  *   - `sam-holt` — ядро, текст модели не прочитан — 404;
  *   - `lou-grey` — без ядра (нет цитат и сцен) — 404;
+ *   - `anna-lark--tom-reed` — пара героев (`F08-8c`) с ядром, только `en`: оба героя на сайте, сама
+ *     пара — нет до `F08-8c-2` (рубильник пар, решение арбитра `F08 | F08-8c-1` R2);
  * - `world-acceptance-noindex` — `en` с редакторским `noindex`: мир есть, но закрыт от индекса.
  * - `world-acceptance-hidden` — `en`, сущность мира есть, но скрыта (`isVisible=false`): `/wiki` — 404.
  *
@@ -184,6 +186,8 @@ const SCENES_EN: [number, string][] = [
 
 type EntitySeed = {
   key: string;
+  /** Тип сущности; нет — герой `main`. Пара (`F08-8c`) — без роли. */
+  type?: 'character' | 'pair';
   name: string;
   short: string | null;
   blocks: Record<string, unknown>;
@@ -350,6 +354,55 @@ const ENTITIES_EN: EntitySeed[] = [
     coreMissing: ['quotes', 'scenes'],
     isListed: false,
   },
+  {
+    // Пара (`F08-8c`): общие главы — `coPresence` Анны с Томом. Оба героя на сайте, но рубильник
+    // пар выключен до фронта `F08-8c-2` (решение арбитра `F08 | F08-8c-1` R2): `isListed` — false;
+    // `F08-8c-2` включает рубильник и ставит здесь true.
+    key: 'anna-lark--tom-reed',
+    type: 'pair',
+    name: 'Anna Lark and Tom Reed',
+    short: 'The mapmaker and the lamplighter who cross the river together.',
+    blocks: {
+      compare: [
+        ['Work', 1, 1],
+        ['At the bridge', 2, 2],
+        ['At the end', 3, 3],
+        ['Who leads', 2, 1],
+      ].map(([feature, chapterA, chapterB]) => ({
+        feature,
+        a: `Anna: ${String(feature)}.`,
+        chapterA,
+        b: `Tom: ${String(feature)}.`,
+        chapterB,
+      })),
+      bonds: 'Service text: the crossing binds them.',
+      differences: 'Service text: she reads the map, he keeps the light.',
+      quotes: [
+        {
+          text: 'Anna Lark and Tom Reed crossed the bridge together.',
+          chapter: 2,
+          speakerKey: 'anna-lark',
+          aboutKey: 'tom-reed',
+          interpretation: 'What it shows.',
+        },
+      ],
+      conclusion: 'Service text: one guides, the other lights the way.',
+      faq: [
+        { question: 'Who leads the crossing?', answer: 'Anna Lark, with Tom Reed beside her.' },
+      ],
+    },
+    mentions: {
+      chapters: [1, 2, 3],
+      first: 1,
+      perChapter: {},
+      paragraphs: {},
+      coPresence: {},
+      stale: [],
+    },
+    hasCore: true,
+    coreMissing: [],
+    isListed: false,
+  },
 ];
 
 const ENTITIES_RU: EntitySeed[] = [
@@ -459,9 +512,9 @@ const json = (value: unknown): Prisma.InputJsonValue | typeof Prisma.DbNull =>
 function entityData(e: EntitySeed) {
   const read = e.read ?? true;
   return {
-    type: 'character' as const,
+    type: e.type ?? 'character',
     name: e.name,
-    role: 'main',
+    role: e.type === 'pair' ? null : 'main',
     short: e.short,
     aliases: Prisma.DbNull,
     aliasExclusions: Prisma.DbNull,

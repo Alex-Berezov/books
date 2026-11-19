@@ -4,7 +4,7 @@ import { jsonField } from '../../shared/prisma/json-field.util';
 import { isRecord } from '../../shared/prisma/json-record.util';
 import { stableJson } from '../../shared/json/stable-json';
 import { mentionChapters, mentionStale } from './world-core';
-import { stalePaths, worldItemKey } from './world-quote-check';
+import { stalePaths, worldCompareKey, worldItemKey } from './world-quote-check';
 import { publicMentionForms, type WorldChapterExclusion } from './world-mentions';
 import type {
   BookAnalysisFaqDto,
@@ -14,6 +14,7 @@ import type {
 import type {
   BookWorldAdaptationDto,
   BookWorldArcDto,
+  BookWorldCompareDto,
   BookWorldProfileDto,
   BookWorldQuoteDto,
   BookWorldRelationDto,
@@ -28,7 +29,11 @@ import type {
   BookWorldMentionsDto,
 } from './dto/book-world-response.dto';
 
-/** Поля страницы героя в колонке `blocks` (плоский JSON импорта, решение арбитра `F08 | F08-1` R7). */
+/**
+ * Поля страницы сущности в колонке `blocks` (плоский JSON импорта, решение арбитра `F08 | F08-1` R7):
+ * героя и пары (`compare`, `bonds`, `differences`, `conclusion` — `F08-8c`). Чужие типу поля
+ * отбивает `checkWorldTypeFields` (`world-refs.ts`).
+ */
 export interface StoredWorldBlocks {
   profile: BookWorldProfileDto | null;
   appearance: string | null;
@@ -40,6 +45,10 @@ export interface StoredWorldBlocks {
   critique: string | null;
   prototypes: string | null;
   adaptations: BookWorldAdaptationDto[] | null;
+  compare: BookWorldCompareDto[] | null;
+  bonds: string | null;
+  differences: string | null;
+  conclusion: string | null;
   faq: BookAnalysisFaqDto[] | null;
 }
 
@@ -56,7 +65,15 @@ export interface StoredWorldEntity extends StoredWorldBlocks {
   sources: BookAnalysisSourceDto[] | null;
 }
 
-const TEXT_BLOCK_KEYS = ['appearance', 'character', 'critique', 'prototypes'] as const;
+const TEXT_BLOCK_KEYS = [
+  'appearance',
+  'character',
+  'critique',
+  'prototypes',
+  'bonds',
+  'differences',
+  'conclusion',
+] as const;
 const JSON_BLOCK_KEYS = [
   'profile',
   'arc',
@@ -64,9 +81,24 @@ const JSON_BLOCK_KEYS = [
   'relations',
   'quotes',
   'adaptations',
+  'compare',
   'faq',
 ] as const;
 export const BOOK_WORLD_BLOCK_KEYS = [...TEXT_BLOCK_KEYS, ...JSON_BLOCK_KEYS] as const;
+
+/** Блоки пары героев (`F08-8c`) — у героя их нет (`checkWorldTypeFields`). */
+export const WORLD_PAIR_BLOCK_KEYS = ['compare', 'bonds', 'differences', 'conclusion'] as const;
+/** Блоки любой сущности: цитаты и частые вопросы. */
+const WORLD_SHARED_BLOCK_KEYS: readonly string[] = ['quotes', 'faq'];
+/**
+ * Блоки страницы героя — у пары их нет: всё, что не блок пары и не общее. Новое поле героя
+ * попадает сюда само, без второго перечня.
+ */
+export const WORLD_CHARACTER_BLOCK_KEYS = BOOK_WORLD_BLOCK_KEYS.filter(
+  (k) =>
+    !(WORLD_PAIR_BLOCK_KEYS as readonly string[]).includes(k) &&
+    !WORLD_SHARED_BLOCK_KEYS.includes(k),
+);
 /**
  * Содержательные поля сущности: их сливает импорт и по ним решается «текст изменился»
  * (решение арбитра R9). Ключ, тип и отметки (`isVisible`, `isIndexable`, `readAt`) сюда не входят.
@@ -203,6 +235,17 @@ export function coPresenceKeys(mentions: unknown): string[] {
 }
 
 /**
+ * Главы, где сущность вместе с `other` (`mentions.coPresence[other]`), по возрастанию; нет — `[]`.
+ * Одно правило общих глав пары (`F08-8c`, Q6): условие заведения (`pairEvidenceOf`) и присутствие
+ * пары (`pairMentions`).
+ */
+export function coPresenceWith(mentions: unknown, other: string): number[] {
+  const chapters =
+    isRecord(mentions) && isRecord(mentions.coPresence) ? mentions.coPresence[other] : undefined;
+  return numberList(chapters).sort((x, y) => x - y);
+}
+
+/**
  * Посчитанное присутствие наружу (`world-mentions.ts`): главы, первая глава, счёт по главам
  * и совместное присутствие; номера абзацев и `stale` из колонки не отдаются. `visibleKeys` —
  * читателю: в `coPresence` только соседи из этого набора (решение арбитра `F08 | F08-2` Q3).
@@ -248,6 +291,7 @@ export function worldMentionSourceOf(row: WorldEditorRow) {
     quotes: s.quotes,
     scenes: s.scenes,
     arc: s.arc,
+    compare: s.compare,
   };
 }
 
@@ -349,12 +393,16 @@ export function toSummary(row: WorldSummaryRow): BookWorldEntitySummaryDto {
 export function toReaderSummary(row: WorldReaderSummaryRow): BookWorldListEntityDto {
   return {
     ...toSummary(row),
-    forms: publicMentionForms({
-      key: row.key,
-      name: row.name,
-      aliases: readStringList(row.aliases),
-      aliasExclusions: readAliasExclusions(row.aliasExclusions),
-    }),
+    // У пары нет своих форм имени (решение арбитра `F08 | F08-8c` Q6): «A и B» не цель перелинковки.
+    forms:
+      row.type === 'pair'
+        ? []
+        : publicMentionForms({
+            key: row.key,
+            name: row.name,
+            aliases: readStringList(row.aliases),
+            aliasExclusions: readAliasExclusions(row.aliasExclusions),
+          }),
   };
 }
 
@@ -377,6 +425,7 @@ export function toEntityDto(
     s.quotes = s.quotes ? s.quotes.filter(fresh('quotes')) : null;
     s.scenes = s.scenes ? s.scenes.filter(fresh('scenes')) : null;
     if (s.arc?.stages) s.arc = { ...s.arc, stages: s.arc.stages.filter(fresh('arc.stages')) };
+    s.compare = s.compare ? s.compare.filter((c) => !stale.has(worldCompareKey(c))) : null;
   }
   return {
     ...toSummary(row),
@@ -391,6 +440,10 @@ export function toEntityDto(
     critique: s.critique,
     prototypes: s.prototypes,
     adaptations: s.adaptations,
+    compare: s.compare,
+    bonds: s.bonds,
+    differences: s.differences,
+    conclusion: s.conclusion,
     faq: s.faq,
     sources: s.sources,
     mentions: readMentions(row.mentions, reader?.visibleKeys),

@@ -59,6 +59,9 @@ export const BOOK_WORLD_LIMITS = {
   prototypes: BOOK_ANALYSIS_LIMITS.mediumText,
   adaptations: BOOK_ANALYSIS_LIMITS.adaptations,
   faq: 8,
+  // Пара героев (`F08-8c`, решение арбитра `F08 | F08-8c` Q2): строк сравнения в записи 0–8;
+  // нижние 4 — условие ядра (`world-core.ts`), а не DTO: иначе не сохранить черновик.
+  compare: 8,
   sources: BOOK_ANALYSIS_LIMITS.sources,
   title: BOOK_ANALYSIS_LIMITS.title,
   mediumText: BOOK_ANALYSIS_LIMITS.mediumText,
@@ -70,8 +73,11 @@ export const BOOK_WORLD_LIMITS = {
 /** Ключ сущности — тот же, что у героя анализа: часть адреса `/wiki/{key}`. */
 export const BOOK_WORLD_KEY_REGEX = BLOCK_KEY_REGEX;
 
-/** Типы, которые импорт принимает сейчас; остальные `WorldEntityType` — пачками своего типа (`batches.md` F08-1 п.2). */
-export const BOOK_WORLD_IMPORT_TYPES = ['character'] as const;
+/**
+ * Типы, которые импорт принимает сейчас; остальные `WorldEntityType` — пачками своего типа
+ * (`batches.md` F08-1 п.2). Пара героев — с `F08-8c`.
+ */
+export const BOOK_WORLD_IMPORT_TYPES = ['character', 'pair'] as const;
 export type BookWorldImportType = (typeof BOOK_WORLD_IMPORT_TYPES)[number];
 
 /** Номер главы версии — обязателен: цитата сверяется по своей главе, сцена и этап ведут в читалку. */
@@ -196,9 +202,53 @@ export class BookWorldQuoteDto {
   @Key()
   speakerKey?: string | null;
 
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    pattern: BOOK_WORLD_KEY_REGEX.source,
+    description:
+      'Pairs only (F08-8c): the member of the pair the quote is about; with speakerKey, both are members and differ',
+  })
+  @Trim()
+  @ValidateIf((_o, value) => !isAbsent(value))
+  @Key()
+  aboutKey?: string | null;
+
   @ApiProperty({ maxLength: BOOK_WORLD_LIMITS.interpretation })
   @RequiredText(BOOK_WORLD_LIMITS.interpretation)
   interpretation!: string;
+}
+
+/**
+ * Строка таблицы сравнения пары (`product.md` §6, решение арбитра `F08 | F08-8c` Q2): признак и как
+ * он у первого и второго героя ключа пары (`{a}--{b}`), каждая сторона — со своей главой версии.
+ */
+export class BookWorldCompareDto {
+  @ApiProperty({ maxLength: BOOK_WORLD_LIMITS.title, description: 'Feature compared, e.g. origin' })
+  @RequiredText(BOOK_WORLD_LIMITS.title)
+  feature!: string;
+
+  @ApiProperty({
+    maxLength: BOOK_WORLD_LIMITS.mediumText,
+    description: 'The first member of the key',
+  })
+  @RequiredText(BOOK_WORLD_LIMITS.mediumText)
+  a!: string;
+
+  @ApiProperty({ type: Number, minimum: 1 })
+  @RequiredChapter()
+  chapterA!: number;
+
+  @ApiProperty({
+    maxLength: BOOK_WORLD_LIMITS.mediumText,
+    description: 'The second member of the key',
+  })
+  @RequiredText(BOOK_WORLD_LIMITS.mediumText)
+  b!: string;
+
+  @ApiProperty({ type: Number, minimum: 1 })
+  @RequiredChapter()
+  chapterB!: number;
 }
 
 export class BookWorldAdaptationDto {

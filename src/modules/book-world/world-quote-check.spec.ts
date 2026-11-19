@@ -1,5 +1,12 @@
 import { createHash } from 'node:crypto';
-import { fingerprintOfChapters, worldChapterItems, worldItemKey } from './world-quote-check';
+import {
+  fingerprintOfChapters,
+  stalePaths,
+  worldChapterIssues,
+  worldChapterItems,
+  worldCompareKey,
+  worldItemKey,
+} from './world-quote-check';
 
 describe('worldChapterItems (F08-2) — единственный обход пунктов с главой', () => {
   it('этапы пути, сцены и цитаты с путями и ключами по содержанию; пункт без главы пропущен', () => {
@@ -36,5 +43,47 @@ describe('fingerprintOfChapters (F08-2, решение арбитра R3b)', () 
     ).toBe(md5('1:aa,2:bb'));
     // Пустая версия — md5 пустой строки, как coalesce(string_agg(...), '') в базе.
     expect(fingerprintOfChapters([])).toBe(md5(''));
+  });
+});
+
+describe('строка сравнения пары (F08-8c): две главы, один ключ', () => {
+  const row = { feature: 'F', a: 'A', chapterA: 1, b: 'B', chapterB: 9 };
+  const entity = { arc: null, scenes: null, quotes: null, compare: [row] };
+
+  it('worldChapterItems: пункт на главу каждой стороны, поле главы и общий ключ строки', () => {
+    expect(worldChapterItems(entity)).toEqual([
+      {
+        kind: 'compare',
+        path: 'compare.0',
+        field: 'chapterA',
+        key: worldCompareKey(row),
+        chapter: 1,
+        text: 'A',
+      },
+      {
+        kind: 'compare',
+        path: 'compare.0',
+        field: 'chapterB',
+        key: worldCompareKey(row),
+        chapter: 9,
+        text: 'B',
+      },
+    ]);
+  });
+
+  it('глава одной стороны не из версии — отказ путём её поля; stalePaths — строка один раз', () => {
+    const issues = worldChapterIssues(
+      entity,
+      (n) => n !== 9,
+      () => true,
+    );
+    expect(issues.map((i) => `${i.item}.${i.field}`)).toEqual(['compare.0.chapterB']);
+    expect(stalePaths(entity, new Set([worldCompareKey(row)]))).toEqual(['compare.0']);
+  });
+
+  it('worldCompareKey: поля разделены — разные строки не совпадают ключом', () => {
+    const x = worldCompareKey({ feature: 'F', a: 'x', chapterA: 1, b: '3', chapterB: 12 });
+    const y = worldCompareKey({ feature: 'F', a: 'x1', chapterA: 1, b: '3', chapterB: 2 });
+    expect(x).not.toBe(y);
   });
 });

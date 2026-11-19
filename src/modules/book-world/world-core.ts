@@ -1,7 +1,7 @@
 import { isFilled } from '../book-analysis/book-analysis-core';
 import { isRecord } from '../../shared/prisma/json-record.util';
 import type { StoredWorldEntity } from './book-world-data';
-import { worldItemKey } from './world-quote-check';
+import { worldCompareKey, worldItemKey } from './world-quote-check';
 
 /**
  * Ядро героя (`books-app-docs/features/F08-book-wiki/product.md` §3, `tech.md` §3): «Коротко»,
@@ -11,7 +11,22 @@ import { worldItemKey } from './world-quote-check';
  */
 export const WORLD_CHARACTER_CORE = { quotes: 3, scenes: 2, mentionChapters: 1 } as const;
 
-export type WorldCorePart = 'short' | 'character' | 'arc' | 'quotes' | 'scenes' | 'mentions';
+/**
+ * Ядро пары героев (`F08-8c`, решение арбитра `F08 | F08-8c` Q2): «Коротко», не меньше 4 строк
+ * сравнения с обеими сторонами и главами, общие главы героев хотя бы одна (`mentions` пары —
+ * пересечение глав членов, Q6), вывод.
+ */
+export const WORLD_PAIR_CORE = { compare: 4, mentionChapters: 1 } as const;
+
+export type WorldCorePart =
+  | 'short'
+  | 'character'
+  | 'arc'
+  | 'quotes'
+  | 'scenes'
+  | 'mentions'
+  | 'compare'
+  | 'conclusion';
 
 export interface WorldCoreResult {
   hasCore: boolean;
@@ -19,10 +34,13 @@ export interface WorldCoreResult {
   missing: { part: WorldCorePart; have: number; need: number }[];
 }
 
-type CoreInput = Pick<StoredWorldEntity, 'short' | 'character' | 'arc' | 'quotes' | 'scenes'> & {
-  /** Колонка `mentions` как есть (`WorldMentions` подсчёта `F08-2`, `world-mentions.ts`). */
-  mentions: unknown;
-};
+type CoreInput = Pick<StoredWorldEntity, 'short' | 'character' | 'arc' | 'quotes' | 'scenes'> &
+  Partial<Pick<StoredWorldEntity, 'compare' | 'conclusion'>> & {
+    /** Тип сущности; нет — герой (вход без типа — только герой, до `F08-8c`). */
+    type?: StoredWorldEntity['type'];
+    /** Колонка `mentions` как есть (`WorldMentions` подсчёта `F08-2`, `world-mentions.ts`). */
+    mentions: unknown;
+  };
 
 const hasChapter = (chapter: unknown) => typeof chapter === 'number' && chapter > 0;
 
@@ -44,6 +62,7 @@ export function mentionStale(mentions: unknown): Set<string> {
 }
 
 export function computeWorldCore(entity: CoreInput): WorldCoreResult {
+  if (entity.type === 'pair') return computePairCore(entity);
   const stale = mentionStale(entity.mentions);
   const quotes = (entity.quotes ?? []).filter(
     (q) => isFilled(q.text) && hasChapter(q.chapter) && !stale.has(worldItemKey('quotes', q)),
@@ -72,5 +91,30 @@ export function computeWorldCore(entity: CoreInput): WorldCoreResult {
       need: WORLD_CHARACTER_CORE.mentionChapters,
     });
   }
+  return { hasCore: missing.length === 0, missing };
+}
+
+function computePairCore(entity: CoreInput): WorldCoreResult {
+  const stale = mentionStale(entity.mentions);
+  const compare = (entity.compare ?? []).filter(
+    (c) =>
+      isFilled(c.feature) &&
+      isFilled(c.a) &&
+      isFilled(c.b) &&
+      hasChapter(c.chapterA) &&
+      hasChapter(c.chapterB) &&
+      !stale.has(worldCompareKey(c)),
+  ).length;
+  const chapters = mentionChapters(entity.mentions).length;
+
+  const missing: WorldCoreResult['missing'] = [];
+  if (!isFilled(entity.short)) missing.push({ part: 'short', have: 0, need: 1 });
+  if (compare < WORLD_PAIR_CORE.compare) {
+    missing.push({ part: 'compare', have: compare, need: WORLD_PAIR_CORE.compare });
+  }
+  if (chapters < WORLD_PAIR_CORE.mentionChapters) {
+    missing.push({ part: 'mentions', have: chapters, need: WORLD_PAIR_CORE.mentionChapters });
+  }
+  if (!isFilled(entity.conclusion)) missing.push({ part: 'conclusion', have: 0, need: 1 });
   return { hasCore: missing.length === 0, missing };
 }

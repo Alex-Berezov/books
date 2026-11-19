@@ -8,7 +8,11 @@ import request from 'supertest';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
-import { computeWorldListed } from '../src/modules/book-world/world-public';
+import {
+  WORLD_PAIRS,
+  computeWorldListed,
+  pairMembersIn,
+} from '../src/modules/book-world/world-public';
 import {
   WorldMentionsService,
   type WorldRecountOutcome,
@@ -142,10 +146,16 @@ describe('BookWorld e2e', () => {
   const expectListedConsistent = async (versionId: string) => {
     const rows = await prisma.bookWorldEntity.findMany({ where: { bookVersionId: versionId } });
     expect(rows.length).toBeGreaterThan(0);
+    // Пара (F08-8c, Q3): оба героя ключа на сайте — по тем же строкам базы.
+    const listedCharacters = new Set(
+      rows.filter((r) => r.type === 'character' && r.isListed).map((r) => r.key),
+    );
     for (const r of rows) {
+      const hasListedMembers =
+        r.type === 'pair' ? pairMembersIn(r.key, listedCharacters) : undefined;
       expect({ key: r.key, isListed: r.isListed }).toEqual({
         key: r.key,
-        isListed: computeWorldListed(r),
+        isListed: computeWorldListed({ ...r, hasListedMembers }),
       });
     }
   };
@@ -277,6 +287,44 @@ describe('BookWorld e2e', () => {
       expect(raskolnikov.hasCore).toBe(false);
       expect(raskolnikov.coreMissing).toEqual(['mentions']);
       await expectListedConsistent(version.id);
+
+      // F08-8c: эталон пары (`prompts/example-world-pair.{ru,en}.json`) — вторым импортом, когда
+      // герои уже в мире; заводится связью героев в анализе. Его цитаты — из эталона героев.
+      const pairBody = JSON.parse(
+        readFileSync(join(__dirname, 'fixtures', `example-world-pair.${language}.json`), 'utf8'),
+      ) as { language: Language; entities: Body[] };
+      await prisma.bookAnalysis.create({
+        data: {
+          bookVersionId: version.id,
+          characters: [
+            {
+              key: 'raskolnikov',
+              name: 'R',
+              role: 'main',
+              relations: [{ to: 'sonya', label: 'x' }],
+            },
+          ],
+        },
+      });
+      const pairRes = await put(version.id, pairBody);
+      expect({
+        language,
+        status: pairRes.status,
+        body: pairRes.status === 200 ? null : pairRes.body,
+      }).toEqual({
+        language,
+        status: 200,
+        body: null,
+      });
+      // Ядру пары не хватает только общих глав: имени Раскольникова в тексте глав эталона нет.
+      expect(pairRes.body.entities[0]).toMatchObject({
+        key: 'raskolnikov--sonya',
+        created: true,
+        hasCore: false,
+      });
+      expect(pairRes.body.entities[0].warnings.map((w: { path: string }) => w.path)).toEqual([
+        'entities.0.mentions',
+      ]);
     }
   });
 
@@ -496,6 +544,11 @@ describe('BookWorld e2e', () => {
         'critique',
         'prototypes',
         'adaptations',
+        // F08-8c: поля пары — один тип ответа на все сущности, у героя они null.
+        'compare',
+        'bonds',
+        'differences',
+        'conclusion',
         'faq',
         'sources',
         'mentions',
@@ -1587,6 +1640,426 @@ describe('BookWorld e2e', () => {
       .send({ content: '<p>Changed.</p>' })
       .expect(200);
     expect(await pending(versionId)).toBeNull();
+  });
+
+  describe('F08-8c: пара героев (решения арбитра `F08 | F08-8c` Q1-Q4, Q6)', () => {
+    // Рубильник пар (`F08 | F08-8c-1` R2) выключен до фронта `F08-8c-2`; здесь проверяется поведение
+    // включённого, выключенный — отдельным тестом ниже.
+    beforeAll(() => {
+      WORLD_PAIRS.public = true;
+    });
+    afterAll(() => {
+      WORLD_PAIRS.public = false;
+    });
+    /** Пара с полным ядром кроме общих глав (их пишет пересчёт); цитаты — дословно из `TEXT`. */
+    const pair = (key: string, over: Body = {}): Body => ({
+      key,
+      type: 'pair',
+      name: 'Oblomov and Olga',
+      short: 'Two ways to live.',
+      compare: [1, 2, 3, 1].map((chapter, i) => ({
+        feature: `Feature ${i}`,
+        a: `Oblomov ${i}`,
+        chapterA: chapter,
+        b: `Olga ${i}`,
+        chapterB: 2,
+      })),
+      bonds: 'Love.',
+      differences: 'Will.',
+      quotes: [
+        {
+          text: 'Olga sang Casta diva.',
+          chapter: 2,
+          speakerKey: 'oblomov',
+          aboutKey: 'olga',
+          interpretation: 'Her voice.',
+        },
+      ],
+      conclusion: 'Will against dream.',
+      ...over,
+    });
+    const heroes = (versionId: string) =>
+      put(versionId, {
+        language: 'en',
+        entities: [
+          hero('oblomov'),
+          hero('olga', { name: 'Olga' }),
+          hero('zakhar', { name: 'Zakhar' }),
+        ],
+      }).expect(200);
+    const related = (versionId: string) =>
+      prisma.bookAnalysis.create({
+        data: {
+          bookVersionId: versionId,
+          characters: [
+            {
+              key: 'olga',
+              name: 'Olga',
+              role: 'main',
+              relations: [{ to: 'oblomov', label: 'loves' }],
+            },
+          ],
+        },
+      });
+    const message = (res: { body: { message: unknown } }) => JSON.stringify(res.body.message);
+
+    it('ключ: не по алфавиту, один герой, не герой версии, два «--» — 400 с путём key', async () => {
+      const { versionId } = await createVersion();
+      await heroes(versionId);
+      await related(versionId);
+      for (const [key, text] of [
+        ['olga--oblomov', 'alphabetical order'],
+        ['olga--olga', 'two different characters'],
+        ['oblomov--stolz', '\\"stolz\\" is not a character of this version'],
+        ['oblomov---olga', 'two character keys joined by one'],
+      ]) {
+        const res = await put(versionId, { language: 'en', entities: [pair(key)] }).expect(400);
+        expect(message(res)).toContain(`entities.0.key: `);
+        expect(message(res)).toContain(text);
+      }
+      // Тот же ключ одной сущностью: путь без префикса тела.
+      const one = await putEntity(versionId, 'olga--oblomov', {
+        ...pair('olga--oblomov'),
+        key: undefined,
+        language: 'en',
+      }).expect(400);
+      expect(message(one)).toContain('key: pair keys go in alphabetical order');
+      await putEntity(versionId, 'oblomov--olga', {
+        ...pair('oblomov--olga'),
+        key: undefined,
+        language: 'en',
+      }).expect(200);
+    });
+
+    it('заведение: без связи и без общих глав — 400; связь в анализе — 200; треть глав — 200', async () => {
+      const { versionId } = await createVersion();
+      await heroes(versionId);
+      // Присутствие не посчитано, связи нет — 400.
+      const uncounted = await put(versionId, {
+        language: 'en',
+        entities: [pair('oblomov--olga')],
+      }).expect(400);
+      expect(message(uncounted)).toContain('are not related in the analysis');
+      // Посчитано, общих глав нет: Обломов в 1 и 3, Захар только в 1-й (TEXT), Ольга только во 2-й.
+      await setMentions(versionId, 'oblomov', [1, 3]);
+      await setMentions(versionId, 'olga', [2]);
+      expect(
+        message(
+          await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(400),
+        ),
+      ).toContain('are not related in the analysis');
+      // Вместе в главе 1 из двух глав Обломова и одной Захара: 3·1 ≥ 2 и ≥ 1 — заводится без связи.
+      await put(versionId, {
+        language: 'en',
+        entities: [pair('oblomov--zakhar', { name: 'Oblomov and Zakhar', quotes: null })],
+      }).expect(200);
+      // Связь в анализе в любую сторону (Ольга → Обломов) — заводится без общих глав.
+      await related(versionId);
+      await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(200);
+    });
+
+    it('поля не своего типа — 400 с путём; цитата пары — только о героях пары, не о себе', async () => {
+      const { versionId } = await createVersion();
+      await heroes(versionId);
+      await related(versionId);
+      const wrong = await put(versionId, {
+        language: 'en',
+        entities: [
+          pair('oblomov--olga', {
+            role: 'main',
+            character: 'x',
+            aliases: ['O and O'],
+            sources: [{ title: 'S', url: 'https://example.com/s' }],
+          }),
+          hero('stolz', { name: 'Stolz', conclusion: 'x' }),
+          // Ссылка героя — на героя, не на пару (ревью круга 1).
+          hero('zakhar', { name: 'Zakhar', relations: [{ to: 'oblomov--olga', label: 'x' }] }),
+        ],
+      }).expect(400);
+      for (const path of [
+        'entities.0.role',
+        'entities.0.character',
+        'entities.0.aliases',
+        'entities.0.sources',
+        'entities.1.conclusion',
+        'entities.2.relations.0.to',
+      ]) {
+        expect(message(wrong)).toContain(`${path}: `);
+      }
+      const quote = { text: 'Olga sang Casta diva.', chapter: 2, interpretation: 'Voice.' };
+      const quotes = await put(versionId, {
+        language: 'en',
+        entities: [
+          pair('oblomov--olga', {
+            quotes: [
+              { ...quote, speakerKey: 'zakhar', aboutKey: 'olga' },
+              { ...quote, speakerKey: 'olga', aboutKey: 'olga' },
+              { ...quote, speakerKey: 'olga' },
+              { ...quote, aboutKey: 'olga' },
+            ],
+          }),
+        ],
+      }).expect(400);
+      expect(message(quotes)).toContain(
+        'entities.0.quotes.0.speakerKey: \\"zakhar\\" is not a character of this pair',
+      );
+      expect(message(quotes)).toContain(
+        'entities.0.quotes.1.aboutKey: a quote of a pair is about the other character',
+      );
+      expect(message(quotes)).toContain(
+        'entities.0.quotes.2.aboutKey: a quote of a pair names the character it is about',
+      );
+      // Рассказчик об одном из героев — не «друг о друге» (ревью круга 2).
+      expect(message(quotes)).toContain(
+        'entities.0.quotes.3.speakerKey: a quote of a pair is said by one of its characters',
+      );
+      const heroAbout = await put(versionId, {
+        language: 'en',
+        entities: [hero('oblomov', { quotes: [{ ...quote, aboutKey: 'olga' }] })],
+      }).expect(400);
+      expect(message(heroAbout)).toContain('entities.0.quotes.0.aboutKey: ');
+      // Глава стороны сравнения — из версии (R4), путём своего поля.
+      const chapter = await put(versionId, {
+        language: 'en',
+        entities: [
+          pair('oblomov--olga', {
+            compare: [{ feature: 'F', a: 'A', chapterA: 1, b: 'B', chapterB: 9 }],
+          }),
+        ],
+      }).expect(400);
+      expect(message(chapter)).toContain(
+        'entities.0.compare.0.chapterB: chapter 9 is not in this version',
+      );
+    });
+
+    it('общие главы пишет пересчёт, имя пары не ищется; пара на сайте только с обоими героями', async () => {
+      const { versionId } = await createVersion();
+      await makeListed(versionId, 'oblomov');
+      await makeListed(versionId, 'olga', hero('olga', { name: 'Olga' }));
+      await related(versionId);
+      const saved = await put(versionId, {
+        language: 'en',
+        entities: [pair('oblomov--olga')],
+      }).expect(200);
+      expect(saved.body.entities[0].warnings.map((w: { path: string }) => w.path)).toEqual([
+        'entities.0.mentions',
+      ]);
+      expect(saved.body.entities[0].warnings[0].message).toContain(
+        'no chapter with both characters',
+      );
+      await drain(versionId);
+      // Оба героя — в главах 1–3 (`makeListed`): общие главы — все три. Имя пары «Oblomov and Olga»
+      // в тексте не стоит: найдись оно поиском — глав не было бы вовсе.
+      const counted = await row(versionId, 'oblomov--olga');
+      expect(counted.mentions).toMatchObject({ chapters: [1, 2, 3], first: 1, coPresence: {} });
+      expect(counted.hasCore).toBe(true);
+      expect(counted.isListed).toBe(false);
+      await readLatest(versionId, 'oblomov--olga');
+      expect((await row(versionId, 'oblomov--olga')).isListed).toBe(true);
+      const page = await request(http())
+        .get(`/versions/${versionId}/world/oblomov--olga`)
+        .expect(200);
+      // Читателю — без служебного (ревью круга 1): отметок редактора нет, строки сравнения — ровно поля DTO.
+      expect(page.body.entity.editor).toBeUndefined();
+      for (const c of page.body.entity.compare as Record<string, unknown>[]) {
+        expect(Object.keys(c).sort()).toEqual(['a', 'b', 'chapterA', 'chapterB', 'feature']);
+      }
+      expect(page.body.entity).toMatchObject({
+        type: 'pair',
+        compare: expect.arrayContaining([expect.objectContaining({ chapterB: 2 })]),
+        conclusion: 'Will against dream.',
+        mentions: { chapters: [1, 2, 3] },
+      });
+      const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
+      expect(
+        list.body.entities.find((e: { key: string }) => e.key === 'oblomov--olga'),
+      ).toMatchObject({
+        type: 'pair',
+        forms: [],
+      });
+      await expectListedConsistent(versionId);
+
+      // Героиню скрыли — пара уходит с сайта той же транзакцией; вернули — пара возвращается.
+      await flags(versionId, 'olga', { isVisible: false }).expect(200);
+      expect((await row(versionId, 'oblomov--olga')).isListed).toBe(false);
+      await request(http()).get(`/versions/${versionId}/world/oblomov--olga`).expect(404);
+      await expectListedConsistent(versionId);
+      await flags(versionId, 'olga', { isVisible: true }).expect(200);
+      expect((await row(versionId, 'oblomov--olga')).isListed).toBe(true);
+
+      // Героиня исчезла из текста: ядро и публичность падают у неё и у пары (пересчёт).
+      await setMentions(versionId, 'olga', []);
+      await prisma.chapter.update({
+        where: { bookVersionId_number: { bookVersionId: versionId, number: 2 } },
+        data: { content: '<p>The letter from the estate was still unread.</p><p>Ilya Oblomov</p>' },
+      });
+      await expect(worldMentions.recountVersion(versionId)).resolves.toMatchObject({
+        status: 'done',
+      });
+      expect((await row(versionId, 'olga')).isListed).toBe(false);
+      const gone = await row(versionId, 'oblomov--olga');
+      expect(gone).toMatchObject({ isListed: false, hasCore: false });
+      expect(gone.coreMissing).toEqual(['mentions']);
+      await expectListedConsistent(versionId);
+    });
+
+    it('сравнение: 9 строк — 400; черновик из 2 строк сохраняется с предупреждением ядра', async () => {
+      const { versionId } = await createVersion();
+      await heroes(versionId);
+      await related(versionId);
+      const row = { feature: 'F', a: 'A', chapterA: 1, b: 'B', chapterB: 2 };
+      const nine = await put(versionId, {
+        language: 'en',
+        entities: [pair('oblomov--olga', { compare: Array.from({ length: 9 }, () => row) })],
+      }).expect(400);
+      expect(message(nine)).toContain('entities.0.compare');
+      const draft = await put(versionId, {
+        language: 'en',
+        entities: [pair('oblomov--olga', { compare: [row, row] })],
+      }).expect(200);
+      expect(draft.body.entities[0].warnings.map((w: { path: string }) => w.path)).toEqual([
+        'entities.0.compare',
+        'entities.0.mentions',
+      ]);
+    });
+
+    it('герои и пара одним телом: герои пишутся первыми, пара заводится связью анализа', async () => {
+      const { versionId } = await createVersion();
+      await related(versionId);
+      const res = await put(versionId, {
+        language: 'en',
+        // Пара раньше героев в теле — порядок записи от тела не зависит.
+        entities: [pair('oblomov--olga'), hero('oblomov'), hero('olga', { name: 'Olga' })],
+      }).expect(200);
+      expect(res.body.entities.map((e: { key: string; created: boolean }) => e.created)).toEqual([
+        true,
+        true,
+        true,
+      ]);
+      expect((await row(versionId, 'oblomov--olga')).type).toBe('pair');
+    });
+
+    it('заведённая пара правится, даже если условие заведения больше не держится (R1); новая — 400', async () => {
+      const { versionId } = await createVersion();
+      await heroes(versionId);
+      await related(versionId);
+      await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(200);
+      // Связь из анализа убрали: условие заведения у этой пары больше не выполняется.
+      await prisma.bookAnalysis.update({
+        where: { bookVersionId: versionId },
+        data: { characters: [{ key: 'olga', name: 'Olga', role: 'main' }] },
+      });
+      await putEntity(versionId, 'oblomov--olga', {
+        language: 'en',
+        type: 'pair',
+        conclusion: 'Fixed typo.',
+      }).expect(200);
+      expect((await row(versionId, 'oblomov--olga')).blocks).toMatchObject({
+        conclusion: 'Fixed typo.',
+      });
+      // Та же пара заново — условие проверяется как у новой.
+      await remove(versionId, 'oblomov--olga').expect(204);
+      const again = await put(versionId, {
+        language: 'en',
+        entities: [pair('oblomov--olga')],
+      }).expect(400);
+      expect(message(again)).toContain('are not related in the analysis');
+    });
+
+    it('герой пары не меняет тип — 400 с путём type', async () => {
+      const { versionId } = await createVersion();
+      await heroes(versionId);
+      await related(versionId);
+      await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(200);
+      const res = await putEntity(versionId, 'olga', { language: 'en', type: 'pair' }).expect(400);
+      expect(message(res)).toContain('type: \\"olga\\" is a character of pairs oblomov--olga');
+      expect((await row(versionId, 'olga')).type).toBe('character');
+    });
+
+    it('рубильник выключен (до F08-8c-2): пара с ядром и героями на сайте не публична', async () => {
+      const { versionId } = await createVersion();
+      await makeListed(versionId, 'oblomov');
+      await makeListed(versionId, 'olga', hero('olga', { name: 'Olga' }));
+      await related(versionId);
+      await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(200);
+      await drain(versionId);
+      WORLD_PAIRS.public = false;
+      try {
+        await readLatest(versionId, 'oblomov--olga');
+        expect(await row(versionId, 'oblomov--olga')).toMatchObject({
+          hasCore: true,
+          isListed: false,
+        });
+        await request(http()).get(`/versions/${versionId}/world/oblomov--olga`).expect(404);
+        const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
+        expect(list.body.entities.map((e: { key: string }) => e.key)).toEqual(['oblomov', 'olga']);
+        await expectListedConsistent(versionId);
+      } finally {
+        WORLD_PAIRS.public = true;
+      }
+    });
+
+    it('пересчёт снимает героя с сайта — пара уходит в том же проходе, хотя её ключ раньше героя', async () => {
+      const { versionId } = await createVersion();
+      await makeListed(versionId, 'oblomov');
+      // Второстепенная на сайте от WORLD_MIN_CHAPTERS (3) глав: Ольга в 1–3.
+      await makeListed(versionId, 'olga', hero('olga', { name: 'Olga', role: 'secondary' }));
+      await related(versionId);
+      await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(200);
+      await drain(versionId);
+      await readLatest(versionId, 'oblomov--olga');
+      expect((await row(versionId, 'oblomov--olga')).isListed).toBe(true);
+      // Ольга осталась только во 2-й главе (TEXT): ниже порога — уходит с сайта. Общая глава с
+      // Обломовым есть, ядро пары держится — снимает её только публичность героини. Ключ
+      // `oblomov--olga` по алфавиту раньше `olga`: без порядка «герои раньше пар» пара прочитала бы
+      // прежний `isListed` героини.
+      await setMentions(versionId, 'olga', [2]);
+      expect((await row(versionId, 'olga')).isListed).toBe(false);
+      expect(await row(versionId, 'oblomov--olga')).toMatchObject({
+        hasCore: true,
+        isListed: false,
+      });
+      await expectListedConsistent(versionId);
+    });
+
+    it('глава строки сравнения удалена — после пересчёта строка в stale, ядро пары падает', async () => {
+      const { versionId } = await createVersion();
+      await heroes(versionId);
+      await related(versionId);
+      await setMentions(versionId, 'oblomov', [1, 2, 3]);
+      await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(200);
+      await drain(versionId);
+      expect((await row(versionId, 'oblomov--olga')).hasCore).toBe(true);
+      // Строка 2 сравнения ссылается на главу 3 (`chapterA`).
+      await prisma.chapter.delete({
+        where: { bookVersionId_number: { bookVersionId: versionId, number: 3 } },
+      });
+      await expect(worldMentions.recountVersion(versionId)).resolves.toMatchObject({
+        status: 'done',
+      });
+      const after = await row(versionId, 'oblomov--olga');
+      expect(after.hasCore).toBe(false);
+      expect(after.coreMissing).toEqual(['compare']);
+      const editor = await request(http())
+        .get(`/versions/${versionId}/world/oblomov--olga`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+      expect(editor.body.entity.editor.stale).toEqual(['compare.2']);
+    });
+
+    it('героя из-под пары не удалить — 409 WORLD_ENTITY_REFERENCED, даже если ключ есть в анализе', async () => {
+      const { versionId } = await createVersion();
+      await heroes(versionId);
+      await related(versionId);
+      await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(200);
+      const res = await remove(versionId, 'olga').expect(409);
+      expect(res.body).toMatchObject({
+        code: 'WORLD_ENTITY_REFERENCED',
+        referencedBy: ['oblomov--olga'],
+      });
+      await remove(versionId, 'oblomov--olga').expect(204);
+      await remove(versionId, 'olga').expect(204);
+    });
   });
 
   it('версии нет — 404 на чтение и запись', async () => {

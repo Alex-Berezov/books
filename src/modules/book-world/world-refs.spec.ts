@@ -1,5 +1,15 @@
 import type { StoredWorldEntity } from './book-world-data';
-import { checkWorldRefs, duplicateWorldKeys, worldEntityRefs } from './world-refs';
+import {
+  checkWorldPair,
+  checkWorldRefs,
+  checkWorldTypeFields,
+  duplicateWorldKeys,
+  pairEvidenceOf,
+  pairFounded,
+  pairMembers,
+  worldEntityRefs,
+  type WorldPairEvidence,
+} from './world-refs';
 
 /** F08-1: ссылки на слитой сущности (`tech.md` §3, решение арбитра `F08 | F08-1` R7). */
 const entity = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
@@ -20,12 +30,17 @@ const entity = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
   critique: null,
   prototypes: null,
   adaptations: null,
+  compare: null,
+  bonds: null,
+  differences: null,
+  conclusion: null,
   faq: null,
   ...over,
 });
 const ctx = (entityKeys: string[], analysisKeys: string[] = []) => ({
   entityKeys: new Set(entityKeys),
   analysisKeys: new Set(analysisKeys),
+  characterKeys: new Set(entityKeys),
 });
 const quote = (speakerKey?: string) => ({
   text: 'Q',
@@ -105,5 +120,222 @@ describe('duplicateWorldKeys (F08-1)', () => {
     expect(duplicateWorldKeys([{ key: 'a' }, { key: 'b' }, { key: 'a' }])).toEqual([
       { path: 'entities.2.key', message: 'duplicate key "a"' },
     ]);
+  });
+});
+
+describe('пара героев (F08-8c, решения арбитра `F08 | F08-8c` Q1, Q2, Q4)', () => {
+  const evidence =
+    (e: Partial<WorldPairEvidence> = {}) =>
+    (): WorldPairEvidence => ({
+      isLinked: true,
+      chaptersA: null,
+      chaptersB: null,
+      common: 0,
+      ...e,
+    });
+  const pair = (key: string, over: Partial<StoredWorldEntity> = {}) =>
+    entity({ key, type: 'pair', role: null, name: 'A and B', ...over });
+  const heroes = ctx(['anna', 'tom', 'anna--tom']);
+  const keyErrors = (key: string) =>
+    checkWorldPair(pair(key), heroes, evidence()).map((e) => `${e.path}: ${e.message}`);
+
+  describe('pairFounded — граница трети без округления', () => {
+    // 3·общие ≥ глав каждого: 3 главы и 1 общая — ровно треть.
+    it('ровно треть глав каждого — заводится', () => {
+      expect(pairFounded({ isLinked: false, chaptersA: 3, chaptersB: 3, common: 1 })).toBe(true);
+    });
+    it('на одну главу больше трети у одного из героев — нет', () => {
+      expect(pairFounded({ isLinked: false, chaptersA: 4, chaptersB: 3, common: 1 })).toBe(false);
+      expect(pairFounded({ isLinked: false, chaptersA: 3, chaptersB: 4, common: 1 })).toBe(false);
+    });
+    it('общих глав нет — нет, даже у героев без глав', () => {
+      expect(pairFounded({ isLinked: false, chaptersA: 0, chaptersB: 0, common: 0 })).toBe(false);
+    });
+    it('присутствие не посчитано — нет; связь в анализе — да без присутствия', () => {
+      expect(pairFounded({ isLinked: false, chaptersA: null, chaptersB: 3, common: 3 })).toBe(
+        false,
+      );
+      expect(pairFounded({ isLinked: true, chaptersA: null, chaptersB: null, common: 0 })).toBe(
+        true,
+      );
+    });
+  });
+
+  it('ключ по алфавиту из двух героев версии — без ошибок', () => {
+    expect(keyErrors('anna--tom')).toEqual([]);
+  });
+
+  it('ключ не по алфавиту, один и тот же герой, не герой версии, не одно «--» — отказ путём key', () => {
+    expect(keyErrors('tom--anna')).toEqual([
+      'key: pair keys go in alphabetical order: "anna--tom"',
+    ]);
+    expect(keyErrors('anna--anna')).toEqual(['key: a pair needs two different characters']);
+    expect(keyErrors('anna--stolz')).toEqual(['key: "stolz" is not a character of this version']);
+    for (const key of ['anna---tom', 'anna--tom--x', 'anna-tom', '--tom', 'anna--']) {
+      expect(keyErrors(key)).toEqual([
+        'key: a pair key is {a}--{b}: two character keys joined by one "--"',
+      ]);
+    }
+    // Длиннее предела ключа (60) — отказ, хотя оба героя есть (решение арбитра Q1).
+    const longKey = `${'a'.repeat(30)}--${'b'.repeat(30)}`;
+    expect(
+      checkWorldPair(pair(longKey), ctx(['a'.repeat(30), 'b'.repeat(30)]), evidence()).map(
+        (e) => e.path,
+      ),
+    ).toEqual(['key']);
+  });
+
+  it('условие заведения не выполнено — отказ путём key; выполнено — пусто', () => {
+    expect(
+      checkWorldPair(pair('anna--tom'), heroes, evidence({ isLinked: false })).map((e) => e.path),
+    ).toEqual(['key']);
+    expect(
+      checkWorldPair(
+        pair('anna--tom'),
+        heroes,
+        evidence({ isLinked: false, chaptersA: 3, chaptersB: 3, common: 1 }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('цитата пары: говорящий и о ком — только герои пары и не один и тот же', () => {
+    const q = (speakerKey: string | null, aboutKey: string | null) => ({
+      ...quote(),
+      speakerKey,
+      aboutKey,
+    });
+    expect(
+      checkWorldPair(
+        pair('anna--tom', {
+          quotes: [q('anna', 'tom'), q('olga', 'anna'), q('tom', 'tom'), q(null, null)],
+        }),
+        heroes,
+        evidence(),
+      ),
+    ).toEqual([
+      { path: 'quotes.1.speakerKey', message: '"olga" is not a character of this pair' },
+      { path: 'quotes.2.aboutKey', message: 'a quote of a pair is about the other character' },
+      // «Друг о друге» (`product.md` §6): о ком — обязательно, рассказчик без адресата — отказ.
+      {
+        path: 'quotes.3.speakerKey',
+        message: 'a quote of a pair is said by one of its characters',
+      },
+      { path: 'quotes.3.aboutKey', message: 'a quote of a pair names the character it is about' },
+    ]);
+    expect(
+      checkWorldPair(pair('anna--tom', { quotes: [q(null, 'tom')] }), heroes, evidence()),
+    ).toEqual([
+      // Рассказчик об одном из героев — не «друг о друге» (`product.md` §6, ревью круга 2).
+      {
+        path: 'quotes.0.speakerKey',
+        message: 'a quote of a pair is said by one of its characters',
+      },
+    ]);
+    expect(
+      checkWorldPair(pair('anna--tom', { quotes: [q('anna', 'tom')] }), heroes, evidence()),
+    ).toEqual([]);
+    // Ссылки цитат пары не проверяются второй раз общим правилом (ключи анализа ей не годятся).
+    expect(checkWorldRefs(pair('anna--tom', { quotes: [q('olga', null)] }), heroes)).toEqual([]);
+  });
+
+  it('поля не своего типа: у пары — героя, роль и формы; у героя — пары и aboutKey', () => {
+    const none = { aliasExclusions: null, aliasChapterExclusions: null };
+    expect(
+      checkWorldTypeFields(
+        pair('anna--tom', { role: 'main', aliases: ['A'], character: 'x', scenes: [] }),
+        { aliasExclusions: ['A'], aliasChapterExclusions: null },
+      ).map((e) => e.path),
+    ).toEqual(['character', 'scenes', 'role', 'aliases', 'aliasExclusions']);
+    // Источников у пары нет: внешних блоков у страницы пары нет (`product.md` §6, Q2).
+    expect(
+      checkWorldTypeFields(
+        pair('anna--tom', { sources: [{ title: 'S', url: 'https://x.io' }] }),
+        none,
+      ),
+    ).toEqual([{ path: 'sources', message: 'sources is not a field of a pair' }]);
+    expect(
+      checkWorldTypeFields(
+        entity({ conclusion: 'x', quotes: [{ ...quote(), aboutKey: 'tom' }] }),
+        none,
+      ),
+    ).toEqual([
+      { path: 'conclusion', message: 'conclusion is not a field of a character' },
+      { path: 'quotes.0.aboutKey', message: 'quotes.0.aboutKey is not a field of a character' },
+    ]);
+    expect(checkWorldTypeFields(pair('anna--tom'), none)).toEqual([]);
+  });
+
+  it('worldEntityRefs: герои ключа пары — ссылки (героя из-под пары не удалить), aboutKey — тоже', () => {
+    expect(
+      worldEntityRefs(pair('anna--tom', { quotes: [{ ...quote(), aboutKey: 'tom' }] })),
+    ).toEqual([
+      { kind: 'member', path: 'key', key: 'anna' },
+      { kind: 'member', path: 'key', key: 'tom' },
+      { kind: 'about', path: 'quotes.0.aboutKey', key: 'tom' },
+    ]);
+    // У героя ключ с «--» членов не даёт.
+    expect(worldEntityRefs(entity({ key: 'anna--tom' }))).toEqual([]);
+  });
+});
+
+describe('пара героев: заведённая пара и ссылки героя (F08-8c-1, решение арбитра R1, ревью круга 1)', () => {
+  const pair = (key: string, over: Partial<StoredWorldEntity> = {}) =>
+    entity({ key, type: 'pair', role: null, name: 'A and B', ...over });
+  const notFounded = () => ({ isLinked: false, chaptersA: 9, chaptersB: 9, common: 1 });
+
+  it('evidence = null (пара уже заведена) — условие заведения не проверяется; ключ — проверяется', () => {
+    const heroes = ctx(['anna', 'tom']);
+    expect(checkWorldPair(pair('anna--tom'), heroes, notFounded).map((e) => e.path)).toEqual([
+      'key',
+    ]);
+    expect(checkWorldPair(pair('anna--tom'), heroes, null)).toEqual([]);
+    expect(checkWorldPair(pair('tom--anna'), heroes, null).map((e) => e.path)).toEqual(['key']);
+  });
+
+  it('ссылка героя на ключ пары — неизвестный ключ: адресат отношения и реплики — герой', () => {
+    const c = {
+      ...ctx(['oblomov', 'olga']),
+      entityKeys: new Set(['oblomov', 'olga', 'oblomov--olga']),
+    };
+    expect(
+      checkWorldRefs(
+        entity({
+          relations: [{ to: 'oblomov--olga', label: 'pair' }],
+          quotes: [{ ...quote(), speakerKey: 'oblomov--olga' }],
+        }),
+        c,
+      ).map((e) => e.path),
+    ).toEqual(['relations.0.to', 'quotes.0.speakerKey']);
+  });
+
+  it('pairMembers: ровно одно «--» и обе половины не пусты', () => {
+    expect(pairMembers('anna--tom')).toEqual(['anna', 'tom']);
+    expect(pairMembers('anna-lee--tom')).toEqual(['anna-lee', 'tom']);
+    for (const key of ['anna', 'anna---tom', 'a--b--c', '--tom', 'anna--']) {
+      expect(pairMembers(key)).toBeNull();
+    }
+  });
+
+  it('pairEvidenceOf: связь в анализе в любую сторону; главы и общие главы из присутствия героев', () => {
+    const evidence = pairEvidenceOf(
+      [{ key: 'tom', relations: [{ to: 'anna', label: 'x' }] }],
+      new Map<string, unknown>([
+        ['anna', { chapters: [1, 2, 3], coPresence: { tom: [3, 2] } }],
+        ['tom', { chapters: [2, 3] }],
+      ]),
+    );
+    expect(evidence('anna', 'tom')).toEqual({
+      isLinked: true,
+      chaptersA: 3,
+      chaptersB: 2,
+      common: 2,
+    });
+    // Присутствие не посчитано (нет строки или нет `chapters`) — `null`, а не 0.
+    expect(evidence('anna', 'olga')).toEqual({
+      isLinked: false,
+      chaptersA: 3,
+      chaptersB: null,
+      common: 0,
+    });
   });
 });

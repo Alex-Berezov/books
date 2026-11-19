@@ -11,7 +11,7 @@ import {
   worldContentChanged,
   type StoredWorldEntity,
 } from './book-world-data';
-import { worldItemKey } from './world-quote-check';
+import { worldCompareKey, worldItemKey } from './world-quote-check';
 
 /**
  * F08-1, решение арбитра R9: импорт ставит `autoTextAt` только сущности, у которой после слияния
@@ -36,6 +36,10 @@ const stored = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
   critique: null,
   prototypes: null,
   adaptations: null,
+  compare: null,
+  bonds: null,
+  differences: null,
+  conclusion: null,
   faq: null,
   ...over,
 });
@@ -285,5 +289,37 @@ describe('исключённые главы у формы из колонки (F
         'Simon: 6',
       ]),
     ).toEqual([{ form: 'Simon', chapters: [6, 15] }]);
+  });
+});
+
+describe('пара читателю (F08-8c): несошедшаяся строка сравнения не отдаётся, форм нет', () => {
+  const kept = { feature: 'Kept', a: 'A', chapterA: 1, b: 'B', chapterB: 2 };
+  const gone = { feature: 'Gone', a: 'A', chapterA: 1, b: 'B', chapterB: 9 };
+  const row = {
+    key: 'anna--tom',
+    type: 'pair' as const,
+    name: 'Anna and Tom',
+    role: null,
+    short: 'Two.',
+    hasCore: true,
+    isIndexable: true,
+    mentionFirst: 1,
+    updatedAt: new Date(),
+    createdAt: new Date(),
+    aliases: null,
+    aliasExclusions: null,
+    sources: null,
+    mentions: { chapters: [1], first: 1, stale: [worldCompareKey(gone)] },
+    blocks: { compare: [gone, kept], conclusion: 'So.' },
+  };
+
+  it('читателю — без строки из stale; редактору — обе', () => {
+    expect(toEntityDto(row, { visibleKeys: new Set() }).compare).toEqual([kept]);
+    expect(toEntityDto(row).compare).toEqual([gone, kept]);
+    expect(toEntityDto(row).conclusion).toBe('So.');
+  });
+
+  it('в списке читателя у пары нет форм имени — «A и B» не цель перелинковки', () => {
+    expect(toReaderSummary(row).forms).toEqual([]);
   });
 });

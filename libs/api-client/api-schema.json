@@ -7871,6 +7871,41 @@
         ],
         "type": "object"
       },
+      "BookWorldCompareDto": {
+        "properties": {
+          "a": {
+            "description": "The first member of the key",
+            "maxLength": 1500,
+            "type": "string"
+          },
+          "b": {
+            "description": "The second member of the key",
+            "maxLength": 1500,
+            "type": "string"
+          },
+          "chapterA": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "chapterB": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "feature": {
+            "description": "Feature compared, e.g. origin",
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "feature",
+          "a",
+          "chapterA",
+          "b",
+          "chapterB"
+        ],
+        "type": "object"
+      },
       "BookWorldEditorDto": {
         "properties": {
           "aliasChapterExclusions": {
@@ -7901,7 +7936,7 @@
             "type": "string"
           },
           "isListed": {
-            "description": "The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); the page exists when the version is also published with a slug",
+            "description": "The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); a pair also needs both its characters listed (F08-8c); the page exists when the version is also published with a slug",
             "type": "boolean"
           },
           "isVisible": {
@@ -7982,7 +8017,25 @@
             "nullable": true,
             "type": "object"
           },
+          "bonds": {
+            "description": "Pairs only (F08-8c)",
+            "nullable": true,
+            "type": "string"
+          },
           "character": {
+            "nullable": true,
+            "type": "string"
+          },
+          "compare": {
+            "description": "Pairs only (F08-8c)",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldCompareDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "conclusion": {
+            "description": "Pairs only (F08-8c)",
             "nullable": true,
             "type": "string"
           },
@@ -7991,6 +8044,11 @@
             "type": "string"
           },
           "critique": {
+            "nullable": true,
+            "type": "string"
+          },
+          "differences": {
+            "description": "Pairs only (F08-8c)",
             "nullable": true,
             "type": "string"
           },
@@ -8123,6 +8181,10 @@
           "critique",
           "prototypes",
           "adaptations",
+          "compare",
+          "bonds",
+          "differences",
+          "conclusion",
           "faq",
           "sources",
           "mentions",
@@ -8177,13 +8239,39 @@
             "nullable": true,
             "type": "object"
           },
+          "bonds": {
+            "description": "Pairs only: what binds the two characters",
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
           "character": {
             "maxLength": 3000,
             "nullable": true,
             "type": "string"
           },
+          "compare": {
+            "description": "Pairs only (F08-8c): comparison table, at least 4 rows for the page core",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldCompareDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "conclusion": {
+            "description": "Pairs only: conclusion of the comparison; required for the page core",
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
           "critique": {
             "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "differences": {
+            "description": "Pairs only: what sets the two characters apart",
+            "maxLength": 1500,
             "nullable": true,
             "type": "string"
           },
@@ -8260,9 +8348,10 @@
             "type": "array"
           },
           "type": {
-            "description": "Only character for now; other entity types come with their own batches",
+            "description": "character or pair (F08-8c); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order",
             "enum": [
-              "character"
+              "character",
+              "pair"
             ],
             "type": "string"
           }
@@ -8524,7 +8613,7 @@
       "BookWorldMentionsDto": {
         "properties": {
           "chapters": {
-            "description": "Chapters the entity is found in, ascending",
+            "description": "Chapters the entity is found in, ascending; for a pair (F08-8c) — chapters where both characters are found",
             "items": {
               "type": "number"
             },
@@ -8575,6 +8664,12 @@
       },
       "BookWorldQuoteDto": {
         "properties": {
+          "aboutKey": {
+            "description": "Pairs only (F08-8c): the member of the pair the quote is about; with speakerKey, both are members and differ",
+            "nullable": true,
+            "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          },
           "chapter": {
             "minimum": 1,
             "type": "number"
@@ -30951,13 +31046,39 @@
             "nullable": true,
             "type": "object"
           },
+          "bonds": {
+            "description": "Pairs only: what binds the two characters",
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
           "character": {
             "maxLength": 3000,
             "nullable": true,
             "type": "string"
           },
+          "compare": {
+            "description": "Pairs only (F08-8c): comparison table, at least 4 rows for the page core",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldCompareDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "conclusion": {
+            "description": "Pairs only: conclusion of the comparison; required for the page core",
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
           "critique": {
             "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
+          "differences": {
+            "description": "Pairs only: what sets the two characters apart",
+            "maxLength": 1500,
             "nullable": true,
             "type": "string"
           },
@@ -31046,9 +31167,10 @@
             "type": "array"
           },
           "type": {
-            "description": "Only character for now; other entity types come with their own batches",
+            "description": "character or pair (F08-8c); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order",
             "enum": [
-              "character"
+              "character",
+              "pair"
             ],
             "type": "string"
           }

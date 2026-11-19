@@ -1,5 +1,10 @@
-import { computeWorldCore, mentionChapters, WORLD_CHARACTER_CORE } from './world-core';
-import { worldItemKey } from './world-quote-check';
+import {
+  computeWorldCore,
+  mentionChapters,
+  WORLD_CHARACTER_CORE,
+  WORLD_PAIR_CORE,
+} from './world-core';
+import { worldCompareKey, worldItemKey } from './world-quote-check';
 
 /**
  * F08-1: ядро героя на границах (`product.md` §3, `tech.md` §3) — ровно порог проходит, на один
@@ -98,5 +103,62 @@ describe('computeWorldCore: несошедшиеся пункты (F08-2, реш
   it('герой исчез из всех глав — ядра нет', () => {
     const r = computeWorldCore({ ...full(), mentions: { chapters: [], first: null } });
     expect(r.missing).toEqual([{ part: 'mentions', have: 0, need: 1 }]);
+  });
+});
+
+describe('computeWorldCore пары (F08-8c, решение арбитра `F08 | F08-8c` Q2)', () => {
+  const row = (i: number, over = {}) => ({
+    feature: `F${i}`,
+    a: 'A',
+    chapterA: 1,
+    b: 'B',
+    chapterB: 2,
+    ...over,
+  });
+  const pair = () => ({
+    type: 'pair' as const,
+    short: 'Two of them.',
+    character: null,
+    arc: null,
+    quotes: null,
+    scenes: null,
+    compare: [row(1), row(2), row(3), row(4)],
+    conclusion: 'So.',
+    mentions: { chapters: [2], first: 2 },
+  });
+  const parts = (input: Parameters<typeof computeWorldCore>[0]) =>
+    computeWorldCore(input).missing.map((m) => m.part);
+
+  it('порог — 4 строки сравнения, общих глав хотя бы одна', () => {
+    expect(WORLD_PAIR_CORE).toEqual({ compare: 4, mentionChapters: 1 });
+  });
+
+  it('полное ядро пары — без полей героя (характер, путь, цитаты, сцены)', () => {
+    expect(computeWorldCore(pair())).toEqual({ hasCore: true, missing: [] });
+  });
+
+  it('3 строки из 4 — ядра нет; строка без стороны или без главы не считается', () => {
+    expect(computeWorldCore({ ...pair(), compare: [row(1), row(2), row(3)] }).missing).toEqual([
+      { part: 'compare', have: 3, need: 4 },
+    ]);
+    const broken = [row(1), row(2), row(3), row(4, { b: ' ' }), row(5, { chapterB: null })];
+    expect(computeWorldCore({ ...pair(), compare: broken }).missing).toEqual([
+      { part: 'compare', have: 3, need: 4 },
+    ]);
+  });
+
+  it('строка сравнения в stale (глава ушла из версии) не считается', () => {
+    const stale = [worldCompareKey(row(4))];
+    expect(
+      computeWorldCore({ ...pair(), mentions: { chapters: [2], first: 2, stale } }).missing,
+    ).toEqual([{ part: 'compare', have: 3, need: 4 }]);
+  });
+
+  it('нет общих глав, «Коротко» и вывода — всё в missing', () => {
+    expect(parts({ ...pair(), short: null, conclusion: ' ', mentions: { chapters: [] } })).toEqual([
+      'short',
+      'mentions',
+      'conclusion',
+    ]);
   });
 });

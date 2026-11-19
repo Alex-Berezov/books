@@ -13,7 +13,12 @@ import { runInWorldTx, type WorldVersionState } from './book-world-lock';
 import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
 import { computeWorldCore } from './world-core';
 import { countWorldMentions, type StoredWorldMentions } from './world-mentions-count';
-import { worldDerivedUnchanged, worldListedWrite } from './world-public';
+import {
+  heroesFirst,
+  worldDerivedUnchanged,
+  worldListedWrite,
+  worldMembersReader,
+} from './world-public';
 import { deferWorldMentions, dueWorldMentions, requeueWorldMentions } from './world-mentions-queue';
 import { versionFingerprint } from './world-quote-check';
 
@@ -100,9 +105,16 @@ export class WorldMentionsService {
         }
         let written = 0;
         const now = new Date();
-        for (const row of current) {
+        // Герои — раньше пар: публичность пары читает `isListed` героев (решение арбитра
+        // `F08 | F08-8c` Q3), уже записанный в этой транзакции, — одним запросом на все пары.
+        const membersOf = worldMembersReader(tx, bookVersionId);
+        for (const row of [...current].sort(heroesFirst)) {
           const mentions = counted.byKey.get(row.key);
-          if (mentions && (await writeMentions(tx, bookVersionId, row, mentions, version, now))) {
+          if (!mentions) continue;
+          const hasListedMembers = await membersOf(row);
+          if (
+            await writeMentions(tx, bookVersionId, row, mentions, version, now, hasListedMembers)
+          ) {
             written++;
           }
         }
@@ -128,10 +140,16 @@ async function writeMentions(
   mentions: StoredWorldMentions,
   version: WorldVersionState,
   now: Date,
+  /** Пара: оба героя на сайте (`pairMembersIn`); у героя — `undefined`. */
+  hasListedMembers: boolean | undefined,
 ): Promise<boolean> {
   const core = computeWorldCore({ ...readStoredEntity(row), mentions });
   const coreMissing = core.missing.map((m) => m.part);
-  const listed = worldListedWrite({ ...row, mentions, hasCore: core.hasCore }, version, now);
+  const listed = worldListedWrite(
+    { ...row, mentions, hasListedMembers, hasCore: core.hasCore },
+    version,
+    now,
+  );
   const mentionsChanged = stableJson(row.mentions) !== stableJson(mentions);
   // Колонки числа глав и первой главы — вместе с `mentions`; строка, у которой они пусты при тех же
   // `mentions` (записана до колонки), получает их без сдвига `mentionsAt`.

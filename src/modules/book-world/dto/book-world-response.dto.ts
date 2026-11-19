@@ -9,6 +9,7 @@ import {
 import {
   BookWorldAdaptationDto,
   BookWorldArcDto,
+  BookWorldCompareDto,
   BookWorldChapterExclusionDto,
   BookWorldProfileDto,
   BookWorldQuoteDto,
@@ -25,7 +26,8 @@ export class BookWorldEditorDto {
     type: Boolean,
     description:
       'The entity is public apart from the version: core, read after the model text, visible ' +
-      '(computeWorldListed); the page exists when the version is also published with a slug',
+      '(computeWorldListed); a pair also needs both its characters listed (F08-8c); ' +
+      'the page exists when the version is also published with a slug',
   })
   isListed!: boolean;
 
@@ -199,7 +201,11 @@ export class BookWorldCoPresenceDto {
  * (белый список `readMentions`): номера абзацев и несошедшиеся пункты хранятся, но не отдаются.
  */
 export class BookWorldMentionsDto {
-  @ApiProperty({ type: [Number], description: 'Chapters the entity is found in, ascending' })
+  @ApiProperty({
+    type: [Number],
+    description:
+      'Chapters the entity is found in, ascending; for a pair (F08-8c) — chapters where both characters are found',
+  })
   chapters!: number[];
 
   @ApiProperty({ type: Number, nullable: true, description: 'First chapter it is found in' })
@@ -252,6 +258,18 @@ export class BookWorldEntityDto extends BookWorldEntitySummaryDto {
 
   @ApiProperty({ type: [BookWorldAdaptationDto], nullable: true })
   adaptations!: BookWorldAdaptationDto[] | null;
+
+  @ApiProperty({ type: [BookWorldCompareDto], nullable: true, description: 'Pairs only (F08-8c)' })
+  compare!: BookWorldCompareDto[] | null;
+
+  @ApiProperty({ type: String, nullable: true, description: 'Pairs only (F08-8c)' })
+  bonds!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, description: 'Pairs only (F08-8c)' })
+  differences!: string | null;
+
+  @ApiProperty({ type: String, nullable: true, description: 'Pairs only (F08-8c)' })
+  conclusion!: string | null;
 
   @ApiProperty({ type: [BookAnalysisFaqDto], nullable: true })
   faq!: BookAnalysisFaqDto[] | null;

@@ -76,13 +76,22 @@ import { isWorldRecountPending, markWorldMentionsDirty } from './world-mentions-
 import {
   WORLD_ENTITY_PUBLIC_WHERE,
   isWorldEntityPublic,
+  heroesFirst,
+  worldMembersReader,
+  type WorldMembersReader,
+  relistWorldPairs,
   worldDerivedUnchanged,
   worldListedWrite,
 } from './world-public';
 import { worldAlternates } from './world-alternates';
 import {
+  checkWorldPair,
   checkWorldRefs,
+  checkWorldTypeFields,
   duplicateWorldKeys,
+  pairEvidenceOf,
+  pairMembers,
+  pairsHolding,
   worldEntityRefs,
   type WorldRefError,
 } from './world-refs';
@@ -255,11 +264,16 @@ export class BookWorldService {
         const result = await this.plan(tx, bookVersionId, dto.entities, prefix, chapters);
         const now = new Date();
         let needsRecount = false;
-        for (const p of result) {
-          if ((await writePlanned(tx, bookVersionId, p, version, now)).needsRecount) {
-            needsRecount = true;
-          }
+        let listedMoved = false;
+        const membersOf = worldMembersReader(tx, bookVersionId);
+        // Герои — раньше пар: публичность пары читает `isListed` героев (решение арбитра
+        // `F08 | F08-8c` Q3); пары вне тела догоняет `relistWorldPairs`.
+        for (const p of [...result].sort((x, y) => heroesFirst(x.merged, y.merged))) {
+          const written = await writePlanned(tx, bookVersionId, p, version, now, membersOf);
+          needsRecount ||= written.needsRecount;
+          listedMoved ||= characterListedMoved(p.existing, written.row);
         }
+        if (listedMoved) await relistWorldPairs(tx, bookVersionId, version, now);
         // Присутствие считает только пересчёт (решение арбитра `F08 | F08-2` R2); очередь — только
         // если запись изменила вход подсчёта (R4, S2): формы имени, исключения, тип или набор.
         if (needsRecount) await markWorldMentionsDirty(tx, bookVersionId);
@@ -324,7 +338,18 @@ export class BookWorldService {
       assertWorldAsExpected(current, expected, 'The entity was changed by another editor');
       await revalidateChapters(tx, bookVersionId, chapters);
       const [p] = await this.plan(tx, bookVersionId, [input], prefix, chapters);
-      const written = await writePlanned(tx, bookVersionId, p, version, new Date());
+      const now = new Date();
+      const written = await writePlanned(
+        tx,
+        bookVersionId,
+        p,
+        version,
+        now,
+        worldMembersReader(tx, bookVersionId),
+      );
+      if (characterListedMoved(p.existing, written.row)) {
+        await relistWorldPairs(tx, bookVersionId, version, now);
+      }
       // `recountQueued` — из той же ветки, что ставит очередь (S5): фронт условие R4/S2 не повторяет.
       const recountQueued =
         written.needsRecount && (await markWorldMentionsDirty(tx, bookVersionId));
@@ -362,17 +387,22 @@ export class BookWorldService {
       const [others, analysis] = await Promise.all([
         tx.bookWorldEntity.findMany({
           where: { bookVersionId, key: { not: key } },
-          select: { key: true, blocks: true },
+          select: { key: true, type: true, blocks: true },
           orderBy: { key: 'asc' },
           take: BOOK_WORLD_LIMITS.entities,
         }),
         tx.bookAnalysis.findUnique({ where: { bookVersionId }, select: { characters: true } }),
       ]);
       // Ссылка на ключ, который есть и у героя анализа, после удаления остаётся действительной
-      // (`checkWorldRefs` принимает ключи анализа) — удалению она не мешает.
+      // (`checkWorldRefs` принимает ключи анализа) — удалению она не мешает. Герой ключа пары
+      // (`member`) — только герой мира: его ключ анализа не заменяет (`F08-8c`).
       const stillResolves = analysisCharacterKeys(analysis?.characters).has(key);
-      const referencedBy = (stillResolves ? [] : others)
-        .filter((o) => worldEntityRefs(readStoredBlocks(o.blocks)).some((r) => r.key === key))
+      const referencedBy = others
+        .filter((o) =>
+          worldEntityRefs({ ...readStoredBlocks(o.blocks), key: o.key, type: o.type }).some(
+            (r) => r.key === key && (r.kind === 'member' || !stillResolves),
+          ),
+        )
         .map((o) => o.key);
       if (referencedBy.length > 0) {
         throw codedConflict(
@@ -414,7 +444,11 @@ export class BookWorldService {
       }
       // Не раньше последнего текста модели: часы другого экземпляра могли уйти вперёд (как `T184`).
       const readAt = new Date(Math.max(Date.now(), entity.autoTextAt.getTime()));
-      return updateState(tx, bookVersionId, entity, { readAt }, version);
+      const row = await updateState(tx, bookVersionId, entity, { readAt }, version);
+      if (characterListedMoved(entity, row)) {
+        await relistWorldPairs(tx, bookVersionId, version, new Date());
+      }
+      return row;
     });
     return withEditor(row);
   }
@@ -433,9 +467,14 @@ export class BookWorldService {
       ...(dto.isVisible !== undefined ? { isVisible: dto.isVisible } : {}),
       ...(dto.isIndexable !== undefined ? { isIndexable: dto.isIndexable } : {}),
     };
-    const row = await runInWorldTx(this.prisma, bookVersionId, async (tx, version) =>
-      updateState(tx, bookVersionId, await findEntity(tx, bookVersionId, key), patch, version),
-    );
+    const row = await runInWorldTx(this.prisma, bookVersionId, async (tx, version) => {
+      const entity = await findEntity(tx, bookVersionId, key);
+      const updated = await updateState(tx, bookVersionId, entity, patch, version);
+      if (characterListedMoved(entity, updated)) {
+        await relistWorldPairs(tx, bookVersionId, version, new Date());
+      }
+      return updated;
+    });
     return withEditor(row);
   }
 
@@ -474,21 +513,42 @@ export class BookWorldService {
     prefix: (i: number) => string,
     chapters: ChapterCheck,
   ): Promise<PlannedEntity[]> {
-    const [existingRows, versionKeys, analysis] = await Promise.all([
+    const pairKeys = inputs.flatMap((i) => (i.type === 'pair' ? (pairMembers(i.key) ?? []) : []));
+    const [existingRows, versionKeys, analysis, memberRows] = await Promise.all([
       client.bookWorldEntity.findMany({
         where: { bookVersionId, key: { in: inputs.map((i) => i.key) } },
         select: BOOK_WORLD_SELECT,
       }),
       client.bookWorldEntity.findMany({
         where: { bookVersionId },
-        select: { key: true },
+        select: { key: true, type: true },
         orderBy: { key: 'asc' },
         take: BOOK_WORLD_LIMITS.entities,
       }),
       client.bookAnalysis.findUnique({ where: { bookVersionId }, select: { characters: true } }),
+      // Присутствие героев пар тела — вход условия заведения (Q4); без пар не читается.
+      pairKeys.length === 0
+        ? Promise.resolve<{ key: string; mentions: Prisma.JsonValue }[]>([])
+        : client.bookWorldEntity.findMany({
+            where: { bookVersionId, key: { in: [...new Set(pairKeys)] } },
+            select: { key: true, mentions: true },
+            take: BOOK_WORLD_LIMITS.entities,
+          }),
     ]);
     const byKey = new Map(existingRows.map((r) => [r.key, r]));
     const entityKeys = new Set([...versionKeys.map((r) => r.key), ...inputs.map((i) => i.key)]);
+    // Тип после записи: пришедший в теле поверх сохранённого.
+    const typeOf = new Map<string, string>([
+      ...versionKeys.map((r) => [r.key, r.type] as const),
+      ...inputs.map((i) => [i.key, i.type] as const),
+    ]);
+    const characterKeys = new Set(
+      [...typeOf].flatMap(([key, type]) => (type === 'character' ? [key] : [])),
+    );
+    const evidence = pairEvidenceOf(
+      analysis?.characters,
+      new Map<string, unknown>(memberRows.map((r) => [r.key, r.mentions] as const)),
+    );
     const errors: WorldRefError[] = [];
     if (entityKeys.size > BOOK_WORLD_LIMITS.entities) {
       errors.push({
@@ -496,7 +556,11 @@ export class BookWorldService {
         message: `the version would hold ${entityKeys.size} entities, at most ${BOOK_WORLD_LIMITS.entities}`,
       });
     }
-    const ctx = { entityKeys, analysisKeys: analysisCharacterKeys(analysis?.characters) };
+    const ctx = {
+      entityKeys,
+      characterKeys,
+      analysisKeys: analysisCharacterKeys(analysis?.characters),
+    };
 
     const merged = inputs.map((input, i) => {
       const row = byKey.get(input.key) ?? null;
@@ -508,7 +572,33 @@ export class BookWorldService {
           message: row ? 'name cannot be cleared' : 'name is required for a new entity',
         });
       }
-      for (const e of checkWorldRefs(entity, ctx)) {
+      const typeErrors = checkWorldTypeFields(entity, {
+        aliasExclusions:
+          input.aliasExclusions === undefined
+            ? readAliasExclusions(row?.aliasExclusions)
+            : compactBlock(input.aliasExclusions),
+        aliasChapterExclusions:
+          input.aliasChapterExclusions === undefined
+            ? readAliasChapterExclusions(row?.aliasChapterExclusions)
+            : compactBlock(input.aliasChapterExclusions),
+      });
+      // Условие заведения — только у новой пары (строки нет или она была не парой; решение арбитра
+      // `F08 | F08-8c-1` R1): заведённая пара правится, даже если общих глав стало меньше трети.
+      const pairErrors =
+        entity.type === 'pair'
+          ? checkWorldPair(entity, ctx, row?.type === 'pair' ? null : evidence)
+          : [];
+      // Герой пары не меняет тип: пара осталась бы с не-героем (как удаление — 409 по `member`).
+      if (row?.type === 'character' && entity.type !== 'character') {
+        const pairs = pairsHolding(input.key, versionKeys);
+        if (pairs.length > 0) {
+          errors.push({
+            path: `${prefix(i)}type`,
+            message: `"${input.key}" is a character of pairs ${pairs.join(', ')}: its type cannot change`,
+          });
+        }
+      }
+      for (const e of [...typeErrors, ...checkWorldRefs(entity, ctx), ...pairErrors]) {
         errors.push({ path: `${prefix(i)}${e.path}`, message: e.message });
       }
       // Предел глав на запись (решение арбитра `F08 | F08-8a` п.5) — и после слияния повторов формы:
@@ -559,7 +649,7 @@ export class BookWorldService {
         warnings: core.missing.map((m) => ({
           code: 'core_incomplete' as const,
           path: `${prefix(i)}${m.part}`,
-          message: coreMessage(m),
+          message: coreMessage(m, entity.type),
         })),
       };
     });
@@ -638,7 +728,7 @@ async function checkChapters(
       errors.push(
         issue.kind === 'chapter'
           ? {
-              path: `${prefix(i)}${issue.item}.chapter`,
+              path: `${prefix(i)}${issue.item}.${issue.field}`,
               message: `chapter ${issue.chapter} is not in this version`,
             }
           : {
@@ -699,9 +789,11 @@ function throwIfErrors(errors: readonly WorldRefError[]): void {
   }
 }
 
-function coreMessage(m: WorldCoreResult['missing'][number]): string {
+function coreMessage(m: WorldCoreResult['missing'][number], type: string): string {
   if (m.part === 'mentions') {
-    return 'mentions: the entity is not found in any chapter yet; the page will not be published';
+    return type === 'pair'
+      ? 'mentions: no chapter with both characters yet; the page will not be published'
+      : 'mentions: the entity is not found in any chapter yet; the page will not be published';
   }
   if (m.need === 1) return `${m.part} is empty; the page will not be published`;
   return `${m.part}: ${m.have} of ${m.need} with a chapter; the page will not be published`;
@@ -719,6 +811,17 @@ function savedSummary(p: PlannedEntity) {
 function withEditor(row: WorldEditorSummaryRow): BookWorldEntitySummaryDto {
   return { ...toSummary(row), editor: editorOf(row) };
 }
+
+/**
+ * У героя сменилась публичность — пары версии пересчитываются (`relistWorldPairs`, Q3): герой
+ * появился или ушёл с сайта, либо сменил тип. Иначе пары не читаются вовсе.
+ */
+const characterListedMoved = (
+  before: { type: string; isListed: boolean } | null,
+  after: { type: string; isListed: boolean },
+) =>
+  (before?.type === 'character' && before.isListed) !==
+  (after.type === 'character' && after.isListed);
 
 /** Ключи героев анализа версии: только строки `key` элементов `characters`. */
 function analysisCharacterKeys(characters: Prisma.JsonValue | undefined): Set<string> {
@@ -758,6 +861,7 @@ async function writePlanned(
   p: PlannedEntity,
   version: WorldVersionState,
   now: Date,
+  membersOf: WorldMembersReader,
 ): Promise<{ row: WorldEditorRow; needsRecount: boolean }> {
   const state = p.existing ?? {
     isVisible: true,
@@ -773,6 +877,8 @@ async function writePlanned(
     {
       ...state,
       autoTextAt,
+      type: p.merged.type,
+      hasListedMembers: await membersOf(p.merged),
       role: p.merged.role,
       hasCore: p.core.hasCore,
     },
@@ -843,7 +949,7 @@ const searchInput = (entity: Parameters<typeof mentionForms>[0]) => ({
  * Отметки без смены текста: ядро пересчитывается от сохранённых блоков и присутствия (его пишет
  * не эта ручка), `isListed` и `firstPublishedAt` — заново; `autoTextAt` не трогается (R9).
  */
-function updateState(
+async function updateState(
   tx: Prisma.TransactionClient,
   bookVersionId: string,
   entity: WorldEditorRow,
@@ -852,7 +958,12 @@ function updateState(
 ): Promise<WorldEditorRow> {
   const core = computeWorldCore({ ...readStoredEntity(entity), mentions: entity.mentions });
   const listed = worldListedWrite(
-    { ...entity, ...patch, hasCore: core.hasCore },
+    {
+      ...entity,
+      ...patch,
+      hasListedMembers: await worldMembersReader(tx, bookVersionId)(entity),
+      hasCore: core.hasCore,
+    },
     version,
     new Date(),
   );
