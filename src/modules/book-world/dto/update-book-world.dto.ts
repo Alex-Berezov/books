@@ -30,6 +30,7 @@ import {
   BOOK_WORLD_LIMITS,
   BookWorldAdaptationDto,
   BookWorldArcDto,
+  BookWorldChapterExclusionDto,
   BookWorldProfileDto,
   BookWorldQuoteDto,
   BookWorldRelationDto,
@@ -104,6 +105,16 @@ export class BookWorldEntityInputDto {
   @IsNotEmpty({ each: true })
   @MaxLength(BOOK_WORLD_LIMITS.name, { each: true })
   aliasExclusions?: string[] | null;
+
+  @ApiPropertyOptional({
+    type: [BookWorldChapterExclusionDto],
+    nullable: true,
+    description:
+      'Chapters where a name form is not counted: namesakes sharing the form (F08-8a). ' +
+      'Only this form, only these chapters; a form that is not searched or a chapter not in the version has no effect',
+  })
+  @NestedList(() => BookWorldChapterExclusionDto, BOOK_WORLD_LIMITS.chapterExclusions)
+  aliasChapterExclusions?: BookWorldChapterExclusionDto[] | null;
 
   @ApiPropertyOptional({ type: String, nullable: true, maxLength: BOOK_WORLD_LIMITS.short })
   @OptionalText(BOOK_WORLD_LIMITS.short)

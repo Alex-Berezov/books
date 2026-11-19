@@ -7739,6 +7739,12 @@ export interface components {
       /** @description Mentions of any name form in the chapter */
       count: number;
     };
+    BookWorldChapterExclusionDto: {
+      /** @description Chapters of the version where this form is not counted */
+      chapters: number[];
+      /** @description Name form as written */
+      form: string;
+    };
     BookWorldCoPresenceDto: {
       /** @description Chapters where both are found, ascending */
       chapters: number[];
@@ -7746,6 +7752,8 @@ export interface components {
       key: string;
     };
     BookWorldEditorDto: {
+      /** @description Entity page only: chapters where a name form is not counted (F08-8a) */
+      aliasChapterExclusions?: components['schemas']['BookWorldChapterExclusionDto'][] | null;
       /** @description Entity page only: name forms excluded from mention search (F08-2) */
       aliasExclusions?: string[] | null;
       /** Format: date-time */
@@ -7809,6 +7817,8 @@ export interface components {
     };
     BookWorldEntityInputDto: {
       adaptations?: components['schemas']['BookWorldAdaptationDto'][] | null;
+      /** @description Chapters where a name form is not counted: namesakes sharing the form (F08-8a). Only this form, only these chapters; a form that is not searched or a chapter not in the version has no effect */
+      aliasChapterExclusions?: components['schemas']['BookWorldChapterExclusionDto'][] | null;
       /** @description Name forms excluded from mention search: false matches with ordinary words (F08-2) */
       aliasExclusions?: string[] | null;
       /** @description Name forms for mention search (F08-2) */
@@ -15647,6 +15657,8 @@ export interface components {
     };
     UpdateBookWorldEntityDto: {
       adaptations?: components['schemas']['BookWorldAdaptationDto'][] | null;
+      /** @description Chapters where a name form is not counted: namesakes sharing the form (F08-8a). Only this form, only these chapters; a form that is not searched or a chapter not in the version has no effect */
+      aliasChapterExclusions?: components['schemas']['BookWorldChapterExclusionDto'][] | null;
       /** @description Name forms excluded from mention search: false matches with ordinary words (F08-2) */
       aliasExclusions?: string[] | null;
       /** @description Name forms for mention search (F08-2) */

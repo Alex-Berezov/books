@@ -1191,6 +1191,131 @@ describe('BookWorld e2e', () => {
     expect(editor.body.entity.editor.stale).toEqual([]);
   });
 
+  it('F08-8a: исключённые главы у формы — форма не считается в этих главах, поле видит только редактор', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, {
+      language: 'en',
+      entities: [hero('letter', { name: 'Letter' })],
+    }).expect(200);
+    await drain(versionId);
+    const before = await row(versionId, 'letter');
+    expect(before.mentions).toMatchObject({ chapters: [2] });
+
+    const saved = await putEntity(versionId, 'letter', {
+      language: 'en',
+      type: 'character',
+      aliasChapterExclusions: [
+        { form: 'LETTER', chapters: [2] },
+        { form: 'letter', chapters: [9999] },
+        { form: 'Nobody', chapters: [1] },
+      ],
+    }).expect(200);
+    expect(saved.body.recountQueued).toBe(true);
+    await drain(versionId);
+    const after = await row(versionId, 'letter');
+    expect(after.mentions).toMatchObject({ chapters: [], first: null });
+    expect(after.aliasChapterExclusions).toEqual([
+      { form: 'LETTER', chapters: [2, 9999] },
+      { form: 'Nobody', chapters: [1] },
+    ]);
+    expect(after.autoTextAt).toEqual(before.autoTextAt);
+
+    const editor = await request(http())
+      .get(`/versions/${versionId}/world/letter`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(editor.body.entity.editor.aliasChapterExclusions).toEqual(after.aliasChapterExclusions);
+
+    // Запись только о форме, которой нет, пересчёт не ставит (S7).
+    const stray = await putEntity(versionId, 'letter', {
+      language: 'en',
+      type: 'character',
+      aliasChapterExclusions: [
+        { form: 'LETTER', chapters: [2, 9999] },
+        { form: 'Nobody', chapters: [1, 3] },
+      ],
+    }).expect(200);
+    expect(stray.body.recountQueued).toBe(false);
+
+    // Снятие исключения возвращает главу.
+    await putEntity(versionId, 'letter', {
+      language: 'en',
+      type: 'character',
+      aliasChapterExclusions: null,
+    }).expect(200);
+    await drain(versionId);
+    expect((await row(versionId, 'letter')).mentions).toMatchObject({ chapters: [2] });
+  });
+
+  it('F08-8a: импорт версии несёт исключённые главы: поле записано, пересчёт его учёл', async () => {
+    const { versionId } = await createVersion();
+    await put(versionId, {
+      language: 'en',
+      entities: [
+        hero('letter', {
+          name: 'Letter',
+          aliasChapterExclusions: [{ form: 'Letter', chapters: [2] }],
+        }),
+      ],
+    }).expect(200);
+    await drain(versionId);
+    const after = await row(versionId, 'letter');
+    expect(after.aliasChapterExclusions).toEqual([{ form: 'Letter', chapters: [2] }]);
+    expect(after.mentions).toMatchObject({ chapters: [] });
+  });
+
+  it('F08-8a: повторы формы сливаются — предел глав считается после слияния, 400 с путём поля', async () => {
+    const { versionId } = await createVersion();
+    const half = BOOK_WORLD_LIMITS.chapterExclusionChapters;
+    const res = await put(versionId, {
+      language: 'en',
+      entities: [
+        hero('letter', {
+          name: 'Letter',
+          aliasChapterExclusions: [
+            { form: 'Letter', chapters: Array.from({ length: half }, (_, i) => i + 1) },
+            { form: 'LETTER', chapters: Array.from({ length: half }, (_, i) => half + i + 1) },
+          ],
+        }),
+      ],
+    }).expect(400);
+    expect(JSON.stringify(res.body)).toContain('entities.0.aliasChapterExclusions');
+  });
+
+  it.each([
+    ['дробная глава', [{ form: 'Letter', chapters: [1.5] }]],
+    ['глава 0', [{ form: 'Letter', chapters: [0] }]],
+    ['глава больше предела', [{ form: 'Letter', chapters: [BOOK_WORLD_LIMITS.chapter + 1] }]],
+    ['пустой список глав', [{ form: 'Letter', chapters: [] }]],
+    ['пустая форма', [{ form: '  ', chapters: [1] }]],
+    ['лишний ключ', [{ form: 'Letter', chapters: [1], note: 'x' }]],
+    [
+      'записей больше предела',
+      Array.from({ length: BOOK_WORLD_LIMITS.chapterExclusions + 1 }, (_, i) => ({
+        form: `Form${i}`,
+        chapters: [1],
+      })),
+    ],
+    [
+      'глав в записи больше предела',
+      [
+        {
+          form: 'Letter',
+          chapters: Array.from(
+            { length: BOOK_WORLD_LIMITS.chapterExclusionChapters + 1 },
+            (_, i) => i + 1,
+          ),
+        },
+      ],
+    ],
+  ])('F08-8a: исключённые главы — 400 на мусор: %s', async (_label, aliasChapterExclusions) => {
+    const { versionId } = await createVersion();
+    await put(versionId, {
+      language: 'en',
+      entities: [hero('letter', { name: 'Letter', aliasChapterExclusions })],
+    }).expect(400);
+  });
+
   it('F08-2: правка главы ставит задачу; пересчёт обновляет mentions с прежним updatedAt, вкладка без 409', async () => {
     const { versionId } = await createVersion();
     await makeListed(versionId);
@@ -1281,6 +1406,7 @@ describe('BookWorld e2e', () => {
     expect(reader.body.entity.quotes).toHaveLength(3);
     expect(reader.body.entity.editor).toBeUndefined();
     expect(reader.body.entity).not.toHaveProperty('aliasExclusions');
+    expect(reader.body.entity).not.toHaveProperty('aliasChapterExclusions');
   });
 
   it('F08-2: удаление несошедшейся цитаты не прячет соседнюю — stale по содержанию, без пересчёта (S1)', async () => {

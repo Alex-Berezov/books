@@ -87,3 +87,45 @@ describe('присутствие на тексте книги: Евангели�
     });
   });
 });
+
+/**
+ * F08-8a (решение арбитра `F08 | F08-8a`): исключённые главы у формы на том же тексте. «Симона» —
+ * брат Иисуса в 6:3, Симон прокажённый в 14:3, Симон Киринеянин в 15:21; Пётр в главах 6 и 15 больше
+ * ничем не назван, в 14 — «Петр» (14:29 и далее). Эталон размечен вручную по
+ * `test/fixtures/language-corpus/mark/ru.txt`, не выведен из счётчика.
+ */
+describe('исключённые главы у формы на тексте книги: Евангелие от Марка, ru (F08-8a)', () => {
+  const count = (exclusions: { form: string; chapters: number[] }[]) => {
+    const counter = new WorldMentionCounter(
+      [
+        {
+          key: 'peter',
+          name: 'Пётр',
+          aliases: ['Петра', 'Петру', 'Петром', 'Петре', 'Симон', 'Симона', 'Симону', 'Симоном'],
+          aliasExclusions: null,
+          aliasChapterExclusions: exclusions,
+        },
+        {
+          key: 'judas',
+          name: 'Иуда',
+          aliases: ['Иуды', 'Иуде', 'Иуду', 'Иудою', 'Иудой'],
+          aliasExclusions: null,
+        },
+      ],
+      new Set(['peter', 'judas']),
+    );
+    chapters.forEach((text, i) => counter.addChapterText(i + 1, htmlToParagraphs(html(text))));
+    return counter.result();
+  };
+
+  it('«Симона» исключена в главах тёзок: 6 и 15 уходят, 14 остаётся по «Петр»', () => {
+    const r = count([{ form: 'Симона', chapters: [6, 14, 15] }]);
+    expect(r.get('peter')!.chapters).toEqual([1, 3, 5, 8, 9, 10, 11, 13, 14, 16]);
+    expect(r.get('judas')!.coPresence).toEqual({ peter: [3, 14] });
+  });
+
+  it('исключается только записанная форма: «Симон» в 15 не снимает падеж «Симона»', () => {
+    const r = count([{ form: 'Симон', chapters: [15] }]);
+    expect(r.get('peter')!.chapters).toContain(15);
+  });
+});

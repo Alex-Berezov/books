@@ -6,9 +6,13 @@ import {
   EMPTY_BOOK_ANALYSIS,
   readStoredAnalysis,
 } from '../../book-analysis/book-analysis-data';
-import { BOOK_WORLD_PUBLIC_SELECT, readStoredEntity } from '../../book-world/book-world-data';
+import {
+  BOOK_WORLD_PUBLIC_SELECT,
+  readAliasChapterExclusions,
+  readStoredEntity,
+} from '../../book-world/book-world-data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
-import { WorldMentionCounter } from '../../book-world/world-mentions';
+import { WorldMentionCounter, type WorldChapterExclusion } from '../../book-world/world-mentions';
 import { LlmService } from '../../llm/llm.service';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
@@ -183,7 +187,13 @@ async function openWorldSources(
 /** Присутствие кандидатов по текстам глав (в памяти, без записи - пишет только пересчёт, R2). */
 function countCandidates(
   chapters: ReadonlyArray<{ number: number; content: string }>,
-  candidates: ReadonlyArray<{ key: string; name: string; aliases: string[]; exclusions: string[] }>,
+  candidates: ReadonlyArray<{
+    key: string;
+    name: string;
+    aliases: string[];
+    exclusions: string[];
+    chapterExclusions: WorldChapterExclusion[] | null;
+  }>,
 ): Map<string, CandidateMentions> {
   const counter = new WorldMentionCounter(
     candidates.map((c) => ({
@@ -191,6 +201,7 @@ function countCandidates(
       name: c.name,
       aliases: c.aliases,
       aliasExclusions: c.exclusions,
+      aliasChapterExclusions: c.chapterExclusions,
     })),
     new Set<string>(),
   );
@@ -728,9 +739,13 @@ export class WorldWriteHandler {
     const folded = foldedVersion(index);
     const exclusions = await this.prisma.bookWorldEntity.findMany({
       where: { bookVersionId, key: { in: base.map((c) => c.key) } },
-      select: { key: true, aliasExclusions: true },
+      select: { key: true, aliasExclusions: true, aliasChapterExclusions: true },
       take: BOOK_WORLD_LIMITS.entities,
     });
+    // Исключённые главы у формы (`F08-8a`): кандидат считается тем же правилом, что пересчёт.
+    const chapterExcluded = new Map(
+      exclusions.map((e) => [e.key, readAliasChapterExclusions(e.aliasChapterExclusions)]),
+    );
     const excluded = new Map(
       exclusions.map((e) => [
         e.key,
@@ -758,6 +773,7 @@ export class WorldWriteHandler {
           ...new Set([...(stored?.aliases ?? []), ...(found?.aliases ?? []), ...forms]),
         ].slice(0, BOOK_WORLD_LIMITS.aliases),
         exclusions: excluded.get(c.key) ?? [],
+        chapterExclusions: chapterExcluded.get(c.key) ?? null,
       };
     });
     const mentions = countCandidates(context.chapters, named);

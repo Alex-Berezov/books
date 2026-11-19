@@ -9,6 +9,7 @@ import {
 import {
   BookWorldAdaptationDto,
   BookWorldArcDto,
+  BookWorldChapterExclusionDto,
   BookWorldProfileDto,
   BookWorldQuoteDto,
   BookWorldRelationDto,
@@ -64,6 +65,13 @@ export class BookWorldEditorDto {
     description: 'Entity page only: name forms excluded from mention search (F08-2)',
   })
   aliasExclusions?: string[] | null;
+
+  @ApiPropertyOptional({
+    type: [BookWorldChapterExclusionDto],
+    nullable: true,
+    description: 'Entity page only: chapters where a name form is not counted (F08-8a)',
+  })
+  aliasChapterExclusions?: BookWorldChapterExclusionDto[] | null;
 
   @ApiPropertyOptional({
     type: [String],

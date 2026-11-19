@@ -1,5 +1,14 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsInt, IsOptional, Max, Min, ValidateIf } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayMinSize,
+  IsArray,
+  IsInt,
+  IsOptional,
+  Max,
+  Min,
+  ValidateIf,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { applyDecorators } from '@nestjs/common';
 import { Trim } from '../../../shared/validators/trim.decorator';
@@ -12,6 +21,9 @@ import {
   RequiredText,
   isAbsent,
 } from '../../../shared/validators/block-fields.decorator';
+
+/** Форм имени у сущности; исключённых глав — по записи на имя и каждую форму (`F08-8a`). */
+const WORLD_ALIASES = 30;
 
 /**
  * Блоки сущности мира книги (F08-1), пока только героя (`character`). Форма —
@@ -26,7 +38,10 @@ import {
 export const BOOK_WORLD_LIMITS = {
   // Сущностей в версии: и тело импорта, и итог после слияния (выборки списка и `worldKeys` — этим пределом).
   entities: 100,
-  aliases: 30,
+  aliases: WORLD_ALIASES,
+  // Исключённые главы у формы (F08-8a, решение арбитра `F08 | F08-8a` п.5): записей — имя и все формы.
+  chapterExclusions: WORLD_ALIASES + 1,
+  chapterExclusionChapters: 500,
   name: BOOK_ANALYSIS_LIMITS.title,
   short: BOOK_ANALYSIS_LIMITS.mainIdea,
   profileField: BOOK_ANALYSIS_LIMITS.title,
@@ -84,6 +99,30 @@ export class BookWorldArcStageDto {
   @ApiProperty({ type: Number, minimum: 1 })
   @RequiredChapter()
   chapter!: number;
+}
+
+/**
+ * Форма имени и главы, где она не считается (тёзки, `F08-8a`, решение арбитра `F08 | F08-8a`):
+ * форма, которой нет среди форм, и глава не из версии принимаются и просто не действуют.
+ */
+export class BookWorldChapterExclusionDto {
+  @ApiProperty({ maxLength: BOOK_WORLD_LIMITS.name, description: 'Name form as written' })
+  @RequiredText(BOOK_WORLD_LIMITS.name)
+  form!: string;
+
+  @ApiProperty({
+    type: [Number],
+    minItems: 1,
+    maxItems: BOOK_WORLD_LIMITS.chapterExclusionChapters,
+    description: 'Chapters of the version where this form is not counted',
+  })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ArrayMaxSize(BOOK_WORLD_LIMITS.chapterExclusionChapters)
+  @IsInt({ each: true })
+  @Min(1, { each: true })
+  @Max(BOOK_WORLD_LIMITS.chapter, { each: true })
+  chapters!: number[];
 }
 
 /** Путь героя «в начале → в конце»; этапы вложены (решение арбитра `F08 | F08-1` R7). */

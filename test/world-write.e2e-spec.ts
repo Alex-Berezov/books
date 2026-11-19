@@ -639,6 +639,21 @@ describe('World run «Write World» (e2e)', () => {
     expect(run.candidates.find((c) => c.key === 'anna')?.aliases).toEqual(['Anna', 'the sister']);
   });
 
+  it('F08-8a: chapters the editor excluded for a name form are not the candidate chapters, and the run keeps the field', async () => {
+    const versionId = await version();
+    const exclusions = [{ form: 'Anna', chapters: [3] }];
+    await putEntity(versionId, 'anna', {
+      name: 'Anna',
+      role: 'main',
+      aliasChapterExclusions: exclusions,
+    }).expect(200);
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    expect(run.candidates.find((c) => c.key === 'anna')?.chapters).toEqual([1]);
+    expect((await entityOf(versionId, 'anna'))?.aliasChapterExclusions).toEqual(exclusions);
+  });
+
   it('«Accept» of a proposal whose block the editor changed again - 409 WORLD_BLOCK_CHANGED with the current block; «Discard» leaves the entity as is', async () => {
     const versionId = await version();
     await putEntity(versionId, 'boris', {

@@ -26,6 +26,7 @@ import {
   editorOf,
   entityEditorOf,
   mergeEntity,
+  readAliasChapterExclusions,
   readAliasExclusions,
   worldMentionSourceOf,
   readStoredBlocks,
@@ -66,7 +67,11 @@ import {
   worldChapterItems,
   worldQuoteKey,
 } from './world-quote-check';
-import { mentionForms } from './world-mentions';
+import {
+  activeChapterExclusions,
+  mentionForms,
+  normalizeChapterExclusions,
+} from './world-mentions';
 import { isWorldRecountPending, markWorldMentionsDirty } from './world-mentions-queue';
 import {
   WORLD_ENTITY_PUBLIC_WHERE,
@@ -99,6 +104,8 @@ interface PlannedEntity {
   changed: boolean;
   /** Исключения форм имени после слияния: не содержание (решение арбитра `F08 | F08-2` Q4). */
   exclusions: string[] | null;
+  /** Исключённые главы у формы после слияния (`F08-8a`): тоже не содержание, `autoTextAt` не ставят. */
+  chapterExclusions: ReturnType<typeof normalizeChapterExclusions>;
   core: WorldCoreResult;
   warnings: BookWorldWarningDto[];
 }
@@ -504,6 +511,16 @@ export class BookWorldService {
       for (const e of checkWorldRefs(entity, ctx)) {
         errors.push({ path: `${prefix(i)}${e.path}`, message: e.message });
       }
+      // Предел глав на запись (решение арбитра `F08 | F08-8a` п.5) — и после слияния повторов формы:
+      // DTO видит записи по одной, а «Simon» и «SIMON» по 500 глав сольются в одну на 1000.
+      for (const e of normalizeChapterExclusions(input.aliasChapterExclusions ?? null) ?? []) {
+        if (e.chapters.length > BOOK_WORLD_LIMITS.chapterExclusionChapters) {
+          errors.push({
+            path: `${prefix(i)}aliasChapterExclusions`,
+            message: `form "${e.form}" excludes ${e.chapters.length} chapters after merging repeated forms, at most ${BOOK_WORLD_LIMITS.chapterExclusionChapters}`,
+          });
+        }
+      }
       return { row, stored, entity };
     });
     errors.push(
@@ -525,6 +542,11 @@ export class BookWorldService {
         incoming === undefined
           ? readAliasExclusions(row?.aliasExclusions)
           : ((compactBlock(incoming) as string[] | null) ?? null);
+      const incomingChapters = inputs[i].aliasChapterExclusions;
+      const chapterExclusions =
+        incomingChapters === undefined
+          ? readAliasChapterExclusions(row?.aliasChapterExclusions)
+          : normalizeChapterExclusions(incomingChapters);
       const mentions = row?.mentions ?? null;
       const core = computeWorldCore({ ...entity, mentions });
       return {
@@ -532,6 +554,7 @@ export class BookWorldService {
         merged: entity as StoredWorldEntity & { name: string },
         changed: worldContentChanged(stored, entity),
         exclusions,
+        chapterExclusions,
         core,
         warnings: core.missing.map((m) => ({
           code: 'core_incomplete' as const,
@@ -743,6 +766,7 @@ async function writePlanned(
     firstPublishedAt: null,
     mentions: null,
     aliasExclusions: null,
+    aliasChapterExclusions: null,
   };
   const autoTextAt = p.changed ? autoTextStamp(now, state.readAt) : state.autoTextAt;
   const listed = worldListedWrite(
@@ -757,7 +781,9 @@ async function writePlanned(
   );
   const coreMissing = p.core.missing.map((m) => m.part);
   const exclusionsChanged =
-    stableJson(readAliasExclusions(state.aliasExclusions)) !== stableJson(p.exclusions);
+    stableJson(readAliasExclusions(state.aliasExclusions)) !== stableJson(p.exclusions) ||
+    stableJson(readAliasChapterExclusions(state.aliasChapterExclusions)) !==
+      stableJson(p.chapterExclusions);
   // Ничего не изменилось — ни содержание, ни производные поля: запись не нужна, и `updatedAt`
   // (сверка второй вкладки) не сдвигается от повторного импорта того же JSON.
   if (
@@ -771,6 +797,7 @@ async function writePlanned(
   const data = {
     ...toEntityWrite(p.merged),
     ...jsonField('aliasExclusions', p.exclusions),
+    ...jsonField('aliasChapterExclusions', p.chapterExclusions),
     hasCore: p.core.hasCore,
     coreMissing,
     ...(p.changed ? { autoTextAt } : {}),
@@ -791,17 +818,26 @@ async function writePlanned(
   // сравниваются без порядка: подсчёт от него не зависит, перестановка форм и исключение формы,
   // которой нет, пересчёт не ставят. Правка цитат, сцен и пути его не ставит: пункты сверены
   // R4/R8 в этой записи, `stale` хранится ключами по содержанию (S1).
+  const after = {
+    ...p.merged,
+    aliasExclusions: p.exclusions,
+    aliasChapterExclusions: p.chapterExclusions,
+  };
   const needsRecount =
     !p.existing ||
     p.existing.type !== p.merged.type ||
-    stableJson(sortedForms(worldMentionSourceOf(p.existing))) !==
-      stableJson(sortedForms({ ...p.merged, aliasExclusions: p.exclusions }));
+    stableJson(searchInput(worldMentionSourceOf(p.existing))) !== stableJson(searchInput(after));
   return { row, needsRecount };
 }
 
-/** Итоговые формы поиска без порядка — только для сравнения «вход подсчёта изменился» (S7). */
-const sortedForms = (entity: Parameters<typeof mentionForms>[0]) =>
-  [...mentionForms(entity)].sort();
+/**
+ * Итоговый вход поиска без порядка — только для сравнения «вход подсчёта изменился» (S7): формы
+ * и действующие исключения глав у них (`F08-8a`); запись о форме, которой нет, его не меняет.
+ */
+const searchInput = (entity: Parameters<typeof mentionForms>[0]) => ({
+  forms: [...mentionForms(entity)].sort(),
+  chapterExclusions: activeChapterExclusions(entity),
+});
 
 /**
  * Отметки без смены текста: ядро пересчитывается от сохранённых блоков и присутствия (его пишет

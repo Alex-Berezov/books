@@ -1,6 +1,7 @@
 import { htmlToParagraphs } from '../translation/content-draft/content-draft.text';
 import {
   WorldMentionCounter,
+  activeChapterExclusions,
   countInParagraph,
   foldMention,
   mentionForms,
@@ -238,4 +239,66 @@ describe('общая фикстура свёртки форм с фронтом 
       expect(row.forms.map(foldMention)).toEqual(row.folded);
     },
   );
+});
+
+describe('исключённые главы у формы (F08-8a, решение арбитра `F08 | F08-8a`)', () => {
+  const peter: WorldMentionSource = {
+    key: 'peter',
+    name: 'Пётр',
+    aliases: ['Симон'],
+    aliasExclusions: null,
+    aliasChapterExclusions: [{ form: 'СИМОН', chapters: [2] }],
+  };
+  const judas: WorldMentionSource = {
+    key: 'judas',
+    name: 'Иуда',
+    aliases: null,
+    aliasExclusions: null,
+  };
+  const text: [number, string][] = [
+    [1, '<p>Симон пошёл.</p>'],
+    [2, '<p>Иуда и Симон Киринеянин.</p><p>Симон нёс крест.</p>'],
+    [3, '<p>Иуда и Симон.</p><p>Пётр ответил.</p>'],
+  ];
+
+  it('форма не считается в исключённой главе и считается в остальных', () => {
+    const r = count([peter, judas], text).get('peter')!;
+    expect(r.chapters).toEqual([1, 3]);
+    expect(r.first).toBe(1);
+    expect(r.perChapter).toEqual({ '1': 1, '3': 2 });
+  });
+
+  it('другая форма той же сущности в исключённой главе считается', () => {
+    const r = count([peter], [[2, '<p>Симон Киринеянин.</p><p>Пётр отрёкся.</p>']]).get('peter')!;
+    expect(r.chapters).toEqual([2]);
+    expect(r.perChapter).toEqual({ '2': 1 });
+    expect(r.paragraphs).toEqual({ '2': [1] });
+  });
+
+  it('абзацы и совместное присутствие — без исключённой главы', () => {
+    const r = count([peter, judas], text, ['peter', 'judas']);
+    expect(r.get('peter')!.paragraphs).toEqual({ '1': [0], '3': [0, 1] });
+    expect(r.get('peter')!.coPresence).toEqual({ judas: [3] });
+    expect(r.get('judas')!.coPresence).toEqual({ peter: [3] });
+  });
+
+  it('запись о форме, которой нет среди форм, ничего не меняет', () => {
+    const stray = { ...peter, aliasChapterExclusions: [{ form: 'Кифа', chapters: [1, 2, 3] }] };
+    const plain = { ...peter, aliasChapterExclusions: null };
+    expect(count([stray], text).get('peter')).toEqual(count([plain], text).get('peter'));
+    expect(activeChapterExclusions(stray)).toEqual([]);
+  });
+
+  it('действующие исключения: свёрнутая форма, повторы слиты, главы по возрастанию', () => {
+    const e = activeChapterExclusions({
+      ...peter,
+      aliasExclusions: ['Пётр'],
+      aliasChapterExclusions: [
+        { form: 'Симон', chapters: [5, 2] },
+        { form: ' симон ', chapters: [2, 1] },
+        { form: 'Петр', chapters: [4] },
+      ],
+    });
+    expect(e).toEqual([{ form: 'симон', chapters: [1, 2, 5] }]);
+  });
 });

@@ -7828,6 +7828,29 @@
         ],
         "type": "object"
       },
+      "BookWorldChapterExclusionDto": {
+        "properties": {
+          "chapters": {
+            "description": "Chapters of the version where this form is not counted",
+            "items": {
+              "type": "number"
+            },
+            "maxItems": 500,
+            "minItems": 1,
+            "type": "array"
+          },
+          "form": {
+            "description": "Name form as written",
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "form",
+          "chapters"
+        ],
+        "type": "object"
+      },
       "BookWorldCoPresenceDto": {
         "properties": {
           "chapters": {
@@ -7850,6 +7873,14 @@
       },
       "BookWorldEditorDto": {
         "properties": {
+          "aliasChapterExclusions": {
+            "description": "Entity page only: chapters where a name form is not counted (F08-8a)",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldChapterExclusionDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "aliasExclusions": {
             "description": "Entity page only: name forms excluded from mention search (F08-2)",
             "items": {
@@ -8104,6 +8135,14 @@
           "adaptations": {
             "items": {
               "$ref": "#/components/schemas/BookWorldAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "aliasChapterExclusions": {
+            "description": "Chapters where a name form is not counted: namesakes sharing the form (F08-8a). Only this form, only these chapters; a form that is not searched or a chapter not in the version has no effect",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldChapterExclusionDto"
             },
             "nullable": true,
             "type": "array"
@@ -30870,6 +30909,14 @@
           "adaptations": {
             "items": {
               "$ref": "#/components/schemas/BookWorldAdaptationDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "aliasChapterExclusions": {
+            "description": "Chapters where a name form is not counted: namesakes sharing the form (F08-8a). Only this form, only these chapters; a form that is not searched or a chapter not in the version has no effect",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldChapterExclusionDto"
             },
             "nullable": true,
             "type": "array"

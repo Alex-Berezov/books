@@ -332,6 +332,8 @@ model BookWorldEntity {
   role             String?
   aliases          Json?
   aliasExclusions  Json?
+  /// Исключённые главы у формы (`F08-8a`): `[{ form, chapters }]` — тёзки внутри одной формы.
+  aliasChapterExclusions Json?
   blocks           Json?
   sources          Json?
   /// Посчитанное присутствие по главам (`F08-2`): `{ chapters: number[], ... }`.

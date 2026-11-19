@@ -1,4 +1,5 @@
 import {
+  readAliasChapterExclusions,
   WORLD_EDITOR_SUMMARY_SELECT,
   WORLD_READER_SUMMARY_SELECT,
   WORLD_SUMMARY_SELECT,
@@ -268,5 +269,21 @@ describe('отметки редактора (F08-3, решение арбитр�
   it('editorOf отдаёт isListed как есть — вкладка не повторяет условие публичности', () => {
     expect(editorOf({ ...marks, isListed: true }).isListed).toBe(true);
     expect(editorOf({ ...marks, isListed: false }).isListed).toBe(false);
+  });
+});
+
+describe('исключённые главы у формы из колонки (F08-8a)', () => {
+  it('не массив — null; записи без строки формы или без целых глав отброшены', () => {
+    expect(readAliasChapterExclusions(null)).toBeNull();
+    expect(readAliasChapterExclusions({ form: 'Simon', chapters: [1] })).toBeNull();
+    expect(
+      readAliasChapterExclusions([
+        { form: 'Simon', chapters: [6, 1.5, '7', 15] },
+        { form: 'Peter', chapters: ['3', 2.5] },
+        { form: 7, chapters: [1] },
+        { form: 'Kifa' },
+        'Simon: 6',
+      ]),
+    ).toEqual([{ form: 'Simon', chapters: [6, 15] }]);
   });
 });

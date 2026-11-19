@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import type { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { BookWorldService, WORLD_QUOTE_CHAPTERS_BATCH } from './book-world.service';
@@ -339,6 +340,97 @@ describe('BookWorldService: запись сущности и присутств�
     await save([{ key: 'a', type: 'character', aliasExclusions: ['Nobody'] }], false);
     expect(prisma.bookWorldEntity.update.mock.calls[0][0].data.aliasExclusions).toEqual(['Nobody']);
     expect(dirtyVersions(prisma)).toEqual([]);
+  });
+
+  describe('исключённые главы у формы (F08-8a, решение арбитра `F08 | F08-8a`)', () => {
+    const counted = (over: Row = {}) =>
+      savedRow('a', {
+        name: 'Hope',
+        mentions: { chapters: [1], first: 1, stale: [] },
+        coreMissing: ['short', 'character', 'arc', 'quotes', 'scenes'],
+        ...over,
+      });
+
+    it('правка исключённых глав пишется слитой и ставит очередь; autoTextAt не ставится', async () => {
+      const { save, prisma } = setup({ saved: [counted()], chapters: { 1: '<p>Hope.</p>' } });
+      await save(
+        [
+          {
+            key: 'a',
+            type: 'character',
+            aliasChapterExclusions: [
+              { form: ' Hope ', chapters: [3, 1] },
+              { form: 'HOPE', chapters: [1, 2] },
+            ],
+          },
+        ],
+        false,
+      );
+      expect(prisma.bookWorldEntity.update).toHaveBeenCalledTimes(1);
+      const data = prisma.bookWorldEntity.update.mock.calls[0][0].data;
+      expect(data.aliasChapterExclusions).toEqual([{ form: 'Hope', chapters: [1, 2, 3] }]);
+      expect(data).not.toHaveProperty('autoTextAt');
+      expect(dirtyVersions(prisma)).toEqual(['v1']);
+    });
+
+    it('очистка исключённых глав пишет null и ставит очередь', async () => {
+      const { save, prisma } = setup({
+        saved: [counted({ aliasChapterExclusions: [{ form: 'Hope', chapters: [1] }] })],
+        chapters: { 1: '<p>Hope.</p>' },
+      });
+      await save([{ key: 'a', type: 'character', aliasChapterExclusions: [] }], false);
+      expect(prisma.bookWorldEntity.update.mock.calls[0][0].data.aliasChapterExclusions).toBe(
+        Prisma.DbNull,
+      );
+      expect(dirtyVersions(prisma)).toEqual(['v1']);
+    });
+
+    it('те же главы в другом порядке и регистре формы — пишется, но очередь не ставится (S7)', async () => {
+      const { save, prisma } = setup({
+        saved: [counted({ aliasChapterExclusions: [{ form: 'Hope', chapters: [1, 2] }] })],
+        chapters: { 1: '<p>Hope.</p>' },
+      });
+      await save(
+        [
+          {
+            key: 'a',
+            type: 'character',
+            aliasChapterExclusions: [{ form: 'hope', chapters: [2, 1] }],
+          },
+        ],
+        false,
+      );
+      expect(prisma.bookWorldEntity.update).toHaveBeenCalledTimes(1);
+      expect(dirtyVersions(prisma)).toEqual([]);
+    });
+
+    it('запись о форме, которой среди форм нет, сохраняется без очереди (п.3)', async () => {
+      const { save, prisma } = setup({ saved: [counted()], chapters: { 1: '<p>Hope.</p>' } });
+      await save(
+        [
+          {
+            key: 'a',
+            type: 'character',
+            aliasChapterExclusions: [{ form: 'Nobody', chapters: [9] }],
+          },
+        ],
+        false,
+      );
+      expect(prisma.bookWorldEntity.update.mock.calls[0][0].data.aliasChapterExclusions).toEqual([
+        { form: 'Nobody', chapters: [9] },
+      ]);
+      expect(dirtyVersions(prisma)).toEqual([]);
+    });
+
+    it('поле не пришло — сохранённые исключения остаются, записи и очереди нет', async () => {
+      const { save, prisma } = setup({
+        saved: [counted({ aliasChapterExclusions: [{ form: 'Hope', chapters: [1] }] })],
+        chapters: { 1: '<p>Hope.</p>' },
+      });
+      await save([{ key: 'a', type: 'character' }], false);
+      expect(prisma.bookWorldEntity.update).not.toHaveBeenCalled();
+      expect(dirtyVersions(prisma)).toEqual([]);
+    });
   });
 
   it('повторный импорт без изменений: записи нет и очереди нет (R4)', async () => {

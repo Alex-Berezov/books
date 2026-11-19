@@ -5,7 +5,7 @@ import { isRecord } from '../../shared/prisma/json-record.util';
 import { stableJson } from '../../shared/json/stable-json';
 import { mentionChapters, mentionStale } from './world-core';
 import { stalePaths, worldItemKey } from './world-quote-check';
-import { publicMentionForms } from './world-mentions';
+import { publicMentionForms, type WorldChapterExclusion } from './world-mentions';
 import type {
   BookAnalysisFaqDto,
   BookAnalysisRole,
@@ -146,6 +146,7 @@ export const BOOK_WORLD_SELECT = {
   ...BOOK_WORLD_PUBLIC_SELECT,
   ...WORLD_EDITOR_FIELDS,
   aliasExclusions: true,
+  aliasChapterExclusions: true,
   mentionsAt: true,
 } as const satisfies Prisma.BookWorldEntitySelect;
 
@@ -243,6 +244,7 @@ export function worldMentionSourceOf(row: WorldEditorRow) {
     name: s.name,
     aliases: s.aliases,
     aliasExclusions: readAliasExclusions(row.aliasExclusions),
+    aliasChapterExclusions: readAliasChapterExclusions(row.aliasChapterExclusions),
     quotes: s.quotes,
     scenes: s.scenes,
     arc: s.arc,
@@ -256,6 +258,19 @@ function readStringList(value: unknown): string[] | null {
 
 /** Исключения форм имени из колонки (`F08-2`): только строки. */
 export const readAliasExclusions = readStringList;
+
+/**
+ * Исключённые главы у формы из колонки (`F08-8a`): только записи со строкой `form` и хоть одной
+ * целой главой (запись без глав карточка не сохранила бы обратно); не массив — `null`.
+ */
+export function readAliasChapterExclusions(value: unknown): WorldChapterExclusion[] | null {
+  if (!Array.isArray(value)) return null;
+  return value.flatMap((e: unknown) => {
+    if (!isRecord(e) || typeof e.form !== 'string' || !Array.isArray(e.chapters)) return [];
+    const chapters = e.chapters.filter((n): n is number => Number.isInteger(n));
+    return chapters.length > 0 ? [{ form: e.form, chapters }] : [];
+  });
+}
 
 /**
  * Слияние как `mergeAnalysis`: поля нет в теле — прежнее; `null`, `''` или `[]` — очищено; список
@@ -404,6 +419,7 @@ export function entityEditorOf(row: WorldEditorRow, recountPending: boolean): Bo
   return {
     ...editorOf(row),
     aliasExclusions: readAliasExclusions(row.aliasExclusions),
+    aliasChapterExclusions: readAliasChapterExclusions(row.aliasChapterExclusions),
     stale: stalePaths(readStoredEntity(row), mentionStale(row.mentions)),
     mentionsAt: row.mentionsAt,
     recountPending,

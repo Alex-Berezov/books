@@ -5,7 +5,8 @@ import { continuesWord, foldQuote, paragraphsOf } from '../translation/draft-qua
  * `product.md` §9): считает код по тексту глав версии, не модель.
  *
  * Формы — `name` + `aliases` минус `aliasExclusions`, минус формы короче
- * `WORLD_MIN_FORM_LETTERS` букв. Поиск — целым словом (границы слова Unicode), без регистра,
+ * `WORLD_MIN_FORM_LETTERS` букв. В главах из `aliasChapterExclusions` своя форма не ищется
+ * (`F08-8a`). Поиск — целым словом (границы слова Unicode), без регистра,
  * `ё` = `е`. Абзац — индекс в `paragraphsOf(htmlToParagraphs(html))`: то же правило абзаца, что
  * у сверки цитат и читалки (`F08-10`).
  */
@@ -21,11 +22,19 @@ export function foldMention(text: string): string {
   return foldQuote(text).replace(/ё/g, 'е');
 }
 
+/** Форма имени и главы, где она не считается (тёзки, `F08-8a`, решение арбитра `F08 | F08-8a`). */
+export interface WorldChapterExclusion {
+  form: string;
+  chapters: number[];
+}
+
 export interface WorldMentionSource {
   key: string;
   name: string | null;
   aliases: readonly string[] | null;
   aliasExclusions: readonly string[] | null;
+  /** Исключённые главы у формы; нет поля или `null` — исключений нет. */
+  aliasChapterExclusions?: readonly WorldChapterExclusion[] | null;
 }
 
 /**
@@ -56,6 +65,43 @@ export function mentionForms(entity: WorldMentionSource): string[] {
  */
 export function publicMentionForms(entity: WorldMentionSource): string[] {
   return [...formsOf(entity).values()];
+}
+
+/**
+ * Исключённые главы у формы к записи (решение арбитра `F08 | F08-8a` п.1): повторы формы по
+ * `foldMention` слиты в первое написание, главы без повторов по возрастанию; пусто — `null`.
+ */
+export function normalizeChapterExclusions(
+  list: readonly WorldChapterExclusion[] | null,
+): WorldChapterExclusion[] | null {
+  const byForm = new Map<string, { form: string; chapters: Set<number> }>();
+  for (const e of list ?? []) {
+    const form = e.form.trim();
+    const folded = foldMention(form);
+    if (folded === '' || e.chapters.length === 0) continue;
+    const entry = byForm.get(folded) ?? { form, chapters: new Set<number>() };
+    for (const n of e.chapters) entry.chapters.add(n);
+    byForm.set(folded, entry);
+  }
+  const out = [...byForm.values()].map(({ form, chapters }) => ({
+    form,
+    chapters: [...chapters].sort((a, b) => a - b),
+  }));
+  return out.length > 0 ? out : null;
+}
+
+/**
+ * Действующие исключения глав (решение арбитра `F08 | F08-8a`): то же слияние, что у записи
+ * (`normalizeChapterExclusions`), только у форм, по которым идёт поиск (`mentionForms`), форма
+ * в виде `foldMention`, записи по форме. Запись о форме, которой нет среди форм, не действует —
+ * ни на подсчёт, ни на постановку пересчёта (S7).
+ */
+export function activeChapterExclusions(entity: WorldMentionSource): WorldChapterExclusion[] {
+  const forms = formsOf(entity);
+  return (normalizeChapterExclusions(entity.aliasChapterExclusions ?? null) ?? [])
+    .map((e) => ({ form: foldMention(e.form), chapters: e.chapters }))
+    .filter((e) => forms.has(e.form))
+    .sort((a, b) => (a.form < b.form ? -1 : a.form > b.form ? 1 : 0));
 }
 
 /**
@@ -101,14 +147,25 @@ export interface WorldMentions {
  * хранится только счёт. `coPresence` считается между сущностями из `coPresenceKeys`.
  */
 export class WorldMentionCounter {
-  private readonly forms: { key: string; forms: string[] }[];
+  private readonly forms: {
+    key: string;
+    forms: string[];
+    /** Глава → формы, которые в ней не считаются (`activeChapterExclusions`). */
+    excluded: Map<number, Set<string>>;
+  }[];
   private readonly found = new Map<string, Map<number, { count: number; paragraphs: number[] }>>();
 
   constructor(
     entities: readonly WorldMentionSource[],
     private readonly coPresenceKeys: ReadonlySet<string> = new Set(),
   ) {
-    this.forms = entities.map((e) => ({ key: e.key, forms: mentionForms(e) }));
+    this.forms = entities.map((e) => {
+      const excluded = new Map<number, Set<string>>();
+      for (const { form, chapters } of activeChapterExclusions(e)) {
+        for (const n of chapters) excluded.set(n, (excluded.get(n) ?? new Set()).add(form));
+      }
+      return { key: e.key, forms: mentionForms(e), excluded };
+    });
     for (const e of this.forms) this.found.set(e.key, new Map());
   }
 
@@ -116,11 +173,13 @@ export class WorldMentionCounter {
   addChapterText(number: number, text: string): void {
     const paragraphs = paragraphsOf(text).map(foldMention);
     for (const entity of this.forms) {
-      if (entity.forms.length === 0) continue;
+      const off = entity.excluded.get(number);
+      const forms = off ? entity.forms.filter((f) => !off.has(f)) : entity.forms;
+      if (forms.length === 0) continue;
       let count = 0;
       const at: number[] = [];
       paragraphs.forEach((p, i) => {
-        const n = countInParagraph(p, entity.forms);
+        const n = countInParagraph(p, forms);
         if (n > 0) {
           count += n;
           at.push(i);
