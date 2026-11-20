@@ -1,3 +1,4 @@
+import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
 import {
   computeWorldListed,
   isWorldEntityPublic,
@@ -9,6 +10,7 @@ import {
   pairMembersIn,
   relistWorldPairs,
   worldListedWrite,
+  worldMembersReader,
   type WorldListedInput,
 } from './world-public';
 
@@ -127,15 +129,18 @@ describe('worldListedWrite (F08-1, R2)', () => {
 describe('пара героев (F08-8c, решение арбитра `F08 | F08-8c` Q3)', () => {
   const pair = (over: Partial<WorldListedInput> = {}) =>
     main({ type: 'pair', role: null, hasListedMembers: true, ...over });
-  // Рубильник R2 (`F08 | F08-8c-1`): до фронта `F08-8c-2` пара не публична; здесь — включён.
-  beforeEach(() => {
+  // Рубильник R2 (`F08 | F08-8c-1`): с `F08-8c-2` включён по умолчанию; выключенное положение
+  // проверяется отдельным тестом и возвращается.
+  afterEach(() => {
     WORLD_PAIRS.public = true;
   });
-  afterEach(() => {
-    WORLD_PAIRS.public = false;
+
+  it('рубильник включён по умолчанию — пара с обоими героями на сайте', () => {
+    expect(WORLD_PAIRS.public).toBe(true);
+    expect(computeWorldListed(pair())).toBe(true);
   });
 
-  it('рубильник выключен (по умолчанию до F08-8c-2) — пара не на сайте, герой — на сайте', () => {
+  it('рубильник выключен — пара не на сайте, герой — на сайте', () => {
     WORLD_PAIRS.public = false;
     expect(computeWorldListed(pair())).toBe(false);
     expect(computeWorldListed(main())).toBe(true);
@@ -174,6 +179,32 @@ describe('пара героев (F08-8c, решение арбитра `F08 | F0
 
   it('герой с ролью не читает hasListedMembers', () => {
     expect(computeWorldListed(main({ hasListedMembers: false }))).toBe(true);
+  });
+
+  it('worldMembersReader: один запрос героев на все пары транзакции; у героя — undefined', async () => {
+    const findMany = jest.fn().mockResolvedValue([{ key: 'anna' }, { key: 'tom' }]);
+    const tx = { bookWorldEntity: { findMany } } as unknown as Parameters<
+      typeof worldMembersReader
+    >[0];
+    const read = worldMembersReader(tx, 'v1');
+
+    expect(await read({ key: 'anna', type: 'character' })).toBeUndefined();
+    // Героев без пар запрос не читает вовсе.
+    expect(findMany).not.toHaveBeenCalled();
+    const answers = await Promise.all([
+      read({ key: 'anna--tom', type: 'pair' }),
+      read({ key: 'anna--olga', type: 'pair' }),
+      read({ key: 'olga--tom', type: 'pair' }),
+    ]);
+    expect(await read({ key: 'anna--tom', type: 'pair' })).toBe(true);
+
+    expect(answers).toEqual([true, false, false]);
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany.mock.calls[0][0]).toEqual({
+      where: { bookVersionId: 'v1', type: 'character', isListed: true },
+      select: { key: true },
+      take: BOOK_WORLD_LIMITS.entities,
+    });
   });
 
   it('relistWorldPairs: пишет только пары со сменившимся isListed, с прежним updatedAt', async () => {

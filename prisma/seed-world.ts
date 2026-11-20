@@ -69,6 +69,7 @@ const CHAPTERS_EN: Record<number, string[]> = {
     'Tom Reed lit the lamp in the tower.',
     'Anna Lark closed the map for the last time.',
     'Ned Fox kept the keys.',
+    '"He never let the lamp go out," she said.',
   ],
 };
 
@@ -355,9 +356,8 @@ const ENTITIES_EN: EntitySeed[] = [
     isListed: false,
   },
   {
-    // Пара (`F08-8c`): общие главы — `coPresence` Анны с Томом. Оба героя на сайте, но рубильник
-    // пар выключен до фронта `F08-8c-2` (решение арбитра `F08 | F08-8c-1` R2): `isListed` — false;
-    // `F08-8c-2` включает рубильник и ставит здесь true.
+    // Пара (`F08-8c`): общие главы — `coPresence` Анны с Томом. Оба героя на сайте, рубильник пар
+    // включён (`F08-8c-2`, решение арбитра `F08 | F08-8c-1` R2): `isListed` — true, как у героев.
     key: 'anna-lark--tom-reed',
     type: 'pair',
     name: 'Anna Lark and Tom Reed',
@@ -379,8 +379,8 @@ const ENTITIES_EN: EntitySeed[] = [
       differences: 'Service text: she reads the map, he keeps the light.',
       quotes: [
         {
-          text: 'Anna Lark and Tom Reed crossed the bridge together.',
-          chapter: 2,
+          text: 'He never let the lamp go out',
+          chapter: 3,
           speakerKey: 'anna-lark',
           aboutKey: 'tom-reed',
           interpretation: 'What it shows.',
@@ -401,7 +401,7 @@ const ENTITIES_EN: EntitySeed[] = [
     },
     hasCore: true,
     coreMissing: [],
-    isListed: false,
+    isListed: true,
   },
 ];
 

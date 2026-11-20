@@ -32,7 +32,11 @@ import { TRANSLATION_SAMPLE_SLUG, sampleChapterHtml } from '../prisma/seed-trans
 import { WORLD_ACCEPTANCE, worldAcceptanceBooks } from '../prisma/seed-world';
 import { readStoredEntity } from '../src/modules/book-world/book-world-data';
 import { computeWorldCore } from '../src/modules/book-world/world-core';
-import { computeWorldListed, pairMembersIn } from '../src/modules/book-world/world-public';
+import {
+  computeWorldListed,
+  pairMembersIn,
+  WORLD_PAIRS,
+} from '../src/modules/book-world/world-public';
 import { WorldMentionsService } from '../src/modules/book-world/world-mentions.service';
 import { httpServerOf } from './http-server';
 import { grantStaffRoles } from './helpers/staff-roles';
@@ -1310,6 +1314,16 @@ describe('Seeded dataset (e2e)', () => {
             hasCore: core.hasCore,
             missing: core.missing.map((m) => m.part),
           });
+          // Рубильник пар включён (F08-8c-2): пара сида с обоими героями на сайте сама на сайте,
+          // с отметкой первого показа, как у героев. Выключенный рубильник дал бы false здесь.
+          if (row.type === 'pair') {
+            expect(WORLD_PAIRS.public).toBe(true);
+            expect({ key: row.key, isListed: row.isListed }).toEqual({
+              key: row.key,
+              isListed: true,
+            });
+            expect(row.firstPublishedAt).not.toBeNull();
+          }
           expect({ key: row.key, isListed: row.isListed }).toEqual({
             key: row.key,
             isListed: computeWorldListed({
@@ -1356,14 +1370,28 @@ describe('Seeded dataset (e2e)', () => {
       },
     );
 
-    it('читатель видит ровно публичные сущности: en — три, ru — одна (пара — после F08-8c-2)', async () => {
+    it('читатель видит ровно публичные сущности: en — четыре с парой, ru — одна', async () => {
       const keysOf = async (language: Language) => {
         const { id } = await versionOf(WORLD_ACCEPTANCE.book, language);
         const res = await get(`/versions/${id}/world`).expect(200);
         const body = res.body as { entities: { key: string }[] };
         return body.entities.map((e) => e.key).sort();
       };
-      expect(await keysOf(Language.en)).toEqual(['anna-lark', 'mira-vale', 'tom-reed']);
+      expect(await keysOf(Language.en)).toEqual([
+        'anna-lark',
+        'anna-lark--tom-reed',
+        'mira-vale',
+        'tom-reed',
+      ]);
+      // Страница пары сида открыта читателю (F08-8c-2): тот же маршрут, что берёт фронт `/wiki/{a}--{b}`.
+      const en = await versionOf(WORLD_ACCEPTANCE.book, Language.en);
+      const pairPage = await get(`/versions/${en.id}/world/anna-lark--tom-reed`).expect(200);
+      const pairEntity = (
+        pairPage.body as { entity: { key: string; type: string; compare: unknown[] } }
+      ).entity;
+      expect(pairEntity).toMatchObject({ key: 'anna-lark--tom-reed', type: 'pair' });
+      // В сиде у пары ровно четыре строки сравнения (`prisma/seed-world.ts`).
+      expect(pairEntity.compare).toHaveLength(4);
       // Мир есть, но скрыт — читателю пусто (`/wiki` — 404, кнопки нет: §19 п.6).
       const hidden = await versionOf(WORLD_ACCEPTANCE.hidden, Language.en);
       const hiddenList = await get(`/versions/${hidden.id}/world`).expect(200);
@@ -1388,9 +1416,15 @@ describe('Seeded dataset (e2e)', () => {
       const { items } = res.body as { items: Item[] };
       const book = items.find((i) => i.slug === WORLD_ACCEPTANCE.book);
       expect(book?.alternates.map((a) => a.language)).toEqual(['en', 'ru']);
-      expect(book?.entities.map((e) => e.key)).toEqual(['anna-lark', 'tom-reed']);
+      expect(book?.entities.map((e) => e.key)).toEqual([
+        'anna-lark',
+        'anna-lark--tom-reed',
+        'tom-reed',
+      ]);
       expect(book?.entities[0].alternates.map((a) => a.language)).toEqual(['en', 'ru']);
+      // Пара и Том — только en: в ru-версии сида их нет.
       expect(book?.entities[1].alternates.map((a) => a.language)).toEqual(['en']);
+      expect(book?.entities[2].alternates.map((a) => a.language)).toEqual(['en']);
       expect(items.find((i) => i.slug === WORLD_ACCEPTANCE.noindex)).toBeUndefined();
       expect(items.find((i) => i.slug === WORLD_ACCEPTANCE.hidden)).toBeUndefined();
     });

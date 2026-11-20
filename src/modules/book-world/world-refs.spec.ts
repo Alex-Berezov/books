@@ -7,6 +7,7 @@ import {
   pairEvidenceOf,
   pairFounded,
   pairMembers,
+  pairsHolding,
   worldEntityRefs,
   type WorldPairEvidence,
 } from './world-refs';
@@ -50,6 +51,23 @@ const quote = (speakerKey?: string) => ({
 });
 
 describe('checkWorldRefs (F08-1)', () => {
+  it('пара: checkWorldRefs молчит — одна ошибка на поле даёт checkWorldTypeFields (F08-8c)', () => {
+    const p = entity({
+      key: 'a--b',
+      type: 'pair',
+      role: null,
+      relations: [{ to: 'nobody', label: 'x' }],
+      critique: 'C',
+      prototypes: 'P',
+      adaptations: [{ title: 'T', year: null, actor: null, differences: 'D' }],
+    });
+    expect(checkWorldRefs(p, ctx(['a', 'b']))).toEqual([]);
+    const fields = checkWorldTypeFields(p, { aliasExclusions: null, aliasChapterExclusions: null });
+    for (const f of ['relations', 'critique', 'prototypes', 'adaptations']) {
+      expect(fields.filter((e) => e.path === f)).toHaveLength(1);
+    }
+  });
+
   it('неизвестный relations.0.to — ошибка с путём', () => {
     const e = entity({ relations: [{ to: 'nobody', label: 'friend' }] });
     expect(checkWorldRefs(e, ctx(['oblomov']))).toEqual([
@@ -112,6 +130,21 @@ describe('worldEntityRefs (F08-1)', () => {
       { kind: 'relation', path: 'relations.0.to', key: 'zakhar' },
       { kind: 'speaker', path: 'quotes.1.speakerKey', key: 'olga' },
     ]);
+  });
+});
+
+describe('pairsHolding (F08-8c-2: одно условие «герой в составе пары» для удаления и смены типа)', () => {
+  it('держат героя только пары с ним в ключе; ссылки из блоков героев не в счёт', () => {
+    const others = [
+      { key: 'oblomov--olga', type: 'pair' },
+      { key: 'olga--zakhar', type: 'pair' },
+      { key: 'oblomov--zakhar', type: 'pair' },
+      // Герой с ключом вида пары не держит: только тип `pair` даёт ссылку `member`.
+      { key: 'olga--stolz', type: 'character' },
+      { key: 'stolz', type: 'character' },
+    ] as Pick<StoredWorldEntity, 'key' | 'type'>[];
+    expect(pairsHolding('olga', others)).toEqual(['oblomov--olga', 'olga--zakhar']);
+    expect(pairsHolding('stolz', others)).toEqual([]);
   });
 });
 

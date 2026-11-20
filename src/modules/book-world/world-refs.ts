@@ -13,7 +13,8 @@ const WORLD_PAIR_SEPARATOR = '--';
 
 /**
  * Ключ пары `{a}--{b}` → ключи героев (`F08-8c`, решение арбитра Q1): ровно одно `--`, обе половины
- * не пусты; иначе `null`. Единственный разбор ключа пары; проверки ключа — `checkWorldPair`.
+ * не пусты; иначе `null`. Единственный разбор ключа пары в books; проверки ключа — `checkWorldPair`.
+ * Копия разбора живёт на фронте — `books-front/lib/book-world/pair.ts` (`pairMembers`); менять вместе.
  */
 export function pairMembers(key: string): [string, string] | null {
   const at = key.indexOf(WORLD_PAIR_SEPARATOR);
@@ -39,21 +40,21 @@ export interface WorldRefContext {
 }
 
 /**
- * Ссылки на **слитой** сущности (как `checkAnalysisRefs`): `relations[].to` и `quotes[].speakerKey` —
- * ключ сущности версии или героя анализа (ключ мира не обязан совпадать с анализом, решение
- * арбитра `F08 | F08-1` R7); связь с собой — отказ. Внешние блоки (`critique`, `prototypes`,
- * `adaptations`) — только при `sources` (`tech.md` §3).
+ * Ссылки на **слитой** сущности героя (как `checkAnalysisRefs`): `relations[].to` и
+ * `quotes[].speakerKey` — ключ героя мира или героя анализа (ключ мира не обязан совпадать с
+ * анализом, решение арбитра `F08 | F08-1` R7), не пары; связь с собой — отказ. Внешние блоки
+ * (`critique`, `prototypes`, `adaptations`) — только при `sources` (`tech.md` §3). У пары проверок
+ * нет вовсе: ключ, цитаты и состав — `checkWorldPair`, чужие поля (в том числе внешние блоки и
+ * `sources`) — `checkWorldTypeFields`, по одной ошибке на поле.
  */
 export function checkWorldRefs(entity: StoredWorldEntity, ctx: WorldRefContext): WorldRefError[] {
+  if (entity.type === 'pair') return [];
   const errors: WorldRefError[] = [];
   // Ссылки героя — на героя мира или анализа (`tech.md` §3), не на пару (`F08-8c`): ключ пары —
   // тоже ключ сущности версии, но страница сравнения не адресат отношения или реплики.
   const known = (key: string) => ctx.characterKeys.has(key) || ctx.analysisKeys.has(key);
 
   for (const ref of worldEntityRefs(entity)) {
-    // Ссылки пары проверяет `checkWorldPair` (только герои пары); `relations` у пары нет вовсе
-    // (`checkWorldTypeFields`) — одна ошибка на поле, а не две.
-    if (entity.type === 'pair') continue;
     if (ref.kind === 'relation' && ref.key === entity.key) {
       errors.push({ path: ref.path, message: 'an entity cannot relate to itself' });
     } else if (!known(ref.key)) {
@@ -211,7 +212,8 @@ export function pairFounded(e: WorldPairEvidence): boolean {
  * и `aboutKey` обязательны, оба — только
  * герои пары, и не один и тот же; условие заведения — `pairFounded` по `evidence` (нет — отказ),
  * только у новой пары: `evidence = null` — пара уже заведена, условие не проверяется.
- * Ошибки ключа — путём `key`.
+ * Ошибки ключа — путём `key`. Правило порядка и различия героев скопировано на фронт —
+ * `books-front/lib/book-world/pair.ts` (`pairKey`, `canonicalPairMembers`); менять вместе.
  */
 export function checkWorldPair(
   entity: StoredWorldEntity,

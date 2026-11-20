@@ -196,7 +196,13 @@ export class BookWorldQuoteDto {
   @RequiredChapter()
   chapter!: number;
 
-  @ApiPropertyOptional({ type: String, nullable: true, pattern: BOOK_WORLD_KEY_REGEX.source })
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    pattern: BOOK_WORLD_KEY_REGEX.source,
+    description:
+      'Who says the quote: a character key. Required for a pair (F08-8c; one of its two members, differs from aboutKey)',
+  })
   @Trim()
   @ValidateIf((_o, value) => !isAbsent(value))
   @Key()
@@ -207,7 +213,7 @@ export class BookWorldQuoteDto {
     nullable: true,
     pattern: BOOK_WORLD_KEY_REGEX.source,
     description:
-      'Pairs only (F08-8c): the member of the pair the quote is about; with speakerKey, both are members and differ',
+      'Pairs only (F08-8c), required for a pair: the member of the pair the quote is about; with speakerKey, both are members and differ',
   })
   @Trim()
   @ValidateIf((_o, value) => !isAbsent(value))

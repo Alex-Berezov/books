@@ -1643,13 +1643,10 @@ describe('BookWorld e2e', () => {
   });
 
   describe('F08-8c: пара героев (решения арбитра `F08 | F08-8c` Q1-Q4, Q6)', () => {
-    // Рубильник пар (`F08 | F08-8c-1` R2) выключен до фронта `F08-8c-2`; здесь проверяется поведение
-    // включённого, выключенный — отдельным тестом ниже.
-    beforeAll(() => {
-      WORLD_PAIRS.public = true;
-    });
+    // Рубильник пар (`F08 | F08-8c-1` R2) включён по умолчанию с `F08-8c-2`; выключенное положение —
+    // отдельным тестом ниже, он возвращает включённое.
     afterAll(() => {
-      WORLD_PAIRS.public = false;
+      WORLD_PAIRS.public = true;
     });
     /** Пара с полным ядром кроме общих глав (их пишет пересчёт); цитаты — дословно из `TEXT`. */
     const pair = (key: string, over: Body = {}): Body => ({
@@ -1976,7 +1973,74 @@ describe('BookWorld e2e', () => {
       expect((await row(versionId, 'olga')).type).toBe('character');
     });
 
-    it('рубильник выключен (до F08-8c-2): пара с ядром и героями на сайте не публична', async () => {
+    it('поля героя у пары без источников — ровно одна ошибка на поле (relations, critique, prototypes, adaptations)', async () => {
+      const { versionId } = await createVersion();
+      await heroes(versionId);
+      await related(versionId);
+      const res = await put(versionId, {
+        language: 'en',
+        entities: [
+          pair('oblomov--olga', {
+            relations: [{ to: 'oblomov', label: 'x' }],
+            critique: 'A critic.',
+            prototypes: 'A prototype.',
+            adaptations: [{ title: 'Film', year: 1980, actor: 'A', differences: 'Shorter.' }],
+          }),
+        ],
+      }).expect(400);
+      const errors = res.body.message as string[];
+      for (const field of ['relations', 'critique', 'prototypes', 'adaptations']) {
+        expect(errors.filter((e) => e.startsWith(`entities.0.${field}`))).toHaveLength(1);
+      }
+      expect(errors.filter((e) => e.startsWith('entities.0.relations.0.to'))).toHaveLength(0);
+      expect(errors).toHaveLength(4);
+    });
+
+    it('«прочитано» героя возвращает пару на сайт в той же транзакции', async () => {
+      const { versionId } = await createVersion();
+      await makeListed(versionId, 'oblomov');
+      // Ольга записана и посчитана, но её текст не прочитан: не на сайте.
+      await put(versionId, { language: 'en', entities: [hero('olga', { name: 'Olga' })] }).expect(
+        200,
+      );
+      await setMentions(versionId, 'olga', [1, 2, 3]);
+      await put(versionId, {
+        language: 'en',
+        entities: [{ key: 'olga', type: 'character' }],
+      }).expect(200);
+      await related(versionId);
+      await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(200);
+      await drain(versionId);
+      await readLatest(versionId, 'oblomov--olga');
+      expect((await row(versionId, 'olga')).isListed).toBe(false);
+      expect((await row(versionId, 'oblomov--olga')).isListed).toBe(false);
+      await readLatest(versionId, 'olga');
+      expect((await row(versionId, 'olga')).isListed).toBe(true);
+      expect((await row(versionId, 'oblomov--olga')).isListed).toBe(true);
+      await expectListedConsistent(versionId);
+    });
+
+    it('запись одного героя снимает его с сайта (роль minor не проходит worldRolePasses): пара уходит тем же запросом', async () => {
+      const { versionId } = await createVersion();
+      await makeListed(versionId, 'oblomov');
+      await makeListed(versionId, 'olga', hero('olga', { name: 'Olga' }));
+      await related(versionId);
+      await put(versionId, { language: 'en', entities: [pair('oblomov--olga')] }).expect(200);
+      await drain(versionId);
+      await readLatest(versionId, 'oblomov--olga');
+      expect((await row(versionId, 'oblomov--olga')).isListed).toBe(true);
+      // Роль minor не проходит порог публичности героя (worldRolePasses): Ольга уходит с сайта, пара - с ней.
+      await putEntity(versionId, 'olga', {
+        language: 'en',
+        type: 'character',
+        role: 'minor',
+      }).expect(200);
+      expect((await row(versionId, 'olga')).isListed).toBe(false);
+      expect((await row(versionId, 'oblomov--olga')).isListed).toBe(false);
+      await expectListedConsistent(versionId);
+    });
+
+    it('рубильник выключен: пара с ядром и героями на сайте не публична', async () => {
       const { versionId } = await createVersion();
       await makeListed(versionId, 'oblomov');
       await makeListed(versionId, 'olga', hero('olga', { name: 'Olga' }));

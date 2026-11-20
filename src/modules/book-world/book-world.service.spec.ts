@@ -265,6 +265,19 @@ describe('BookWorldService: запись сущности и присутств�
     expect(dirtyVersions(prisma)).toEqual(['v1']);
   });
 
+  it('герои и пара одним телом: герои записываются раньше пар, пара в теле первой (F08-8c Q3)', async () => {
+    const { save, prisma } = setup({ chapters: { 1: '<p>Hero came.</p>' } });
+    prisma.bookAnalysis.findUnique.mockResolvedValue({
+      characters: [{ key: 'a', relations: [{ to: 'b' }] }],
+    });
+    await save([{ key: 'a--b', type: 'pair', name: 'A and B' }, hero('b'), hero('a')], false);
+    const written = prisma.bookWorldEntity.create.mock.calls.map(
+      ([args]: [{ data: Row }]) => `${String(args.data.type)}:${String(args.data.key)}`,
+    );
+    // Герои в порядке тела, пара — после обоих (её isListed читает уже записанных героев).
+    expect(written).toEqual(['character:b', 'character:a', 'pair:a--b']);
+  });
+
   it('dryRun ничего не ставит в очередь и глав для присутствия не читает', async () => {
     const { save, prisma, countCalls } = setup({ chapters: { 1: '<p>Hero came.</p>' } });
     await save([hero('a')]);

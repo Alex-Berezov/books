@@ -8665,7 +8665,7 @@
       "BookWorldQuoteDto": {
         "properties": {
           "aboutKey": {
-            "description": "Pairs only (F08-8c): the member of the pair the quote is about; with speakerKey, both are members and differ",
+            "description": "Pairs only (F08-8c), required for a pair: the member of the pair the quote is about; with speakerKey, both are members and differ",
             "nullable": true,
             "pattern": "^[a-z0-9-]{1,60}$",
             "type": "string"
@@ -8679,6 +8679,7 @@
             "type": "string"
           },
           "speakerKey": {
+            "description": "Who says the quote: a character key. Required for a pair (F08-8c; one of its two members, differs from aboutKey)",
             "nullable": true,
             "pattern": "^[a-z0-9-]{1,60}$",
             "type": "string"

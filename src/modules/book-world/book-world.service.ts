@@ -394,14 +394,17 @@ export class BookWorldService {
         tx.bookAnalysis.findUnique({ where: { bookVersionId }, select: { characters: true } }),
       ]);
       // Ссылка на ключ, который есть и у героя анализа, после удаления остаётся действительной
-      // (`checkWorldRefs` принимает ключи анализа) — удалению она не мешает. Герой ключа пары
-      // (`member`) — только герой мира: его ключ анализа не заменяет (`F08-8c`).
+      // (`checkWorldRefs` принимает ключи анализа) — удалению она не мешает. Герой ключа пары —
+      // только герой мира: его ключ анализа не заменяет (`F08-8c`); кто держит героя — `pairsHolding`,
+      // одно правило со сменой типа героя.
       const stillResolves = analysisCharacterKeys(analysis?.characters).has(key);
+      const holdingPairs = new Set(pairsHolding(key, others));
       const referencedBy = others
-        .filter((o) =>
-          worldEntityRefs({ ...readStoredBlocks(o.blocks), key: o.key, type: o.type }).some(
-            (r) => r.key === key && (r.kind === 'member' || !stillResolves),
-          ),
+        .filter(
+          (o) =>
+            holdingPairs.has(o.key) ||
+            (!stillResolves &&
+              worldEntityRefs(readStoredBlocks(o.blocks)).some((r) => r.key === key)),
         )
         .map((o) => o.key);
       if (referencedBy.length > 0) {

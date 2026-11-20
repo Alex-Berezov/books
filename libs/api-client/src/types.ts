@@ -7955,10 +7955,11 @@ export interface components {
       relationToMain?: string | null;
     };
     BookWorldQuoteDto: {
-      /** @description Pairs only (F08-8c): the member of the pair the quote is about; with speakerKey, both are members and differ */
+      /** @description Pairs only (F08-8c), required for a pair: the member of the pair the quote is about; with speakerKey, both are members and differ */
       aboutKey?: string | null;
       chapter: number;
       interpretation: string;
+      /** @description Who says the quote: a character key. Required for a pair (F08-8c; one of its two members, differs from aboutKey) */
       speakerKey?: string | null;
       text: string;
     };
