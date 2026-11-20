@@ -1,6 +1,8 @@
 import { Language, Prisma } from '@prisma/client';
 import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
 import type { StoredWorldEntity } from '../../book-world/book-world-data';
+import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
+import { characterKeyRefused, worldPairKey } from '../../book-world/world-refs';
 import { ANSWER_CHARS_PER_TOKEN, estimateInputTokens } from '../../llm/openrouter.client';
 import type { LlmService, StageCallEstimator } from '../../llm/llm.service';
 import { chaptersText } from '../content-draft/content-draft.text';
@@ -18,23 +20,34 @@ import { StageModels } from '../run/run-models';
 import {
   EMPTY_EXTERNAL,
   EMPTY_PAGE,
+  EMPTY_PAIR,
   EMPTY_SELECT,
   externalRemarks,
   foldedVersion,
   pageRemarks,
+  pairRemarks,
   readExternalAnswer,
   readPageAnswer,
+  readPairAnswer,
   readSelectAnswer,
   WorldExternalDraft,
   WorldPageDraft,
+  WorldPairDraft,
   WorldSelectDraft,
 } from './world-write.checks';
-import { isWorldWriteLanguage, WORLD_REVIEW_STAGE } from './world-write.constants';
-import { WorldCandidate, WorldStepKind, WorldStepSource } from './world-write.data';
-import { EXAMPLE_WORLDS } from './examples';
+import { isWorldWriteLanguage, WORLD_PAIRS_MAX, WORLD_REVIEW_STAGE } from './world-write.constants';
+import {
+  WorldCandidate,
+  WorldCandidateRole,
+  WorldPairCandidate,
+  WorldStepKind,
+  WorldStepSource,
+} from './world-write.data';
+import { EXAMPLE_WORLD_PAIRS, EXAMPLE_WORLDS } from './examples';
 import {
   externalWriteRequest,
   pageWriteRequest,
+  pairWriteRequest,
   selectWriteRequest,
   WORLD_REVIEW_CODES,
   WORLD_STEP_SHAPES,
@@ -61,27 +74,66 @@ export interface WorldContext extends PartContext {
 export interface WorldBaseCharacter {
   key: string;
   name: string;
-  role: 'main' | 'secondary';
+  role: WorldCandidateRole;
 }
 
-/** Герои `main` анализа версии: без них ход не стартует (решение арбитра `F08 | F08-4`, Q3, Q4). */
-export function mainCharacters(analysis: StoredBookAnalysis): WorldBaseCharacter[] {
-  return (analysis.characters ?? [])
-    .filter((c) => c.role === 'main')
-    .map((c) => ({ key: c.key, name: c.name, role: 'main' as const }));
+/** Герои анализа ролей `main`, затем `secondary` - до отсева ключей вида пары. */
+function allRunCharacters(analysis: StoredBookAnalysis): WorldBaseCharacter[] {
+  const of = (role: WorldCandidateRole) =>
+    (analysis.characters ?? [])
+      .filter((c) => c.role === role)
+      .map((c) => ({ key: c.key, name: c.name, role }));
+  return [...of('main'), ...of('secondary')];
+}
+
+/**
+ * Героя ход не берёт, если его запись отобьётся (`characterKeyRefused`, `F08-8e-1` Q7, `LEGACY-507`):
+ * `stored` - ключи героев мира версии; заведённый герой с `--` правится и в ходе остаётся.
+ */
+const refusedPairForm = (key: string, stored: ReadonlySet<string>): boolean =>
+  characterKeyRefused(key, stored.has(key) ? 'character' : null);
+
+/**
+ * Герои `main` анализа версии, которых ход может взять: без них ход не стартует (решение арбитра
+ * `F08 | F08-4`, Q3, Q4); ключ вида пары нового героя не в счёт (`F08-8e-1` Q7: иначе платный ход без
+ * кандидатов).
+ */
+export function mainCharacters(
+  analysis: StoredBookAnalysis,
+  stored: ReadonlySet<string> = new Set(),
+): WorldBaseCharacter[] {
+  return worldCharacters(analysis, stored).filter((c) => c.role === 'main');
+}
+
+/**
+ * Герои `main` и `secondary` анализа с ключом вида пары, которых нет героями в мире версии (`F08-8e-1`
+ * Q7, `LEGACY-507`): запись такого героя отбивается, в ход он не идёт и виден отсеянным с `KEY_PAIR_FORM`.
+ */
+export function pairFormCharacters(
+  analysis: StoredBookAnalysis,
+  stored: ReadonlySet<string> = new Set(),
+): WorldBaseCharacter[] {
+  return allRunCharacters(analysis).filter((c) => refusedPairForm(c.key, stored));
 }
 
 /**
  * Кандидаты хода (`F08-8b`): герои `main`, затем `secondary` анализа. Второстепенный остаётся
  * в ходе, только если стоит не меньше чем в `WORLD_MIN_CHAPTERS` главах (отсев - `candidatesOf`
- * обработчика после подсчёта присутствия); `minor` в ход не попадает.
+ * обработчика после подсчёта присутствия); `minor` в ход не попадает; ключ вида пары - тоже
+ * (`pairFormCharacters`, решение арбитра `F08 | F08-8e-1` Q7: не платить за страницу под отказ записи).
  */
-export function worldCharacters(analysis: StoredBookAnalysis): WorldBaseCharacter[] {
-  const secondary = (analysis.characters ?? [])
-    .filter((c) => c.role === 'secondary')
-    .map((c) => ({ key: c.key, name: c.name, role: 'secondary' as const }));
-  return [...mainCharacters(analysis), ...secondary];
+export function worldCharacters(
+  analysis: StoredBookAnalysis,
+  stored: ReadonlySet<string> = new Set(),
+): WorldBaseCharacter[] {
+  return allRunCharacters(analysis).filter((c) => !refusedPairForm(c.key, stored));
 }
+
+/** Ключи героев (`character`) мира версии - заведённые герои с `--` остаются в ходе (Q7). */
+export const storedCharacterKeys = (
+  entities: ReadonlyMap<string, Pick<StoredWorldEntity, 'type'>>,
+): Set<string> =>
+  new Set([...entities].flatMap(([key, e]) => (e.type === 'character' ? [key] : [])));
 
 /** Вход шага: запрос автора, запрос проверяющей, разбор ответа и проверки кода. */
 export interface WorldStepInput<T> {
@@ -147,6 +199,12 @@ function dossierNames(dossier: unknown): string {
 /** Эталон языка версии; языка вне хода нет - старт и оценка ему отказывают (Q5), эталона нет. */
 const exampleOf = (language: Language): string =>
   isWorldWriteLanguage(language) ? JSON.stringify(EXAMPLE_WORLDS[language]) : NONE;
+
+/** Эталон пары языка версии; языка без эталона пары у этапа пар нет (Q6), эталона - тоже. */
+const pairExampleOf = (language: Language): string => {
+  const example = isWorldWriteLanguage(language) ? EXAMPLE_WORLD_PAIRS[language] : undefined;
+  return example ? JSON.stringify(example) : NONE;
+};
 
 /** Книга шага: текст глав и признак «не всё». */
 export interface WorldBook {
@@ -337,6 +395,132 @@ export function externalInput(
   };
 }
 
+/** Герои пары из кандидатов хода: главы и имя каждого (имя - выбора героев или анализа). */
+export interface WorldPairMembers {
+  a: WorldCandidate;
+  b: WorldCandidate;
+}
+
+/**
+ * Главы текста шага пары (`F08-8e`): общие главы героев; у связанной в анализе пары без общих глав -
+ * главы обоих героев (иначе сравнивать не по чему). По порядку глав.
+ */
+export function pairChapters(pair: WorldPairCandidate, members: WorldPairMembers): number[] {
+  if (pair.chapters.length > 0) return [...pair.chapters].sort((x, y) => x - y);
+  return [...new Set([...members.a.mentions.chapters, ...members.b.mentions.chapters])].sort(
+    (x, y) => x - y,
+  );
+}
+
+/** Книга шага пары и номера глав, чей текст в ней есть. */
+export interface WorldPairBook extends WorldBook {
+  chapters: number[];
+}
+
+/** Книга пары: текст первых `count` глав пары (`null` - всех). */
+export function pairBook(
+  context: WorldContext,
+  chapters: readonly number[],
+  count: number | null,
+): WorldPairBook {
+  const chosen = count === null ? [...chapters] : chapters.slice(0, count);
+  const own = context.chapters.filter((c) => chosen.includes(c.number));
+  return {
+    text: chaptersText(own) || NONE,
+    partial: count !== null && count < chapters.length,
+    chapters: chosen,
+  };
+}
+
+/** Союз «и» языка версии - запасное имя пары («{Имя} и {Имя}», `prompts/world-pair.md` §name). */
+const PAIR_AND: Record<Language, string> = { ru: 'и', en: 'and', es: 'y', fr: 'et', pt: 'e' };
+
+/**
+ * Имя пары, если модель его не дала: имена героев через союз языка, как в эталоне; длиннее предела
+ * имени импорта - ключи героев через союз (иначе запись отбила бы оплаченную страницу).
+ */
+export function pairFallbackName(language: Language, members: WorldPairMembers): string {
+  const name = `${members.a.name} ${PAIR_AND[language]} ${members.b.name}`;
+  return name.length <= BOOK_WORLD_LIMITS.name
+    ? name
+    : `${members.a.key} ${PAIR_AND[language]} ${members.b.key}`;
+}
+
+const chaptersLine = (chapters: readonly number[]): string =>
+  chapters.length > 0 ? chapters.join(', ') : NONE;
+
+export function pairInput(
+  context: WorldContext,
+  pair: WorldPairCandidate,
+  members: WorldPairMembers,
+  quotes: ChapterIndex,
+  book: WorldPairBook,
+  regen: WorldRegenSpec | null = null,
+): WorldStepInput<WorldPairDraft> {
+  const analysis = analysisText(context.analysis);
+  // Сторона строки сравнения - только в главе своего героя, чей текст модель и проверяющая видели.
+  const given = new Set(book.chapters);
+  const chaptersA = members.a.mentions.chapters.filter((n) => given.has(n));
+  const chaptersB = members.b.mentions.chapters.filter((n) => given.has(n));
+  const check = {
+    key: pair.key,
+    a: pair.a,
+    b: pair.b,
+    language: context.language,
+    chapters: quotes,
+    chaptersA: new Set(chaptersA),
+    chaptersB: new Set(chaptersB),
+    glossary: glossaryNames(context.glossary),
+    // Перегенерация одного блока: ядра всей пары в таком ответе нет - не проверяется.
+    core: regen === null,
+  };
+  const name = pairFallbackName(context.language, members);
+  const onlyBlock = (draft: WorldPairDraft): WorldPairDraft =>
+    regen
+      ? {
+          ...draft,
+          blocks: Object.fromEntries(
+            Object.entries(draft.blocks).filter(([block]) => block === regen.block),
+          ),
+        }
+      : draft;
+  return {
+    kind: 'pair',
+    source: book.partial ? 'top' : 'text',
+    author: (redo) =>
+      pairWriteRequest({
+        language: context.language,
+        bookTitle: context.bookTitle,
+        author: context.author,
+        key: pair.key,
+        first: `${members.a.key} - ${members.a.name}`,
+        second: `${members.b.key} - ${members.b.name}`,
+        chapterList: chapterList(context),
+        chaptersA: chaptersLine(chaptersA),
+        chaptersB: chaptersLine(chaptersB),
+        analysis,
+        glossary: glossaryText(context),
+        example: pairExampleOf(context.language),
+        book: book.text,
+        bookIsPartial: book.partial,
+        regen,
+        redo,
+      }),
+    review: (draft) =>
+      worldReviewRequest({
+        kind: 'pair',
+        language: context.language,
+        book: book.text,
+        analysis,
+        answer: { name: draft.name, ...draft.blocks },
+        regenBlock: regen?.block ?? null,
+      }),
+    read: (value) => onlyBlock(readPairAnswer(value, check)),
+    codeCheck: (draft) => pairRemarks(draft, check, name),
+    empty: EMPTY_PAIR,
+  };
+}
+
 /** Спецификация цикла качества шага на моделях снимка операции. */
 export function worldLoopSpec<T>(
   input: WorldStepInput<T>,
@@ -406,7 +590,16 @@ export interface WorldEstimators {
   select: StageCallEstimator;
   page: StageCallEstimator;
   external: StageCallEstimator;
+  pair: StageCallEstimator;
   review: StageCallEstimator;
+}
+
+/**
+ * Шагов пар сверху (решение арбитра `F08 | F08-8e-1` Q8): `min(WORLD_PAIRS_MAX, C(N,2))` по героям
+ * хода; на языке без эталона пары - 0 (Q6). Присутствие до старта неизвестно - граница сверху.
+ */
+export function pairStepsUpperBound(heroes: number, pairsOn: boolean): number {
+  return pairsOn && heroes >= 2 ? Math.min(WORLD_PAIRS_MAX, (heroes * (heroes - 1)) / 2) : 0;
 }
 
 /** Проходов автора и проверки на шаг: первый и одна переделка. */
@@ -427,14 +620,18 @@ export function worldStepUsd<T>(
 /**
  * Оценка хода сверху (`tech.md` §5): выбор героев по всему тексту версии, затем на каждого героя
  * `main` и `secondary` (до порога глав, решение арбитра `F08 | F08-8b` Q1) страница по всему
- * тексту версии (сверху: ход берёт только главы с героем) и внешние блоки, каждый шаг с проверяющей × 2 прохода. Итог страницы во входе внешнего шага - сверху выходом этапа.
+ * тексту версии (сверху: ход берёт только главы с героем) и внешние блоки, затем `pairs` шагов пар
+ * по всему тексту версии (`F08-8e-1` Q8), каждый шаг с проверяющей × 2 прохода. Итог страницы во
+ * входе внешнего шага - сверху выходом этапа.
  */
 export function worldPipelineUsd(
   calls: WorldEstimators,
   context: WorldContext,
   extraInputTokens: number,
+  pairs = 0,
+  stored: ReadonlySet<string> = storedCharacterKeys(context.entities),
 ): Prisma.Decimal {
-  const candidates = worldCharacters(context.analysis);
+  const candidates = worldCharacters(context.analysis, stored);
   const whole: WorldBook = { text: chaptersText(context.chapters) || NONE, partial: false };
   const quotes: ChapterIndex = new Map();
   let usd = worldStepUsd(
@@ -466,6 +663,28 @@ export function worldPipelineUsd(
           extraInputTokens + calls.page.maxTokens,
         ),
       );
+  }
+  if (pairs > 0 && candidates.length >= 2) {
+    const [a, b] = candidates.map(
+      (c): WorldCandidate => ({ ...c, aliases: [], mentions: { chapters: [], perChapter: {} } }),
+    );
+    const pair: WorldPairCandidate = {
+      key: worldPairKey(a.key, b.key) ?? a.key,
+      a: a.key,
+      b: b.key,
+      linked: true,
+      chapters: [],
+    };
+    const step = worldStepUsd(
+      calls.pair,
+      calls.review,
+      pairInput(context, pair, { a, b }, quotes, {
+        ...whole,
+        chapters: context.chapters.map((c) => c.number),
+      }),
+      extraInputTokens,
+    );
+    usd = usd.add(step.mul(pairs));
   }
   return usd;
 }

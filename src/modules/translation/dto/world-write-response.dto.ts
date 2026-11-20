@@ -9,6 +9,7 @@ import {
 import {
   BookWorldAdaptationDto,
   BookWorldArcDto,
+  BookWorldCompareDto,
   BookWorldProfileDto,
   BookWorldQuoteDto,
   BookWorldRelationDto,
@@ -19,13 +20,17 @@ import {
   WORLD_BLOCKS,
   WORLD_FIX_CODES,
   WORLD_ITEM_OUTCOMES,
+  WORLD_PAIRS_OFF_REASONS,
   WORLD_REVIEW_KINDS,
+  WORLD_SKIP_REASONS,
   WORLD_STEP_KINDS,
   WORLD_STEP_SOURCES,
   WORLD_VERDICTS,
   WorldBlock,
   WorldFixCode,
   WorldItemOutcome,
+  WorldPairsOffReason,
+  WorldSkipReason,
   WorldStepKind,
   WorldStepSource,
   WorldVerdict,
@@ -67,9 +72,16 @@ export class WorldWriteEstimateDto {
   candidates!: number;
 
   @ApiProperty({
+    type: Number,
+    description:
+      'Up to N pair pages (F08-8e): min(10, candidates·(candidates−1)/2) before the chapter count, 0 on a language without a pair sample; one page each, included in stageUsd',
+  })
+  pairs!: number;
+
+  @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, plus the reviewer of each step, each step × 2 passes',
+      'Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages on the whole version text, plus the reviewer of each step, each step × 2 passes',
   })
   stageUsd!: string;
 
@@ -176,10 +188,55 @@ export class WorldWriteCandidateDto {
   chapters!: number[];
 }
 
+/** Пара хода (`F08-8e`): два героя-кандидата хода, шаг пары - после шагов героев. */
+export class WorldWritePairDto {
+  @ApiProperty({ type: String, description: 'Key of the pair {a}--{b}' })
+  key!: string;
+
+  @ApiProperty({ type: String, description: 'Key of the first character of the pair key' })
+  a!: string;
+
+  @ApiProperty({ type: String, description: 'Key of the second character of the pair key' })
+  b!: string;
+
+  @ApiProperty({
+    type: Boolean,
+    description: 'The characters are related in the analysis of the version',
+  })
+  linked!: boolean;
+
+  @ApiProperty({
+    type: [Number],
+    description: 'Chapters where both characters are (counted at the choice step)',
+  })
+  chapters!: number[];
+}
+
+/** Отсеянный шагом выбора герой или пара (`F08-8e`): в ход не вошёл, вызова не было. */
+export class WorldWriteSkipDto {
+  @ApiProperty({ type: String, description: 'Key of the character or the pair' })
+  key!: string;
+
+  @ApiProperty({
+    enum: WORLD_SKIP_REASONS,
+    description:
+      'BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run',
+  })
+  reason!: WorldSkipReason;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    description: 'Chapters of the character or common chapters of the pair',
+  })
+  chapters!: number | null;
+}
+
 export class WorldWriteStepDto {
   @ApiProperty({
     type: Number,
-    description: '0 - the choice of name forms, then page and external blocks per character',
+    description:
+      '0 - the choice of name forms, then page and external blocks per character, then one step per pair',
   })
   step!: number;
 
@@ -189,7 +246,7 @@ export class WorldWriteStepDto {
   @ApiProperty({
     type: String,
     nullable: true,
-    description: 'Key of the character; null - the choice step',
+    description: 'Key of the character or of the pair; null - the choice step',
   })
   key!: string | null;
 
@@ -212,7 +269,7 @@ export class WorldWriteStepDto {
     type: String,
     nullable: true,
     description:
-      'Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter)',
+      'Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (the saved presence does not found the pair), WORLD_MENTIONS_MOVED (the text moved during the presence recount)',
   })
   failedReason!: string | null;
 
@@ -239,7 +296,8 @@ export class WorldWriteValueDto {
   @ApiProperty({
     type: String,
     nullable: true,
-    description: 'short, appearance, character, critique, prototypes',
+    description:
+      'short, appearance, character, critique, prototypes, bonds, differences, conclusion',
   })
   text!: string | null;
 
@@ -266,6 +324,13 @@ export class WorldWriteValueDto {
 
   @ApiProperty({ type: [BookWorldAdaptationDto], nullable: true })
   adaptations!: BookWorldAdaptationDto[] | null;
+
+  @ApiProperty({
+    type: [BookWorldCompareDto],
+    nullable: true,
+    description: 'Pair comparison table',
+  })
+  compare!: BookWorldCompareDto[] | null;
 
   @ApiProperty({
     type: [BookAnalysisSourceDto],
@@ -365,12 +430,34 @@ export class WorldWriteDto {
   @ApiProperty({
     type: Number,
     nullable: true,
-    description: 'Steps of the run: 1 + 2 per character; null - the characters are not chosen yet',
+    description:
+      'Steps of the run: 1 + 2 per character + 1 per pair; null - the characters are not chosen yet',
   })
   stepsTotal!: number | null;
 
   @ApiProperty({ type: [WorldWriteCandidateDto], nullable: true })
   candidates!: WorldWriteCandidateDto[] | null;
+
+  @ApiProperty({
+    type: [WorldWritePairDto],
+    nullable: true,
+    description:
+      'Pairs of the run (F08-8e), their steps go after the steps of the characters; null - the characters are not chosen yet; [] for a run started before F08-8e',
+  })
+  pairs!: WorldWritePairDto[] | null;
+
+  @ApiProperty({
+    type: [WorldWriteSkipDto],
+    description: 'Characters and pairs the choice step left out, with the reason',
+  })
+  leftOut!: WorldWriteSkipDto[];
+
+  @ApiProperty({
+    enum: WORLD_PAIRS_OFF_REASONS,
+    nullable: true,
+    description: 'The run writes no pairs: WORLD_PAIR_LANGUAGE - no pair sample for the language',
+  })
+  pairsOff!: WorldPairsOffReason | null;
 
   @ApiProperty({ type: [WorldWriteStepDto] })
   steps!: WorldWriteStepDto[];

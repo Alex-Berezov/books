@@ -1,4 +1,3 @@
-import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
 import { LlmStageRegistry } from '../../llm/llm-stages.registry';
 import {
   ANALYSIS_WRITE_TASK_KIND,
@@ -14,24 +13,24 @@ import {
 import {
   blockIsEmpty,
   emptyWorldData,
+  entityKindOf,
   readWorldData,
   stepAt,
   stepsTotalOf,
   valuePrint,
   worldDataJson,
 } from './world-write.data';
-import { mainCharacters, worldCharacters } from './world-write.steps';
 
 describe('world run steps', () => {
   it('step 0 chooses the characters, then each candidate gets a page and its external blocks', () => {
-    expect([0, 1, 2, 3, 4].map(stepAt)).toEqual([
+    expect([0, 1, 2, 3, 4].map((step) => stepAt(step, 2))).toEqual([
       { kind: 'select', candidate: null },
       { kind: 'page', candidate: 0 },
       { kind: 'external', candidate: 0 },
       { kind: 'page', candidate: 1 },
       { kind: 'external', candidate: 1 },
     ]);
-    expect(stepsTotalOf({ candidates: null })).toBeNull();
+    expect(stepsTotalOf({ candidates: null, pairs: null })).toBeNull();
     expect(
       stepsTotalOf({
         candidates: [
@@ -43,8 +42,80 @@ describe('world run steps', () => {
             mentions: { chapters: [], perChapter: {} },
           },
         ],
+        pairs: [],
       }),
     ).toBe(3);
+  });
+
+  it('pair steps go after all hero steps, one per pair; hero steps keep their numbers (F08-8e)', () => {
+    expect([4, 5, 6].map((step) => stepAt(step, 2))).toEqual([
+      { kind: 'external', candidate: 1 },
+      { kind: 'pair', candidate: 0 },
+      { kind: 'pair', candidate: 1 },
+    ]);
+    const hero = (key: string) => ({
+      key,
+      role: 'main' as const,
+      name: key,
+      aliases: [],
+      mentions: { chapters: [1], perChapter: {} },
+    });
+    const pair = { key: 'anna--boris', a: 'anna', b: 'boris', linked: true, chapters: [1] };
+    expect(stepsTotalOf({ candidates: [hero('anna'), hero('boris')], pairs: [pair] })).toBe(6);
+  });
+});
+
+describe('world run pairs (F08-8e)', () => {
+  const hero = {
+    key: 'anna',
+    name: 'Anna',
+    aliases: [],
+    mentions: { chapters: [1] },
+    role: 'main',
+  };
+  const pair = { key: 'anna--boris', a: 'anna', b: 'boris', linked: false, chapters: [1, 2] };
+
+  it('a run started before F08-8e (candidates, no pairs field) reads with no pairs: it ends on the heroes', () => {
+    const data = readWorldData({ candidates: [hero, { ...hero, key: 'boris' }] });
+    expect(data.pairs).toEqual([]);
+    expect(stepsTotalOf(data)).toBe(5);
+    expect(data.stepsBroken).toBe(false);
+    expect(readWorldData({}).pairs).toBeNull();
+  });
+
+  it('pairs, left out and pairs off survive the round trip', () => {
+    const data = {
+      ...emptyWorldData(),
+      candidates: [],
+      pairs: [pair],
+      leftOut: [{ key: 'vera', reason: 'BELOW_MIN_CHAPTERS' as const, chapters: 2 }],
+      pairsOff: null,
+    };
+    const read = readWorldData(worldDataJson(data));
+    expect(read.pairs).toEqual([pair]);
+    expect(read.leftOut).toEqual(data.leftOut);
+    // Отметка пересчёта присутствия (уточнение Q1) переживает запись; хода без неё - нет.
+    expect(
+      readWorldData(worldDataJson({ ...data, mentionsRecounted: true })).mentionsRecounted,
+    ).toBe(true);
+    expect(read.mentionsRecounted).toBe(false);
+    expect(readWorldData({ ...data, pairsOff: 'WORLD_PAIR_LANGUAGE' }).pairsOff).toBe(
+      'WORLD_PAIR_LANGUAGE',
+    );
+  });
+
+  it('a dropped pair or pairs of a wrong form - stepsBroken: a pair step never takes the next pair', () => {
+    const base = { candidates: [hero] };
+    expect(readWorldData({ ...base, pairs: [pair, { key: 'x' }] }).stepsBroken).toBe(true);
+    expect(readWorldData({ ...base, pairs: 'x' }).stepsBroken).toBe(true);
+    expect(readWorldData({ ...base, pairs: [pair] }).stepsBroken).toBe(false);
+  });
+
+  it('the entity of a pair item is a pair, of a hero item - a character with the role of the candidate', () => {
+    const data = readWorldData({ candidates: [hero], pairs: [pair] });
+    expect(entityKindOf(data, 'anna--boris')).toEqual({ type: 'pair' });
+    expect(entityKindOf(data, 'anna')).toEqual({ type: 'character', role: 'main' });
+    expect(entityKindOf(data, 'tom')).toEqual({ type: 'character', role: null });
   });
 });
 
@@ -186,21 +257,26 @@ describe('world run candidates: an unknown role (F08-8b)', () => {
     });
     expect(data.candidates).toEqual([]);
   });
-});
 
-describe('world run candidates: who goes into the run (F08-8b)', () => {
-  it('main heroes first, then secondary ones; minor heroes are never candidates', () => {
-    const analysis = {
-      characters: [
-        { key: 'boris', name: 'Boris', role: 'secondary' },
-        { key: 'vera', name: 'Vera', role: 'minor' },
-        { key: 'anna', name: 'Anna', role: 'main' },
-      ],
-    } as unknown as StoredBookAnalysis;
-    expect(worldCharacters(analysis)).toEqual([
-      { key: 'anna', name: 'Anna', role: 'main' },
-      { key: 'boris', name: 'Boris', role: 'secondary' },
-    ]);
-    expect(mainCharacters(analysis).map((c) => c.key)).toEqual(['anna']);
+  it('a dropped candidate between two good ones - stepsBroken: a hero step never takes the next hero by index', () => {
+    const good = (key: string) => ({
+      key,
+      name: key,
+      aliases: [],
+      mentions: { chapters: [1] },
+      role: 'main',
+    });
+    const data = readWorldData({
+      ...(worldDataJson(emptyWorldData()) as object),
+      candidates: [good('anna'), { ...good('vera'), role: 'minor' }, good('boris')],
+    });
+    expect(data.candidates?.map((c) => c.key)).toEqual(['anna', 'boris']);
+    expect(data.stepsBroken).toBe(true);
+    expect(
+      readWorldData({
+        ...(worldDataJson(emptyWorldData()) as object),
+        candidates: [good('anna'), good('boris')],
+      }).stepsBroken,
+    ).toBe(false);
   });
 });

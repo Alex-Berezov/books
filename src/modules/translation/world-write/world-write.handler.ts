@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { ContentDraft, LlmOperation, LlmTask, Prisma } from '@prisma/client';
+import { ContentDraft, Language, LlmOperation, LlmTask, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
 import {
   BOOK_ANALYSIS_SELECT,
@@ -13,7 +13,15 @@ import {
 } from '../../book-world/book-world-data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { WorldMentionCounter, type WorldChapterExclusion } from '../../book-world/world-mentions';
+import { WorldMentionsService } from '../../book-world/world-mentions.service';
 import { worldRolePasses } from '../../book-world/world-public';
+import {
+  missingPairMembers,
+  pairEvidenceOf,
+  pairFounded,
+  pairKeyTaken,
+  savedMentionsOf,
+} from '../../book-world/world-refs';
 import { LlmService } from '../../llm/llm.service';
 import { EnqueueTaskInput, LlmTaskService } from '../../llm-worker/llm-task.service';
 import { LlmTaskContext, LlmTaskHandler, LlmTaskStepResult } from '../../llm-worker/llm-task.types';
@@ -64,10 +72,15 @@ import {
   WorldExternalDraft,
   WorldExternalVerdict,
   WorldPageDraft,
+  WorldPairDraft,
   WorldSelectDraft,
 } from './world-write.checks';
 import {
   WORLD_ANALYSIS_MISSING,
+  WORLD_MENTIONS_MOVED,
+  WORLD_PAIR_KEY_TAKEN,
+  WORLD_PAIR_MEMBER_MISSING,
+  WORLD_PAIR_NOT_FOUNDED,
   WORLD_REVIEW_STAGE,
   WORLD_WRITE_REFUSED,
   WORLD_WRITE_TASK_KIND,
@@ -77,14 +90,17 @@ import {
   DroppedWorldQuote,
   DroppedWorldSource,
   PendingWorldStep,
-  stepAt,
   stepKey,
+  stepOfData,
   stepsTotalOf,
   WORLD_BLOCKS,
   WorldBlock,
   WorldCandidate,
   WorldFix,
   WorldItem,
+  WorldPairCandidate,
+  WorldPairsOffReason,
+  WorldSkip,
   WorldSource,
   WorldStep,
   WorldStepKind,
@@ -109,14 +125,21 @@ import {
   mainCharacters,
   pageBook,
   pageInput,
+  pairBook,
+  pairChapters,
+  pairFallbackName,
+  pairInput,
   selectInput,
+  storedCharacterKeys,
   WorldBaseCharacter,
   WorldContext,
   worldCharacters,
   worldInputFits,
   worldLoopSpec,
+  WorldPairMembers,
   WorldStepInput,
 } from './world-write.steps';
+import { ChosenCandidates, choosePairs } from './world-write.pairs';
 
 /** Задача хода мира: одна задача - один шаг; `index` - перегенерация пункта `index` своей операцией. */
 export const worldWriteTaskInput = (
@@ -129,6 +152,9 @@ export const worldWriteTaskInput = (
 export const WORLD_CHARACTER_NOT_FOUND = 'WORLD_CHARACTER_NOT_FOUND';
 /** Внешний шаг героя, чья страница не удалась, не идёт (виден как `failedReason` шага). */
 export const WORLD_PAGE_MISSING = 'WORLD_PAGE_MISSING';
+
+/** Ход ушёл во время проверок шага пары: шаг не пишется (`null` из `produceStep`). */
+const RUN_GONE = 'RUN_GONE';
 
 /** Ни один источник не открылся по вине канала: пауза `STEP_FAILED`, «Continue» повторяет шаг. */
 class SourcesOffline extends Error {
@@ -187,7 +213,15 @@ async function openWorldSources(
   }));
 }
 
-/** Присутствие кандидатов по текстам глав (в памяти, без записи - пишет только пересчёт, R2). */
+/** Присутствие кандидата в памяти и общие главы с другими кандидатами (`F08-8e`, отбор пар). */
+interface CountedCandidate extends CandidateMentions {
+  coPresence: Record<string, number[]>;
+}
+
+/**
+ * Присутствие кандидатов по текстам глав (в памяти, без записи - пишет только пересчёт, R2) и общие
+ * главы между ними - вход отбора пар (решение арбитра `F08 | F08-8e-1` Q1).
+ */
 function countCandidates(
   chapters: ReadonlyArray<{ number: number; content: string }>,
   candidates: ReadonlyArray<{
@@ -197,7 +231,7 @@ function countCandidates(
     exclusions: string[];
     chapterExclusions: WorldChapterExclusion[] | null;
   }>,
-): Map<string, CandidateMentions> {
+): Map<string, CountedCandidate> {
   const counter = new WorldMentionCounter(
     candidates.map((c) => ({
       key: c.key,
@@ -206,7 +240,7 @@ function countCandidates(
       aliasExclusions: c.exclusions,
       aliasChapterExclusions: c.chapterExclusions,
     })),
-    new Set<string>(),
+    new Set(candidates.map((c) => c.key)),
   );
   for (const chapter of chapters)
     counter.addChapterText(chapter.number, htmlToParagraphs(chapter.content));
@@ -214,7 +248,14 @@ function countCandidates(
   return new Map(
     candidates.map((c) => {
       const m = result.get(c.key);
-      return [c.key, { chapters: m?.chapters ?? [], perChapter: m?.perChapter ?? {} }] as const;
+      return [
+        c.key,
+        {
+          chapters: m?.chapters ?? [],
+          perChapter: m?.perChapter ?? {},
+          coPresence: m?.coPresence ?? {},
+        },
+      ] as const;
     }),
   );
 }
@@ -257,6 +298,10 @@ interface StepRecord {
   step: WorldStep;
   items: WorldItem[];
   candidates?: WorldCandidate[];
+  /** Итог выбора (`F08-8e`): пары, отсеянные и причина хода без пар. */
+  pairs?: WorldPairCandidate[];
+  leftOut?: WorldSkip[];
+  pairsOff?: WorldPairsOffReason | null;
   droppedQuotes: DroppedWorldQuote[];
   droppedSources: DroppedWorldSource[];
 }
@@ -350,6 +395,9 @@ function withStep(data: WorldWriteData, record: StepRecord): WorldWriteData {
   return {
     ...data,
     candidates: record.candidates ?? data.candidates,
+    pairs: record.pairs ?? data.pairs,
+    leftOut: record.leftOut ?? data.leftOut,
+    pairsOff: record.pairsOff === undefined ? data.pairsOff : record.pairsOff,
     steps: [...data.steps, record.step],
     items: [...data.items, ...record.items],
     droppedQuotes: [...data.droppedQuotes, ...record.droppedQuotes],
@@ -360,7 +408,8 @@ function withStep(data: WorldWriteData, record: StepRecord): WorldWriteData {
 
 /**
  * Шаги хода «Write World» (`F08-4a`; `features/F08-book-wiki/tech.md` §5): выбор героев и форм имени,
- * затем на каждого героя - страница и внешние блоки; каждый шаг - циклом качества `F06-1` с
+ * затем на каждого героя - страница и внешние блоки, затем страница каждой пары (`F08-8e`); каждый
+ * шаг - циклом качества `F06-1` с
  * проверяющей `world_review`, запись после каждого шага (обрыв не теряет готового), оплаченный текст
  * шага хранится до проверяющей и до переделки. После последнего шага ход `ready`.
  */
@@ -374,6 +423,7 @@ export class WorldWriteHandler {
     private readonly drafts: ContentDraftService,
     private readonly fields: WorldWriteFields,
     private readonly fetcher: SourceFetcherService,
+    private readonly mentions: WorldMentionsService,
   ) {}
 
   readonly handler: LlmTaskHandler = {
@@ -470,7 +520,10 @@ export class WorldWriteHandler {
     const total = stepsTotalOf(data);
     if (total !== null && step >= total) return finishRun(this.tasks, row);
     const context = await this.contextOf(row, dossier);
-    if (step === 0 && mainCharacters(context.analysis).length === 0) {
+    if (
+      step === 0 &&
+      mainCharacters(context.analysis, storedCharacterKeys(context.entities)).length === 0
+    ) {
       return failRun(this.tasks, row, WORLD_ANALYSIS_MISSING);
     }
     const record = await this.produceStep(row, gate, step, context, data, data.pending, ctx);
@@ -504,7 +557,7 @@ export class WorldWriteHandler {
     ctx: LlmTaskContext,
     regen: { spec: WorldRegenSpec; index: number } | null = null,
   ): Promise<StepRecord | null> {
-    const { kind, candidate: at } = stepAt(step);
+    const { kind, candidate: at } = stepOfData(data, step);
     // Индекс глав - только выбору и странице: внешний шаг текста книги не читает.
     const quotes = () =>
       indexChapters(new Map(context.chapters.map((c) => [c.number, htmlToParagraphs(c.content)])));
@@ -512,7 +565,7 @@ export class WorldWriteHandler {
     const empty = { droppedQuotes: [], droppedSources: [] };
 
     if (kind === 'select') {
-      const base = worldCharacters(context.analysis);
+      const base = worldCharacters(context.analysis, storedCharacterKeys(context.entities));
       const index = quotes();
       const make = (count: number) =>
         selectInput(context, base, index, {
@@ -527,14 +580,25 @@ export class WorldWriteHandler {
       const result = input ? await this.loop(row, gate, input, step, pending, ctx, null) : null;
       if (result === null && input !== null) return null;
       const answer = result?.ok ? result.draft : null;
-      const candidates = await this.candidatesOf(row.bookVersionId, context, base, answer, index);
+      const chosen = await this.candidatesOf(row.bookVersionId, context, base, answer, index);
+      const choice = choosePairs(context, chosen);
       const stepRecord =
         input === null
           ? failedStep(step, kind, null, DRAFT_TOO_LONG, null)
           : !result?.ok
             ? failedStep(step, kind, null, DRAFT_INVALID_RESPONSE, input.source)
             : doneStep(step, kind, null, result, result.remarks, input.source, answer?.fixes ?? []);
-      return { step: stepRecord, items: [], candidates, ...empty };
+      return {
+        step: stepRecord,
+        items: [],
+        candidates: chosen.candidates,
+        ...choice,
+        ...empty,
+      };
+    }
+
+    if (kind === 'pair') {
+      return this.pairStep(row, gate, step, at ?? -1, context, data, pending, ctx, regen);
     }
 
     const candidate = data.candidates?.[at ?? -1];
@@ -729,8 +793,115 @@ export class WorldWriteHandler {
   }
 
   /**
+   * Шаг пары `at` (`F08-8e`): без платного вызова - если героя пары нет в мире версии героем, ключ
+   * занят сущностью другого типа или новая пара не проходит условие заведения по сохранённому
+   * присутствию (решения арбитра `F08 | F08-8e-1` Q1, Q4); перед новой парой до первого успешного - пересчёт присутствия
+   * версии. Перегенерация пункта - у заведённой пары, без этих проверок.
+   */
+  private async pairStep(
+    row: ContentDraft,
+    gate: WorldGate,
+    step: number,
+    at: number,
+    context: WorldContext,
+    data: WorldWriteData,
+    pending: PendingWorldStep | null,
+    ctx: LlmTaskContext,
+    regen: { spec: WorldRegenSpec; index: number } | null,
+  ): Promise<StepRecord | null> {
+    const pair = data.pairs?.[at];
+    const a = pair ? data.candidates?.find((c) => c.key === pair.a) : undefined;
+    const b = pair ? data.candidates?.find((c) => c.key === pair.b) : undefined;
+    const fail = (reason: string, source: WorldStepSource | null = null): StepRecord => ({
+      step: failedStep(step, 'pair', pair?.key ?? null, reason, source),
+      items: [],
+      droppedQuotes: [],
+      droppedSources: [],
+    });
+    if (!pair || !a || !b) return fail(DRAFT_DATA_INVALID);
+    // Героя пары формы имени не нашли ни в одной главе: сравнивать не по чему (как у страницы героя).
+    if (a.mentions.chapters.length === 0 || b.mentions.chapters.length === 0) {
+      return fail(WORLD_CHARACTER_NOT_FOUND);
+    }
+    // Оплаченный текст этого шага уже сохранён (обрыв после вызова): проверки он прошёл до оплаты.
+    const paid = pending !== null && pending.key === stepKey(step);
+    if (!regen && !paid) {
+      const refused = await this.pairRefusal(row, gate, pair, context, data);
+      if (refused === RUN_GONE) return null;
+      if (refused) return fail(refused);
+    }
+    const members: WorldPairMembers = { a, b };
+    const chapters = pairChapters(pair, members);
+    const index = indexChapters(
+      new Map(context.chapters.map((c) => [c.number, htmlToParagraphs(c.content)])),
+    );
+    const make = (count: number | null) =>
+      pairInput(
+        context,
+        pair,
+        members,
+        index,
+        pairBook(context, chapters, count),
+        regen?.spec ?? null,
+      );
+    const fits = <T>(input: WorldStepInput<T>) => worldInputFits(this.llm, input);
+    const whole = make(null);
+    const input = (await fits(whole))
+      ? whole
+      : await largestFitting(chapters.length, (n) => make(n), fits);
+    if (input === null) return fail(DRAFT_TOO_LONG);
+    const result = await this.loop(row, gate, input, step, pending, ctx, regen);
+    if (result === null) return null;
+    if (!result.ok) return fail(DRAFT_INVALID_RESPONSE, input.source);
+    return pairRecord(step, context.language, pair, members, result, input.source);
+  }
+
+  /**
+   * Почему шаг пары не платит за вызов; `null` - платит. Перед новой парой, пока пересчёт присутствия
+   * версии ни разу не сошёлся, - пересчёт (уточнение Q1): условие заведения читает сохранённое
+   * присутствие героев, которых ход только что записал; не сошёлся - `WORLD_MENTIONS_MOVED` только
+   * этой паре, следующая новая пара пересчитает снова; сошёлся - отметка `mentionsRecounted`, дальше
+   * без пересчёта. Заведённая пара условие не проходит (R1) - ей пересчёт не нужен.
+   */
+  private async pairRefusal(
+    row: ContentDraft,
+    gate: WorldGate,
+    pair: WorldPairCandidate,
+    context: WorldContext,
+    data: WorldWriteData,
+  ): Promise<string | null> {
+    const bookVersionId = row.bookVersionId;
+    const stored = context.entities.get(pair.key);
+    // Правила `world-refs.ts`: ключ другого типа ход не берёт (как отбор пар), без героев пары запись
+    // отбила бы её 400 (`checkWorldPair`).
+    if (pairKeyTaken(stored?.type)) return WORLD_PAIR_KEY_TAKEN;
+    if (missingPairMembers([pair.a, pair.b], storedCharacterKeys(context.entities)).length > 0) {
+      return WORLD_PAIR_MEMBER_MISSING;
+    }
+    // Заведённая пара условие заведения повторно не проходит (решение `F08 | F08-8c-1` R1, Q4).
+    if (stored) return null;
+    if (!data.mentionsRecounted) {
+      if ((await this.mentions.recountVersion(bookVersionId)).status === 'retry') {
+        return WORLD_MENTIONS_MOVED;
+      }
+      const marked = await this.fields.mutate(row, gate, (current) => ({
+        ...current,
+        mentionsRecounted: true,
+      }));
+      // Ход ушёл (отменён, отброшен) во время пересчёта: платного вызова не будет.
+      if (marked === null) return RUN_GONE;
+    }
+    const evidence = pairEvidenceOf(
+      context.analysis.characters,
+      await savedMentionsOf(this.prisma, bookVersionId, [pair.a, pair.b]),
+    );
+    return pairFounded(evidence(pair.a, pair.b)) ? null : WORLD_PAIR_NOT_FOUNDED;
+  }
+
+  /**
    * Кандидаты после выбора: имя и формы из ответа (нет ответа - имя анализа), формы и исключения
-   * сохранённой сущности, присутствие по текстам глав - до страницы, в памяти.
+   * сохранённой сущности, присутствие по текстам глав - до страницы, в памяти; второстепенные ниже
+   * порога глав - отсеянными (`BELOW_MIN_CHAPTERS`), общие главы кандидатов - вход отбора пар.
    */
   private async candidatesOf(
     bookVersionId: string,
@@ -738,7 +909,7 @@ export class WorldWriteHandler {
     base: ReadonlyArray<WorldBaseCharacter>,
     answer: WorldSelectDraft | null,
     index: ChapterIndex,
-  ): Promise<WorldCandidate[]> {
+  ): Promise<ChosenCandidates> {
     const folded = foldedVersion(index);
     const exclusions = await this.prisma.bookWorldEntity.findMany({
       where: { bookVersionId, key: { in: base.map((c) => c.key) } },
@@ -780,19 +951,30 @@ export class WorldWriteHandler {
         chapterExclusions: chapterExcluded.get(c.key) ?? null,
       };
     });
-    const mentions = countCandidates(context.chapters, named);
-    return (
-      named
+    const counted = countCandidates(context.chapters, named);
+    const all = named.map((c) => {
+      const m = counted.get(c.key);
+      return {
+        key: c.key,
+        role: c.role,
+        name: c.name,
+        aliases: c.aliases,
+        mentions: { chapters: m?.chapters ?? [], perChapter: m?.perChapter ?? {} },
+      };
+    });
+    // Второстепенный ниже порога глав на сайт не выйдет (`F08-8b`): страницу ему не пишут.
+    const passes = (c: WorldCandidate) => worldRolePasses(c.role, c.mentions.chapters.length);
+    return {
+      candidates: all.filter(passes),
+      leftOut: all
+        .filter((c) => !passes(c))
         .map((c) => ({
           key: c.key,
-          role: c.role,
-          name: c.name,
-          aliases: c.aliases,
-          mentions: mentions.get(c.key) ?? { chapters: [], perChapter: {} },
-        }))
-        // Второстепенный ниже порога глав на сайт не выйдет (`F08-8b`): страницу ему не пишут.
-        .filter((c) => worldRolePasses(c.role, c.mentions.chapters.length))
-    );
+          reason: 'BELOW_MIN_CHAPTERS' as const,
+          chapters: c.mentions.chapters.length,
+        })),
+      coPresence: new Map(all.map((c) => [c.key, counted.get(c.key)?.coPresence ?? {}])),
+    };
   }
 
   /**
@@ -948,6 +1130,51 @@ export class WorldWriteHandler {
       },
     };
   }
+}
+
+/** Итог шага пары: пункт на блок ответа, неверные по импорту - не пишутся (как у страницы героя). */
+function pairRecord(
+  step: number,
+  language: Language,
+  pair: WorldPairCandidate,
+  members: WorldPairMembers,
+  result: Extract<QualityLoopResult<WorldPairDraft>, { ok: true }>,
+  source: WorldStepSource,
+): StepRecord {
+  const invalid = invalidBlocks(result.remarks);
+  const answered = result.review.kind === 'answered';
+  const name = result.draft.name ?? pairFallbackName(language, members);
+  const items: WorldItem[] = [];
+  for (const [block, value] of Object.entries(result.draft.blocks) as Array<
+    [WorldBlock, unknown]
+  >) {
+    const own = remarksOfBlock(result.remarks, block);
+    items.push(
+      invalid.has(block)
+        ? {
+            ...emptyItem(pair.key, block, step),
+            verdict: 'failed',
+            remarks: own,
+            review: result.review,
+            outcome: 'none',
+            failedReason: 'IMPORT_INVALID',
+          }
+        : {
+            ...emptyItem(pair.key, block, step),
+            verdict: verdictOf(own, answered),
+            remarks: own,
+            review: result.review,
+            value,
+            name,
+          },
+    );
+  }
+  return {
+    step: doneStep(step, 'pair', pair.key, result, result.remarks, source, result.draft.fixes),
+    items,
+    droppedQuotes: result.draft.droppedQuotes,
+    droppedSources: [],
+  };
 }
 
 /** Итог страницы: пункт на блок (формы имени - из выбора), неверные по импорту - не пишутся. */

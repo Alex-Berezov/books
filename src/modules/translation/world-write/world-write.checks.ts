@@ -5,12 +5,14 @@ import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import type {
   BookWorldAdaptationDto,
   BookWorldArcDto,
+  BookWorldCompareDto,
   BookWorldProfileDto,
   BookWorldQuoteDto,
   BookWorldRelationDto,
   BookWorldSceneDto,
 } from '../../book-world/dto/book-world-blocks.dto';
 import { BookWorldEntityInputDto } from '../../book-world/dto/update-book-world.dto';
+import { computeWorldCore, WORLD_PAIR_CORE, type WorldCorePart } from '../../book-world/world-core';
 import { countInParagraph, foldMention, mentionForms } from '../../book-world/world-mentions';
 import { quoteStandsIn } from '../../book-world/world-quote-check';
 import type { BookAnalysisFaqDto } from '../../book-analysis/dto/book-analysis-blocks.dto';
@@ -370,13 +372,18 @@ function flatten(errors: ValidationError[], prefix = ''): string[] {
  * Ошибки DTO импорта мира (`IMPORT_INVALID` с путём, `tech.md` §5) по блокам ответа: те же классы
  * и опции, что у `PUT versions/:id/world/:key`. Только поля этих блоков.
  */
-export function importRemarks(key: string, name: string, blocks: object): DraftRemark[] {
+export function importRemarks(
+  key: string,
+  name: string,
+  blocks: object,
+  type: 'character' | 'pair' = 'character',
+): DraftRemark[] {
   const own = new Set(Object.keys(blocks));
   const dto = plainToInstance(BookWorldEntityInputDto, {
     key,
-    type: 'character',
+    type,
     name,
-    role: 'main',
+    ...(type === 'character' ? { role: 'main' } : {}),
     ...blocks,
   });
   return flatten(validateSync(dto, { whitelist: true, forbidNonWhitelisted: true }))
@@ -486,6 +493,221 @@ export function pageRemarks(
     ...importRemarks(check.key, draft.name ?? name, draft.blocks),
     ...mentionRemarks(draft.blocks, check.mentionChapters),
     ...textRemarks(pageFields(draft.blocks), check.language, check.glossary),
+  ];
+}
+
+// ---------------------------------------------------------------- страница пары
+
+/** Блоки страницы пары (`F08-8e`; `prompts/world-pair.md`, «Структура ответа»). */
+export interface WorldPairBlocks {
+  short?: string;
+  compare?: BookWorldCompareDto[];
+  bonds?: string;
+  differences?: string;
+  conclusion?: string;
+  quotes?: BookWorldQuoteDto[];
+  faq?: BookAnalysisFaqDto[];
+}
+
+export interface WorldPairDraft {
+  name: string | null;
+  blocks: WorldPairBlocks;
+  fixes: WorldFix[];
+  droppedQuotes: DroppedWorldQuote[];
+}
+
+export const EMPTY_PAIR: WorldPairDraft = { name: null, blocks: {}, fixes: [], droppedQuotes: [] };
+
+/** Что знает код о версии и паре: ключ, герои ключа и главы каждого (посчитано на шаге выбора). */
+export interface WorldPairCheck {
+  key: string;
+  a: string;
+  b: string;
+  language: Language;
+  chapters: ChapterIndex;
+  chaptersA: ReadonlySet<number>;
+  chaptersB: ReadonlySet<number>;
+  glossary: readonly NameEntry[];
+  /** Проверять ядро пары: при перегенерации одного блока - нет (ядра в таком ответе нет). */
+  core: boolean;
+}
+
+/**
+ * Ответ шага пары после кода (`F08-8e`): строка сравнения с главой стороны не из версии - выброшена
+ * (`CHAPTER_UNKNOWN`); цитата с главой не версии или не дословная - выброшена с причиной
+ * (`droppedQuotes`); цитата, у которой говорящий или тот, о ком она, - не герой пары или один и тот
+ * же, - выброшена (`KEY_UNKNOWN`): импорт отбил бы пару целиком (`checkWorldPair`); списки - по
+ * пределам импорта (Q7 `F08 | F08-4`).
+ */
+export function readPairAnswer(value: unknown, check: WorldPairCheck): WorldPairDraft {
+  const v = rec(value);
+  const fixes: WorldFix[] = [];
+  const droppedQuotes: DroppedWorldQuote[] = [];
+  const known = (n: number | null) => n !== null && check.chapters.has(n);
+  const blocks: WorldPairBlocks = {};
+  for (const field of ['short', 'bonds', 'differences', 'conclusion'] as const) {
+    const text = textOrNull(v[field]);
+    if (text) blocks[field] = text;
+  }
+
+  const compare = list(v.compare).flatMap((raw, i) => {
+    const c = rec(raw);
+    const chapterA = chapterOf(c.chapterA);
+    const chapterB = chapterOf(c.chapterB);
+    if (!known(chapterA) || !known(chapterB)) {
+      fixes.push(chapterFix(`compare.${i}`, known(chapterA) ? chapterB : chapterA));
+      return [];
+    }
+    return [
+      {
+        feature: trimmed(c.feature),
+        a: trimmed(c.a),
+        chapterA: chapterA as number,
+        b: trimmed(c.b),
+        chapterB: chapterB as number,
+      },
+    ];
+  });
+  if (compare.length > 0) {
+    blocks.compare = limited(compare, BOOK_WORLD_LIMITS.compare, 'compare', fixes);
+  }
+
+  const members = [check.a, check.b];
+  const quotes = list(v.quotes).flatMap((raw, i) => {
+    const q = rec(raw);
+    const text = trimmed(q.text);
+    const chapter = chapterOf(q.chapter);
+    const speakerKey = trimmed(q.speakerKey);
+    const aboutKey = trimmed(q.aboutKey);
+    if (!members.includes(speakerKey) || !members.includes(aboutKey) || speakerKey === aboutKey) {
+      fixes.push({
+        code: 'KEY_UNKNOWN',
+        path: `quotes.${i}`,
+        note: `a quote of the pair is said by one of ${check.a}, ${check.b} about the other: removed`,
+      });
+      return [];
+    }
+    if (!known(chapter)) {
+      droppedQuotes.push({ key: check.key, chapter, text, reason: 'CHAPTER_UNKNOWN' });
+      fixes.push(chapterFix(`quotes.${i}`, chapter));
+      return [];
+    }
+    if (!quoteStandsIn(text, check.chapters.get(chapter as number) ?? [])) {
+      droppedQuotes.push({ key: check.key, chapter, text, reason: 'QUOTE_NOT_VERBATIM' });
+      fixes.push({
+        code: 'QUOTE_NOT_VERBATIM',
+        path: `quotes.${i}`,
+        note: `not word for word in chapter ${chapter}: removed`,
+      });
+      return [];
+    }
+    return [
+      {
+        text,
+        chapter: chapter as number,
+        speakerKey,
+        aboutKey,
+        interpretation: trimmed(q.interpretation),
+      },
+    ];
+  });
+  if (quotes.length > 0) blocks.quotes = limited(quotes, BOOK_WORLD_LIMITS.quotes, 'quotes', fixes);
+
+  const faq = list(v.faq).map((raw) => {
+    const f = rec(raw);
+    return { question: trimmed(f.question), answer: trimmed(f.answer) };
+  });
+  if (faq.length > 0) blocks.faq = limited(faq, BOOK_WORLD_LIMITS.faq, 'faq', fixes);
+
+  return { name: nameOf(v.name), blocks, fixes, droppedQuotes };
+}
+
+function pairFields(blocks: WorldPairBlocks): TextField[] {
+  const fields: TextField[] = [];
+  const add = (path: string, text: string | null | undefined, long: boolean) => {
+    if (typeof text === 'string' && text.trim() !== '') fields.push({ path, text, long });
+  };
+  add('short', blocks.short, true);
+  (blocks.compare ?? []).forEach((c, i) => {
+    add(`compare.${i}.feature`, c.feature, false);
+    add(`compare.${i}.a`, c.a, true);
+    add(`compare.${i}.b`, c.b, true);
+  });
+  add('bonds', blocks.bonds, true);
+  add('differences', blocks.differences, true);
+  add('conclusion', blocks.conclusion, true);
+  (blocks.quotes ?? []).forEach((q, i) =>
+    add(`quotes.${i}.interpretation`, q.interpretation, true),
+  );
+  (blocks.faq ?? []).forEach((f, i) => {
+    add(`faq.${i}.question`, f.question, false);
+    add(`faq.${i}.answer`, f.answer, true);
+  });
+  return fields;
+}
+
+/** Что дописать, чтобы собрать ядро пары: по части ядра `computeWorldCore`. */
+const PAIR_CORE_NOTES: Partial<Record<WorldCorePart, string>> = {
+  short: 'Write "short": it is the core of the page.',
+  compare: `The core needs ${WORLD_PAIR_CORE.compare} full comparison rows: add features both characters share, each side with its chapter.`,
+  conclusion: 'Write "conclusion": it is the core of the page.',
+};
+
+/**
+ * Ядро пары в ответе (решение арбитра `F08 | F08-8e-1` Q5): правило ядра одно - `computeWorldCore`
+ * (`book-world/world-core.ts`); общие главы ответ не несёт (их пишет пересчёт), поэтому присутствие
+ * подставлено и в замечания не идёт. Нет части - замечание и одна переделка, затем запись как есть.
+ */
+export function pairCoreRemarks(blocks: WorldPairBlocks): DraftRemark[] {
+  const core = computeWorldCore({
+    type: 'pair',
+    short: blocks.short ?? null,
+    compare: blocks.compare ?? null,
+    conclusion: blocks.conclusion ?? null,
+    character: null,
+    arc: null,
+    quotes: null,
+    scenes: null,
+    mentions: { chapters: [1] },
+  });
+  return core.missing.flatMap((m) => {
+    const note = PAIR_CORE_NOTES[m.part];
+    return note ? [codeRemark('CORE_MISSING', m.part, note)] : [];
+  });
+}
+
+/**
+ * Сторона строки сравнения - в главе, где формы имени нашли своего героя (как сцены героя, `tech.md`
+ * §5): иначе замечание и переделка.
+ */
+function pairSideRemarks(blocks: WorldPairBlocks, check: WorldPairCheck): DraftRemark[] {
+  const outside = (path: string, who: string, chapter: number) =>
+    codeRemark(
+      'SCENE_OUTSIDE_MENTIONS',
+      path,
+      `${who} is not found by the name forms in chapter ${chapter}: take a scene from a chapter where the character is, or leave the feature out.`,
+    );
+  return (blocks.compare ?? []).flatMap((c, i) => [
+    ...(check.chaptersA.has(c.chapterA)
+      ? []
+      : [outside(`compare.${i}.chapterA`, check.a, c.chapterA)]),
+    ...(check.chaptersB.has(c.chapterB)
+      ? []
+      : [outside(`compare.${i}.chapterB`, check.b, c.chapterB)]),
+  ]);
+}
+
+/** Замечания кода к паре: импорт, ядро, сторона вне глав своего героя, текст (язык, имена, мусор). */
+export function pairRemarks(
+  draft: WorldPairDraft,
+  check: WorldPairCheck,
+  name: string,
+): DraftRemark[] {
+  return [
+    ...importRemarks(check.key, draft.name ?? name, draft.blocks, 'pair'),
+    ...(check.core ? pairCoreRemarks(draft.blocks) : []),
+    ...pairSideRemarks(draft.blocks, check),
+    ...textRemarks(pairFields(draft.blocks), check.language, check.glossary),
   ];
 }
 

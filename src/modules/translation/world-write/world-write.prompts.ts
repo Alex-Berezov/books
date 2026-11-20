@@ -9,6 +9,7 @@ import { DraftRemark, DraftRemarkCode } from '../draft-quality/text-checks';
 import {
   WORLD_EXTERNAL_WRITE_STAGE,
   WORLD_PAGE_WRITE_STAGE,
+  WORLD_PAIR_WRITE_STAGE,
   WORLD_REVIEW_STAGE,
   WORLD_SELECT_STAGE,
 } from './world-write.constants';
@@ -21,7 +22,9 @@ import type { WorldBlock, WorldStepKind } from './world-write.data';
  * (герои `main` и `secondary` анализа версии, `F08-4` Q3, `F08-8b`), формы имени - отдельным шагом,
  * внешние блоки - отдельным шагом со ссылками утверждений на источники; ответ - по строгой форме,
  * поэтому «нет значения» - пустая строка, «нет года» - `0`. Текст глав, анализ, досье, глоссарий,
- * прошлый ответ и замечания - данные в оградах (`F05-14`), а не инструкция.
+ * прошлый ответ и замечания - данные в оградах (`F05-14`), а не инструкция. Страница пары (`F08-8e`) -
+ * по канону `prompts/world-pair.md` и эталону `example-world-pair.{ru,en}.json`; пары выбирает код
+ * (условие заведения, решения арбитра `F08 | F08-8e-1` Q1, Q3), поэтому шаг пишет одну пару.
  */
 
 const str = 'string' as const;
@@ -57,6 +60,25 @@ const PAGE_SHAPE: Shape = {
   },
 };
 
+const PAIR_SHAPE: Shape = {
+  object: {
+    name: str,
+    short: str,
+    compare: {
+      array: { object: { feature: str, a: str, chapterA: int, b: str, chapterB: int } },
+    },
+    bonds: str,
+    differences: str,
+    conclusion: str,
+    quotes: {
+      array: {
+        object: { text: str, chapter: int, speakerKey: str, aboutKey: str, interpretation: str },
+      },
+    },
+    faq: { array: { object: { question: str, answer: str } } },
+  },
+};
+
 const REFS = { array: int } as const;
 
 const EXTERNAL_SHAPE: Shape = {
@@ -76,12 +98,14 @@ export const WORLD_STEP_SHAPES: Record<WorldStepKind, Shape> = {
   select: SELECT_SHAPE,
   page: PAGE_SHAPE,
   external: EXTERNAL_SHAPE,
+  pair: PAIR_SHAPE,
 };
 
 export const WORLD_STEP_STAGES: Record<WorldStepKind, string> = {
   select: WORLD_SELECT_STAGE,
   page: WORLD_PAGE_WRITE_STAGE,
   external: WORLD_EXTERNAL_WRITE_STAGE,
+  pair: WORLD_PAIR_WRITE_STAGE,
 };
 
 /** Коды проверяющей мира (`product.md` §5): `SHORT_SPOILER` - исход в «Коротко» (Q6). */
@@ -139,6 +163,51 @@ function pageRules(language: Language): string {
     'Do not speak for the site: no "our editors think", no "we have prepared".',
   ]);
 }
+
+/** «Главные правила» канона пары (`prompts/world-pair.md`) для страницы пары по тексту версии. */
+function pairRules(language: Language): string {
+  return numbered([
+    'A comparison, not two portraits. Every row of "compare" is one feature of both characters, ' +
+      'and the two sides answer the same question. The page of each character already told who ' +
+      'they are: here - only what shows when the two stand side by side. Do not retell the ' +
+      'character pages, the analysis or the summary.',
+    'Every statement rests on a scene with its chapter. Each side of a row has its own chapter ' +
+      'from the list of chapters of this version, where that character is (chapterA for the first ' +
+      'character of the key, chapterB for the second). Not sure of the chapter of a side - leave ' +
+      'the feature out.',
+    '"short" - 2-3 sentences without the ending: who the two are to each other and why they are ' +
+      'compared. No outcome, no turn of the last third.',
+    'Quotations only word for word from the text of this version given in the data, with the ' +
+      'number of the chapter where the words stand, and only words of one character of the pair ' +
+      'about the other: speakerKey - who speaks, aboutKey - about whom, both keys of this pair and ' +
+      'not the same. No such words - no quotes. No quotations in quotation marks inside the prose ' +
+      'fields.',
+    'Do not invent: no dates, critics, links or sources - a pair has no external blocks. Present ' +
+      'the disputable as an interpretation ("can be read as…").',
+    `Write for the reader of ${LANGUAGE_NAMES[language]} (language code "${language}"), not a ` +
+      'translation from English. Names as in the glossary and in the known translations.',
+    'Plain text: no HTML, no Markdown, no emoji. Paragraphs of a long text are separated by an ' +
+      `empty line. Quotation marks of the language: ${QUOTE_MARKS[language]}.`,
+    'Do not speak for the site: no "our editors think".',
+  ]);
+}
+
+const PAIR_FIELDS =
+  `The core - without it there is no page: short, at least 4 rows of compare with both sides and ` +
+  'their chapters, conclusion.' +
+  `\nname - the names of the two characters joined by "and" of the language (at most ${L.name} ` +
+  `characters). short - at most ${L.short} characters. compare - 4-${L.compare} features both ` +
+  'characters share, from the outer to the main one: position, character, attitude to the main ' +
+  'conflict, fate (a fate that is a turn of the last third - the last row); feature - a few words, ' +
+  `a and b - one or two sentences with a scene, at most ${L.mediumText} each. bonds - what binds ` +
+  'them: likeness and what brings them together in the plot. differences - the main difference ' +
+  `that makes the comparison worth it, not a list of trifles. conclusion - what the pair means for ` +
+  `the book, two or three sentences, a thesis, not a repeat of the table; bonds, differences and ` +
+  `conclusion at most ${L.mediumText} each. quotes - at most ${L.quotes}, each at most ${L.quote} ` +
+  'characters; interpretation - 1-3 sentences: what the line shows about the two. faq - at most ' +
+  `${L.faq} questions people really ask about the pair ("why…", "what is the difference…"), the ` +
+  'answer direct in its first sentence.' +
+  '\nA field without reliable data - "" or an empty list.';
 
 const QUALITY_BAR =
   'Every text about the character passes the quality bar: (1) concreteness - a trait is shown ' +
@@ -402,6 +471,84 @@ export function pageWriteRequest(input: PagePromptInput): ShapedRequest {
   );
 }
 
+export interface PairPromptInput {
+  language: Language;
+  bookTitle: string;
+  author: string;
+  key: string;
+  first: string;
+  second: string;
+  chapterList: string;
+  chaptersA: string;
+  chaptersB: string;
+  analysis: string;
+  glossary: string;
+  example: string;
+  book: string;
+  bookIsPartial: boolean;
+  regen: WorldRegenSpec | null;
+  redo: WorldRedo | null;
+}
+
+export function pairWriteRequest(input: PairPromptInput): ShapedRequest {
+  const system =
+    'You write the page of one pair of characters of a book for the site: a comparison of two ' +
+    'characters - how they are alike and how they differ and why the book needs them side by ' +
+    'side. The reader is a pupil writing a comparison essay or a reader who noticed that the two ' +
+    'mirror each other. This is the text for publication, not a draft.\nMain rules (breaking any ' +
+    'is a defect):\n' +
+    pairRules(input.language) +
+    `\n${PAIR_FIELDS}` +
+    (input.bookIsPartial
+      ? '\nThe whole text with the two characters does not fit: you get a part of the chapters ' +
+        'where they are. Quote and place sides only in the chapters whose text is given.'
+      : '') +
+    (input.regen ? regenRule(input.regen) : '') +
+    '\nBefore answering, check: the core is complete; every side of every row has a chapter ' +
+    'where its character is; every quotation is a line of this text word for word, said by one ' +
+    'character of the pair about the other; "short" has no ending; no empty template values.';
+  const items: Array<readonly [string, string]> = [
+    ['BOOK_TITLE', input.bookTitle],
+    ['AUTHOR', input.author],
+    ['PAIR', input.key],
+    ['FIRST_CHARACTER', input.first],
+    ['SECOND_CHARACTER', input.second],
+    ['CHAPTERS_LIST', input.chapterList],
+    ['CHAPTERS_WITH_FIRST', input.chaptersA],
+    ['CHAPTERS_WITH_SECOND', input.chaptersB],
+    ['ANALYSIS', input.analysis],
+    ['GLOSSARY', input.glossary],
+    ...regenItems(input.regen),
+    ['EXAMPLE', input.example],
+    [input.bookIsPartial ? 'CHAPTERS_PART' : 'CHAPTERS_TEXT', input.book],
+  ];
+  const labels = [
+    'The title of the book is',
+    'the author',
+    'the key of the pair',
+    'the first character of the key (key - name; compare.a, chapterA)',
+    'the second character of the key (key - name; compare.b, chapterB)',
+    'the chapters of this version (number - title)',
+    'the chapters where the first character is',
+    'the chapters where the second character is',
+    'the analysis of this book (do not repeat it)',
+    'the glossary',
+    ...(input.regen ? ['the current content of the block to rewrite', 'the editor remark'] : []),
+    'a sample pair page of another book in this language',
+    'the text of the chapters with the two characters',
+  ];
+  return shapedRequest(
+    WORLD_PAIR_WRITE_STAGE,
+    PAIR_SHAPE,
+    messages(
+      system,
+      items,
+      leadOf(labels, 'The sample shows the form and the level only: never take its content.'),
+      input.redo,
+    ),
+  );
+}
+
 export interface ExternalPromptInput {
   language: Language;
   bookTitle: string;
@@ -455,6 +602,7 @@ const REVIEW_STEP: Record<WorldStepKind, string> = {
   select: 'the name forms of the characters',
   page: 'the page of one character',
   external: 'the external blocks of one character page (criticism, prototypes, adaptations)',
+  pair: 'the page of one pair of characters (a comparison of the two)',
 };
 
 export interface WorldReviewInput {
@@ -480,9 +628,11 @@ export function worldReviewRequest(input: WorldReviewInput): ShapedRequest {
       : '') +
     (input.kind === 'page'
       ? `The rules the answer must follow:\n${pageRules(input.language)}\n${QUALITY_BAR}`
-      : input.kind === 'select'
-        ? `The rules the answer must follow:\n${SELECT_RULES}`
-        : `The rules the answer must follow:\n${externalRules(input.language)}`) +
+      : input.kind === 'pair'
+        ? `The rules the answer must follow:\n${pairRules(input.language)}\n${PAIR_FIELDS}`
+        : input.kind === 'select'
+          ? `The rules the answer must follow:\n${SELECT_RULES}`
+          : `The rules the answer must follow:\n${externalRules(input.language)}`) +
     '\nRemark codes:' +
     (external
       ? ''
@@ -491,7 +641,7 @@ export function worldReviewRequest(input: WorldReviewInput): ShapedRequest {
     '\n- GENERIC: the text is true for any character (replace the name - nothing changes).' +
     '\n- CONTRADICTION: the fields contradict each other or the analysis of the book.' +
     '\n- RETELLING: a retelling of the plot instead of a characterisation.' +
-    (input.kind === 'page'
+    (input.kind === 'page' || input.kind === 'pair'
       ? '\n- SHORT_SPOILER: "short" tells the outcome, the ending or a turn of the last third. ' +
         'where: short.'
       : '') +

@@ -54,6 +54,7 @@ import {
   WORLD_ITEM_UNKNOWN,
   WORLD_LANGUAGE_UNSUPPORTED,
   WORLD_PAGE_WRITE_STAGE,
+  WORLD_PAIR_WRITE_STAGE,
   WORLD_REGEN_IN_PROGRESS,
   WORLD_REVIEW_STAGE,
   WORLD_SELECT_STAGE,
@@ -64,7 +65,7 @@ import {
   emptyWorldData,
   proposalPrint,
   readWorldData,
-  stepAt,
+  stepOfData,
   stepsTotalOf,
   withItem,
   WORLD_TEXT_BLOCKS,
@@ -72,13 +73,20 @@ import {
   WorldWriteData,
   worldDataJson,
 } from './world-write.data';
+import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
+import { hasWorldPairExample } from './examples';
 import { worldReadyGate, WorldWriteFields } from './world-write.fields';
 import { WorldWriteHandler, worldWriteTaskInput } from './world-write.handler';
 import {
   externalInput,
   mainCharacters,
+  pairFormCharacters,
   pageBook,
   pageInput,
+  pairBook,
+  pairChapters,
+  pairInput,
+  pairStepsUpperBound,
   worldCharacters,
   WorldEstimators,
   worldPipelineUsd,
@@ -92,13 +100,14 @@ const DISCARD_ATTEMPTS = 3;
 
 /** Оценщики этапов хода мира. */
 async function worldEstimators(llm: LlmService): Promise<WorldEstimators> {
-  const [select, page, external, review] = await Promise.all([
+  const [select, page, external, pair, review] = await Promise.all([
     stageEstimatorFor(llm, WORLD_SELECT_STAGE),
     stageEstimatorFor(llm, WORLD_PAGE_WRITE_STAGE),
     stageEstimatorFor(llm, WORLD_EXTERNAL_WRITE_STAGE),
+    stageEstimatorFor(llm, WORLD_PAIR_WRITE_STAGE),
     stageEstimatorFor(llm, WORLD_REVIEW_STAGE),
   ]);
-  return { select, page, external, review };
+  return { select, page, external, pair, review };
 }
 
 /**
@@ -405,12 +414,33 @@ export class WorldWriteService {
       ? await this.prisma.bookDossier.findUnique({ where: { id: row.dossierId } })
       : null;
     if (!dossier) throw llmTaskConflict(DRAFT_DOSSIER_MISSING, 'The run dossier is gone');
+    const calls = await worldEstimators(this.llm);
+    const spec = { block: item.block, current: item.value, remark };
+    const pair = data.pairs?.find((p) => p.key === item.key);
+    if (pair) {
+      const a = data.candidates?.find((c) => c.key === pair.a);
+      const b = data.candidates?.find((c) => c.key === pair.b);
+      if (!a || !b) throw llmTaskConflict(WORLD_WRITE_NOT_READY, 'The world run is not ready');
+      const context = await this.handler.contextOf(row, dossier.data);
+      const members = { a, b };
+      return worldStepUsd(
+        calls.pair,
+        calls.review,
+        pairInput(
+          context,
+          pair,
+          members,
+          new Map(),
+          pairBook(context, pairChapters(pair, members), null),
+          spec,
+        ),
+        0,
+      );
+    }
     const candidate = data.candidates?.find((c) => c.key === item.key);
     if (!candidate) throw llmTaskConflict(WORLD_WRITE_NOT_READY, 'The world run is not ready');
-    const calls = await worldEstimators(this.llm);
     const context = await this.handler.contextOf(row, dossier.data);
-    const spec = { block: item.block, current: item.value, remark };
-    if (stepAt(item.step).kind === 'external') {
+    if (stepOfData(data, item.step).kind === 'external') {
       return worldStepUsd(
         calls.external,
         calls.review,
@@ -448,7 +478,20 @@ export class WorldWriteService {
       select: BOOK_ANALYSIS_SELECT,
     });
     const analysis = analysisRow ? readStoredAnalysis(analysisRow) : null;
-    const mains = analysis ? mainCharacters(analysis) : [];
+    // Заведённые герои с ключом вида пары остаются в ходе (Q7): ключи героев мира, которых это касается.
+    const pairForm = analysis ? pairFormCharacters(analysis).map((c) => c.key) : [];
+    const stored = new Set(
+      pairForm.length === 0
+        ? []
+        : (
+            await this.prisma.bookWorldEntity.findMany({
+              where: { bookVersionId: versionId, type: 'character', key: { in: pairForm } },
+              select: { key: true },
+              take: BOOK_WORLD_LIMITS.entities,
+            })
+          ).map((e) => e.key),
+    );
+    const mains = analysis ? mainCharacters(analysis, stored) : [];
     if (!analysis || mains.length === 0) {
       throw llmTaskConflict(
         WORLD_ANALYSIS_MISSING,
@@ -465,6 +508,8 @@ export class WorldWriteService {
     const context = await this.drafts.draftContext(versionId, version);
     const upperBound = context.dossier === null || context.glossaryLine !== null;
     const extra = upperBound ? await contextUpperChars(this.llm) : 0;
+    const heroes = worldCharacters(analysis, stored).length;
+    const pairs = pairStepsUpperBound(heroes, hasWorldPairExample(version.language));
     const usd = worldPipelineUsd(
       calls,
       {
@@ -480,6 +525,8 @@ export class WorldWriteService {
         names: { titles: [version.title], authors: [version.author] },
       },
       extra,
+      pairs,
+      stored,
     );
     const lines = contextLimits(context, usd);
     return {
@@ -490,7 +537,8 @@ export class WorldWriteService {
       dto: {
         dossier: lines.dossier,
         glossary: lines.glossary,
-        candidates: worldCharacters(analysis).length,
+        candidates: heroes,
+        pairs,
         stageUsd: moneyUsd(usd),
         upperBound,
         suggestedLimitUsd: moneyUsd(lines.suggestedLimitUsd),
@@ -521,6 +569,9 @@ export class WorldWriteService {
           aliases: c.aliases,
           chapters: c.mentions.chapters,
         })) ?? null,
+      pairs: data.pairs,
+      leftOut: data.leftOut,
+      pairsOff: data.pairsOff,
       steps: data.steps.map((s) => ({
         ...s,
         remarks: remarksDto(s.remarks),
@@ -562,6 +613,7 @@ function valueDto(item: WorldItem): WorldWriteValueDto {
     quotes: null,
     faq: null,
     adaptations: null,
+    compare: null,
     sources: item.sources && item.sources.length > 0 ? item.sources : null,
     print: proposalPrint(item),
   };

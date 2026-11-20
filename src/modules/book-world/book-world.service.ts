@@ -86,12 +86,14 @@ import {
 import { worldAlternates } from './world-alternates';
 import {
   checkWorldPair,
+  checkCharacterKey,
   checkWorldRefs,
   checkWorldTypeFields,
   duplicateWorldKeys,
   pairEvidenceOf,
   pairMembers,
   pairsHolding,
+  savedMentionsOf,
   worldEntityRefs,
   type WorldRefError,
 } from './world-refs';
@@ -517,7 +519,7 @@ export class BookWorldService {
     chapters: ChapterCheck,
   ): Promise<PlannedEntity[]> {
     const pairKeys = inputs.flatMap((i) => (i.type === 'pair' ? (pairMembers(i.key) ?? []) : []));
-    const [existingRows, versionKeys, analysis, memberRows] = await Promise.all([
+    const [existingRows, versionKeys, analysis, memberMentions] = await Promise.all([
       client.bookWorldEntity.findMany({
         where: { bookVersionId, key: { in: inputs.map((i) => i.key) } },
         select: BOOK_WORLD_SELECT,
@@ -530,13 +532,7 @@ export class BookWorldService {
       }),
       client.bookAnalysis.findUnique({ where: { bookVersionId }, select: { characters: true } }),
       // Присутствие героев пар тела — вход условия заведения (Q4); без пар не читается.
-      pairKeys.length === 0
-        ? Promise.resolve<{ key: string; mentions: Prisma.JsonValue }[]>([])
-        : client.bookWorldEntity.findMany({
-            where: { bookVersionId, key: { in: [...new Set(pairKeys)] } },
-            select: { key: true, mentions: true },
-            take: BOOK_WORLD_LIMITS.entities,
-          }),
+      savedMentionsOf(client, bookVersionId, pairKeys),
     ]);
     const byKey = new Map(existingRows.map((r) => [r.key, r]));
     const entityKeys = new Set([...versionKeys.map((r) => r.key), ...inputs.map((i) => i.key)]);
@@ -548,10 +544,7 @@ export class BookWorldService {
     const characterKeys = new Set(
       [...typeOf].flatMap(([key, type]) => (type === 'character' ? [key] : [])),
     );
-    const evidence = pairEvidenceOf(
-      analysis?.characters,
-      new Map<string, unknown>(memberRows.map((r) => [r.key, r.mentions] as const)),
-    );
+    const evidence = pairEvidenceOf(analysis?.characters, memberMentions);
     const errors: WorldRefError[] = [];
     if (entityKeys.size > BOOK_WORLD_LIMITS.entities) {
       errors.push({
@@ -601,7 +594,13 @@ export class BookWorldService {
           });
         }
       }
-      for (const e of [...typeErrors, ...checkWorldRefs(entity, ctx), ...pairErrors]) {
+      const keyErrors = checkCharacterKey(entity, row?.type ?? null);
+      for (const e of [
+        ...keyErrors,
+        ...typeErrors,
+        ...checkWorldRefs(entity, ctx),
+        ...pairErrors,
+      ]) {
         errors.push({ path: `${prefix(i)}${e.path}`, message: e.message });
       }
       // Предел глав на запись (решение арбитра `F08 | F08-8a` п.5) — и после слияния повторов формы:

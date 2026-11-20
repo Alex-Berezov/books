@@ -1303,6 +1303,12 @@ describe('Seeded dataset (e2e)', () => {
           orderBy: { key: 'asc' },
         });
         expect(rows.map((r) => r.key)).toEqual(v.entities.map((e) => e.key).sort());
+        // Пара сида есть в en-версии приёмки (F08-8c-2): проверки пары в цикле ниже не молчат.
+        if (slug === WORLD_ACCEPTANCE.book && language === Language.en) {
+          expect(rows.filter((r) => r.type === 'pair').map((r) => r.key)).toEqual([
+            'anna-lark--tom-reed',
+          ]);
+        }
         // Пара (F08-8c): оба героя ключа на сайте — по тем же строкам сида.
         const listedHeroes = new Set(
           rows.filter((r) => r.type === 'character' && r.isListed).map((r) => r.key),
@@ -1387,11 +1393,40 @@ describe('Seeded dataset (e2e)', () => {
       const en = await versionOf(WORLD_ACCEPTANCE.book, Language.en);
       const pairPage = await get(`/versions/${en.id}/world/anna-lark--tom-reed`).expect(200);
       const pairEntity = (
-        pairPage.body as { entity: { key: string; type: string; compare: unknown[] } }
+        pairPage.body as { entity: Record<string, unknown> & { compare: unknown[] } }
       ).entity;
       expect(pairEntity).toMatchObject({ key: 'anna-lark--tom-reed', type: 'pair' });
       // В сиде у пары ровно четыре строки сравнения (`prisma/seed-world.ts`).
       expect(pairEntity.compare).toHaveLength(4);
+      // У пары нет полей героя и внешних блоков (`checkWorldTypeFields`), читателю нет служебных.
+      expect({
+        role: pairEntity.role,
+        aliases: pairEntity.aliases,
+        profile: pairEntity.profile,
+        character: pairEntity.character,
+        arc: pairEntity.arc,
+        scenes: pairEntity.scenes,
+        relations: pairEntity.relations,
+        critique: pairEntity.critique,
+        prototypes: pairEntity.prototypes,
+        adaptations: pairEntity.adaptations,
+        sources: pairEntity.sources,
+      }).toEqual({
+        role: null,
+        aliases: null,
+        profile: null,
+        character: null,
+        arc: null,
+        scenes: null,
+        relations: null,
+        critique: null,
+        prototypes: null,
+        adaptations: null,
+        sources: null,
+      });
+      for (const field of ['editor', 'autoTextAt', 'readAt', 'isListed', 'coreMissing']) {
+        expect(pairEntity).not.toHaveProperty(field);
+      }
       // Мир есть, но скрыт — читателю пусто (`/wiki` — 404, кнопки нет: §19 п.6).
       const hidden = await versionOf(WORLD_ACCEPTANCE.hidden, Language.en);
       const hiddenList = await get(`/versions/${hidden.id}/world`).expect(200);

@@ -1,11 +1,17 @@
 import type { StoredWorldEntity } from './book-world-data';
 import {
+  characterKeyRefused,
+  checkCharacterKey,
   checkWorldPair,
   checkWorldRefs,
   checkWorldTypeFields,
   duplicateWorldKeys,
   pairEvidenceOf,
+  missingPairMembers,
   pairFounded,
+  pairKeyTaken,
+  savedMentionsOf,
+  worldPairKey,
   pairMembers,
   pairsHolding,
   worldEntityRefs,
@@ -369,6 +375,72 @@ describe('пара героев: заведённая пара и ссылки �
       chaptersA: 3,
       chaptersB: null,
       common: 0,
+    });
+  });
+});
+
+describe('ключ пары и ключ героя вида пары (F08-8e-1, LEGACY-507, решение арбитра Q7)', () => {
+  it('worldPairKey: по алфавиту по коду символа; один герой, `--`, `-` по краю и ключ длиннее 60 — нет пары', () => {
+    expect(worldPairKey('sonya', 'raskolnikov')).toBe('raskolnikov--sonya');
+    expect(worldPairKey('a9', 'a10')).toBe('a10--a9');
+    expect(worldPairKey('anna', 'anna')).toBeNull();
+    expect(worldPairKey('anna--tom', 'boris')).toBeNull();
+    expect(worldPairKey('anna-', 'boris')).toBeNull();
+    expect(worldPairKey('-anna', '-boris')).toBeNull();
+    expect(worldPairKey('-anna', 'boris')).toBe('-anna--boris');
+    expect(worldPairKey('a'.repeat(30), 'b'.repeat(29))).toBeNull();
+    expect(worldPairKey('a'.repeat(29), 'b'.repeat(29))).toBe(
+      `${'a'.repeat(29)}--${'b'.repeat(29)}`,
+    );
+  });
+
+  it('новый герой или смена типа на героя с `--` в ключе — отказ путём key; заведённый герой — без отказа', () => {
+    const hero = { key: 'anna--tom', type: 'character' as const };
+    expect(checkCharacterKey(hero, null)).toEqual([
+      { path: 'key', message: expect.stringContaining('"--"') },
+    ]);
+    expect(checkCharacterKey(hero, 'pair')).toEqual([
+      { path: 'key', message: expect.stringContaining('"--"') },
+    ]);
+    expect(checkCharacterKey(hero, 'character')).toEqual([]);
+    expect(checkCharacterKey({ key: 'anna-tom', type: 'character' }, null)).toEqual([]);
+    expect(checkCharacterKey({ key: 'anna--tom', type: 'pair' }, null)).toEqual([]);
+  });
+});
+
+describe('правила записи пары, общие с ходом мира (F08-8e-1, ревью круга 3)', () => {
+  it('characterKeyRefused: ключ с «--» у строки, которая не герой; заведённый герой — нет', () => {
+    expect(characterKeyRefused('anna--tom', null)).toBe(true);
+    expect(characterKeyRefused('anna--tom', 'pair')).toBe(true);
+    expect(characterKeyRefused('anna--tom', 'character')).toBe(false);
+    expect(characterKeyRefused('anna-tom', null)).toBe(false);
+  });
+
+  it('missingPairMembers: герои ключа, которых нет героями версии, без повторов', () => {
+    expect(missingPairMembers(['anna', 'tom'], new Set(['anna']))).toEqual(['tom']);
+    expect(missingPairMembers(['anna', 'anna'], new Set())).toEqual(['anna']);
+    expect(missingPairMembers(['anna', 'tom'], new Set(['anna', 'tom']))).toEqual([]);
+  });
+
+  it('pairKeyTaken: ключ занят сущностью не-парой; нет строки или пара — не занят', () => {
+    expect(pairKeyTaken('character')).toBe(true);
+    expect(pairKeyTaken('pair')).toBe(false);
+    expect(pairKeyTaken(undefined)).toBe(false);
+    expect(pairKeyTaken(null)).toBe(false);
+  });
+
+  it('savedMentionsOf: одно чтение присутствия по ключам версии; без ключей — без запроса', async () => {
+    const findMany = jest.fn().mockResolvedValue([{ key: 'anna', mentions: { chapters: [1] } }]);
+    const client = { bookWorldEntity: { findMany } } as never;
+    expect(await savedMentionsOf(client, 'v1', [])).toEqual(new Map());
+    expect(findMany).not.toHaveBeenCalled();
+    const got = await savedMentionsOf(client, 'v1', ['anna', 'tom', 'anna']);
+    expect(got).toEqual(new Map([['anna', { chapters: [1] }]]));
+    expect(findMany).toHaveBeenCalledTimes(1);
+    expect(findMany).toHaveBeenCalledWith({
+      where: { bookVersionId: 'v1', key: { in: ['anna', 'tom'] } },
+      select: { key: true, mentions: true },
+      take: 100,
     });
   });
 });

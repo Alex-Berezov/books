@@ -164,6 +164,20 @@ describe('пара героев (F08-8c, решение арбитра `F08 | F0
     expect([...rows].sort(heroesFirst).map((r) => r.key)).toEqual(['b', 'a', 'a--b', 'c--d']);
   });
 
+  it('heroesFirst: публичная пара первой во входе — всё равно после героев, без потери строк (F08-8c-2)', () => {
+    const rows = [
+      { key: 'anna--tom', type: 'pair', isListed: true },
+      { key: 'tom', type: 'character', isListed: true },
+      { key: 'anna', type: 'character', isListed: false },
+    ];
+    const sorted = [...rows].sort(heroesFirst);
+    expect(sorted.map((r) => [r.key, r.isListed])).toEqual([
+      ['tom', true],
+      ['anna', false],
+      ['anna--tom', true],
+    ]);
+  });
+
   it('пара с ядром, прочитанная, оба героя на сайте — на сайте без роли', () => {
     expect(computeWorldListed(pair())).toBe(true);
   });

@@ -1963,6 +1963,25 @@ describe('BookWorld e2e', () => {
       expect(message(again)).toContain('are not related in the analysis');
     });
 
+    it('новый герой с ключом вида пары — 400 с путём key; заведённый герой с «--» правится (LEGACY-507, F08-8e-1 Q7)', async () => {
+      const { versionId } = await createVersion();
+      const res = await put(versionId, { language: 'en', entities: [hero('anna--tom')] }).expect(
+        400,
+      );
+      expect(message(res)).toContain('key: a character key cannot hold');
+      expect(await prisma.bookWorldEntity.count({ where: { bookVersionId: versionId } })).toBe(0);
+      // Строка, заведённая до правки (на проде такие могут быть): правка не отбивается, ключ не меняется.
+      await prisma.bookWorldEntity.create({
+        data: { bookVersionId: versionId, key: 'vera--old', type: 'character', name: 'Vera' },
+      });
+      await putEntity(versionId, 'vera--old', {
+        language: 'en',
+        type: 'character',
+        short: 'Edited.',
+      }).expect(200);
+      await put(versionId, { language: 'en', entities: [hero('anna-tom')] }).expect(200);
+    });
+
     it('герой пары не меняет тип — 400 с путём type', async () => {
       const { versionId } = await createVersion();
       await heroes(versionId);

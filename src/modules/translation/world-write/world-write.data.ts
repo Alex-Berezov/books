@@ -3,8 +3,11 @@ import { Prisma } from '@prisma/client';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 import { stableJson } from '../../../shared/json/stable-json';
 import { compactBlock } from '../../../shared/prisma/compact-block.util';
-import type { BookAnalysisSourceDto } from '../../book-analysis/dto/book-analysis-blocks.dto';
-import type { StoredWorldEntity } from '../../book-world/book-world-data';
+import type {
+  BookAnalysisRole,
+  BookAnalysisSourceDto,
+} from '../../book-analysis/dto/book-analysis-blocks.dto';
+import { WORLD_PAIR_BLOCK_KEYS, type StoredWorldEntity } from '../../book-world/book-world-data';
 import { intOf, oneOf, remarksReader, reviewReader, stringOf } from '../draft-quality/draft-record';
 import type { QualityLoopResume, ReviewState } from '../draft-quality/quality-loop';
 import { DRAFT_REMARK_CODES, DraftRemark } from '../draft-quality/text-checks';
@@ -30,7 +33,15 @@ export const WORLD_PAGE_BLOCKS = [
 ] as const;
 /** Блоки внешнего шага: только с проверенным источником (`product.md` §5, правило 6 канона). */
 export const WORLD_EXTERNAL_BLOCKS = ['critique', 'prototypes', 'adaptations'] as const;
-export const WORLD_BLOCKS = [...WORLD_PAGE_BLOCKS, ...WORLD_EXTERNAL_BLOCKS] as const;
+/**
+ * Блоки хода: страница героя, внешние блоки и блоки только пары (`F08-8e`; перечень пары — один на мир
+ * книги, `WORLD_PAIR_BLOCK_KEYS`); «Коротко», цитаты и вопросы пары — общие с героем.
+ */
+export const WORLD_BLOCKS = [
+  ...WORLD_PAGE_BLOCKS,
+  ...WORLD_EXTERNAL_BLOCKS,
+  ...WORLD_PAIR_BLOCK_KEYS,
+] as const;
 /** Блоки-тексты: предложение отдаётся полем `text` (`WorldWriteValueDto`). */
 export const WORLD_TEXT_BLOCKS: ReadonlySet<string> = new Set([
   'short',
@@ -38,17 +49,28 @@ export const WORLD_TEXT_BLOCKS: ReadonlySet<string> = new Set([
   'character',
   'critique',
   'prototypes',
+  'bonds',
+  'differences',
+  'conclusion',
 ]);
 export type WorldPageBlock = (typeof WORLD_PAGE_BLOCKS)[number];
 export type WorldExternalBlock = (typeof WORLD_EXTERNAL_BLOCKS)[number];
 export type WorldBlock = (typeof WORLD_BLOCKS)[number];
 
-export const WORLD_STEP_KINDS = ['select', 'page', 'external'] as const;
+export const WORLD_STEP_KINDS = ['select', 'page', 'external', 'pair'] as const;
 export type WorldStepKind = (typeof WORLD_STEP_KINDS)[number];
 
-/** Шаг по номеру: 0 - выбор, затем на кандидата `i` - страница (`1 + 2i`) и внешние блоки (`2 + 2i`). */
-export function stepAt(step: number): { kind: WorldStepKind; candidate: number | null } {
+/**
+ * Шаг по номеру: 0 - выбор, затем на кандидата `i` - страница (`1 + 2i`) и внешние блоки (`2 + 2i`),
+ * после всех `heroes` героев - пара `j` (`1 + 2·heroes + j`, `F08-8e`); `candidate` - индекс героя
+ * в `candidates` или пары в `pairs`. Номера шагов героев от пар не зависят.
+ */
+export function stepAt(
+  step: number,
+  heroes: number,
+): { kind: WorldStepKind; candidate: number | null } {
   if (step === 0) return { kind: 'select', candidate: null };
+  if (step > 2 * heroes) return { kind: 'pair', candidate: step - 1 - 2 * heroes };
   return {
     kind: (step - 1) % 2 === 0 ? 'page' : 'external',
     candidate: Math.floor((step - 1) / 2),
@@ -61,17 +83,65 @@ export interface CandidateMentions {
   perChapter: Record<string, number>;
 }
 
+/** Роли анализа, из которых ход берёт кандидатов (`F08-4` Q3, `F08-8b`): `minor` в ход не идёт. */
+export const WORLD_CANDIDATE_ROLES = [
+  'main',
+  'secondary',
+] as const satisfies readonly BookAnalysisRole[];
+export type WorldCandidateRole = (typeof WORLD_CANDIDATE_ROLES)[number];
+
 /** Кандидат хода: герой `main` или `secondary` анализа версии (`F08-4` Q3, `F08-8b`). */
 export interface WorldCandidate {
   key: string;
   /** Роль в анализе на шаге выбора - роль новой сущности; ходы до `F08-8b` брали только `main`. */
-  role: 'main' | 'secondary';
+  role: WorldCandidateRole;
   /** Имя героя: из ответа выбора героев, иначе сохранённой сущности, иначе анализа версии. */
   name: string;
   /** Формы имени после проверки по тексту версии (выбор героев). */
   aliases: string[];
   mentions: CandidateMentions;
 }
+
+/**
+ * Кандидат пары (`F08-8e`, решения арбитра `F08 | F08-8e-1` Q1, Q3): два героя-кандидата хода,
+ * прошедшие условие заведения (`pairFounded`) по присутствию в памяти на шаге выбора, или уже
+ * заведённая пара этих героев. `a` и `b` - герои ключа по алфавиту.
+ */
+export interface WorldPairCandidate {
+  key: string;
+  a: string;
+  b: string;
+  /** Связь героев в `relations` анализа версии (в любую сторону). */
+  linked: boolean;
+  /** Общие главы героев по подсчёту шага выбора - текст шага пары. */
+  chapters: number[];
+}
+
+/**
+ * Почему герой или пара в ход не попали (видно редактору, без платного вызова): второстепенный ниже
+ * порога глав (`F08-8b`), ключ героя вида пары (`LEGACY-507`, Q7), ключ пары не собрать (Q1 `F08-8c`),
+ * ключ пары занят сущностью другого типа (Q4), пара за потолком `WORLD_PAIRS_MAX` (Q3).
+ */
+export const WORLD_SKIP_REASONS = [
+  'BELOW_MIN_CHAPTERS',
+  'KEY_PAIR_FORM',
+  'PAIR_KEY_INVALID',
+  'PAIR_KEY_TAKEN',
+  'PAIRS_MAX',
+] as const;
+export type WorldSkipReason = (typeof WORLD_SKIP_REASONS)[number];
+
+export interface WorldSkip {
+  /** Ключ героя или пары; у `PAIR_KEY_INVALID` - ключи героев через `--`, как вышел бы ключ. */
+  key: string;
+  reason: WorldSkipReason;
+  /** Главы героя (`BELOW_MIN_CHAPTERS`) или общие главы пары; иначе `null`. */
+  chapters: number | null;
+}
+
+/** Этапа пар нет у хода: язык без эталона пары (решение арбитра `F08 | F08-8e-1` Q6). */
+export const WORLD_PAIRS_OFF_REASONS = ['WORLD_PAIR_LANGUAGE'] as const;
+export type WorldPairsOffReason = (typeof WORLD_PAIRS_OFF_REASONS)[number];
 
 /** Код снял элемент ответа или ответ целиком (видно редактору: что и почему). */
 export const WORLD_FIX_CODES = [
@@ -198,6 +268,20 @@ export interface PendingWorldStep {
 export interface WorldWriteData {
   /** Кандидаты; `null` - выбор героев ещё не прошёл. */
   candidates: WorldCandidate[] | null;
+  /**
+   * Кандидаты пар (`F08-8e`); `null` - выбор ещё не прошёл. Ход, начатый до `F08-8e` (кандидаты есть,
+   * пар нет), читается `[]`: его оценка пар не включала, он кончается на героях.
+   */
+  pairs: WorldPairCandidate[] | null;
+  /** Отсеянные шагом выбора герои и пары с причиной (`F08-8e`). */
+  leftOut: WorldSkip[];
+  /** Этапа пар нет и почему; `null` - есть или выбор ещё не прошёл. */
+  pairsOff: WorldPairsOffReason | null;
+  /**
+   * Присутствие версии пересчитано перед новой парой и пересчёт сошёлся (уточнение Q1 `F08 | F08-8e-1`):
+   * дальше новые пары читают сохранённое присутствие без пересчёта. Нет поля - пересчитывать.
+   */
+  mentionsRecounted: boolean;
   steps: WorldStep[];
   items: WorldItem[];
   droppedQuotes: DroppedWorldQuote[];
@@ -209,6 +293,10 @@ export interface WorldWriteData {
 
 export const emptyWorldData = (): WorldWriteData => ({
   candidates: null,
+  pairs: null,
+  leftOut: [],
+  pairsOff: null,
+  mentionsRecounted: false,
   steps: [],
   items: [],
   droppedQuotes: [],
@@ -217,9 +305,29 @@ export const emptyWorldData = (): WorldWriteData => ({
   stepsBroken: false,
 });
 
-/** Шагов в ходе: выбор и по два на кандидата; до выбора - неизвестно (`null`). */
-export const stepsTotalOf = (data: Pick<WorldWriteData, 'candidates'>): number | null =>
-  data.candidates === null ? null : 1 + data.candidates.length * 2;
+/** Шагов в ходе: выбор, по два на героя и по одному на пару; до выбора - неизвестно (`null`). */
+export const stepsTotalOf = (data: Pick<WorldWriteData, 'candidates' | 'pairs'>): number | null =>
+  data.candidates === null ? null : 1 + data.candidates.length * 2 + (data.pairs?.length ?? 0);
+
+/** Шаг по номеру в этом ходе (`stepAt` с числом героев хода). */
+export const stepOfData = (data: Pick<WorldWriteData, 'candidates'>, step: number) =>
+  stepAt(step, data.candidates?.length ?? 0);
+
+/**
+ * Тип и роль сущности пункта (`F08-8e`): ключ кандидата пары - пара (по `pairs`, а не по виду ключа:
+ * заведённые герои с `--` остались, `LEGACY-507`), иначе герой с ролью кандидата (`null` - не кандидат).
+ */
+export type WorldEntityKind =
+  | { type: 'pair' }
+  | { type: 'character'; role: WorldCandidateRole | null };
+
+export function entityKindOf(
+  data: Pick<WorldWriteData, 'candidates' | 'pairs'>,
+  key: string,
+): WorldEntityKind {
+  if (data.pairs?.some((p) => p.key === key)) return { type: 'pair' };
+  return { type: 'character', role: data.candidates?.find((c) => c.key === key)?.role ?? null };
+}
 
 /**
  * Отпечаток значения блока в хранимом виде (`compactBlock`, как его пишет импорт мира): sha256
@@ -312,9 +420,32 @@ function candidatesOf(v: unknown): WorldCandidate[] | null {
     const name = stringOf(c.name);
     if (key === null || name === null) return [];
     // Роли нет - ход до `F08-8b`, он брал только `main`; неизвестная роль - кандидат не читается.
-    const role = c.role === undefined ? 'main' : c.role;
-    if (role !== 'main' && role !== 'secondary') return [];
+    const role = c.role === undefined ? 'main' : oneOf(WORLD_CANDIDATE_ROLES, c.role);
+    if (!role) return [];
     return [{ key, role, name, aliases: stringsOf(c.aliases), mentions: mentionsOf(c.mentions) }];
+  });
+}
+
+function pairsOf(v: unknown): WorldPairCandidate[] | null {
+  if (!Array.isArray(v)) return null;
+  return v.flatMap((p) => {
+    if (!isRecord(p)) return [];
+    const key = stringOf(p.key);
+    const a = stringOf(p.a);
+    const b = stringOf(p.b);
+    if (key === null || a === null || b === null) return [];
+    const chapters = Array.isArray(p.chapters) ? p.chapters.flatMap((n) => intOf(n) ?? []) : [];
+    return [{ key, a, b, linked: p.linked === true, chapters }];
+  });
+}
+
+function leftOutOf(v: unknown): WorldSkip[] {
+  if (!Array.isArray(v)) return [];
+  return v.flatMap((d) => {
+    if (!isRecord(d)) return [];
+    const key = stringOf(d.key);
+    const reason = oneOf(WORLD_SKIP_REASONS, d.reason);
+    return key !== null && reason ? [{ key, reason, chapters: intOf(d.chapters) }] : [];
   });
 }
 
@@ -437,8 +568,9 @@ function droppedSourcesOf(v: unknown): DroppedWorldSource[] {
 }
 
 /**
- * Данные хода из `ContentDraft.data`. Пункт не той формы выпадает: номера пунктов в ответе - это
- * индексы в `items`, поэтому `stepsBroken` ставится и тогда - ход не продолжается поверх битых данных.
+ * Данные хода из `ContentDraft.data`. Пункт или кандидат не той формы выпадает: номера пунктов в
+ * ответе - индексы в `items`, кандидат шага - индекс в `candidates`, поэтому `stepsBroken` ставится
+ * и тогда - ход не продолжается поверх битых данных.
  */
 export function readWorldData(data: unknown): WorldWriteData {
   const d = isRecord(data) ? data : {};
@@ -446,13 +578,28 @@ export function readWorldData(data: unknown): WorldWriteData {
   const steps = (rawSteps ?? []).flatMap((s) => stepOf(s) ?? []);
   const rawItems = Array.isArray(d.items) ? d.items : [];
   const items = rawItems.flatMap((i) => itemOf(i) ?? []);
+  const candidates = candidatesOf(d.candidates);
+  const storedPairs = pairsOf(d.pairs);
+  // Шаг героя и пары берёт кандидата по индексу (`stepAt`): выпавшая запись сдвинула бы шаги на чужого.
+  const candidatesBroken =
+    (candidates !== null &&
+      Array.isArray(d.candidates) &&
+      candidates.length !== d.candidates.length) ||
+    (storedPairs !== null && Array.isArray(d.pairs) && storedPairs.length !== d.pairs.length) ||
+    (d.pairs !== undefined && d.pairs !== null && storedPairs === null);
   const stepsBroken =
     rawSteps === null ||
+    candidatesBroken ||
     steps.length !== rawSteps.length ||
     steps.some((s, i) => s.step !== i) ||
     items.length !== rawItems.length;
   return {
-    candidates: candidatesOf(d.candidates),
+    candidates,
+    // Ход до `F08-8e`: кандидаты есть, поля пар нет - пар нет (`[]`), а не «выбор не прошёл».
+    pairs: storedPairs ?? (candidates !== null && d.pairs === undefined ? [] : null),
+    leftOut: leftOutOf(d.leftOut),
+    pairsOff: oneOf(WORLD_PAIRS_OFF_REASONS, d.pairsOff),
+    mentionsRecounted: d.mentionsRecounted === true,
     steps,
     items,
     droppedQuotes: droppedQuotesOf(d.droppedQuotes),
@@ -465,6 +612,10 @@ export function readWorldData(data: unknown): WorldWriteData {
 export const worldDataJson = (data: WorldWriteData): Prisma.InputJsonValue =>
   ({
     candidates: data.candidates,
+    pairs: data.pairs,
+    leftOut: data.leftOut,
+    pairsOff: data.pairsOff,
+    mentionsRecounted: data.mentionsRecounted,
     steps: data.steps,
     items: data.items,
     droppedQuotes: data.droppedQuotes,

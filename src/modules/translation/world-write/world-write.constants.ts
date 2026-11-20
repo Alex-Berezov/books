@@ -4,7 +4,8 @@ import { GPT_TERRA_MODEL } from '../translate/translate.constants';
 
 /**
  * Этапы хода «Write World» (`F08-4a`; `books-app-docs/features/F08-book-wiki/tech.md` §5): выбор героев
- * и форм имени, страница героя, внешние блоки с проверкой источников и проверяющая другого семейства.
+ * и форм имени, страница героя, внешние блоки с проверкой источников, страница пары (`F08-8e`)
+ * и проверяющая другого семейства.
  * Свои этапы, а не этапы анализа: этап закреплён за одним видом задачи (`registerTaskStages`), аренда
  * задачи считается от таймаутов своих этапов (урок аренды `F06-1`/`F07-1`). Умолчания - как у этапов
  * анализа, на которые указывает `tech.md` §5; замер цены - `F08-6`.
@@ -12,6 +13,8 @@ import { GPT_TERRA_MODEL } from '../translate/translate.constants';
 export const WORLD_SELECT_STAGE = 'world_select';
 export const WORLD_PAGE_WRITE_STAGE = 'world_page_write';
 export const WORLD_EXTERNAL_WRITE_STAGE = 'world_external_write';
+/** Страница пары героев (`F08-8e`, решение арбитра `F08 | F08-8e-1` Q2): умолчания страницы героя. */
+export const WORLD_PAIR_WRITE_STAGE = 'world_pair_write';
 export const WORLD_REVIEW_STAGE = 'world_review';
 
 /** Вид задачи исполнителя хода мира (`ContentDraft` вида `world_write`). */
@@ -23,6 +26,23 @@ export type WorldWriteLanguage = (typeof WORLD_WRITE_LANGUAGES)[number];
 
 export const isWorldWriteLanguage = (language: string): language is WorldWriteLanguage =>
   (WORLD_WRITE_LANGUAGES as readonly string[]).includes(language);
+
+/**
+ * Потолок пар на ход (решение арбитра `F08 | F08-8e-1` Q3): сначала связанные в анализе, затем по
+ * убыванию общих глав, при равенстве - по ключу; остальные - отсеянные с `PAIRS_MAX`.
+ */
+export const WORLD_PAIRS_MAX = 10;
+
+/**
+ * Шаг пары не платит за вызов (решение арбитра `F08 | F08-8e-1` Q1, Q4): героя пары нет в мире версии
+ * (`WORLD_PAIR_MEMBER_MISSING`), ключ пары занят сущностью другого типа (`WORLD_PAIR_KEY_TAKEN`),
+ * новая пара не проходит условие заведения по сохранённому присутствию (`WORLD_PAIR_NOT_FOUNDED`),
+ * пересчёт присутствия перед новой парой (до первого успешного) не сошёлся - текст сдвинулся (`WORLD_MENTIONS_MOVED`).
+ */
+export const WORLD_PAIR_MEMBER_MISSING = 'WORLD_PAIR_MEMBER_MISSING';
+export const WORLD_PAIR_KEY_TAKEN = 'WORLD_PAIR_KEY_TAKEN';
+export const WORLD_PAIR_NOT_FOUNDED = 'WORLD_PAIR_NOT_FOUNDED';
+export const WORLD_MENTIONS_MOVED = 'WORLD_MENTIONS_MOVED';
 
 /** Таймаут вызова страницы героя: 32 000 токенов ответа, как у шага толкований анализа. */
 const PAGE_CALL_TIMEOUT_MS = 840_000;
@@ -44,6 +64,17 @@ export const WORLD_WRITE_STAGE_DEFINITIONS: LlmStageDefinition[] = [
   },
   {
     stage: WORLD_PAGE_WRITE_STAGE,
+    model: AUTHOR,
+    fallbacks: AUTHOR_FALLBACKS,
+    temperature: 0.4,
+    maxTokens: 32_000,
+    enabled: true,
+    reasoningAnswerReserve: 12_000,
+    callTimeoutMs: PAGE_CALL_TIMEOUT_MS,
+    truncationEndsModel: true,
+  },
+  {
+    stage: WORLD_PAIR_WRITE_STAGE,
     model: AUTHOR,
     fallbacks: AUTHOR_FALLBACKS,
     temperature: 0.4,

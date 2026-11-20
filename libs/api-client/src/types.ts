@@ -16565,13 +16565,22 @@ export interface components {
       items: components['schemas']['WorldWriteItemDto'][];
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Characters and pairs the choice step left out, with the reason */
+      leftOut: components['schemas']['WorldWriteSkipDto'][];
       operation: components['schemas']['LlmOperationDto'];
+      /** @description Pairs of the run (F08-8e), their steps go after the steps of the characters; null - the characters are not chosen yet; [] for a run started before F08-8e */
+      pairs: components['schemas']['WorldWritePairDto'][] | null;
+      /**
+       * @description The run writes no pairs: WORLD_PAIR_LANGUAGE - no pair sample for the language
+       * @enum {string|null}
+       */
+      pairsOff: 'WORLD_PAIR_LANGUAGE' | null;
       /** @description Proposals left as proposals by their own refusal, with its code */
       skipped: components['schemas']['WorldAcceptAllSkippedDto'][];
       /** @enum {string} */
       status: 'building' | 'ready' | 'failed' | 'discarded';
       steps: components['schemas']['WorldWriteStepDto'][];
-      /** @description Steps of the run: 1 + 2 per character; null - the characters are not chosen yet */
+      /** @description Steps of the run: 1 + 2 per character + 1 per pair; null - the characters are not chosen yet */
       stepsTotal: number | null;
       /** Format: date-time */
       updatedAt: string;
@@ -16701,11 +16710,20 @@ export interface components {
       items: components['schemas']['WorldWriteItemDto'][];
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Characters and pairs the choice step left out, with the reason */
+      leftOut: components['schemas']['WorldWriteSkipDto'][];
       operation: components['schemas']['LlmOperationDto'];
+      /** @description Pairs of the run (F08-8e), their steps go after the steps of the characters; null - the characters are not chosen yet; [] for a run started before F08-8e */
+      pairs: components['schemas']['WorldWritePairDto'][] | null;
+      /**
+       * @description The run writes no pairs: WORLD_PAIR_LANGUAGE - no pair sample for the language
+       * @enum {string|null}
+       */
+      pairsOff: 'WORLD_PAIR_LANGUAGE' | null;
       /** @enum {string} */
       status: 'building' | 'ready' | 'failed' | 'discarded';
       steps: components['schemas']['WorldWriteStepDto'][];
-      /** @description Steps of the run: 1 + 2 per character; null - the characters are not chosen yet */
+      /** @description Steps of the run: 1 + 2 per character + 1 per pair; null - the characters are not chosen yet */
       stepsTotal: number | null;
       /** Format: date-time */
       updatedAt: string;
@@ -16719,9 +16737,11 @@ export interface components {
       dossier: components['schemas']['DossierContextLineDto'] | null;
       /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
       glossary: components['schemas']['CompareContextLineDto'] | null;
+      /** @description Up to N pair pages (F08-8e): min(10, candidates·(candidates−1)/2) before the chapter count, 0 on a language without a pair sample; one page each, included in stageUsd */
+      pairs: number;
       /**
        * Format: decimal
-       * @description Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, plus the reviewer of each step, each step × 2 passes
+       * @description Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages on the whole version text, plus the reviewer of each step, each step × 2 passes
        * @example 100.00000000
        */
       stageUsd: string;
@@ -16768,7 +16788,11 @@ export interface components {
         | 'faq'
         | 'critique'
         | 'prototypes'
-        | 'adaptations';
+        | 'adaptations'
+        | 'compare'
+        | 'bonds'
+        | 'differences'
+        | 'conclusion';
       /** @description Why the block is not written: IMPORT_INVALID, EXTERNAL_UNVERIFIED (no checked source), WORLD_WRITE_REFUSED (the world import refused) */
       failedReason: string | null;
       index: number;
@@ -16792,6 +16816,18 @@ export interface components {
       /** @enum {string} */
       verdict: 'ok' | 'flags' | 'failed';
     };
+    WorldWritePairDto: {
+      /** @description Key of the first character of the pair key */
+      a: string;
+      /** @description Key of the second character of the pair key */
+      b: string;
+      /** @description Chapters where both characters are (counted at the choice step) */
+      chapters: number[];
+      /** @description Key of the pair {a}--{b} */
+      key: string;
+      /** @description The characters are related in the analysis of the version */
+      linked: boolean;
+    };
     WorldWriteRemarkDto: {
       /** @enum {string} */
       by: 'code' | 'model';
@@ -16805,6 +16841,7 @@ export interface components {
         | 'CHAPTER_UNKNOWN'
         | 'LIMIT_OUT'
         | 'QUOTE_NOT_VERBATIM'
+        | 'CORE_MISSING'
         | 'SCENE_OUTSIDE_MENTIONS'
         | 'NOT_IN_TEXT'
         | 'GENERIC'
@@ -16830,6 +16867,22 @@ export interface components {
       /** @description The reviewer model (answered) */
       model: string | null;
     };
+    WorldWriteSkipDto: {
+      /** @description Chapters of the character or common chapters of the pair */
+      chapters: number | null;
+      /** @description Key of the character or the pair */
+      key: string;
+      /**
+       * @description BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run
+       * @enum {string}
+       */
+      reason:
+        | 'BELOW_MIN_CHAPTERS'
+        | 'KEY_PAIR_FORM'
+        | 'PAIR_KEY_INVALID'
+        | 'PAIR_KEY_TAKEN'
+        | 'PAIRS_MAX';
+    };
     WorldWriteStateDto: {
       draft: components['schemas']['WorldWriteDto'] | null;
     };
@@ -16838,12 +16891,12 @@ export interface components {
       attempt: number;
       authorModel: string | null;
       dropped: components['schemas']['WorldWriteFixDto'][];
-      /** @description Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter) */
+      /** @description Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (the saved presence does not found the pair), WORLD_MENTIONS_MOVED (the text moved during the presence recount) */
       failedReason: string | null;
-      /** @description Key of the character; null - the choice step */
+      /** @description Key of the character or of the pair; null - the choice step */
       key: string | null;
       /** @enum {string} */
-      kind: 'select' | 'page' | 'external';
+      kind: 'select' | 'page' | 'external' | 'pair';
       /** @enum {string} */
       outcome: 'done' | 'failed';
       remarks: components['schemas']['WorldWriteRemarkDto'][];
@@ -16853,7 +16906,7 @@ export interface components {
        * @enum {string|null}
        */
       source: 'text' | 'top' | 'none' | null;
-      /** @description 0 - the choice of name forms, then page and external blocks per character */
+      /** @description 0 - the choice of name forms, then page and external blocks per character, then one step per pair */
       step: number;
       /** @enum {string} */
       verdict: 'ok' | 'flags' | 'failed';
@@ -16862,6 +16915,8 @@ export interface components {
       adaptations: components['schemas']['BookWorldAdaptationDto'][] | null;
       aliases: string[] | null;
       arc: components['schemas']['BookWorldArcDto'] | null;
+      /** @description Pair comparison table */
+      compare: components['schemas']['BookWorldCompareDto'][] | null;
       faq: components['schemas']['BookAnalysisFaqDto'][] | null;
       /** @description Print of the proposal: send it as expectedPrint of «Accept» */
       print: string;
@@ -16871,7 +16926,7 @@ export interface components {
       scenes: components['schemas']['BookWorldSceneDto'][] | null;
       /** @description Checked sources of an external block: «Accept» adds them to the sources of the entity */
       sources: components['schemas']['BookAnalysisSourceDto'][] | null;
-      /** @description short, appearance, character, critique, prototypes */
+      /** @description short, appearance, character, critique, prototypes, bonds, differences, conclusion */
       text: string | null;
     };
   };

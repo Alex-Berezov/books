@@ -180,6 +180,38 @@ describe('World run «Write World» (e2e)', () => {
       { title: 'Source missing.test', url: sourceUrl('missing.test') },
     ],
   });
+  /** Страница пары Анны и Бориса (`F08-8e`): стороны - в главах своего героя, цитата Бориса об Анне. */
+  const row = (feature: string, chapterA: number, chapterB: number) => ({
+    feature,
+    a: `Anna ${feature.toLowerCase()} in her own way.`,
+    chapterA,
+    b: `Boris ${feature.toLowerCase()} in his own way.`,
+    chapterB,
+  });
+  const PAIR = () => ({
+    name: 'Anna and Boris',
+    short: 'A sister who wants to leave the town and a brother who keeps its bell.',
+    compare: [
+      // Стороны - только в общих главах 1 и 3: текст шага пары - их текст (ревью круга 1).
+      row('Place in the town', 1, 3),
+      row('Attitude to the river', 1, 1),
+      row('Answer to the bell', 3, 1),
+      row('Fate', 3, 3),
+    ],
+    bonds: 'Both grew up by the same river and the same bell.',
+    differences: 'She breaks with the town, he holds to it.',
+    conclusion: 'The book needs the two to show the price of leaving and of staying.',
+    quotes: [
+      {
+        text: LINES.bridge,
+        chapter: 1,
+        speakerKey: 'boris',
+        aboutKey: 'anna',
+        interpretation: 'He watches her from afar.',
+      },
+    ],
+    faq: [],
+  });
   const OK_REVIEW = { verdict: 'ok', remarks: [] };
 
   let sourceServer: Server;
@@ -209,6 +241,7 @@ describe('World run «Write World» (e2e)', () => {
       dossier: DOSSIER,
       world_select: SELECT,
       world_external_write: EXTERNAL(),
+      world_pair_write: PAIR(),
       world_review: OK_REVIEW,
     }[name];
   };
@@ -301,6 +334,9 @@ describe('World run «Write World» (e2e)', () => {
     operation: { id: string; status: string; pauseReason: string | null };
     stepsTotal: number | null;
     candidates: Array<{ key: string; name: string; aliases: string[]; chapters: number[] }>;
+    pairs: Array<{ key: string; a: string; b: string; linked: boolean; chapters: number[] }> | null;
+    leftOut: Array<{ key: string; reason: string; chapters: number | null }>;
+    pairsOff: string | null;
     steps: Array<{
       step: number;
       kind: string;
@@ -478,14 +514,19 @@ describe('World run «Write World» (e2e)', () => {
   it('an empty version: the pages of both main characters are written with the keys of the analysis, the core is complete after the recount, the invented quotation and the name form not in the text are dropped with their reason', async () => {
     const versionId = await version();
     const estimate = await auth(http().get(`${base(versionId)}/estimate`)).expect(200);
-    expect(estimate.body).toMatchObject({ candidates: 2, dossier: null, glossary: null });
+    expect(estimate.body).toMatchObject({ candidates: 2, pairs: 1, dossier: null, glossary: null });
     expect(Number(estimate.body.stageUsd)).toBeGreaterThan(0);
     await start(versionId).expect(202);
     await drain();
 
     const run = await runOf(versionId);
     expect(run.status).toBe('ready');
-    expect(run.stepsTotal).toBe(5);
+    // Анна и Борис вместе в главах 1 и 3 - не меньше трети глав каждого: пара (`F08-8e`), шаг шестой.
+    expect(run.stepsTotal).toBe(6);
+    expect(run.pairs).toEqual([
+      { key: 'anna--boris', a: 'anna', b: 'boris', linked: false, chapters: [1, 3] },
+    ]);
+    expect(run.pairsOff).toBeNull();
     // Ключи - из анализа версии, только герои `main`; присутствие посчитано кодом до страницы.
     expect(run.candidates.map((c) => [c.key, c.aliases, c.chapters])).toEqual([
       ['anna', ['Anna'], [1, 3]],
@@ -503,6 +544,7 @@ describe('World run «Write World» (e2e)', () => {
       ['external', 'anna', 'done'],
       ['page', 'boris', 'done'],
       ['external', 'boris', 'done'],
+      ['pair', 'anna--boris', 'done'],
     ]);
     expect(run.droppedQuotes).toEqual([
       expect.objectContaining({
@@ -523,6 +565,11 @@ describe('World run «Write World» (e2e)', () => {
     const blocks = anna?.blocks as { quotes: Array<{ text: string }> };
     expect(blocks.quotes.map((q) => q.text)).toEqual([LINES.river, LINES.never, LINES.leave]);
     expect(anna?.aliases).toEqual(['Anna']);
+    // Новая пара записана сразу: тип пара, без роли и форм имени, ядро после пересчёта (общие главы).
+    const pair = await entityOf(versionId, 'anna--boris');
+    expect(pair).toMatchObject({ type: 'pair', role: null, aliases: null, hasCore: true });
+    expect(pair?.autoTextAt).not.toBeNull();
+    expect(callsOf('world_pair_write')).toHaveLength(1);
     // Проверяющая - другого семейства; шаг без замечаний - без переделки.
     expect(callsOf('world_page_write')).toHaveLength(2);
     expect(new Set(callsOf('world_review').map((c) => c.body.model))).toEqual(new Set([REVIEWER]));
@@ -730,6 +777,36 @@ describe('World run «Write World» (e2e)', () => {
     expect((await entityOf(versionId, 'anna'))?.blocks).toMatchObject({
       character: page('anna').character,
     });
+  });
+
+  // F08-8e-1, ревью круга 1: перегенерация блока пары - шаг пары своей операцией, одним вызовом
+  // (ядро в ответе одного блока не проверяется), новый текст - предложение.
+  it('«Regenerate» of a pair block: one call of the pair step, no CORE_MISSING redo, the new text is a proposal', async () => {
+    const versionId = await version();
+    await start(versionId).expect(202);
+    await drain();
+    let run = await runOf(versionId);
+    const bonds = itemOf(run, 'anna--boris', 'bonds');
+    expect(bonds.outcome).toBe('written');
+    answer = (name, body) =>
+      name === 'world_pair_write'
+        ? { ...PAIR(), bonds: 'Both keep the memory of the river.' }
+        : defaultAnswer(name, body);
+    calls.length = 0;
+    await auth(http().post(content(run.id, `/items/${bonds.index}/regenerate`)))
+      .send({ remark: 'Shorter.' })
+      .expect(202);
+    await drain();
+    expect(callsOf('world_pair_write')).toHaveLength(1);
+    run = await runOf(versionId);
+    expect(itemOf(run, 'anna--boris', 'bonds')).toMatchObject({
+      outcome: 'proposed',
+      regenerating: false,
+      regenFailedReason: null,
+    });
+    expect(itemOf(run, 'anna--boris', 'bonds').remarks.map((r) => r.code)).not.toContain(
+      'CORE_MISSING',
+    );
   });
 
   // /fix 3б (решение арбитра `F08 | F08-4a`): перегенерация одного внешнего блока не дописывает

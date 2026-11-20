@@ -127,6 +127,8 @@ export const WORLD_REMARK_CODES = [
   'CHAPTER_UNKNOWN',
   'LIMIT_OUT',
   'QUOTE_NOT_VERBATIM',
+  // Ядро пары в ответе шага пары (`F08-8e`, решение арбитра `F08 | F08-8e-1` Q5).
+  'CORE_MISSING',
   'SCENE_OUTSIDE_MENTIONS',
   'NOT_IN_TEXT',
   'GENERIC',

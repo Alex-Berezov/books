@@ -11,8 +11,10 @@ import { WorldStatsController } from './world-stats.controller';
 
 /**
  * Мир книги (F08). `BookWorldService` экспортируется для хода «Write World» (`F08-4`);
- * `WorldMentionsService` — пересчёт присутствия по главам (`F08-2`), его зовёт только планировщик
- * модуля: снаружи присутствие ставится в очередь (`markWorldMentionsDirty`), не считается.
+ * `WorldMentionsService` — пересчёт присутствия по главам (`F08-2`), его зовёт планировщик модуля;
+ * снаружи присутствие ставится в очередь (`markWorldMentionsDirty`), единственное исключение — ход
+ * «Write World» пересчитывает версию сам перед новой парой, до первого успешного пересчёта (`recountVersion`, решение арбитра
+ * `F08 | F08-8e-1` Q1: условие заведения пары читает сохранённое присутствие).
  * Чтение для читателя — только ручкой. `WorldSitemapService` — карта сайта мира (`F08-3`), её ручку
  * держит публичный контроллер `:lang`; счётчики страниц и отчёт — `WorldStatsController`.
  */
@@ -27,6 +29,6 @@ import { WorldStatsController } from './world-stats.controller';
     WorldSitemapService,
     WorldStatsService,
   ],
-  exports: [BookWorldService, WorldSitemapService],
+  exports: [BookWorldService, WorldMentionsService, WorldSitemapService],
 })
 export class BookWorldModule {}

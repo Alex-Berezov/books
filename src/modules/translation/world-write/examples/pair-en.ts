@@ -1,0 +1,70 @@
+/**
+ * Эталон страницы пары языка `en` - копия `test/fixtures/example-world-pair.en.json` (канон
+ * `features/F08-book-wiki/prompts/example-world-pair.en.json`): образец формы пары в промпте шага пары
+ * хода мира `F08-8e`. Равенство с копией JSON держит `examples.spec.ts`. Правится только вместе с ней.
+ */
+export const EXAMPLE_WORLD_PAIR_EN: Record<string, unknown> = {
+  language: 'en',
+  entities: [
+    {
+      key: 'raskolnikov--sonya',
+      type: 'pair',
+      name: 'Raskolnikov and Sonya',
+      short:
+        'A proud former student nursing a dangerous idea, and the daughter of a drunken clerk whom he first knows only from her father’s confession. Dostoevsky sets them side by side as two answers to the same poverty: one tries to calculate his way out of it, the other gives herself away to save her family.',
+      compare: [
+        {
+          feature: 'Place in the world',
+          a: 'A former law student who left the university for lack of money and hides from his landlady in a garret under the roof.',
+          chapterA: 1,
+          b: 'The daughter of the clerk Marmeladov by his first marriage, living with a consumptive stepmother and starving little children.',
+          chapterB: 2,
+        },
+        {
+          feature: 'Answer to poverty',
+          a: 'He turns his own destitution into a theory: in the tavern talk he hears that one death may buy a hundred lives and takes it as a sign.',
+          chapterA: 6,
+          b: 'She leaves the house after her stepmother’s reproach and comes back with thirty roubles, silently laid on the table: a sacrifice, not a theory.',
+          chapterB: 2,
+        },
+        {
+          feature: 'Sacrifice of others',
+          a: 'He refuses to accept his sister’s sacrifice for him and thinks of Sonya as the measure of such sacrifices.',
+          chapterA: 4,
+          b: 'She is the sacrifice others accept: her father drinks away the money she earns and confesses it in a tavern.',
+          chapterB: 2,
+        },
+        {
+          feature: 'Attitude to violence',
+          a: 'In the dream of the beaten horse he rushes to kiss its muzzle and is horrified by his own thought of murder: for that moment his own mind rejects what he has planned.',
+          chapterA: 5,
+          b: 'By her father’s account she goes out onto the street for the hungry children and pays with herself, not with another’s life: she has no idea of a right behind it, and so she can be read as the counterweight to his plan.',
+          chapterB: 2,
+        },
+      ],
+      bonds:
+        'One reading: both are crushed by the same Petersburg poverty, and both do what the world forbids. Raskolnikov himself sets his case against Sonya’s: reading his mother’s letter, he measures his sister’s sacrifice by her fate (chapter 4).',
+      differences:
+        'In Part One the difference is in the motive: he nurses his deed for an idea and to test himself, she sacrifices herself for her family and proves nothing to herself.',
+      quotes: [
+        {
+          text: 'Sonia, Sonia Marmeladov, the eternal victim so long as the world lasts.',
+          chapter: 4,
+          speakerKey: 'raskolnikov',
+          aboutKey: 'sonya',
+          interpretation:
+            'Reading his mother’s letter, he measures his sister’s marriage by Sonya’s fate: for him Sonya is the image of a sacrifice he refuses to accept.',
+        },
+      ],
+      conclusion:
+        'The pair can be read as the book’s central question put from two sides: may a person step over another for an idea. Raskolnikov’s calculation and Sonya’s uncalculated sacrifice show two answers to the same poverty.',
+      faq: [
+        {
+          question: 'Why does Dostoevsky compare Raskolnikov with Sonya?',
+          answer:
+            'Both are pushed by poverty to cross a forbidden line, which lets the author contrast a crime committed for an idea with a sacrifice made for others.',
+        },
+      ],
+    },
+  ],
+};

@@ -33101,8 +33101,31 @@
             ],
             "type": "string"
           },
+          "leftOut": {
+            "description": "Characters and pairs the choice step left out, with the reason",
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteSkipDto"
+            },
+            "type": "array"
+          },
           "operation": {
             "$ref": "#/components/schemas/LlmOperationDto"
+          },
+          "pairs": {
+            "description": "Pairs of the run (F08-8e), their steps go after the steps of the characters; null - the characters are not chosen yet; [] for a run started before F08-8e",
+            "items": {
+              "$ref": "#/components/schemas/WorldWritePairDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "pairsOff": {
+            "description": "The run writes no pairs: WORLD_PAIR_LANGUAGE - no pair sample for the language",
+            "enum": [
+              "WORLD_PAIR_LANGUAGE"
+            ],
+            "nullable": true,
+            "type": "string"
           },
           "skipped": {
             "description": "Proposals left as proposals by their own refusal, with its code",
@@ -33127,7 +33150,7 @@
             "type": "array"
           },
           "stepsTotal": {
-            "description": "Steps of the run: 1 + 2 per character; null - the characters are not chosen yet",
+            "description": "Steps of the run: 1 + 2 per character + 1 per pair; null - the characters are not chosen yet",
             "nullable": true,
             "type": "number"
           },
@@ -33154,6 +33177,9 @@
           "operation",
           "stepsTotal",
           "candidates",
+          "pairs",
+          "leftOut",
+          "pairsOff",
           "steps",
           "items",
           "droppedQuotes",
@@ -33534,8 +33560,31 @@
             ],
             "type": "string"
           },
+          "leftOut": {
+            "description": "Characters and pairs the choice step left out, with the reason",
+            "items": {
+              "$ref": "#/components/schemas/WorldWriteSkipDto"
+            },
+            "type": "array"
+          },
           "operation": {
             "$ref": "#/components/schemas/LlmOperationDto"
+          },
+          "pairs": {
+            "description": "Pairs of the run (F08-8e), their steps go after the steps of the characters; null - the characters are not chosen yet; [] for a run started before F08-8e",
+            "items": {
+              "$ref": "#/components/schemas/WorldWritePairDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "pairsOff": {
+            "description": "The run writes no pairs: WORLD_PAIR_LANGUAGE - no pair sample for the language",
+            "enum": [
+              "WORLD_PAIR_LANGUAGE"
+            ],
+            "nullable": true,
+            "type": "string"
           },
           "status": {
             "enum": [
@@ -33553,7 +33602,7 @@
             "type": "array"
           },
           "stepsTotal": {
-            "description": "Steps of the run: 1 + 2 per character; null - the characters are not chosen yet",
+            "description": "Steps of the run: 1 + 2 per character + 1 per pair; null - the characters are not chosen yet",
             "nullable": true,
             "type": "number"
           },
@@ -33580,6 +33629,9 @@
           "operation",
           "stepsTotal",
           "candidates",
+          "pairs",
+          "leftOut",
+          "pairsOff",
           "steps",
           "items",
           "droppedQuotes",
@@ -33615,8 +33667,12 @@
             "nullable": true,
             "type": "object"
           },
+          "pairs": {
+            "description": "Up to N pair pages (F08-8e): min(10, candidates·(candidates−1)/2) before the chapter count, 0 on a language without a pair sample; one page each, included in stageUsd",
+            "type": "number"
+          },
           "stageUsd": {
-            "description": "Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, plus the reviewer of each step, each step × 2 passes",
+            "description": "Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages on the whole version text, plus the reviewer of each step, each step × 2 passes",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -33636,6 +33692,7 @@
           "dossier",
           "glossary",
           "candidates",
+          "pairs",
           "stageUsd",
           "upperBound",
           "suggestedLimitUsd"
@@ -33690,7 +33747,11 @@
               "faq",
               "critique",
               "prototypes",
-              "adaptations"
+              "adaptations",
+              "compare",
+              "bonds",
+              "differences",
+              "conclusion"
             ],
             "type": "string"
           },
@@ -33792,6 +33853,41 @@
         ],
         "type": "object"
       },
+      "WorldWritePairDto": {
+        "properties": {
+          "a": {
+            "description": "Key of the first character of the pair key",
+            "type": "string"
+          },
+          "b": {
+            "description": "Key of the second character of the pair key",
+            "type": "string"
+          },
+          "chapters": {
+            "description": "Chapters where both characters are (counted at the choice step)",
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "key": {
+            "description": "Key of the pair {a}--{b}",
+            "type": "string"
+          },
+          "linked": {
+            "description": "The characters are related in the analysis of the version",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "key",
+          "a",
+          "b",
+          "linked",
+          "chapters"
+        ],
+        "type": "object"
+      },
       "WorldWriteRemarkDto": {
         "properties": {
           "by": {
@@ -33811,6 +33907,7 @@
               "CHAPTER_UNKNOWN",
               "LIMIT_OUT",
               "QUOTE_NOT_VERBATIM",
+              "CORE_MISSING",
               "SCENE_OUTSIDE_MENTIONS",
               "NOT_IN_TEXT",
               "GENERIC",
@@ -33868,6 +33965,36 @@
         ],
         "type": "object"
       },
+      "WorldWriteSkipDto": {
+        "properties": {
+          "chapters": {
+            "description": "Chapters of the character or common chapters of the pair",
+            "nullable": true,
+            "type": "number"
+          },
+          "key": {
+            "description": "Key of the character or the pair",
+            "type": "string"
+          },
+          "reason": {
+            "description": "BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds \"--\"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or \"-\" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run",
+            "enum": [
+              "BELOW_MIN_CHAPTERS",
+              "KEY_PAIR_FORM",
+              "PAIR_KEY_INVALID",
+              "PAIR_KEY_TAKEN",
+              "PAIRS_MAX"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "reason",
+          "chapters"
+        ],
+        "type": "object"
+      },
       "WorldWriteStateDto": {
         "properties": {
           "draft": {
@@ -33902,12 +34029,12 @@
             "type": "array"
           },
           "failedReason": {
-            "description": "Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter)",
+            "description": "Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (the saved presence does not found the pair), WORLD_MENTIONS_MOVED (the text moved during the presence recount)",
             "nullable": true,
             "type": "string"
           },
           "key": {
-            "description": "Key of the character; null - the choice step",
+            "description": "Key of the character or of the pair; null - the choice step",
             "nullable": true,
             "type": "string"
           },
@@ -33915,7 +34042,8 @@
             "enum": [
               "select",
               "page",
-              "external"
+              "external",
+              "pair"
             ],
             "type": "string"
           },
@@ -33952,7 +34080,7 @@
             "type": "string"
           },
           "step": {
-            "description": "0 - the choice of name forms, then page and external blocks per character",
+            "description": "0 - the choice of name forms, then page and external blocks per character, then one step per pair",
             "type": "number"
           },
           "verdict": {
@@ -34005,6 +34133,14 @@
             "nullable": true,
             "type": "object"
           },
+          "compare": {
+            "description": "Pair comparison table",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldCompareDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "faq": {
             "items": {
               "$ref": "#/components/schemas/BookAnalysisFaqDto"
@@ -34055,7 +34191,7 @@
             "type": "array"
           },
           "text": {
-            "description": "short, appearance, character, critique, prototypes",
+            "description": "short, appearance, character, critique, prototypes, bonds, differences, conclusion",
             "nullable": true,
             "type": "string"
           }
@@ -34070,6 +34206,7 @@
           "quotes",
           "faq",
           "adaptations",
+          "compare",
           "sources",
           "print"
         ],

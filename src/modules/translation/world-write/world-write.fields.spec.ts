@@ -51,12 +51,13 @@ function setup(
   entity: Record<string, unknown> | null,
   initial = 'building',
   role: 'main' | 'secondary' | null = 'main',
+  pairs: WorldWriteData['pairs'] = [],
 ) {
   // Кандидат хода с ролью из анализа на шаге выбора (`F08-8b`); `null` - ключа нет среди кандидатов.
   const candidates = role
     ? [{ key: 'anna', role, name: 'Anna', aliases: [], mentions: { chapters: [], perChapter: {} } }]
     : [];
-  let data: WorldWriteData = { ...emptyWorldData(), candidates, items };
+  let data: WorldWriteData = { ...emptyWorldData(), candidates, pairs, items };
   let status = initial;
   const row = (): ContentDraft =>
     ({
@@ -142,6 +143,30 @@ describe('WorldWriteFields.settleStep', () => {
       expect.any(Function),
     );
     expect(data().items.map((i) => i.outcome)).toEqual(['written', 'written']);
+  });
+
+  it('no entity and a pair of the run: a pair is created - type pair, no role, no name forms (F08-8e)', async () => {
+    const pair = { key: 'anna--boris', a: 'anna', b: 'boris', linked: true, chapters: [1] };
+    const own = { key: 'anna--boris', name: 'Anna and Boris' };
+    const { fields, world, row } = setup(
+      [item('short', 'Two.', own), item('conclusion', 'So.', own)],
+      null,
+      'building',
+      'main',
+      [pair],
+    );
+    await fields.settleStep(row(), worldRunGate('op1'), 1);
+    expect(world.saveEntity).toHaveBeenCalledTimes(1);
+    const [, key, body, , expected] = world.saveEntity.mock.calls[0];
+    expect(key).toBe('anna--boris');
+    expect(body).toEqual({
+      language: 'en',
+      type: 'pair',
+      name: 'Anna and Boris',
+      short: 'Two.',
+      conclusion: 'So.',
+    });
+    expect(expected).toEqual({ expectedAbsent: 'true' });
   });
 
   it('no entity and a secondary candidate: the entity is created with the role of the candidate (F08-8b)', async () => {

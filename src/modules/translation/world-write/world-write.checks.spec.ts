@@ -8,11 +8,15 @@ import {
   pageRemarks,
   invalidBlocks,
   mentionRemarks,
+  pairCoreRemarks,
+  pairRemarks,
   readExternalAnswer,
   readPageAnswer,
+  readPairAnswer,
   readSelectAnswer,
   verifyWorldExternal,
   WorldPageCheck,
+  WorldPairCheck,
 } from './world-write.checks';
 import { WORLD_REVIEW_CODES } from './world-write.prompts';
 
@@ -383,5 +387,149 @@ describe('dossierForms: the glossary by the key of the dossier character', () =>
     expect(dossierForms({ key: 'anna', name: 'Ann' }, onlyGlossary, glossary, folded)).toEqual([
       'Anna',
     ]);
+  });
+});
+
+describe('pair step answer (F08-8e)', () => {
+  const pairCheck: WorldPairCheck = {
+    key: 'anna--boris',
+    a: 'anna',
+    b: 'boris',
+    language: 'en',
+    chapters,
+    chaptersA: new Set([1]),
+    chaptersB: new Set([2]),
+    glossary: [],
+    core: true,
+  };
+  const row = (chapterA: number, chapterB: number) => ({
+    feature: 'Morning',
+    a: 'Anna walks by the river.',
+    chapterA,
+    b: 'Boris rings the bell.',
+    chapterB,
+  });
+  const pairQuote = (text: string, chapter: number, speakerKey: string, aboutKey: string) => ({
+    text,
+    chapter,
+    speakerKey,
+    aboutKey,
+    interpretation: 'What the line shows.',
+  });
+
+  it('a compare row with a side chapter not of the version is removed; a row of the version stays', () => {
+    const draft = readPairAnswer({ compare: [row(1, 2), row(1, 9), row(7, 2)] }, pairCheck);
+    expect(draft.blocks.compare).toEqual([row(1, 2)]);
+    expect(draft.fixes.map((f) => [f.code, f.path])).toEqual([
+      ['CHAPTER_UNKNOWN', 'compare.1'],
+      ['CHAPTER_UNKNOWN', 'compare.2'],
+    ]);
+  });
+
+  it('a quote not word for word is dropped; a word-for-word line of one about the other stays', () => {
+    const draft = readPairAnswer(
+      {
+        quotes: [
+          pairQuote('the cold river at dawn', 1, 'anna', 'boris'),
+          pairQuote('the warm sea at night', 1, 'anna', 'boris'),
+        ],
+      },
+      pairCheck,
+    );
+    expect(draft.blocks.quotes?.map((q) => q.text)).toEqual(['the cold river at dawn']);
+    expect(draft.droppedQuotes).toEqual([
+      {
+        key: 'anna--boris',
+        chapter: 1,
+        text: 'the warm sea at night',
+        reason: 'QUOTE_NOT_VERBATIM',
+      },
+    ]);
+  });
+
+  it('a quote by or about someone else, about oneself or without aboutKey is removed: the import would refuse the pair', () => {
+    const line = 'the old bell three times';
+    const draft = readPairAnswer(
+      {
+        quotes: [
+          pairQuote(line, 2, 'tom', 'anna'),
+          pairQuote(line, 2, 'boris', 'boris'),
+          pairQuote(line, 2, 'boris', ''),
+          pairQuote(line, 2, 'boris', 'anna'),
+        ],
+      },
+      pairCheck,
+    );
+    expect(draft.blocks.quotes).toEqual([pairQuote(line, 2, 'boris', 'anna')]);
+    expect(draft.fixes.map((f) => [f.code, f.path])).toEqual([
+      ['KEY_UNKNOWN', 'quotes.0'],
+      ['KEY_UNKNOWN', 'quotes.1'],
+      ['KEY_UNKNOWN', 'quotes.2'],
+    ]);
+  });
+
+  it('no sources, external blocks or hero fields in the pair draft, whatever the answer holds', () => {
+    const draft = readPairAnswer(
+      {
+        short: 'Two.',
+        sources: [{ title: 't', url: 'https://x.example' }],
+        critique: 'c',
+        role: 'main',
+      },
+      pairCheck,
+    );
+    expect(Object.keys(draft.blocks)).toEqual(['short']);
+  });
+
+  it('the core (Q5): no short, fewer than 4 full rows, no conclusion - CORE_MISSING; the full core - none', () => {
+    expect(pairCoreRemarks({ compare: [row(1, 2)] }).map((r) => r.where)).toEqual([
+      'short',
+      'compare',
+      'conclusion',
+    ]);
+    expect(
+      pairCoreRemarks({
+        short: 'Two.',
+        compare: [1, 2, 3, 4].map(() => row(1, 2)),
+        conclusion: 'So.',
+      }),
+    ).toEqual([]);
+  });
+
+  it('a side outside the chapters of its character - SCENE_OUTSIDE_MENTIONS on that side', () => {
+    const draft = readPairAnswer({ compare: [row(2, 2), row(1, 1)] }, pairCheck);
+    const outside = pairRemarks(draft, pairCheck, 'Anna and Boris')
+      .filter((r) => r.code === 'SCENE_OUTSIDE_MENTIONS')
+      .map((r) => r.where);
+    expect(outside).toEqual(['compare.0.chapterA', 'compare.1.chapterB']);
+  });
+
+  it('import remarks of a pair go by the pair DTO: no role needed; a pair block over its limit is IMPORT_INVALID', () => {
+    const ok = importRemarks('anna--boris', 'Anna and Boris', { conclusion: 'So.' }, 'pair');
+    expect(ok).toEqual([]);
+    const long = importRemarks(
+      'anna--boris',
+      'Anna and Boris',
+      { conclusion: 'x'.repeat(5000) },
+      'pair',
+    );
+    expect(long.map((r) => [r.code, r.where])).toEqual([['IMPORT_INVALID', 'conclusion']]);
+  });
+
+  it('the core: 3 full rows or 4 rows with one not full - CORE_MISSING on compare', () => {
+    const full = { short: 'Two.', conclusion: 'So.' };
+    expect(
+      pairCoreRemarks({ ...full, compare: [1, 2, 3].map(() => row(1, 2)) }).map((r) => r.where),
+    ).toEqual(['compare']);
+    const notFull = [...[1, 2, 3].map(() => row(1, 2)), { ...row(1, 2), b: '' }];
+    expect(pairCoreRemarks({ ...full, compare: notFull }).map((r) => r.where)).toEqual(['compare']);
+  });
+
+  it('regenerating one block of a pair (core: false): no CORE_MISSING for the blocks the answer does not hold', () => {
+    const draft = readPairAnswer({ bonds: 'Both grew up by the river.' }, pairCheck);
+    const codes = (core: boolean) =>
+      pairRemarks(draft, { ...pairCheck, core }, 'Anna and Boris').map((r) => r.code);
+    expect(codes(true)).toContain('CORE_MISSING');
+    expect(codes(false)).not.toContain('CORE_MISSING');
   });
 });

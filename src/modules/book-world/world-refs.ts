@@ -6,10 +6,15 @@ import {
   coPresenceWith,
   type StoredWorldEntity,
 } from './book-world-data';
-import { BOOK_WORLD_KEY_REGEX } from './dto/book-world-blocks.dto';
+import type { Prisma } from '@prisma/client';
+import { BOOK_WORLD_KEY_REGEX, BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
 import { mentionChapters } from './world-core';
 
-const WORLD_PAIR_SEPARATOR = '--';
+/** Разделитель ключей героев в ключе пары `{a}--{b}` — одно место правила на books. */
+export const WORLD_PAIR_SEPARATOR = '--';
+
+/** В ключе стоит разделитель пары: у героя это ключ вида пары (`LEGACY-507`). */
+export const hasPairSeparator = (key: string): boolean => key.includes(WORLD_PAIR_SEPARATOR);
 
 /**
  * Ключ пары `{a}--{b}` → ключи героев (`F08-8c`, решение арбитра Q1): ровно одно `--`, обе половины
@@ -22,6 +27,98 @@ export function pairMembers(key: string): [string, string] | null {
   const a = key.slice(0, at);
   const b = key.slice(at + WORLD_PAIR_SEPARATOR.length);
   return b === '' ? null : [a, b];
+}
+
+/**
+ * Ошибка формы ключа пары (`F08-8c`, решение арбитра Q1) — одно правило на запись (`checkWorldPair`)
+ * и на сборку ключа ходом (`worldPairKey`): ровно одно `--`, обе половины не пусты, ключ в пределе
+ * `BOOK_WORLD_KEY_REGEX`, герои разные и по алфавиту по коду символа (`a < b` строк JS, без локали).
+ * Порядок и различие героев скопированы на фронт — `books-front/lib/book-world/pair.ts`
+ * (`pairKey`, `canonicalPairMembers`); менять вместе. Ключ годится — `members` и `error: null`;
+ * ключ не разобрать на героев — `members: null`.
+ */
+function pairKeyCheck(key: string): { members: [string, string] | null; error: string | null } {
+  const members = pairMembers(key);
+  if (!members || !BOOK_WORLD_KEY_REGEX.test(key)) {
+    return {
+      members: null,
+      error: 'a pair key is {a}--{b}: two character keys joined by one "--"',
+    };
+  }
+  const [a, b] = members;
+  if (a === b) return { members, error: 'a pair needs two different characters' };
+  if (a > b) return { members, error: `pair keys go in alphabetical order: "${b}--${a}"` };
+  return { members, error: null };
+}
+
+/**
+ * Ключ пары героев `a` и `b` (`F08-8e`): герои по алфавиту через разделитель, если ключ проходит
+ * правило формы `pairKeyCheck`; иначе `null` — пары у этих героев нет (решение арбитра `F08 | F08-8c`
+ * Q1: герой с длинным ключом, с `--` или с `-` на стыке пары не получает).
+ */
+export function worldPairKey(a: string, b: string): string | null {
+  const [first, second] = a < b ? [a, b] : [b, a];
+  const key = `${first}${WORLD_PAIR_SEPARATOR}${second}`;
+  const check = pairKeyCheck(key);
+  return check.members?.[0] === first && check.error === null ? key : null;
+}
+
+/**
+ * Ключ героя вида пары (`LEGACY-507`): `--` в ключе `character` занимает адрес пары. Отказ — только
+ * новой строке героя или смене типа на `character` (решение арбитра `F08 | F08-8e-1` Q7, образец R1):
+ * заведённого героя с `--` правят свободно, ключи не меняются (тема владельца №3).
+ */
+export function checkCharacterKey(
+  entity: Pick<StoredWorldEntity, 'key' | 'type'>,
+  storedType: string | null,
+): WorldRefError[] {
+  if (entity.type !== 'character') return [];
+  return characterKeyRefused(entity.key, storedType)
+    ? [{ path: 'key', message: 'a character key cannot hold "--": it is the form of a pair key' }]
+    : [];
+}
+
+/**
+ * Запись героя с этим ключом отбивается (`checkCharacterKey`): ключ вида пары у строки, которая ещё
+ * не герой (`storedType` — тип сохранённой строки, `null` — строки нет). Тем же правилом ход мира
+ * не берёт такого героя в кандидаты (`F08-8e-1` Q7: не платить за страницу под отказ записи).
+ */
+export const characterKeyRefused = (key: string, storedType: string | null): boolean =>
+  storedType !== 'character' && hasPairSeparator(key);
+
+/**
+ * Герои ключа пары, которых нет героями версии — одно правило на запись (`checkWorldPair`) и на шаг
+ * пары хода мира (без них пара не пишется).
+ */
+export const missingPairMembers = (
+  members: readonly string[],
+  characterKeys: ReadonlySet<string>,
+): string[] => [...new Set(members)].filter((k) => !characterKeys.has(k));
+
+/**
+ * Ключ пары занят сущностью другого типа — правило хода мира (отбор пар и шаг пары): пару туда ход
+ * не пишет. Запись такой ключ сама не отбивает: для неё это смена типа сущности (`checkWorldPair`
+ * не зовёт это правило; героя под парами сменить тип не даёт `pairsHolding`).
+ */
+export const pairKeyTaken = (storedType: string | null | undefined): boolean =>
+  storedType !== null && storedType !== undefined && storedType !== 'pair';
+
+/**
+ * Сохранённое присутствие героев (`mentions`) — вход условия заведения `pairEvidenceOf`; одно чтение
+ * на запись мира и на шаг пары хода (присутствие пишет только пересчёт, R2).
+ */
+export async function savedMentionsOf(
+  client: Pick<Prisma.TransactionClient, 'bookWorldEntity'>,
+  bookVersionId: string,
+  keys: readonly string[],
+): Promise<Map<string, unknown>> {
+  if (keys.length === 0) return new Map();
+  const rows = await client.bookWorldEntity.findMany({
+    where: { bookVersionId, key: { in: [...new Set(keys)] } },
+    select: { key: true, mentions: true },
+    take: BOOK_WORLD_LIMITS.entities,
+  });
+  return new Map<string, unknown>(rows.map((r) => [r.key, r.mentions] as const));
 }
 
 /** Ошибка ссылки или ключа: путь поля внутри сущности (`relations.0.to`) или тела (`entities.1.key`). */
@@ -220,23 +317,13 @@ export function checkWorldPair(
   ctx: WorldRefContext,
   evidence: ((a: string, b: string) => WorldPairEvidence) | null,
 ): WorldRefError[] {
-  const members = pairMembers(entity.key);
-  if (!members || !BOOK_WORLD_KEY_REGEX.test(entity.key)) {
-    return [
-      { path: 'key', message: 'a pair key is {a}--{b}: two character keys joined by one "--"' },
-    ];
-  }
+  const { members, error: formError } = pairKeyCheck(entity.key);
+  if (!members) return [{ path: 'key', message: formError ?? '' }];
   const errors: WorldRefError[] = [];
+  if (formError !== null) errors.push({ path: 'key', message: formError });
   const [a, b] = members;
-  if (a === b) {
-    errors.push({ path: 'key', message: 'a pair needs two different characters' });
-  } else if (a > b) {
-    errors.push({ path: 'key', message: `pair keys go in alphabetical order: "${b}--${a}"` });
-  }
-  for (const k of new Set(members)) {
-    if (!ctx.characterKeys.has(k)) {
-      errors.push({ path: 'key', message: `"${k}" is not a character of this version` });
-    }
+  for (const k of missingPairMembers(members, ctx.characterKeys)) {
+    errors.push({ path: 'key', message: `"${k}" is not a character of this version` });
   }
   (entity.quotes ?? []).forEach((q, j) => {
     // Цитаты пары — «друг о друге» (`product.md` §6): кто говорит и о ком — обязательно.
