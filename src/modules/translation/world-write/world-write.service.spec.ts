@@ -1,30 +1,10 @@
 import { Prisma } from '@prisma/client';
+import { worldHero, worldPairContext } from './world-write.spec-fixtures';
 import { emptyWorldData } from './world-write.data';
 import { WorldWriteService } from './world-write.service';
 
 describe('WorldWriteService: the regeneration estimate of a pair (F08-8e-4 Q1-bis)', () => {
-  const hero = (key: string, chapters: number[]) => ({
-    key,
-    role: 'main' as const,
-    name: key.toUpperCase(),
-    aliases: [],
-    mentions: { chapters, perChapter: {} },
-  });
-  const context = {
-    language: 'en',
-    dossier: null,
-    glossary: null,
-    bookTitle: 'B',
-    author: 'A',
-    originalLanguage: '',
-    entities: new Map(),
-    chapters: [
-      { number: 1, title: 'C1', content: '<p>Anna maps the road.</p>' },
-      { number: 2, title: 'C2', content: '<p>Boris rings the bell.</p>' },
-    ],
-    analysis: { characters: [] },
-    names: { titles: ['B'], authors: ['A'] },
-  };
+  const context = worldPairContext();
 
   it('a pair not linked and without shared chapters: the estimate counts the chapters of both heroes', async () => {
     const estimate = jest.fn().mockReturnValue(new Prisma.Decimal(0));
@@ -42,7 +22,7 @@ describe('WorldWriteService: the regeneration estimate of a pair (F08-8e-4 Q1-bi
     );
     const data = {
       ...emptyWorldData(),
-      candidates: [hero('anna', [1]), hero('boris', [2])],
+      candidates: [worldHero('anna', [1]), worldHero('boris', [2])],
       pairs: [{ key: 'anna--boris', a: 'anna', b: 'boris', linked: false, chapters: [] }],
     };
     await (service as unknown as { regenUsd: (...a: unknown[]) => Promise<unknown> }).regenUsd(

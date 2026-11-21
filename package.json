@@ -155,7 +155,8 @@
     ],
     "coveragePathIgnorePatterns": [
       "/node_modules/",
-      "/common/testing/"
+      "/common/testing/",
+      "\\.spec-fixtures\\.ts$"
     ],
     "coverageDirectory": "../coverage",
     "coverageThreshold": {

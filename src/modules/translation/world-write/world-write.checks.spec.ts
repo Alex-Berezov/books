@@ -447,6 +447,33 @@ describe('pair step answer (F08-8e)', () => {
     ]);
   });
 
+  it('a quote of a chapter not of the version or without a chapter is dropped with CHAPTER_UNKNOWN (F08-8e-5)', () => {
+    const draft = readPairAnswer(
+      {
+        quotes: [
+          pairQuote('the cold river at dawn', 9, 'anna', 'boris'),
+          { ...pairQuote('the cold river at dawn', 1, 'anna', 'boris'), chapter: null },
+          pairQuote('the cold river at dawn', 1, 'anna', 'boris'),
+        ],
+      },
+      pairCheck,
+    );
+    expect(draft.blocks.quotes?.map((q) => q.chapter)).toEqual([1]);
+    expect(draft.droppedQuotes).toEqual([
+      { key: 'anna--boris', chapter: 9, text: 'the cold river at dawn', reason: 'CHAPTER_UNKNOWN' },
+      {
+        key: 'anna--boris',
+        chapter: null,
+        text: 'the cold river at dawn',
+        reason: 'CHAPTER_UNKNOWN',
+      },
+    ]);
+    expect(draft.fixes.map((f) => [f.code, f.path])).toEqual([
+      ['CHAPTER_UNKNOWN', 'quotes.0'],
+      ['CHAPTER_UNKNOWN', 'quotes.1'],
+    ]);
+  });
+
   it('a quote by or about someone else, about oneself or without aboutKey is removed: the import would refuse the pair', () => {
     const line = 'the old bell three times';
     const draft = readPairAnswer(

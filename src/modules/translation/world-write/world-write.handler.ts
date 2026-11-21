@@ -1138,18 +1138,18 @@ export class WorldWriteHandler {
   }
 }
 
-/** Итог шага пары: пункт на блок ответа, неверные по импорту - не пишутся (как у страницы героя). */
-function pairRecord(
+/**
+ * Пункты на блок ответа (общее у страницы героя и пары): неверные по импорту - не пишутся,
+ * а идут пунктом `failed`/`IMPORT_INVALID`; остальные - с вердиктом по замечаниям блока.
+ */
+function blockItems<D extends { blocks: Partial<Record<WorldBlock, unknown>> }>(
   step: number,
-  language: Language,
-  pair: WorldPairCandidate,
-  members: WorldPairMembers,
-  result: Extract<QualityLoopResult<WorldPairDraft>, { ok: true }>,
-  source: WorldStepSource,
-): StepRecord {
+  key: string,
+  name: string,
+  result: Extract<QualityLoopResult<D>, { ok: true }>,
+): WorldItem[] {
   const invalid = invalidBlocks(result.remarks);
   const answered = result.review.kind === 'answered';
-  const name = result.draft.name ?? pairFallbackName(language, members);
   const items: WorldItem[] = [];
   for (const [block, value] of Object.entries(result.draft.blocks) as Array<
     [WorldBlock, unknown]
@@ -1158,7 +1158,7 @@ function pairRecord(
     items.push(
       invalid.has(block)
         ? {
-            ...emptyItem(pair.key, block, step),
+            ...emptyItem(key, block, step),
             verdict: 'failed',
             remarks: own,
             review: result.review,
@@ -1166,7 +1166,7 @@ function pairRecord(
             failedReason: 'IMPORT_INVALID',
           }
         : {
-            ...emptyItem(pair.key, block, step),
+            ...emptyItem(key, block, step),
             verdict: verdictOf(own, answered),
             remarks: own,
             review: result.review,
@@ -1175,53 +1175,41 @@ function pairRecord(
           },
     );
   }
+  return items;
+}
+
+/** Итог шага пары: пункт на блок ответа, неверные по импорту - не пишутся (как у страницы героя). */
+export function pairRecord(
+  step: number,
+  language: Language,
+  pair: WorldPairCandidate,
+  members: WorldPairMembers,
+  result: Extract<QualityLoopResult<WorldPairDraft>, { ok: true }>,
+  source: WorldStepSource,
+): StepRecord {
+  const name = result.draft.name ?? pairFallbackName(language, members);
   return {
     step: doneStep(step, 'pair', pair.key, result, result.remarks, source, result.draft.fixes),
-    items,
+    items: blockItems(step, pair.key, name, result),
     droppedQuotes: result.draft.droppedQuotes,
     droppedSources: [],
   };
 }
 
 /** Итог страницы: пункт на блок (формы имени - из выбора), неверные по импорту - не пишутся. */
-function pageRecord(
+export function pageRecord(
   step: number,
   candidate: WorldCandidate,
   result: Extract<QualityLoopResult<WorldPageDraft>, { ok: true }>,
   source: WorldStepSource,
   regen: boolean,
 ): StepRecord {
-  const invalid = invalidBlocks(result.remarks);
-  const answered = result.review.kind === 'answered';
   const name = result.draft.name ?? candidate.name;
   const items: WorldItem[] = [];
   if (!regen && candidate.aliases.length > 0) {
     items.push({ ...emptyItem(candidate.key, 'aliases', step), value: candidate.aliases, name });
   }
-  for (const [block, value] of Object.entries(result.draft.blocks) as Array<
-    [WorldBlock, unknown]
-  >) {
-    const own = remarksOfBlock(result.remarks, block);
-    if (invalid.has(block)) {
-      items.push({
-        ...emptyItem(candidate.key, block, step),
-        verdict: 'failed',
-        remarks: own,
-        review: result.review,
-        outcome: 'none',
-        failedReason: 'IMPORT_INVALID',
-      });
-      continue;
-    }
-    items.push({
-      ...emptyItem(candidate.key, block, step),
-      verdict: verdictOf(own, answered),
-      remarks: own,
-      review: result.review,
-      value,
-      name,
-    });
-  }
+  items.push(...blockItems(step, candidate.key, name, result));
   return {
     step: doneStep(step, 'page', candidate.key, result, result.remarks, source, result.draft.fixes),
     items,

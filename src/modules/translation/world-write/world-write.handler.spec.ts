@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
-import type { PrismaService } from '../../../prisma/prisma.service';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
-import { droppedOfBlock, WorldWriteHandler } from './world-write.handler';
+import { worldHero, worldPairContext, worldWriteHandler } from './world-write.spec-fixtures';
+import type { DraftRemark } from '../draft-quality/text-checks';
+import { droppedOfBlock, pageRecord, pairRecord } from './world-write.handler';
 import { choosePairs } from './world-write.pairs';
 import { indexChapters } from '../draft-quality/quote-check';
 import { emptyWorldData, readWorldData, worldDataJson } from './world-write.data';
@@ -55,18 +56,7 @@ describe('WorldWriteHandler.clearRegenMark', () => {
         }),
       },
     };
-    const handler = new WorldWriteHandler(
-      {} as PrismaService,
-      ...([{}, {}, {}, {}, {}, {}, {}] as unknown as [
-        never,
-        never,
-        never,
-        never,
-        never,
-        never,
-        never,
-      ]),
-    );
+    const handler = worldWriteHandler();
     await handler.clearRegenMark('op9', tx as unknown as Prisma.TransactionClient);
     expect(order).toEqual(['find', 'lock', 'read', 'write']);
   });
@@ -116,16 +106,7 @@ describe('WorldWriteHandler: a regeneration and the external step', () => {
         fn ? fn({}).then(() => true) : Promise.resolve(true),
       ),
     };
-    const handler = new WorldWriteHandler(
-      db as unknown as PrismaService,
-      {} as never,
-      tasks as never,
-      {} as never,
-      {} as never,
-      fields as never,
-      {} as never,
-      {} as never,
-    );
+    const handler = worldWriteHandler({ prisma: db, tasks, fields });
     return { handler, tasks };
   }
 
@@ -241,16 +222,7 @@ describe('WorldWriteHandler: a step written by another attempt; dropped sources 
       bookDossier: { findUnique: jest.fn().mockResolvedValue({ data: {} }) },
     };
     const tasks = { completeOperation: jest.fn().mockResolvedValue(true) };
-    const handler = new WorldWriteHandler(
-      store as unknown as PrismaService,
-      {} as never,
-      tasks as never,
-      {} as never,
-      {} as never,
-      fields as never,
-      {} as never,
-      {} as never,
-    );
+    const handler = worldWriteHandler({ prisma: store, tasks, fields });
     jest.spyOn(handler, 'contextOf').mockResolvedValue({
       language: 'en',
       dossier: {},
@@ -305,16 +277,7 @@ describe('WorldWriteHandler: second-tier heroes (F08-8b)', () => {
   });
   const run = async (chapters: ReturnType<typeof chapter>[], stored: unknown[] = []) => {
     const store = { bookWorldEntity: { findMany: jest.fn().mockResolvedValue(stored) } };
-    const handler = new WorldWriteHandler(
-      store as unknown as PrismaService,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-    );
+    const handler = worldWriteHandler({ prisma: store });
     const base = [
       { key: 'anna', name: 'Anna', role: 'main' as const },
       { key: 'boris', name: 'Boris', role: 'secondary' as const },
@@ -389,16 +352,7 @@ describe('WorldWriteHandler: pair step refusals before the paid call (F08-8e)', 
         return Promise.resolve(marks.at(-1));
       }),
     };
-    const handler = new WorldWriteHandler(
-      store as unknown as PrismaService,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      fields as never,
-      {} as never,
-      mentions as never,
-    );
+    const handler = worldWriteHandler({ prisma: store, fields, mentions });
     const context = {
       entities: new Map(Object.entries(entities)),
       analysis: { characters: relations },
@@ -616,18 +570,7 @@ describe('choosePairs: pairs of the run and what the choice left out (F08-8e)', 
 describe('WorldWriteHandler.candidatesOf: left out and common chapters (F08-8e)', () => {
   it('a secondary hero below the threshold is left out with its chapters; common chapters are counted between candidates', async () => {
     const store = { bookWorldEntity: { findMany: jest.fn().mockResolvedValue([]) } };
-    const handler = new WorldWriteHandler(
-      store as unknown as PrismaService,
-      ...([{}, {}, {}, {}, {}, {}, {}] as unknown as [
-        never,
-        never,
-        never,
-        never,
-        never,
-        never,
-        never,
-      ]),
-    );
+    const handler = worldWriteHandler({ prisma: store });
     const chapters = [
       { number: 1, title: 'C1', content: '<p>Anna and Boris and Vera</p>' },
       { number: 2, title: 'C2', content: '<p>Anna and Boris</p>' },
@@ -700,16 +643,7 @@ describe('WorldWriteHandler: the presence recount before new pairs, until it suc
         return Promise.resolve(marks.at(-1));
       }),
     };
-    const handler = new WorldWriteHandler(
-      store as unknown as PrismaService,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      fields as never,
-      {} as never,
-      mentions as never,
-    );
+    const handler = worldWriteHandler({ prisma: store, fields, mentions });
     const character = { type: 'character' };
     const context = {
       entities: new Map([
@@ -823,16 +757,7 @@ describe('WorldWriteHandler: the choice step of a run started before F08-8e (F08
   // Текст не влез (`stageFit` - нет): шаг выбора без вызова, отбор пар идёт по кандидатам.
   const choose = async (data: unknown) => {
     const llm = { stageFit: jest.fn().mockResolvedValue({ fits: false }) };
-    const handler = new WorldWriteHandler(
-      {} as never,
-      llm as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-    );
+    const handler = worldWriteHandler({ llm });
     const inner = handler as unknown as {
       candidatesOf: jest.Mock;
       produceStep: (...a: unknown[]) => Promise<{
@@ -906,16 +831,7 @@ describe('WorldWriteHandler: pair step branches after the checks (F08-8e-1 revie
       stageInputCeiling: jest.fn().mockResolvedValue({ maxInputChars: null }),
       getStageSetting: jest.fn().mockResolvedValue({}),
     };
-    const handler = new WorldWriteHandler(
-      {} as never,
-      llm as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-    );
+    const handler = worldWriteHandler({ llm });
     const inner = handler as unknown as {
       loop: jest.Mock;
       pairStep: (
@@ -959,33 +875,14 @@ describe('WorldWriteHandler: pair step branches after the checks (F08-8e-1 revie
 });
 
 describe('a pair without shared chapters on the paid paths: both heroes are read, no refusal (F08-8e-4 Q1, Q1-bis)', () => {
-  const hero = (key: string, chapters: number[]) => ({
-    key,
-    role: 'main' as const,
-    name: key.toUpperCase(),
-    aliases: [],
-    mentions: { chapters, perChapter: {} },
-  });
   const pair = { key: 'anna--boris', a: 'anna', b: 'boris', linked: false, chapters: [] };
-  const context = {
-    language: 'en',
-    dossier: null,
-    glossary: null,
-    bookTitle: 'B',
-    author: 'A',
-    originalLanguage: '',
-    entities: new Map([
+  const context = worldPairContext(
+    new Map([
       ['anna', { type: 'character' }],
       ['boris', { type: 'character' }],
       ['anna--boris', { type: 'pair' }],
     ]),
-    chapters: [
-      { number: 1, title: 'C1', content: '<p>Anna maps the road.</p>' },
-      { number: 2, title: 'C2', content: '<p>Boris rings the bell.</p>' },
-    ],
-    analysis: { characters: [] },
-    names: { titles: ['B'], authors: ['A'] },
-  };
+  );
   const texts = (mock: jest.Mock) => JSON.stringify(mock.mock.calls as unknown[]);
   const run = async (
     pairPatch: Partial<typeof pair>,
@@ -996,16 +893,7 @@ describe('a pair without shared chapters on the paid paths: both heroes are read
       stageInputCeiling: jest.fn().mockResolvedValue({ maxInputChars: null }),
       getStageSetting: jest.fn().mockResolvedValue({}),
     };
-    const handler = new WorldWriteHandler(
-      {} as never,
-      llm as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-      {} as never,
-    );
+    const handler = worldWriteHandler({ llm });
     const inner = handler as unknown as {
       loop: jest.Mock;
       pairStep: (...a: unknown[]) => Promise<{ step: { failedReason: string | null } } | null>;
@@ -1013,7 +901,7 @@ describe('a pair without shared chapters on the paid paths: both heroes are read
     inner.loop = jest.fn().mockResolvedValue({ ok: false });
     const data = {
       ...emptyWorldData(),
-      candidates: [hero('anna', [1]), hero('boris', [2])],
+      candidates: [worldHero('anna', [1]), worldHero('boris', [2])],
       pairs: [{ ...pair, ...pairPatch }],
       mentionsRecounted: true,
     };
@@ -1064,5 +952,156 @@ describe('a pair without shared chapters on the paid paths: both heroes are read
     const { got, loop } = await run({});
     expect(got?.step.failedReason).toBe('WORLD_PAIR_NOT_FOUNDED');
     expect(loop).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Итог шага страницы героя и пары (`F08-8e-5`, общий `blockItems`): пункт на блок, блок с ошибкой
+ * импорта - пункт `failed`/`IMPORT_INVALID` без значения и имени; формы имени - только у страницы
+ * и не на перегенерации; имя пары без ответа модели - запасное.
+ */
+describe('pageRecord / pairRecord: the items of a written step (F08-8e-5)', () => {
+  const importRemark: DraftRemark = {
+    code: 'IMPORT_INVALID',
+    where: 'faq.0.answer',
+    note: 'The field faq.0.answer: too long.',
+    by: 'code',
+  };
+  const loopDraft = <D>(draft: D, remarks: DraftRemark[], answered = true) => ({
+    ok: true as const,
+    draft,
+    attempt: 1 as const,
+    verdict: 'flags' as const,
+    remarks,
+    authorModel: 'author',
+    review: answered
+      ? { kind: 'answered' as const, model: 'reviewer' }
+      : { kind: 'unavailable' as const },
+    costUsd: new Prisma.Decimal(0),
+  });
+  const blocks = { short: 'Short text.', faq: [{ question: 'Q?', answer: 'A.' }] };
+  const view = (items: ReturnType<typeof pageRecord>['items']) =>
+    items.map((i) => ({
+      key: i.key,
+      block: i.block,
+      step: i.step,
+      verdict: i.verdict,
+      outcome: i.outcome,
+      value: i.value,
+      name: i.name,
+      failedReason: i.failedReason,
+      remarks: i.remarks.map((r) => r.where),
+    }));
+  const anna = { ...worldHero('anna', [1]), aliases: ['Anna', 'Annushka'] };
+
+  it('a page: the name forms first, a block of the version as is, a block refused by the import - failed without value', () => {
+    const got = pageRecord(
+      4,
+      anna,
+      loopDraft({ name: 'Anna K.', blocks, fixes: [], droppedQuotes: [] }, [importRemark]),
+      'text',
+      false,
+    );
+    expect(view(got.items)).toEqual([
+      {
+        key: 'anna',
+        block: 'aliases',
+        step: 4,
+        verdict: 'ok',
+        outcome: 'waiting',
+        value: ['Anna', 'Annushka'],
+        name: 'Anna K.',
+        failedReason: null,
+        remarks: [],
+      },
+      {
+        key: 'anna',
+        block: 'short',
+        step: 4,
+        verdict: 'ok',
+        outcome: 'waiting',
+        value: 'Short text.',
+        name: 'Anna K.',
+        failedReason: null,
+        remarks: [],
+      },
+      {
+        key: 'anna',
+        block: 'faq',
+        step: 4,
+        verdict: 'failed',
+        outcome: 'none',
+        value: null,
+        name: null,
+        failedReason: 'IMPORT_INVALID',
+        remarks: ['faq.0.answer'],
+      },
+    ]);
+    expect(got.step).toMatchObject({ step: 4, kind: 'page', key: 'anna', outcome: 'done' });
+  });
+
+  it('a page regenerated: no name forms item; without the reviewer - flags; no name from the model - the hero name', () => {
+    const got = pageRecord(
+      4,
+      anna,
+      loopDraft(
+        { name: null, blocks: { short: 'Short text.' }, fixes: [], droppedQuotes: [] },
+        [],
+        false,
+      ),
+      'text',
+      true,
+    );
+    expect(view(got.items)).toEqual([
+      {
+        key: 'anna',
+        block: 'short',
+        step: 4,
+        verdict: 'flags',
+        outcome: 'waiting',
+        value: 'Short text.',
+        name: 'ANNA',
+        failedReason: null,
+        remarks: [],
+      },
+    ]);
+  });
+
+  it('a pair: items under the pair key, the fallback name, a block refused by the import - failed without value', () => {
+    const pair = { key: 'anna--boris', a: 'anna', b: 'boris', linked: true, chapters: [1] };
+    const members = { a: worldHero('anna', [1]), b: worldHero('boris', [2]) };
+    const got = pairRecord(
+      6,
+      'en',
+      pair,
+      members,
+      loopDraft({ name: null, blocks, fixes: [], droppedQuotes: [] }, [importRemark]),
+      'text',
+    );
+    expect(view(got.items)).toEqual([
+      {
+        key: 'anna--boris',
+        block: 'short',
+        step: 6,
+        verdict: 'ok',
+        outcome: 'waiting',
+        value: 'Short text.',
+        name: 'ANNA and BORIS',
+        failedReason: null,
+        remarks: [],
+      },
+      {
+        key: 'anna--boris',
+        block: 'faq',
+        step: 6,
+        verdict: 'failed',
+        outcome: 'none',
+        value: null,
+        name: null,
+        failedReason: 'IMPORT_INVALID',
+        remarks: ['faq.0.answer'],
+      },
+    ]);
+    expect(got.step).toMatchObject({ step: 6, kind: 'pair', key: 'anna--boris', outcome: 'done' });
   });
 });

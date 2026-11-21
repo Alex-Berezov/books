@@ -222,6 +222,42 @@ export interface WorldPageCheck {
   glossary: readonly NameEntry[];
 }
 
+/** Глава из версии: одно правило на сцены, этапы, строки сравнения и цитаты страницы и пары. */
+function chapterKnown(chapters: ChapterIndex, n: number | null): n is number {
+  return n !== null && chapters.has(n);
+}
+
+/**
+ * Общий отсев цитаты страницы и пары: глава не из версии (`CHAPTER_UNKNOWN`) или текст не дословно
+ * в главе (`QUOTE_NOT_VERBATIM`) - причина дописывается в `droppedQuotes` и в `fixes`, ответ
+ * `null` (цитата выброшена); иначе - глава цитаты. Зовётся ровно один раз на цитату: каждый вызов
+ * пишет в оба списка.
+ */
+function quoteChapterOrDrop(
+  text: string,
+  chapter: number | null,
+  path: string,
+  check: { key: string; chapters: ChapterIndex },
+  fixes: WorldFix[],
+  droppedQuotes: DroppedWorldQuote[],
+): number | null {
+  if (!chapterKnown(check.chapters, chapter)) {
+    droppedQuotes.push({ key: check.key, chapter, text, reason: 'CHAPTER_UNKNOWN' });
+    fixes.push(chapterFix(path, chapter));
+    return null;
+  }
+  if (!quoteStandsIn(text, check.chapters.get(chapter) ?? [])) {
+    droppedQuotes.push({ key: check.key, chapter, text, reason: 'QUOTE_NOT_VERBATIM' });
+    fixes.push({
+      code: 'QUOTE_NOT_VERBATIM',
+      path,
+      note: `not word for word in chapter ${chapter}: removed`,
+    });
+    return null;
+  }
+  return chapter;
+}
+
 /**
  * Ответ страницы после кода: цитата с главой не версии или не дословная - выброшена с причиной
  * (`droppedQuotes`), затем хвост сверх 12 отрезан (Q7); сцена и этап с главой не версии -
@@ -232,7 +268,7 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
   const v = rec(value);
   const fixes: WorldFix[] = [];
   const droppedQuotes: DroppedWorldQuote[] = [];
-  const known = (n: number | null) => n !== null && check.chapters.has(n);
+  const known = (n: number | null): n is number => chapterKnown(check.chapters, n);
   const blocks: WorldPageBlocks = {};
 
   const short = textOrNull(v.short);
@@ -260,7 +296,7 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
         fixes.push(chapterFix(`arc.stages.${i}`, chapter));
         return [];
       }
-      return [{ title: trimmed(s.title), text: trimmed(s.text), chapter: chapter as number }];
+      return [{ title: trimmed(s.title), text: trimmed(s.text), chapter }];
     });
     blocks.arc = {
       from: trimmed(arc.from),
@@ -278,7 +314,7 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
       fixes.push(chapterFix(`scenes.${i}`, chapter));
       return [];
     }
-    return [{ chapter: chapter as number, title: trimmed(s.title), text: trimmed(s.text) }];
+    return [{ chapter, title: trimmed(s.title), text: trimmed(s.text) }];
   });
   if (scenes.length > 0) blocks.scenes = limited(scenes, BOOK_WORLD_LIMITS.scenes, 'scenes', fixes);
 
@@ -302,21 +338,15 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
   const quotes = list(v.quotes).flatMap((raw, i) => {
     const q = rec(raw);
     const text = trimmed(q.text);
-    const chapter = chapterOf(q.chapter);
-    if (!known(chapter)) {
-      droppedQuotes.push({ key: check.key, chapter, text, reason: 'CHAPTER_UNKNOWN' });
-      fixes.push(chapterFix(`quotes.${i}`, chapter));
-      return [];
-    }
-    if (!quoteStandsIn(text, check.chapters.get(chapter as number) ?? [])) {
-      droppedQuotes.push({ key: check.key, chapter, text, reason: 'QUOTE_NOT_VERBATIM' });
-      fixes.push({
-        code: 'QUOTE_NOT_VERBATIM',
-        path: `quotes.${i}`,
-        note: `not word for word in chapter ${chapter}: removed`,
-      });
-      return [];
-    }
+    const chapter = quoteChapterOrDrop(
+      text,
+      chapterOf(q.chapter),
+      `quotes.${i}`,
+      check,
+      fixes,
+      droppedQuotes,
+    );
+    if (chapter === null) return [];
     const speaker = trimmed(q.speakerKey);
     let speakerKey: string | undefined;
     if (speaker !== '') {
@@ -332,7 +362,7 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
     return [
       {
         text,
-        chapter: chapter as number,
+        chapter,
         ...(speakerKey ? { speakerKey } : {}),
         interpretation: trimmed(q.interpretation),
       },
@@ -543,7 +573,7 @@ export function readPairAnswer(value: unknown, check: WorldPairCheck): WorldPair
   const v = rec(value);
   const fixes: WorldFix[] = [];
   const droppedQuotes: DroppedWorldQuote[] = [];
-  const known = (n: number | null) => n !== null && check.chapters.has(n);
+  const known = (n: number | null): n is number => chapterKnown(check.chapters, n);
   const blocks: WorldPairBlocks = {};
   for (const field of ['short', 'bonds', 'differences', 'conclusion'] as const) {
     const text = textOrNull(v[field]);
@@ -562,9 +592,9 @@ export function readPairAnswer(value: unknown, check: WorldPairCheck): WorldPair
       {
         feature: trimmed(c.feature),
         a: trimmed(c.a),
-        chapterA: chapterA as number,
+        chapterA,
         b: trimmed(c.b),
-        chapterB: chapterB as number,
+        chapterB,
       },
     ];
   });
@@ -576,7 +606,6 @@ export function readPairAnswer(value: unknown, check: WorldPairCheck): WorldPair
   const quotes = list(v.quotes).flatMap((raw, i) => {
     const q = rec(raw);
     const text = trimmed(q.text);
-    const chapter = chapterOf(q.chapter);
     const speakerKey = trimmed(q.speakerKey);
     const aboutKey = trimmed(q.aboutKey);
     if (!members.includes(speakerKey) || !members.includes(aboutKey) || speakerKey === aboutKey) {
@@ -587,24 +616,19 @@ export function readPairAnswer(value: unknown, check: WorldPairCheck): WorldPair
       });
       return [];
     }
-    if (!known(chapter)) {
-      droppedQuotes.push({ key: check.key, chapter, text, reason: 'CHAPTER_UNKNOWN' });
-      fixes.push(chapterFix(`quotes.${i}`, chapter));
-      return [];
-    }
-    if (!quoteStandsIn(text, check.chapters.get(chapter as number) ?? [])) {
-      droppedQuotes.push({ key: check.key, chapter, text, reason: 'QUOTE_NOT_VERBATIM' });
-      fixes.push({
-        code: 'QUOTE_NOT_VERBATIM',
-        path: `quotes.${i}`,
-        note: `not word for word in chapter ${chapter}: removed`,
-      });
-      return [];
-    }
+    const chapter = quoteChapterOrDrop(
+      text,
+      chapterOf(q.chapter),
+      `quotes.${i}`,
+      check,
+      fixes,
+      droppedQuotes,
+    );
+    if (chapter === null) return [];
     return [
       {
         text,
-        chapter: chapter as number,
+        chapter,
         speakerKey,
         aboutKey,
         interpretation: trimmed(q.interpretation),
