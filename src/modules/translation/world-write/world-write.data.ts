@@ -64,6 +64,8 @@ export type WorldStepKind = (typeof WORLD_STEP_KINDS)[number];
  * Шаг по номеру: 0 - выбор, затем на кандидата `i` - страница (`1 + 2i`) и внешние блоки (`2 + 2i`),
  * после всех `heroes` героев - пара `j` (`1 + 2·heroes + j`, `F08-8e`); `candidate` - индекс героя
  * в `candidates` или пары в `pairs`. Номера шагов героев от пар не зависят.
+ * Фронтовая копия нумерации - `stepAhead` в books-front/components/admin/books/WorldTab/WorldWrite/worldWrite.utils.ts;
+ * менять вместе.
  */
 export function stepAt(
   step: number,
@@ -135,6 +137,11 @@ export interface WorldSkip {
   /** Ключ героя или пары; у `PAIR_KEY_INVALID` - ключи героев через `--`, как вышел бы ключ. */
   key: string;
   reason: WorldSkipReason;
+  /**
+   * Имена для подписи редактору: героя - одно, пары - двух героев в порядке ключа (ключ пары
+   * `PAIR_KEY_INVALID` не разобрать); пусто у записи хода до этого поля - подписью служит ключ.
+   */
+  names: string[];
   /** Главы героя (`BELOW_MIN_CHAPTERS`) или общие главы пары; иначе `null`. */
   chapters: number | null;
 }
@@ -445,7 +452,8 @@ function leftOutOf(v: unknown): WorldSkip[] {
     if (!isRecord(d)) return [];
     const key = stringOf(d.key);
     const reason = oneOf(WORLD_SKIP_REASONS, d.reason);
-    return key !== null && reason ? [{ key, reason, chapters: intOf(d.chapters) }] : [];
+    const names = Array.isArray(d.names) ? d.names.flatMap((n) => stringOf(n) ?? []) : [];
+    return key !== null && reason ? [{ key, reason, names, chapters: intOf(d.chapters) }] : [];
   });
 }
 

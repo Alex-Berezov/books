@@ -16872,6 +16872,8 @@ export interface components {
       chapters: number | null;
       /** @description Key of the character or the pair */
       key: string;
+      /** @description Names to caption the entry: one for a character, two for a pair in key order; empty for a run saved before this field */
+      names: string[];
       /**
        * @description BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run
        * @enum {string}

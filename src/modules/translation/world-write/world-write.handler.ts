@@ -971,6 +971,7 @@ export class WorldWriteHandler {
         .map((c) => ({
           key: c.key,
           reason: 'BELOW_MIN_CHAPTERS' as const,
+          names: [c.name],
           chapters: c.mentions.chapters.length,
         })),
       coPresence: new Map(all.map((c) => [c.key, counted.get(c.key)?.coPresence ?? {}])),

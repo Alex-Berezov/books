@@ -335,7 +335,7 @@ describe('World run «Write World» (e2e)', () => {
     stepsTotal: number | null;
     candidates: Array<{ key: string; name: string; aliases: string[]; chapters: number[] }>;
     pairs: Array<{ key: string; a: string; b: string; linked: boolean; chapters: number[] }> | null;
-    leftOut: Array<{ key: string; reason: string; chapters: number | null }>;
+    leftOut: Array<{ key: string; reason: string; names: string[]; chapters: number | null }>;
     pairsOff: string | null;
     steps: Array<{
       step: number;

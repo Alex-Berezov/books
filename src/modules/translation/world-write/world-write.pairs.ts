@@ -18,6 +18,7 @@ import { pairFormCharacters, storedCharacterKeys, type WorldContext } from './wo
 /** Герой-кандидат хода с присутствием шага выбора: главы и общие главы с другими кандидатами. */
 export interface WorldPairHero {
   key: string;
+  name: string;
   chapters: number[];
   /** Общие главы с другими кандидатами хода (`WorldMentionCounter` с `coPresenceKeys`). */
   coPresence: Record<string, number[]>;
@@ -47,6 +48,7 @@ export function selectWorldPairs(
   );
   const taken: WorldPairCandidate[] = [];
   const skipped: WorldSkip[] = [];
+  const namesOf = new Map<string, string[]>();
   const sorted = [...heroes].sort((x, y) => (x.key < y.key ? -1 : x.key > y.key ? 1 : 0));
   for (let i = 0; i < sorted.length; i++) {
     for (let j = i + 1; j < sorted.length; j++) {
@@ -57,15 +59,23 @@ export function selectWorldPairs(
       if (stored !== 'pair' && !pairFounded(e)) continue;
       const chapters = (a.coPresence[b.key] ?? []).slice().sort((x, y) => x - y);
       if (key === null) {
+        // Ключа пары нет (worldPairKey = null): поле - подпись строки, имена - в names (F08 | F08-8e-3).
         skipped.push({
           key: `${a.key}${WORLD_PAIR_SEPARATOR}${b.key}`,
           reason: 'PAIR_KEY_INVALID',
+          names: [a.name, b.name],
           chapters: chapters.length,
         });
       } else if (pairKeyTaken(stored)) {
-        skipped.push({ key, reason: 'PAIR_KEY_TAKEN', chapters: chapters.length });
+        skipped.push({
+          key,
+          reason: 'PAIR_KEY_TAKEN',
+          names: [a.name, b.name],
+          chapters: chapters.length,
+        });
       } else {
         taken.push({ key, a: a.key, b: b.key, linked: e.isLinked, chapters });
+        namesOf.set(key, [a.name, b.name]);
       }
     }
   }
@@ -76,7 +86,12 @@ export function selectWorldPairs(
       (x.key < y.key ? -1 : x.key > y.key ? 1 : 0),
   );
   for (const p of taken.slice(WORLD_PAIRS_MAX)) {
-    skipped.push({ key: p.key, reason: 'PAIRS_MAX', chapters: p.chapters.length });
+    skipped.push({
+      key: p.key,
+      reason: 'PAIRS_MAX',
+      names: namesOf.get(p.key) ?? [],
+      chapters: p.chapters.length,
+    });
   }
   return { pairs: taken.slice(0, WORLD_PAIRS_MAX), skipped };
 }
@@ -100,7 +115,7 @@ export function choosePairs(
   const pairForm: WorldSkip[] = pairFormCharacters(
     context.analysis,
     storedCharacterKeys(context.entities),
-  ).map((c) => ({ key: c.key, reason: 'KEY_PAIR_FORM', chapters: null }));
+  ).map((c) => ({ key: c.key, reason: 'KEY_PAIR_FORM', names: [c.name], chapters: null }));
   if (!hasWorldPairExample(context.language)) {
     return {
       pairs: [],
@@ -111,6 +126,7 @@ export function choosePairs(
   const selection = selectWorldPairs(
     chosen.candidates.map((c) => ({
       key: c.key,
+      name: c.name,
       chapters: c.mentions.chapters,
       coPresence: chosen.coPresence.get(c.key) ?? {},
     })),

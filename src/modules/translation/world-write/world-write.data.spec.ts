@@ -83,12 +83,35 @@ describe('world run pairs (F08-8e)', () => {
     expect(readWorldData({}).pairs).toBeNull();
   });
 
+  it('a left-out entry saved before names reads with empty names; non-string names are dropped', () => {
+    const saved = {
+      ...(worldDataJson({
+        ...emptyWorldData(),
+        candidates: [],
+        pairs: [],
+        pairsOff: null,
+      }) as Record<string, unknown>),
+      leftOut: [
+        { key: 'vera', reason: 'BELOW_MIN_CHAPTERS', chapters: 2 },
+        { key: 'a--b', reason: 'PAIRS_MAX', names: [null, 'B', 3], chapters: 1 },
+        { key: 'c', reason: 'KEY_PAIR_FORM', names: 'C', chapters: null },
+      ],
+    };
+    expect(readWorldData(saved).leftOut).toEqual([
+      { key: 'vera', reason: 'BELOW_MIN_CHAPTERS', names: [], chapters: 2 },
+      { key: 'a--b', reason: 'PAIRS_MAX', names: ['B'], chapters: 1 },
+      { key: 'c', reason: 'KEY_PAIR_FORM', names: [], chapters: null },
+    ]);
+  });
+
   it('pairs, left out and pairs off survive the round trip', () => {
     const data = {
       ...emptyWorldData(),
       candidates: [],
       pairs: [pair],
-      leftOut: [{ key: 'vera', reason: 'BELOW_MIN_CHAPTERS' as const, chapters: 2 }],
+      leftOut: [
+        { key: 'vera', reason: 'BELOW_MIN_CHAPTERS' as const, names: ['Vera'], chapters: 2 },
+      ],
       pairsOff: null,
     };
     const read = readWorldData(worldDataJson(data));

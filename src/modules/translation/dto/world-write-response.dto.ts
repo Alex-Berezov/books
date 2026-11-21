@@ -225,6 +225,13 @@ export class WorldWriteSkipDto {
   reason!: WorldSkipReason;
 
   @ApiProperty({
+    type: [String],
+    description:
+      'Names to caption the entry: one for a character, two for a pair in key order; empty for a run saved before this field',
+  })
+  names!: string[];
+
+  @ApiProperty({
     type: Number,
     nullable: true,
     description: 'Chapters of the character or common chapters of the pair',

@@ -4,7 +4,7 @@ import { selectWorldPairs, WorldPairHero } from './world-write.pairs';
 /** Отбор пар хода (`F08-8e`, решения арбитра `F08 | F08-8e-1` Q1, Q3, Q4). */
 describe('selectWorldPairs', () => {
   const hero = (key: string, chapters: number[], coPresence: Record<string, number[]> = {}) =>
-    ({ key, chapters, coPresence }) satisfies WorldPairHero;
+    ({ key, name: key.toUpperCase(), chapters, coPresence }) satisfies WorldPairHero;
   const related = (from: string, to: string) => [{ key: from, relations: [{ to }] }];
 
   it('related in the analysis - a pair even without common chapters; the key in alphabetical order', () => {
@@ -45,7 +45,9 @@ describe('selectWorldPairs', () => {
       ]),
     );
     expect(got.pairs.map((p) => p.key)).toEqual(['anna--boris']);
-    expect(got.skipped).toEqual([{ key: 'anna--carl', reason: 'PAIR_KEY_TAKEN', chapters: 0 }]);
+    expect(got.skipped).toEqual([
+      { key: 'anna--carl', reason: 'PAIR_KEY_TAKEN', names: ['ANNA', 'CARL'], chapters: 0 },
+    ]);
   });
 
   it('no pair key for the two (longer than 60) - left out with PAIR_KEY_INVALID, only when founded', () => {
@@ -53,7 +55,14 @@ describe('selectWorldPairs', () => {
     const b = 'b'.repeat(30);
     const got = selectWorldPairs([hero(a, [1]), hero(b, [2])], related(a, b), new Map());
     expect(got.pairs).toEqual([]);
-    expect(got.skipped).toEqual([{ key: `${a}--${b}`, reason: 'PAIR_KEY_INVALID', chapters: 0 }]);
+    expect(got.skipped).toEqual([
+      {
+        key: `${a}--${b}`,
+        reason: 'PAIR_KEY_INVALID',
+        names: [a.toUpperCase(), b.toUpperCase()],
+        chapters: 0,
+      },
+    ]);
     expect(selectWorldPairs([hero(a, [1]), hero(b, [2])], [], new Map()).skipped).toEqual([]);
   });
 
@@ -78,5 +87,7 @@ describe('selectWorldPairs', () => {
       new Array(15 - WORLD_PAIRS_MAX).fill('PAIRS_MAX'),
     );
     expect(got.skipped.map((s) => s.key)).toContain('h1--h6');
+    // Имена отсеянной пары - героев ключа, чтобы редактору не читать ключ.
+    expect(got.skipped.find((s) => s.key === 'h1--h6')?.names).toEqual(['H1', 'H6']);
   });
 });

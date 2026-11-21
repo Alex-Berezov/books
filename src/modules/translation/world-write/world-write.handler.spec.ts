@@ -496,13 +496,13 @@ describe('choosePairs: pairs of the run and what the choice left out (F08-8e)', 
   const candidate = (key: string, chapters: number[]) => ({
     key,
     role: 'main' as const,
-    name: key,
+    name: key.toUpperCase(),
     aliases: [],
     mentions: { chapters, perChapter: {} },
   });
   const chosen = {
     candidates: [candidate('anna', [1, 2]), candidate('boris', [1, 2])],
-    leftOut: [{ key: 'vera', reason: 'BELOW_MIN_CHAPTERS' as const, chapters: 2 }],
+    leftOut: [{ key: 'vera', reason: 'BELOW_MIN_CHAPTERS' as const, names: ['Vera'], chapters: 2 }],
     coPresence: new Map<string, Record<string, number[]>>([
       ['anna', { boris: [1, 2] }],
       ['boris', { anna: [1, 2] }],
@@ -525,8 +525,36 @@ describe('choosePairs: pairs of the run and what the choice left out (F08-8e)', 
     expect(got.pairsOff).toBeNull();
     expect(got.pairs.map((p) => [p.key, p.chapters])).toEqual([['anna--boris', [1, 2]]]);
     expect(got.leftOut).toEqual([
-      { key: 'tom--old', reason: 'KEY_PAIR_FORM', chapters: null },
-      { key: 'vera', reason: 'BELOW_MIN_CHAPTERS', chapters: 2 },
+      { key: 'tom--old', reason: 'KEY_PAIR_FORM', names: ['Tom'], chapters: null },
+      { key: 'vera', reason: 'BELOW_MIN_CHAPTERS', names: ['Vera'], chapters: 2 },
+    ]);
+  });
+
+  it('a candidate whose key holds "--" gets no pair: no pair key can be built, left out as PAIR_KEY_INVALID with the names', () => {
+    const odd = candidate('old--hero', [1, 2]);
+    const got = choosePairs(
+      {
+        ...(context('en') as object),
+        entities: new Map([['old--hero', { type: 'character' }]]),
+      } as never,
+      {
+        ...chosen,
+        candidates: [candidate('anna', [1, 2]), odd],
+        coPresence: new Map<string, Record<string, number[]>>([
+          ['anna', { 'old--hero': [1, 2] }],
+          ['old--hero', { anna: [1, 2] }],
+        ]),
+      },
+    );
+    // Ключ пары с таким героем не собрать (`--` в ключе героя): пары нет, отсеянная названа по именам.
+    expect(got.pairs).toEqual([]);
+    expect(got.leftOut.filter((l) => l.reason === 'PAIR_KEY_INVALID')).toEqual([
+      {
+        key: 'anna--old--hero',
+        reason: 'PAIR_KEY_INVALID',
+        names: ['ANNA', 'OLD--HERO'],
+        chapters: 2,
+      },
     ]);
   });
 
@@ -546,8 +574,8 @@ describe('choosePairs: pairs of the run and what the choice left out (F08-8e)', 
       pairs: [],
       pairsOff: 'WORLD_PAIR_LANGUAGE',
       leftOut: [
-        { key: 'tom--old', reason: 'KEY_PAIR_FORM', chapters: null },
-        { key: 'vera', reason: 'BELOW_MIN_CHAPTERS', chapters: 2 },
+        { key: 'tom--old', reason: 'KEY_PAIR_FORM', names: ['Tom'], chapters: null },
+        { key: 'vera', reason: 'BELOW_MIN_CHAPTERS', names: ['Vera'], chapters: 2 },
       ],
     });
   });
@@ -590,7 +618,9 @@ describe('WorldWriteHandler.candidatesOf: left out and common chapters (F08-8e)'
       }
     ).candidatesOf('v1', context, base, null, index);
     expect(got.candidates.map((c) => c.key)).toEqual(['anna', 'boris']);
-    expect(got.leftOut).toEqual([{ key: 'vera', reason: 'BELOW_MIN_CHAPTERS', chapters: 1 }]);
+    expect(got.leftOut).toEqual([
+      { key: 'vera', reason: 'BELOW_MIN_CHAPTERS', names: ['Vera'], chapters: 1 },
+    ]);
     expect(got.coPresence.get('anna')).toEqual({ boris: [1, 2], vera: [1] });
   });
 });
