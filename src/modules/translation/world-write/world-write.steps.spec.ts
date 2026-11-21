@@ -3,6 +3,7 @@ import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data'
 import {
   mainCharacters,
   pairBook,
+  pairChapters,
   pairFallbackName,
   pairFormCharacters,
   pairInput,
@@ -145,6 +146,12 @@ describe('pair step input (F08-8e-1, review round 1)', () => {
     const answer = { bonds: 'Both grew up by the river.' };
     expect(regen.codeCheck(regen.read(answer)).map((r) => r.code)).not.toContain('CORE_MISSING');
     expect(whole.codeCheck(whole.read(answer)).map((r) => r.code)).toContain('CORE_MISSING');
+  });
+
+  it('pair chapters: shared ones; without shared - both heroes, linked or not (regeneration needs text, F08-8e-4 Q1-bis)', () => {
+    expect(pairChapters({ ...pair, chapters: [3, 1] }, members)).toEqual([1, 3]);
+    expect(pairChapters({ ...pair, chapters: [] }, members)).toEqual([1, 7]);
+    expect(pairChapters({ ...pair, linked: false, chapters: [] }, members)).toEqual([1, 7]);
   });
 
   it('the fallback name of a pair: the names joined by "and" of the language, as in the sample', () => {

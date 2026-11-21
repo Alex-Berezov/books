@@ -673,6 +673,33 @@ describe('World run «Write World» (e2e)', () => {
     expect(itemOf(await runOf(versionId), 'anna', 'short').outcome).toBe('accepted');
   });
 
+  it('F08-8e-4: the estimate counts a stored hero with a pair-form key; the run returns the left-out heroes with their names', async () => {
+    const versionId = await version({
+      characters: [
+        ...ANALYSIS_CHARACTERS,
+        { key: 'carl--old', name: 'Carl', role: 'main', description: 'Carl keeps the station.' },
+        { key: 'vera--new', name: 'Vera', role: 'main', description: 'Vera sells the tickets.' },
+      ],
+    });
+    // Заведён до `LEGACY-507` (ключ вида пары новым героем уже не завести - 400): только базой.
+    await prisma.bookWorldEntity.create({
+      data: { bookVersionId: versionId, key: 'carl--old', type: 'character', name: 'Carl' },
+    });
+    // Заведённый остаётся в ходе (Q7), новый с ключом вида пары - нет: героев три, а не четыре и не два.
+    const estimate = await auth(http().get(`${base(versionId)}/estimate`)).expect(200);
+    expect(estimate.body).toMatchObject({ candidates: 3 });
+    await start(versionId).expect(202);
+    await drain();
+    const run = await runOf(versionId);
+    expect(run.candidates.map((c) => c.key)).toContain('carl--old');
+    expect(run.leftOut).toContainEqual({
+      key: 'vera--new',
+      reason: 'KEY_PAIR_FORM',
+      names: ['Vera'],
+      chapters: null,
+    });
+  });
+
   it('name forms the editor saved stay in the run: the model answer does not push them out', async () => {
     const versionId = await version();
     await putEntity(versionId, 'anna', {

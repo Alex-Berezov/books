@@ -581,7 +581,7 @@ export class WorldWriteHandler {
       if (result === null && input !== null) return null;
       const answer = result?.ok ? result.draft : null;
       const chosen = await this.candidatesOf(row.bookVersionId, context, base, answer, index);
-      const choice = choosePairs(context, chosen);
+      const choice = choosePairs(context, chosen, data.pairs);
       const stepRecord =
         input === null
           ? failedStep(step, kind, null, DRAFT_TOO_LONG, null)
@@ -861,7 +861,9 @@ export class WorldWriteHandler {
    * версии ни разу не сошёлся, - пересчёт (уточнение Q1): условие заведения читает сохранённое
    * присутствие героев, которых ход только что записал; не сошёлся - `WORLD_MENTIONS_MOVED` только
    * этой паре, следующая новая пара пересчитает снова; сошёлся - отметка `mentionsRecounted`, дальше
-   * без пересчёта. Заведённая пара условие не проходит (R1) - ей пересчёт не нужен.
+   * без пересчёта. Заведённая пара условие не проходит (R1) - ей пересчёт не нужен. Несвязанная в анализе
+   * пара без общих глав (новая и заведённая) - `WORLD_PAIR_NOT_FOUNDED` до пересчёта и чтения: ядра у неё
+   * нет (Q1 `F08 | F08-8e-4`); перегенерацию и оплаченный шаг отказ не касается (Q1-бис).
    */
   private async pairRefusal(
     row: ContentDraft,
@@ -878,6 +880,9 @@ export class WorldWriteHandler {
     if (missingPairMembers([pair.a, pair.b], storedCharacterKeys(context.entities)).length > 0) {
       return WORLD_PAIR_MEMBER_MISSING;
     }
+    // Несвязанная пара без общих глав (заведённая - R1 её не отсеивает): ядра у такой пары нет
+    // (общие главы ≥1, Q2 `F08 | F08-8c`), сравнивать не по чему - шаг без вызова (Q1 `F08 | F08-8e-4`).
+    if (!pair.linked && pair.chapters.length === 0) return WORLD_PAIR_NOT_FOUNDED;
     // Заведённая пара условие заведения повторно не проходит (решение `F08 | F08-8c-1` R1, Q4).
     if (stored) return null;
     if (!data.mentionsRecounted) {

@@ -276,8 +276,8 @@ export interface WorldWriteData {
   /** Кандидаты; `null` - выбор героев ещё не прошёл. */
   candidates: WorldCandidate[] | null;
   /**
-   * Кандидаты пар (`F08-8e`); `null` - выбор ещё не прошёл. Ход, начатый до `F08-8e` (кандидаты есть,
-   * пар нет), читается `[]`: его оценка пар не включала, он кончается на героях.
+   * Кандидаты пар (`F08-8e`); `null` - выбор ещё не прошёл. Ход, начатый до `F08-8e` (поля пар нет,
+   * прошёл ли выбор или нет), читается `[]`: его оценка пар не включала, он кончается на героях.
    */
   pairs: WorldPairCandidate[] | null;
   /** Отсеянные шагом выбора герои и пары с причиной (`F08-8e`). */
@@ -603,8 +603,9 @@ export function readWorldData(data: unknown): WorldWriteData {
     items.length !== rawItems.length;
   return {
     candidates,
-    // Ход до `F08-8e`: кандидаты есть, поля пар нет - пар нет (`[]`), а не «выбор не прошёл».
-    pairs: storedPairs ?? (candidates !== null && d.pairs === undefined ? [] : null),
+    // Ход до `F08-8e`: поля пар нет - пар нет (`[]`), а не «выбор не прошёл», и до выбора героев тоже
+    // (Q2 `F08 | F08-8e-4`): новый ход пишет `pairs: null` явно (`emptyWorldData`, `worldDataJson`).
+    pairs: storedPairs ?? (d.pairs === undefined ? [] : null),
     leftOut: leftOutOf(d.leftOut),
     pairsOff: oneOf(WORLD_PAIRS_OFF_REASONS, d.pairsOff),
     mentionsRecounted: d.mentionsRecounted === true,

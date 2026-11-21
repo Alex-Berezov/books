@@ -80,7 +80,13 @@ describe('world run pairs (F08-8e)', () => {
     expect(data.pairs).toEqual([]);
     expect(stepsTotalOf(data)).toBe(5);
     expect(data.stepsBroken).toBe(false);
-    expect(readWorldData({}).pairs).toBeNull();
+  });
+
+  it('a run started before F08-8e and not past the choice (no pairs field) reads with no pairs too (F08-8e-4 Q2)', () => {
+    expect(readWorldData({}).pairs).toEqual([]);
+    expect(readWorldData({ candidates: null, steps: [] }).pairs).toEqual([]);
+    // Новый ход пишет `pairs: null` явно - выбор пар ещё впереди.
+    expect(readWorldData(worldDataJson(emptyWorldData())).pairs).toBeNull();
   });
 
   it('a left-out entry saved before names reads with empty names; non-string names are dropped', () => {

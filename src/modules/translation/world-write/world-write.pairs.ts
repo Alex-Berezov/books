@@ -106,16 +106,24 @@ export interface ChosenCandidates {
 /**
  * Пары хода и отсеянные шагом выбора (`F08-8e`) - весь отбор пар в одном месте: новые герои с ключом
  * вида пары - `KEY_PAIR_FORM` (Q7), второстепенные ниже порога, отбор пар `selectWorldPairs` среди
- * кандидатов; на языке без эталона пары пар нет (`WORLD_PAIR_LANGUAGE`, Q6).
+ * кандидатов; на языке без эталона пары пар нет (`WORLD_PAIR_LANGUAGE`, Q6). `previous` - пары,
+ * прочитанные из данных хода до выбора: не `null` только у хода, начатого до `F08-8e` (поля пар нет -
+ * `[]`); его оценка пар не включала, пары ему не выбираются (Q2 `F08 | F08-8e-4`), отсеянные герои -
+ * как у нового хода; `pairsOff` у него `null` и на языке без эталона - этапа пар у хода нет вовсе,
+ * а не «нет из-за языка».
  */
 export function choosePairs(
   context: WorldContext,
   chosen: ChosenCandidates,
+  previous: WorldPairCandidate[] | null = null,
 ): { pairs: WorldPairCandidate[]; leftOut: WorldSkip[]; pairsOff: WorldPairsOffReason | null } {
   const pairForm: WorldSkip[] = pairFormCharacters(
     context.analysis,
     storedCharacterKeys(context.entities),
   ).map((c) => ({ key: c.key, reason: 'KEY_PAIR_FORM', names: [c.name], chapters: null }));
+  if (previous !== null) {
+    return { pairs: previous, leftOut: [...pairForm, ...chosen.leftOut], pairsOff: null };
+  }
   if (!hasWorldPairExample(context.language)) {
     return {
       pairs: [],

@@ -1,9 +1,10 @@
 import { Prisma } from '@prisma/client';
 import type { PrismaService } from '../../../prisma/prisma.service';
+import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { droppedOfBlock, WorldWriteHandler } from './world-write.handler';
 import { choosePairs } from './world-write.pairs';
 import { indexChapters } from '../draft-quality/quote-check';
-import { emptyWorldData, worldDataJson } from './world-write.data';
+import { emptyWorldData, readWorldData, worldDataJson } from './world-write.data';
 
 /**
  * Круг /fix 1 (/qa 17.11.2026, L-019): снятие отметки перегенерации переписывает данные хода целиком -
@@ -377,7 +378,7 @@ describe('WorldWriteHandler: pair step refusals before the paid call (F08-8e)', 
     saved: Array<{ key: string; mentions: unknown }>,
     recount: 'done' | 'retry' = 'done',
     relations: Array<{ key: string; relations: Array<{ to: string }> }> = [],
-    options: { recounted?: boolean; chaptersB?: number[] } = {},
+    options: { recounted?: boolean; chaptersB?: number[]; pair?: Partial<typeof pair> } = {},
   ) => {
     const store = { bookWorldEntity: { findMany: jest.fn().mockResolvedValue(saved) } };
     const mentions = { recountVersion: jest.fn().mockResolvedValue({ status: recount }) };
@@ -407,7 +408,7 @@ describe('WorldWriteHandler: pair step refusals before the paid call (F08-8e)', 
     const data = {
       ...emptyWorldData(),
       candidates: [hero('anna', [1]), hero('boris', options.chaptersB ?? [1])],
-      pairs: [pair],
+      pairs: [{ ...pair, ...options.pair }],
       mentionsRecounted: options.recounted ?? false,
     };
     const step = (pending: unknown = null) =>
@@ -445,9 +446,40 @@ describe('WorldWriteHandler: pair step refusals before the paid call (F08-8e)', 
     expect(store.bookWorldEntity.findMany).not.toHaveBeenCalled();
   });
 
-  it('the pair key belongs to an entity of another type - WORLD_PAIR_KEY_TAKEN', async () => {
-    const { step } = setup({ anna: character, boris: character, 'anna--boris': character }, []);
+  it('the pair key belongs to an entity of another type - WORLD_PAIR_KEY_TAKEN, no recount, no read', async () => {
+    const { step, mentions, store } = setup(
+      { anna: character, boris: character, 'anna--boris': character },
+      [],
+    );
     expect((await step())?.step).toMatchObject({ failedReason: 'WORLD_PAIR_KEY_TAKEN' });
+    expect(mentions.recountVersion).not.toHaveBeenCalled();
+    expect(store.bookWorldEntity.findMany).not.toHaveBeenCalled();
+  });
+
+  it('a stored pair not linked in the analysis and without shared chapters - WORLD_PAIR_NOT_FOUNDED, no call (F08-8e-4 Q1)', async () => {
+    const { step, mentions, store } = setup(
+      { anna: character, boris: character, 'anna--boris': { type: 'pair' } },
+      [],
+      'done',
+      [],
+      { pair: { linked: false, chapters: [] } },
+    );
+    // Без `llm` платный путь упал бы TypeError: отказ - до вызова.
+    expect((await step())?.step).toMatchObject({
+      outcome: 'failed',
+      failedReason: 'WORLD_PAIR_NOT_FOUNDED',
+    });
+    expect(mentions.recountVersion).not.toHaveBeenCalled();
+    expect(store.bookWorldEntity.findMany).not.toHaveBeenCalled();
+  });
+
+  it('a new pair not linked and without shared chapters - WORLD_PAIR_NOT_FOUNDED before the recount and the read', async () => {
+    const { step, mentions, store } = setup({ anna: character, boris: character }, [], 'done', [], {
+      pair: { linked: false, chapters: [] },
+    });
+    expect((await step())?.step).toMatchObject({ failedReason: 'WORLD_PAIR_NOT_FOUNDED' });
+    expect(mentions.recountVersion).not.toHaveBeenCalled();
+    expect(store.bookWorldEntity.findMany).not.toHaveBeenCalled();
   });
 
   it('a new pair: the presence is recounted first; the recount moved - WORLD_MENTIONS_MOVED, not NOT_FOUNDED', async () => {
@@ -617,6 +649,13 @@ describe('WorldWriteHandler.candidatesOf: left out and common chapters (F08-8e)'
         }>;
       }
     ).candidatesOf('v1', context, base, null, index);
+    // Исключения форм - одним запросом по ключам выбора, только нужные поля, не больше сущностей версии.
+    expect(store.bookWorldEntity.findMany).toHaveBeenCalledTimes(1);
+    expect(store.bookWorldEntity.findMany).toHaveBeenCalledWith({
+      where: { bookVersionId: 'v1', key: { in: ['anna', 'boris', 'vera'] } },
+      select: { key: true, aliasExclusions: true, aliasChapterExclusions: true },
+      take: BOOK_WORLD_LIMITS.entities,
+    });
     expect(got.candidates.map((c) => c.key)).toEqual(['anna', 'boris']);
     expect(got.leftOut).toEqual([
       { key: 'vera', reason: 'BELOW_MIN_CHAPTERS', names: ['Vera'], chapters: 1 },
@@ -701,7 +740,7 @@ describe('WorldWriteHandler: the presence recount before new pairs, until it suc
       {},
       null,
     );
-    return { step, mentions, marks };
+    return { step, mentions, marks, store };
   };
 
   it('no successful recount yet and it moves: only this pair fails, the run is not marked', async () => {
@@ -720,9 +759,11 @@ describe('WorldWriteHandler: the presence recount before new pairs, until it suc
   });
 
   it('the run is gone while the presence recounts (the mark is not saved) - the step is dropped, no paid call', async () => {
-    const { step, mentions } = run(false, 'done', 1, [1], true);
+    const { step, mentions, store } = run(false, 'done', 1, [1], true);
     await expect(step).resolves.toBeNull();
     expect(mentions.recountVersion).toHaveBeenCalledTimes(1);
+    // Ход ушёл - сохранённое присутствие пары не читается (`RUN_GONE` до `savedMentionsOf`).
+    expect(store.bookWorldEntity.findMany).not.toHaveBeenCalled();
   });
 
   it('after a successful recount a new pair does not recount', async () => {
@@ -735,5 +776,293 @@ describe('WorldWriteHandler: the presence recount before new pairs, until it suc
     const { step, mentions } = run(false, 'done', 0, []);
     expect((await step)?.step).toMatchObject({ failedReason: 'WORLD_CHARACTER_NOT_FOUND' });
     expect(mentions.recountVersion).not.toHaveBeenCalled();
+  });
+});
+
+describe('WorldWriteHandler: the choice step of a run started before F08-8e (F08-8e-4 Q2)', () => {
+  const candidate = (key: string) => ({
+    key,
+    role: 'main' as const,
+    name: key.toUpperCase(),
+    aliases: [],
+    mentions: { chapters: [1, 2], perChapter: {} },
+  });
+  const chosen = {
+    candidates: [candidate('anna'), candidate('boris')],
+    leftOut: [],
+    coPresence: new Map<string, Record<string, number[]>>([
+      ['anna', { boris: [1, 2] }],
+      ['boris', { anna: [1, 2] }],
+    ]),
+  };
+  const context = {
+    language: 'en',
+    dossier: null,
+    glossary: null,
+    bookTitle: 'B',
+    author: 'A',
+    originalLanguage: '',
+    entities: new Map(),
+    chapters: [{ number: 1, title: 'C1', content: '<p>Anna and Boris.</p>' }],
+    analysis: {
+      characters: [
+        { key: 'anna', name: 'Anna', role: 'main' },
+        { key: 'boris', name: 'Boris', role: 'main' },
+        // Новый герой с ключом вида пары: в ход не идёт, виден отсеянным (Q7) - у любого хода.
+        { key: 'vera--new', name: 'Vera', role: 'main' },
+      ],
+    },
+    names: { titles: ['B'], authors: ['A'] },
+  };
+  const veraLeftOut = {
+    key: 'vera--new',
+    reason: 'KEY_PAIR_FORM',
+    names: ['Vera'],
+    chapters: null,
+  };
+  // Текст не влез (`stageFit` - нет): шаг выбора без вызова, отбор пар идёт по кандидатам.
+  const choose = async (data: unknown) => {
+    const llm = { stageFit: jest.fn().mockResolvedValue({ fits: false }) };
+    const handler = new WorldWriteHandler(
+      {} as never,
+      llm as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const inner = handler as unknown as {
+      candidatesOf: jest.Mock;
+      produceStep: (...a: unknown[]) => Promise<{
+        pairs?: Array<{ key: string }>;
+        leftOut?: unknown[];
+        pairsOff?: unknown;
+      } | null>;
+    };
+    inner.candidatesOf = jest.fn().mockResolvedValue(chosen);
+    return inner.produceStep(
+      { id: 'd1', bookVersionId: 'v1' },
+      { kind: 'run', operationId: 'op1' },
+      0,
+      context,
+      readWorldData(data),
+      null,
+      {},
+    );
+  };
+
+  it('a new run (pairs: null) gets its pairs at the choice', async () => {
+    const record = await choose(worldDataJson(emptyWorldData()));
+    expect(record?.pairs?.map((p) => p.key)).toEqual(['anna--boris']);
+    expect(record?.leftOut).toEqual([veraLeftOut]);
+    expect(record?.pairsOff).toBeNull();
+  });
+
+  it('a run without the pairs field gets no pairs: its estimate had none; the left-out heroes are still shown', async () => {
+    const record = await choose({ candidates: null, steps: [] });
+    expect(record?.pairs).toEqual([]);
+    expect(record?.leftOut).toEqual([veraLeftOut]);
+    expect(record?.pairsOff).toBeNull();
+  });
+});
+
+describe('WorldWriteHandler: pair step branches after the checks (F08-8e-1 review, F08-8e-4)', () => {
+  const hero = (key: string) => ({
+    key,
+    role: 'main' as const,
+    name: key.toUpperCase(),
+    aliases: [],
+    mentions: { chapters: [1], perChapter: {} },
+  });
+  const character = { type: 'character' };
+  const context = {
+    language: 'en',
+    dossier: null,
+    glossary: null,
+    bookTitle: 'B',
+    author: 'A',
+    originalLanguage: '',
+    // Пара заведена: условие заведения не проверяется (R1), дальше - вход и вызов.
+    entities: new Map([
+      ['anna', character],
+      ['boris', character],
+      ['anna--boris', { type: 'pair' }],
+    ]),
+    chapters: [{ number: 1, title: 'C1', content: '<p>Anna and Boris.</p>' }],
+    analysis: { characters: [] },
+    names: { titles: ['B'], authors: ['A'] },
+  };
+  const data = {
+    ...emptyWorldData(),
+    candidates: [hero('anna'), hero('boris')],
+    pairs: [{ key: 'anna--boris', a: 'anna', b: 'boris', linked: true, chapters: [1] }],
+    mentionsRecounted: true,
+  };
+  const pairStep = (fits: boolean, loopResult: unknown) => {
+    const llm = {
+      stageFit: jest.fn().mockResolvedValue({ fits }),
+      stageInputCeiling: jest.fn().mockResolvedValue({ maxInputChars: null }),
+      getStageSetting: jest.fn().mockResolvedValue({}),
+    };
+    const handler = new WorldWriteHandler(
+      {} as never,
+      llm as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const inner = handler as unknown as {
+      loop: jest.Mock;
+      pairStep: (
+        ...a: unknown[]
+      ) => Promise<{ step: { outcome: string; failedReason: string | null } } | null>;
+    };
+    inner.loop = jest.fn().mockResolvedValue(loopResult);
+    const step = inner.pairStep(
+      { id: 'd1', bookVersionId: 'v1' },
+      { kind: 'run', operationId: 'op1' },
+      5,
+      0,
+      context,
+      data,
+      null,
+      {},
+      null,
+    );
+    return { step, loop: inner.loop };
+  };
+
+  it('the text does not fit even with no chapters - DRAFT_TOO_LONG, no call', async () => {
+    const { step, loop } = pairStep(false, null);
+    expect((await step)?.step).toMatchObject({ outcome: 'failed', failedReason: 'DRAFT_TOO_LONG' });
+    expect(loop).not.toHaveBeenCalled();
+  });
+
+  it('the quality loop gave no valid answer - DRAFT_INVALID_RESPONSE', async () => {
+    const { step, loop } = pairStep(true, { ok: false });
+    expect((await step)?.step).toMatchObject({
+      outcome: 'failed',
+      failedReason: 'DRAFT_INVALID_RESPONSE',
+    });
+    expect(loop).toHaveBeenCalledTimes(1);
+  });
+
+  it('the run stopped taking the step during the call - the step is dropped (null)', async () => {
+    const { step } = pairStep(true, null);
+    await expect(step).resolves.toBeNull();
+  });
+});
+
+describe('a pair without shared chapters on the paid paths: both heroes are read, no refusal (F08-8e-4 Q1, Q1-bis)', () => {
+  const hero = (key: string, chapters: number[]) => ({
+    key,
+    role: 'main' as const,
+    name: key.toUpperCase(),
+    aliases: [],
+    mentions: { chapters, perChapter: {} },
+  });
+  const pair = { key: 'anna--boris', a: 'anna', b: 'boris', linked: false, chapters: [] };
+  const context = {
+    language: 'en',
+    dossier: null,
+    glossary: null,
+    bookTitle: 'B',
+    author: 'A',
+    originalLanguage: '',
+    entities: new Map([
+      ['anna', { type: 'character' }],
+      ['boris', { type: 'character' }],
+      ['anna--boris', { type: 'pair' }],
+    ]),
+    chapters: [
+      { number: 1, title: 'C1', content: '<p>Anna maps the road.</p>' },
+      { number: 2, title: 'C2', content: '<p>Boris rings the bell.</p>' },
+    ],
+    analysis: { characters: [] },
+    names: { titles: ['B'], authors: ['A'] },
+  };
+  const texts = (mock: jest.Mock) => JSON.stringify(mock.mock.calls as unknown[]);
+  const run = async (
+    pairPatch: Partial<typeof pair>,
+    paths: { regen?: boolean; pending?: boolean } = {},
+  ) => {
+    const llm = {
+      stageFit: jest.fn().mockResolvedValue({ fits: true }),
+      stageInputCeiling: jest.fn().mockResolvedValue({ maxInputChars: null }),
+      getStageSetting: jest.fn().mockResolvedValue({}),
+    };
+    const handler = new WorldWriteHandler(
+      {} as never,
+      llm as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const inner = handler as unknown as {
+      loop: jest.Mock;
+      pairStep: (...a: unknown[]) => Promise<{ step: { failedReason: string | null } } | null>;
+    };
+    inner.loop = jest.fn().mockResolvedValue({ ok: false });
+    const data = {
+      ...emptyWorldData(),
+      candidates: [hero('anna', [1]), hero('boris', [2])],
+      pairs: [{ ...pair, ...pairPatch }],
+      mentionsRecounted: true,
+    };
+    // Оплаченный текст шага 5 уже сохранён (обрыв после вызова) - `pending` этого шага.
+    const pending = paths.pending ? { key: 'step:5', operationId: 'op1', resume: {} } : null;
+    const regen = paths.regen
+      ? { spec: { block: 'bonds', current: null, remark: null }, index: 0 }
+      : null;
+    const got = await inner.pairStep(
+      { id: 'd1', bookVersionId: 'v1' },
+      { kind: 'run', operationId: 'op1' },
+      5,
+      0,
+      context,
+      data,
+      pending,
+      {},
+      regen,
+    );
+    return { got, loop: inner.loop, sent: texts(llm.stageFit) };
+  };
+  const readsBoth = (sent: string) => {
+    expect(sent).toContain('Anna maps the road.');
+    expect(sent).toContain('Boris rings the bell.');
+  };
+
+  it.each([
+    ['regenerating a block', { regen: true }],
+    ['the paid text of the step is kept (pending)', { pending: true }],
+  ])(
+    'not linked - %s: no refusal, the call gets the chapters of both heroes',
+    async (_l, paths) => {
+      const { got, loop, sent } = await run({}, paths);
+      expect(got?.step.failedReason).toBe('DRAFT_INVALID_RESPONSE');
+      expect(loop).toHaveBeenCalledTimes(1);
+      readsBoth(sent);
+    },
+  );
+
+  it('linked, the ordinary step: no refusal, the call gets the chapters of both heroes', async () => {
+    const { got, loop, sent } = await run({ linked: true });
+    expect(got?.step.failedReason).toBe('DRAFT_INVALID_RESPONSE');
+    expect(loop).toHaveBeenCalledTimes(1);
+    readsBoth(sent);
+  });
+
+  it('not linked, the ordinary step: WORLD_PAIR_NOT_FOUNDED, no call', async () => {
+    const { got, loop } = await run({});
+    expect(got?.step.failedReason).toBe('WORLD_PAIR_NOT_FOUNDED');
+    expect(loop).not.toHaveBeenCalled();
   });
 });
