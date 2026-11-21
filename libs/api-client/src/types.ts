@@ -16893,7 +16893,7 @@ export interface components {
       attempt: number;
       authorModel: string | null;
       dropped: components['schemas']['WorldWriteFixDto'][];
-      /** @description Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (the saved presence does not found the pair), WORLD_MENTIONS_MOVED (the text moved during the presence recount) */
+      /** @description Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (a pair not linked in the analysis has no shared chapters - new or stored; or a new pair is not founded by the saved presence), WORLD_MENTIONS_MOVED (the text moved during the presence recount) */
       failedReason: string | null;
       /** @description Key of the character or of the pair; null - the choice step */
       key: string | null;
