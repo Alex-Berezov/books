@@ -5,6 +5,7 @@ import { LlmOperationDto } from '../../llm-worker/dto/llm-operation.dto';
 import { CompareContextLineDto, DossierContextLineDto } from './translation-compare-response.dto';
 import { TranslationRunStageModelsDto } from './translation-run-request.dto';
 import { TranslationRunAnalysisDto } from './translation-run-analysis.dto';
+import { TranslationRunWorldDto } from './translation-run-world.dto';
 import { TranslationRunSummaryDto } from './translation-run-summary.dto';
 
 /**
@@ -127,6 +128,14 @@ export class TranslationRunLanguageDto {
       'Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done',
   })
   analysis!: TranslationRunAnalysisDto | null;
+
+  @ApiProperty({
+    type: () => TranslationRunWorldDto,
+    nullable: true,
+    description:
+      'World run of this language (Write World, F08-9b); null - the run has no Write World or the language is not done',
+  })
+  world!: TranslationRunWorldDto | null;
 }
 
 export class TranslationRunDto {
@@ -161,6 +170,13 @@ export class TranslationRunDto {
       'Write Analysis (F07-3b): the analysis run of a language starts by itself when it is done',
   })
   writeAnalysis!: boolean;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'Write World (F08-9b): the world run of a language starts by itself after its analysis run is ready',
+  })
+  writeWorld!: boolean;
 
   @ApiProperty({
     type: () => LlmOperationDto,
@@ -252,6 +268,14 @@ export class TranslationRunLanguageResultDto {
       'Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done',
   })
   analysis!: TranslationRunAnalysisDto | null;
+
+  @ApiProperty({
+    type: () => TranslationRunWorldDto,
+    nullable: true,
+    description:
+      'World run of this language (Write World, F08-9b); null - the run has no Write World or the language is not done',
+  })
+  world!: TranslationRunWorldDto | null;
 }
 
 /**
@@ -292,6 +316,13 @@ export class TranslationRunListItemDto {
   writeAnalysis!: boolean;
 
   @ApiProperty({
+    type: Boolean,
+    description:
+      'Write World (F08-9b): the world run of a language starts by itself after its analysis run is ready',
+  })
+  writeWorld!: boolean;
+
+  @ApiProperty({
     type: () => LlmOperationDto,
     description: 'Status, pause reason, spent and limit of the run',
   })
@@ -317,7 +348,7 @@ export class TranslationRunListItemDto {
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'Spent by all operations of the run (dossier, glossaries, retries, Write Summary and Write Analysis of its languages): totalUsd of its report',
+      'Spent by all operations of the run (dossier, glossaries, retries, Write Summary, Write Analysis and Write World of its languages): totalUsd of its report',
   })
   costUsd!: string;
 
@@ -382,8 +413,16 @@ export class TranslationRunLanguageEstimateDto {
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
+    nullable: true,
     description:
-      'Split, translate, check, final check and metadata of this language, plus summaryUsd and analysisUsd when they are set',
+      'Write World (F08-9b), upper estimate by the source chapters: as many main characters as an analysis allows and the upper bound of pairs, the function of the manual start. Its own operation and limit - not in minLimitUsd; null without writeWorld',
+  })
+  worldUsd!: string | null;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Split, translate, check, final check and metadata of this language, plus summaryUsd, analysisUsd and worldUsd when they are set',
   })
   totalUsd!: string;
 }
@@ -437,8 +476,16 @@ export class TranslationRunEstimateDto {
 
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
+    nullable: true,
     description:
-      'Translations plus the dossier and glossaries built first, plus summaryUsd and analysisUsd',
+      'All languages: Write World (F08-9b), upper estimate, shown apart - its own operations and limits, not in minLimitUsd; null without writeWorld',
+  })
+  worldUsd!: string | null;
+
+  @ApiProperty({
+    ...LLM_MONEY_PROPERTY,
+    description:
+      'Translations plus the dossier and glossaries built first, plus summaryUsd, analysisUsd and worldUsd',
   })
   totalUsd!: string;
 

@@ -14037,6 +14037,11 @@ export interface components {
        * @default false
        */
       writeSummary: boolean;
+      /**
+       * @description Write World (F08-9b): the world run of a language starts by itself after the analysis run of that language is ready; needs writeAnalysis (400 WORLD_NEEDS_ANALYSIS without it); the estimate gets worldUsd per language. Its money is its own operation and limit, not the run limit
+       * @default false
+       */
+      writeWorld: boolean;
     };
     SummaryWriteDto: {
       /** Format: uuid */
@@ -14868,11 +14873,11 @@ export interface components {
        * @example 100.00000000
        */
       dossierUsd: string;
-      /** @description Per language, in the order of languages; Write Summary and Write Analysis of a language - summary.spentUsd and analysis.spentUsd of its language row */
+      /** @description Per language, in the order of languages; Write Summary, Write Analysis and Write World of a language - summary.spentUsd, analysis.spentUsd and world.spentUsd of its language row */
       languages: components['schemas']['TranslationReportLanguageCostDto'][];
       /**
        * Format: decimal
-       * @description The rest of totalUsd that no line shows: calls without a task of a run language, other operation kinds, Write Summary and Write Analysis spending not shown in a language row. The report reads one snapshot, so lines plus this add up to totalUsd; a negative rest (never expected) is returned as zero
+       * @description The rest of totalUsd that no line shows: calls without a task of a run language, other operation kinds, Write Summary, Write Analysis and Write World spending not shown in a language row. The report reads one snapshot, so lines plus this add up to totalUsd; a negative rest (never expected) is returned as zero
        * @example 100.00000000
        */
       unattributedUsd: string;
@@ -15009,6 +15014,8 @@ export interface components {
       summary: components['schemas']['TranslationRunSummaryDto'] | null;
       /** @description Chapter numbers already taken in the draft by another chapter: skipped, not written by the run */
       takenChapters: number[];
+      /** @description World run of this language (Write World, F08-9b); null - the run has no Write World or the language is not done */
+      world: components['schemas']['TranslationRunWorldDto'] | null;
       /** @description Chapters the run wrote to the draft; 0 with a draft - a draft without chapters of the run */
       writtenChapters: number;
     };
@@ -15072,6 +15079,8 @@ export interface components {
       writeAnalysis: boolean;
       /** @description Write Summary (F06-5): the summary run of a language starts by itself when it is done */
       writeSummary: boolean;
+      /** @description Write World (F08-9b): the world run of a language starts by itself after its analysis run is ready */
+      writeWorld: boolean;
     };
     TranslationRunEstimateDto: {
       /**
@@ -15109,7 +15118,7 @@ export interface components {
       summaryUsd: string | null;
       /**
        * Format: decimal
-       * @description Translations plus the dossier and glossaries built first, plus summaryUsd and analysisUsd
+       * @description Translations plus the dossier and glossaries built first, plus summaryUsd, analysisUsd and worldUsd
        * @example 100.00000000
        */
       totalUsd: string;
@@ -15123,6 +15132,12 @@ export interface components {
       translationsUsd: string;
       /** @description Translation estimates include an upper bound for a dossier and glossary not built yet */
       upperBound: boolean;
+      /**
+       * Format: decimal
+       * @description All languages: Write World (F08-9b), upper estimate, shown apart - its own operations and limits, not in minLimitUsd; null without writeWorld
+       * @example 100.00000000
+       */
+      worldUsd: string | null;
     };
     TranslationRunLanguageDto: {
       /** @description Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done */
@@ -15178,6 +15193,8 @@ export interface components {
       status: components['schemas']['TranslationRunLanguageStatus'];
       /** @description Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done */
       summary: components['schemas']['TranslationRunSummaryDto'] | null;
+      /** @description World run of this language (Write World, F08-9b); null - the run has no Write World or the language is not done */
+      world: components['schemas']['TranslationRunWorldDto'] | null;
     };
     TranslationRunLanguageEstimateDto: {
       /**
@@ -15221,7 +15238,7 @@ export interface components {
       summaryUsd: string | null;
       /**
        * Format: decimal
-       * @description Split, translate, check, final check and metadata of this language, plus summaryUsd and analysisUsd when they are set
+       * @description Split, translate, check, final check and metadata of this language, plus summaryUsd, analysisUsd and worldUsd when they are set
        * @example 100.00000000
        */
       totalUsd: string;
@@ -15231,6 +15248,12 @@ export interface components {
        * @example 100.00000000
        */
       translateUsd: string;
+      /**
+       * Format: decimal
+       * @description Write World (F08-9b), upper estimate by the source chapters: as many main characters as an analysis allows and the upper bound of pairs, the function of the manual start. Its own operation and limit - not in minLimitUsd; null without writeWorld
+       * @example 100.00000000
+       */
+      worldUsd: string | null;
     };
     TranslationRunLanguageResultDto: {
       /** @description Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done */
@@ -15248,6 +15271,8 @@ export interface components {
       status: components['schemas']['TranslationRunLanguageStatus'];
       /** @description Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done */
       summary: components['schemas']['TranslationRunSummaryDto'] | null;
+      /** @description World run of this language (Write World, F08-9b); null - the run has no Write World or the language is not done */
+      world: components['schemas']['TranslationRunWorldDto'] | null;
     };
     /** @enum {string} */
     TranslationRunLanguageStatus: 'pending' | 'running' | 'done' | 'failed' | 'cancelled';
@@ -15259,7 +15284,7 @@ export interface components {
       bookVersionId: string;
       /**
        * Format: decimal
-       * @description Spent by all operations of the run (dossier, glossaries, retries, Write Summary and Write Analysis of its languages): totalUsd of its report
+       * @description Spent by all operations of the run (dossier, glossaries, retries, Write Summary, Write Analysis and Write World of its languages): totalUsd of its report
        * @example 100.00000000
        */
       costUsd: string;
@@ -15282,13 +15307,15 @@ export interface components {
       writeAnalysis: boolean;
       /** @description Write Summary (F06-5): the summary run of a language starts by itself when it is done */
       writeSummary: boolean;
+      /** @description Write World (F08-9b): the world run of a language starts by itself after its analysis run is ready */
+      writeWorld: boolean;
     };
     TranslationRunReportDto: {
       /** Format: uuid */
       bookVersionId: string;
-      /** @description Spending split for the report screen: translation and glossary per language, dossier, the rest; with summary.spentUsd and analysis.spentUsd of the languages it adds up to totalUsd (the rest takes the difference) */
+      /** @description Spending split for the report screen: translation and glossary per language, dossier, the rest; with summary.spentUsd, analysis.spentUsd and world.spentUsd of the languages it adds up to totalUsd (the rest takes the difference) */
       breakdown: components['schemas']['TranslationReportBreakdownDto'];
-      /** @description Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary and Write Analysis - their spending is summary.spentUsd and analysis.spentUsd of each language; totalUsd covers all */
+      /** @description Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary, Write Analysis and Write World - their spending is summary.spentUsd, analysis.spentUsd and world.spentUsd of each language; totalUsd covers all */
       costs: components['schemas']['TranslationReportCostDto'][];
       /** Format: uuid */
       id: string;
@@ -15358,6 +15385,34 @@ export interface components {
       spentUsd: string;
       /** @enum {string} */
       status: 'pending' | 'skipped' | 'building' | 'ready' | 'failed' | 'discarded';
+    };
+    TranslationRunWorldDto: {
+      /**
+       * Format: uuid
+       * @description World run of the draft version: GET /admin/versions/:id/drafts/world_write of draftVersionId
+       */
+      draftId: string | null;
+      /** @description Blocks of the run that failed: a ready run with failed blocks is not «Done» */
+      failedItems: number;
+      /** @description Blocks of the run with flags, as Model flags of the World tab: verdict flags and at least one remark of the run other than EXTERNAL_CHECK (check facts by hand); a flags block without such remarks and a Nothing to add block are not counted */
+      flaggedItems: number;
+      /** @description Status of the operation of the world run: paused - Continue on the World tab of the draft version */
+      operationStatus: components['schemas']['LlmOperationStatus'] | null;
+      pauseReason: components['schemas']['LlmPauseReason'] | null;
+      /** @description Always set for skipped and failed - the same reasons as the summary line: AUTOSTART_SKIPPED_* | AUTOSTART_NOTHING_TO_START or the refusal of the start, among them WORLD_ANALYSIS_MISSING - the analysis run of the language is not ready (skipped), failedReason of the run or AUTOSTART_FAILED | AUTOSTART_CANCELLED (failed); pending - waits for the analysis run of the language */
+      reason: string | null;
+      /**
+       * Format: decimal
+       * @description Spent by the world operations of this language: the World line of the run
+       * @example 100.00000000
+       */
+      spentUsd: string;
+      /** @enum {string} */
+      status: 'pending' | 'skipped' | 'building' | 'ready' | 'failed' | 'discarded';
+      /** @description Steps of the run that are over: «step N of M» */
+      stepsDone: number;
+      /** @description Steps of the run: the choice of characters, two per character and one per pair; null - the choice has not passed */
+      stepsTotal: number | null;
     };
     TranslationSourceDto: {
       canTranslate: boolean;
@@ -23051,7 +23106,7 @@ export interface operations {
           'application/json': components['schemas']['TranslationRunDto'];
         };
       };
-      /** @description TRANSLATION_RUN_LIMIT_TOO_LOW: limitUsd below the dossier and glossaries built first; LLM_MODEL_UNKNOWN; 1-5 distinct languages; limitUsd */
+      /** @description TRANSLATION_RUN_LIMIT_TOO_LOW: limitUsd below the dossier and glossaries built first; LLM_MODEL_UNKNOWN; 1-5 distinct languages; limitUsd; WORLD_NEEDS_ANALYSIS: writeWorld without writeAnalysis */
       400: {
         headers: {
           [name: string]: unknown;
@@ -23092,6 +23147,8 @@ export interface operations {
         writeSummary?: boolean;
         /** @description Write Analysis (F07-3b): the analysis run of a language starts by itself when the language is done, independent of writeSummary; the estimate gets analysisUsd per language. Its money is its own operation and limit, not the run limit */
         writeAnalysis?: boolean;
+        /** @description Write World (F08-9b): the world run of a language starts by itself after the analysis run of that language is ready; needs writeAnalysis (400 WORLD_NEEDS_ANALYSIS without it); the estimate gets worldUsd per language. Its money is its own operation and limit, not the run limit */
+        writeWorld?: boolean;
       };
       header?: never;
       path: {
@@ -23109,7 +23166,7 @@ export interface operations {
           'application/json': components['schemas']['TranslationRunEstimateDto'];
         };
       };
-      /** @description LLM_MODEL_UNKNOWN; 1-5 distinct languages */
+      /** @description LLM_MODEL_UNKNOWN; 1-5 distinct languages; WORLD_NEEDS_ANALYSIS: writeWorld without writeAnalysis */
       400: {
         headers: {
           [name: string]: unknown;

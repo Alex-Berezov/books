@@ -26544,6 +26544,11 @@
             "default": false,
             "description": "Write Summary (F06-5): the summary run of a language starts by itself when the language is done; the estimate gets summaryUsd per language. Its money is its own operation and limit, not the run limit",
             "type": "boolean"
+          },
+          "writeWorld": {
+            "default": false,
+            "description": "Write World (F08-9b): the world run of a language starts by itself after the analysis run of that language is ready; needs writeAnalysis (400 WORLD_NEEDS_ANALYSIS without it); the estimate gets worldUsd per language. Its money is its own operation and limit, not the run limit",
+            "type": "boolean"
           }
         },
         "required": [
@@ -29034,14 +29039,14 @@
             "type": "string"
           },
           "languages": {
-            "description": "Per language, in the order of languages; Write Summary and Write Analysis of a language - summary.spentUsd and analysis.spentUsd of its language row",
+            "description": "Per language, in the order of languages; Write Summary, Write Analysis and Write World of a language - summary.spentUsd, analysis.spentUsd and world.spentUsd of its language row",
             "items": {
               "$ref": "#/components/schemas/TranslationReportLanguageCostDto"
             },
             "type": "array"
           },
           "unattributedUsd": {
-            "description": "The rest of totalUsd that no line shows: calls without a task of a run language, other operation kinds, Write Summary and Write Analysis spending not shown in a language row. The report reads one snapshot, so lines plus this add up to totalUsd; a negative rest (never expected) is returned as zero",
+            "description": "The rest of totalUsd that no line shows: calls without a task of a run language, other operation kinds, Write Summary, Write Analysis and Write World spending not shown in a language row. The report reads one snapshot, so lines plus this add up to totalUsd; a negative rest (never expected) is returned as zero",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -29416,6 +29421,16 @@
             },
             "type": "array"
           },
+          "world": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunWorldDto"
+              }
+            ],
+            "description": "World run of this language (Write World, F08-9b); null - the run has no Write World or the language is not done",
+            "nullable": true,
+            "type": "object"
+          },
           "writtenChapters": {
             "description": "Chapters the run wrote to the draft; 0 with a draft - a draft without chapters of the run",
             "type": "number"
@@ -29438,7 +29453,8 @@
           "takenChapters",
           "finalCheck",
           "summary",
-          "analysis"
+          "analysis",
+          "world"
         ],
         "type": "object"
       },
@@ -29610,6 +29626,10 @@
           "writeSummary": {
             "description": "Write Summary (F06-5): the summary run of a language starts by itself when it is done",
             "type": "boolean"
+          },
+          "writeWorld": {
+            "description": "Write World (F08-9b): the world run of a language starts by itself after its analysis run is ready",
+            "type": "boolean"
           }
         },
         "required": [
@@ -29620,6 +29640,7 @@
           "stageModels",
           "writeSummary",
           "writeAnalysis",
+          "writeWorld",
           "operation",
           "operations",
           "languages",
@@ -29687,7 +29708,7 @@
             "type": "string"
           },
           "totalUsd": {
-            "description": "Translations plus the dossier and glossaries built first, plus summaryUsd and analysisUsd",
+            "description": "Translations plus the dossier and glossaries built first, plus summaryUsd, analysisUsd and worldUsd",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -29705,6 +29726,13 @@
           "upperBound": {
             "description": "Translation estimates include an upper bound for a dossier and glossary not built yet",
             "type": "boolean"
+          },
+          "worldUsd": {
+            "description": "All languages: Write World (F08-9b), upper estimate, shown apart - its own operations and limits, not in minLimitUsd; null without writeWorld",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
+            "type": "string"
           }
         },
         "required": [
@@ -29717,6 +29745,7 @@
           "translationsUsd",
           "summaryUsd",
           "analysisUsd",
+          "worldUsd",
           "totalUsd",
           "minLimitUsd",
           "defaultLimitUsd",
@@ -29842,6 +29871,16 @@
             "description": "Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done",
             "nullable": true,
             "type": "object"
+          },
+          "world": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunWorldDto"
+              }
+            ],
+            "description": "World run of this language (Write World, F08-9b); null - the run has no Write World or the language is not done",
+            "nullable": true,
+            "type": "object"
           }
         },
         "required": [
@@ -29863,7 +29902,8 @@
           "blockedByOperationId",
           "draftVersionId",
           "summary",
-          "analysis"
+          "analysis",
+          "world"
         ],
         "type": "object"
       },
@@ -29925,7 +29965,7 @@
             "type": "string"
           },
           "totalUsd": {
-            "description": "Split, translate, check, final check and metadata of this language, plus summaryUsd and analysisUsd when they are set",
+            "description": "Split, translate, check, final check and metadata of this language, plus summaryUsd, analysisUsd and worldUsd when they are set",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -29934,6 +29974,13 @@
             "description": "Upper estimate: one call per piece",
             "example": "100.00000000",
             "format": "decimal",
+            "type": "string"
+          },
+          "worldUsd": {
+            "description": "Write World (F08-9b), upper estimate by the source chapters: as many main characters as an analysis allows and the upper bound of pairs, the function of the manual start. Its own operation and limit - not in minLimitUsd; null without writeWorld",
+            "example": "100.00000000",
+            "format": "decimal",
+            "nullable": true,
             "type": "string"
           }
         },
@@ -29947,6 +29994,7 @@
           "metadataUsd",
           "summaryUsd",
           "analysisUsd",
+          "worldUsd",
           "totalUsd"
         ],
         "type": "object"
@@ -30002,6 +30050,16 @@
             "description": "Summary run of this language (Write Summary, F06-5); null - the run has no Write Summary or the language is not done",
             "nullable": true,
             "type": "object"
+          },
+          "world": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TranslationRunWorldDto"
+              }
+            ],
+            "description": "World run of this language (Write World, F08-9b); null - the run has no Write World or the language is not done",
+            "nullable": true,
+            "type": "object"
           }
         },
         "required": [
@@ -30011,7 +30069,8 @@
           "reasonText",
           "draftVersionId",
           "summary",
-          "analysis"
+          "analysis",
+          "world"
         ],
         "type": "object"
       },
@@ -30033,7 +30092,7 @@
             "type": "string"
           },
           "costUsd": {
-            "description": "Spent by all operations of the run (dossier, glossaries, retries, Write Summary and Write Analysis of its languages): totalUsd of its report",
+            "description": "Spent by all operations of the run (dossier, glossaries, retries, Write Summary, Write Analysis and Write World of its languages): totalUsd of its report",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -30105,6 +30164,10 @@
           "writeSummary": {
             "description": "Write Summary (F06-5): the summary run of a language starts by itself when it is done",
             "type": "boolean"
+          },
+          "writeWorld": {
+            "description": "Write World (F08-9b): the world run of a language starts by itself after its analysis run is ready",
+            "type": "boolean"
           }
         },
         "required": [
@@ -30115,6 +30178,7 @@
           "stageModels",
           "writeSummary",
           "writeAnalysis",
+          "writeWorld",
           "operation",
           "createdAt",
           "createdBy",
@@ -30136,10 +30200,10 @@
                 "$ref": "#/components/schemas/TranslationReportBreakdownDto"
               }
             ],
-            "description": "Spending split for the report screen: translation and glossary per language, dossier, the rest; with summary.spentUsd and analysis.spentUsd of the languages it adds up to totalUsd (the rest takes the difference)"
+            "description": "Spending split for the report screen: translation and glossary per language, dossier, the rest; with summary.spentUsd, analysis.spentUsd and world.spentUsd of the languages it adds up to totalUsd (the rest takes the difference)"
           },
           "costs": {
-            "description": "Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary and Write Analysis - their spending is summary.spentUsd and analysis.spentUsd of each language; totalUsd covers all",
+            "description": "Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary, Write Analysis and Write World - their spending is summary.spentUsd, analysis.spentUsd and world.spentUsd of each language; totalUsd covers all",
             "items": {
               "$ref": "#/components/schemas/TranslationReportCostDto"
             },
@@ -30309,6 +30373,85 @@
           "briefDone",
           "flaggedTexts",
           "failedTexts",
+          "spentUsd"
+        ],
+        "type": "object"
+      },
+      "TranslationRunWorldDto": {
+        "properties": {
+          "draftId": {
+            "description": "World run of the draft version: GET /admin/versions/:id/drafts/world_write of draftVersionId",
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "failedItems": {
+            "description": "Blocks of the run that failed: a ready run with failed blocks is not «Done»",
+            "type": "number"
+          },
+          "flaggedItems": {
+            "description": "Blocks of the run with flags, as Model flags of the World tab: verdict flags and at least one remark of the run other than EXTERNAL_CHECK (check facts by hand); a flags block without such remarks and a Nothing to add block are not counted",
+            "type": "number"
+          },
+          "operationStatus": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationStatus"
+              }
+            ],
+            "description": "Status of the operation of the world run: paused - Continue on the World tab of the draft version",
+            "nullable": true
+          },
+          "pauseReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmPauseReason"
+              }
+            ],
+            "nullable": true
+          },
+          "reason": {
+            "description": "Always set for skipped and failed - the same reasons as the summary line: AUTOSTART_SKIPPED_* | AUTOSTART_NOTHING_TO_START or the refusal of the start, among them WORLD_ANALYSIS_MISSING - the analysis run of the language is not ready (skipped), failedReason of the run or AUTOSTART_FAILED | AUTOSTART_CANCELLED (failed); pending - waits for the analysis run of the language",
+            "nullable": true,
+            "type": "string"
+          },
+          "spentUsd": {
+            "description": "Spent by the world operations of this language: the World line of the run",
+            "example": "100.00000000",
+            "format": "decimal",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "skipped",
+              "building",
+              "ready",
+              "failed",
+              "discarded"
+            ],
+            "type": "string"
+          },
+          "stepsDone": {
+            "description": "Steps of the run that are over: «step N of M»",
+            "type": "number"
+          },
+          "stepsTotal": {
+            "description": "Steps of the run: the choice of characters, two per character and one per pair; null - the choice has not passed",
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "status",
+          "reason",
+          "draftId",
+          "operationStatus",
+          "pauseReason",
+          "stepsDone",
+          "stepsTotal",
+          "flaggedItems",
+          "failedItems",
           "spentUsd"
         ],
         "type": "object"
@@ -45911,7 +46054,7 @@
             "description": ""
           },
           "400": {
-            "description": "TRANSLATION_RUN_LIMIT_TOO_LOW: limitUsd below the dossier and glossaries built first; LLM_MODEL_UNKNOWN; 1-5 distinct languages; limitUsd"
+            "description": "TRANSLATION_RUN_LIMIT_TOO_LOW: limitUsd below the dossier and glossaries built first; LLM_MODEL_UNKNOWN; 1-5 distinct languages; limitUsd; WORLD_NEEDS_ANALYSIS: writeWorld without writeAnalysis"
           },
           "404": {
             "description": "Book version not found"
@@ -45988,6 +46131,16 @@
               "default": false,
               "type": "boolean"
             }
+          },
+          {
+            "description": "Write World (F08-9b): the world run of a language starts by itself after the analysis run of that language is ready; needs writeAnalysis (400 WORLD_NEEDS_ANALYSIS without it); the estimate gets worldUsd per language. Its money is its own operation and limit, not the run limit",
+            "in": "query",
+            "name": "writeWorld",
+            "required": false,
+            "schema": {
+              "default": false,
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -46002,7 +46155,7 @@
             "description": ""
           },
           "400": {
-            "description": "LLM_MODEL_UNKNOWN; 1-5 distinct languages"
+            "description": "LLM_MODEL_UNKNOWN; 1-5 distinct languages; WORLD_NEEDS_ANALYSIS: writeWorld without writeAnalysis"
           },
           "404": {
             "description": "Book version not found"

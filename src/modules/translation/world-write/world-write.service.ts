@@ -24,6 +24,7 @@ import {
 import { ContentDraftService, contextLimits } from '../content-draft/content-draft.service';
 import { withChapterText } from '../content-draft/content-draft.text';
 import { startConflict } from '../content-draft/start-conflict';
+import { AutostartLink, assertNoLiveRun } from '../autostart/content-autostart.start';
 import { DOSSIER_TOO_LONG } from '../dossier/dossier.constants';
 import {
   acceptInTurn,
@@ -43,21 +44,15 @@ import {
   WorldWriteStateDto,
   WorldWriteValueDto,
 } from '../dto/world-write-response.dto';
-import { stageEstimatorFor } from '../llm-model-checks';
 import { contextUpperChars } from '../translate/translate-estimate';
 import {
   WORLD_ACCEPT_ALL_SKIP_CODES,
   WORLD_ANALYSIS_MISSING,
-  WORLD_EXTERNAL_WRITE_STAGE,
   WORLD_ITEM_NOT_PROPOSED,
   WORLD_ITEM_NOT_REGENERABLE,
   WORLD_ITEM_UNKNOWN,
   WORLD_LANGUAGE_UNSUPPORTED,
-  WORLD_PAGE_WRITE_STAGE,
-  WORLD_PAIR_WRITE_STAGE,
   WORLD_REGEN_IN_PROGRESS,
-  WORLD_REVIEW_STAGE,
-  WORLD_SELECT_STAGE,
   isWorldWriteLanguage,
   WORLD_WRITE_NOT_READY,
 } from './world-write.constants';
@@ -75,6 +70,7 @@ import {
 } from './world-write.data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { hasWorldPairExample } from './examples';
+import { worldEstimators } from './world-estimate';
 import { worldReadyGate, WorldWriteFields } from './world-write.fields';
 import { WorldWriteHandler, worldWriteTaskInput } from './world-write.handler';
 import {
@@ -88,7 +84,6 @@ import {
   pairInput,
   pairStepsUpperBound,
   worldCharacters,
-  WorldEstimators,
   worldPipelineUsd,
   worldStepUsd,
 } from './world-write.steps';
@@ -97,18 +92,6 @@ const KIND = 'world_write' as const;
 
 /** Проходов отмены хода, если перегенерацию начинают быстрее, чем отмена её снимает. */
 const DISCARD_ATTEMPTS = 3;
-
-/** Оценщики этапов хода мира. */
-async function worldEstimators(llm: LlmService): Promise<WorldEstimators> {
-  const [select, page, external, pair, review] = await Promise.all([
-    stageEstimatorFor(llm, WORLD_SELECT_STAGE),
-    stageEstimatorFor(llm, WORLD_PAGE_WRITE_STAGE),
-    stageEstimatorFor(llm, WORLD_EXTERNAL_WRITE_STAGE),
-    stageEstimatorFor(llm, WORLD_PAIR_WRITE_STAGE),
-    stageEstimatorFor(llm, WORLD_REVIEW_STAGE),
-  ]);
-  return { select, page, external, pair, review };
-}
 
 /**
  * Ход мира «Write World» (`F08-4a`; `features/F08-book-wiki/tech.md` §5): оценка, старт, чтение
@@ -136,13 +119,21 @@ export class WorldWriteService {
 
   /**
    * Ручной старт: прежний готовый или упавший ход отбрасывается; один строящийся ход вида на версию -
-   * частичным уникальным индексом (`DRAFT_IN_PROGRESS`). Автозапуска у хода мира нет до `F08-9b`.
+   * частичным уникальным индексом (`DRAFT_IN_PROGRESS`).
+   *
+   * Автозапуск (`autostart`, `F08-9b`; как `F07-3b`, решение арбитра `F08 | F08-9b`): прежние
+   * не отбрасываются; неотброшенный ход вида - 409 `AUTOSTART_SKIPPED_EXISTING` (`ready`) или
+   * `AUTOSTART_SKIPPED_IN_PROGRESS` (`building`), второй автозапуск того же языка - 409
+   * `AUTOSTART_DUPLICATE` уникальным индексом (`L-019`).
    */
   async start(
     versionId: string,
     limitUsd: Prisma.Decimal | undefined,
-    createdById: string,
+    createdById: string | null,
+    autostart: AutostartLink | null = null,
   ): Promise<WorldWriteDto> {
+    // Живой ход вида главнее отказов старта (Р9 `F06 | F06-5`); под замком транзакции - повтор (L-019).
+    if (autostart) await assertNoLiveRun(this.prisma, versionId, KIND);
     this.llm.assertEnabled();
     const estimate = await this.estimateOf(versionId);
     if (estimate.dto.dossier?.refusedTooLong) {
@@ -168,13 +159,15 @@ export class WorldWriteService {
       bookVersionId: versionId,
       limitUsd: limit,
       createdById,
+      translationRunId: autostart?.translationRunId ?? null,
       contentKind: KIND,
     });
     let id: string;
     const stale: string[] = [];
     try {
       id = await this.prisma.$transaction(async (tx) => {
-        stale.push(...(await discardPrevious(tx, versionId, KIND)));
+        if (autostart) await assertNoLiveRun(tx, versionId, KIND);
+        else stale.push(...(await discardPrevious(tx, versionId, KIND)));
         const op = await tx.llmOperation.create({ data: opData, select: { id: true } });
         const row = await tx.contentDraft.create({
           data: {
@@ -184,6 +177,7 @@ export class WorldWriteService {
             operationId: op.id,
             dossierId: estimate.run?.dossierId ?? null,
             glossaryId: estimate.run?.glossaryId ?? null,
+            translationRunLanguageId: autostart?.translationRunLanguageId ?? null,
             data: worldDataJson(emptyWorldData()),
           },
         });
@@ -191,7 +185,7 @@ export class WorldWriteService {
         return row.id;
       }, DRAFT_TX_OPTIONS);
     } catch (error) {
-      throw startConflict(error, false, KIND);
+      throw startConflict(error, autostart !== null, KIND);
     }
     await cancelRegens(this.tasks, this.handler, stale);
     return this.get(id);

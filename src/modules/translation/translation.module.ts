@@ -8,6 +8,7 @@ import { LlmTaskHandlerRegistry } from '../llm-worker/llm-task-handler.registry'
 import { LlmWorkerModule } from '../llm-worker/llm-worker.module';
 import {
   ANALYSIS_AUTOSTART_TASK_KIND,
+  WORLD_AUTOSTART_TASK_KIND,
   CONTENT_AUTOSTART_TASK_KIND,
 } from './autostart/content-autostart.constants';
 import { ContentAutostartHandler } from './autostart/content-autostart.handler';
@@ -194,5 +195,7 @@ export class TranslationModule implements OnModuleInit {
     // Автозапуск анализа (`F07-3b`) - тот же обработчик своим видом задачи: прежний образ её не
     // забирает (решение арбитра `F07 | F07-3b`, /qa круг 1).
     this.handlers.register(ANALYSIS_AUTOSTART_TASK_KIND, this.autostartTasks.handler);
+    // Автозапуск мира (`F08-9b`) - тот же обработчик своим видом задачи (как `F07-3b`).
+    this.handlers.register(WORLD_AUTOSTART_TASK_KIND, this.autostartTasks.handler);
   }
 }

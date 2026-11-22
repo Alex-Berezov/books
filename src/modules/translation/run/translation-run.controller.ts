@@ -75,7 +75,10 @@ export class TranslationRunController {
   })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiOkResponse({ type: TranslationRunEstimateDto })
-  @ApiBadRequestResponse({ description: 'LLM_MODEL_UNKNOWN; 1-5 distinct languages' })
+  @ApiBadRequestResponse({
+    description:
+      'LLM_MODEL_UNKNOWN; 1-5 distinct languages; WORLD_NEEDS_ANALYSIS: writeWorld without writeAnalysis',
+  })
   @ApiNotFoundResponse({ description: 'Book version not found' })
   @ApiConflictResponse({
     description:
@@ -99,7 +102,7 @@ export class TranslationRunController {
   @ApiAcceptedResponse({ type: TranslationRunDto })
   @ApiBadRequestResponse({
     description:
-      'TRANSLATION_RUN_LIMIT_TOO_LOW: limitUsd below the dossier and glossaries built first; LLM_MODEL_UNKNOWN; 1-5 distinct languages; limitUsd',
+      'TRANSLATION_RUN_LIMIT_TOO_LOW: limitUsd below the dossier and glossaries built first; LLM_MODEL_UNKNOWN; 1-5 distinct languages; limitUsd; WORLD_NEEDS_ANALYSIS: writeWorld without writeAnalysis',
   })
   @ApiNotFoundResponse({ description: 'Book version not found' })
   @ApiConflictResponse({

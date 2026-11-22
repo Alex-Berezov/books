@@ -14,6 +14,20 @@ export const CONTENT_AUTOSTART_TASK_KIND = 'content_autostart';
 export const ANALYSIS_AUTOSTART_TASK_KIND = 'content_autostart_analysis';
 
 /**
+ * Задача автозапуска хода мира (`F08-9b`) - свой вид на тот же обработчик, как у анализа: прежний
+ * образ этот вид не забирает, при откате по тегу задача ждёт (решение арбитра `F08 | F08-9b`).
+ * Ставится вместе с прочими по `done` языка и ждёт конца хода анализа того же языка.
+ */
+export const WORLD_AUTOSTART_TASK_KIND = 'content_autostart_world';
+
+/**
+ * Причина ожидания задачи автозапуска мира в `lastError` (решение арбитра `F08 | F08-9b`, Q1): ход
+ * анализа версии языка ещё идёт. Не код отказа и не причина строки хода - только видно на странице
+ * операций, что задача ждёт.
+ */
+export const WORLD_AUTOSTART_WAITS_FOR_ANALYSIS = 'WAITS_FOR_ANALYSIS';
+
+/**
  * Причины, по которым операция автозапуска закрыта без хода (`LlmOperation.skipReason`, решение
  * арбитра `F06 | F06-5`, Р3). Их ровно три (Р6): прочие отказы старта - строка хода `failed`.
  */
@@ -40,13 +54,17 @@ export const AUTOSTART_FAILED = 'AUTOSTART_FAILED';
 export const AUTOSTART_CANCELLED = 'AUTOSTART_CANCELLED';
 export const AUTOSTART_NOTHING_TO_START = 'AUTOSTART_NOTHING_TO_START';
 
-/** Виды раздела, которые стартуют сами (`F06-5`, `F07-3b`). */
-export type AutostartKind = Extract<ContentDraftKind, 'summary_write' | 'analysis_write'>;
+/** Виды раздела, которые стартуют сами (`F06-5`, `F07-3b`, `F08-9b`). */
+export type AutostartKind = Extract<
+  ContentDraftKind,
+  'summary_write' | 'analysis_write' | 'world_write'
+>;
 
 /** Вид задачи автозапуска по виду хода раздела. */
 export const AUTOSTART_TASK_KINDS: Readonly<Record<AutostartKind, string>> = {
   summary_write: CONTENT_AUTOSTART_TASK_KIND,
   analysis_write: ANALYSIS_AUTOSTART_TASK_KIND,
+  world_write: WORLD_AUTOSTART_TASK_KIND,
 };
 
 /** Виды хода раздела, которые стартуют сами, - ключи `AUTOSTART_TASK_KINDS`, один список на все места. */

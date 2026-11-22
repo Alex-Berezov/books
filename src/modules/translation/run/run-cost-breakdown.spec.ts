@@ -84,12 +84,19 @@ describe('run cost breakdown', () => {
     });
   });
 
-  it('sectionsSpent sums Summary and Analysis of the language rows that have them', () => {
+  it('sectionsSpent sums Summary, Analysis and World of the language rows that have them', () => {
     const sections = new Map<string, RunSections>([
-      ['l1', { summary: { spentUsd: '0.20000000' }, analysis: { spentUsd: '0.30000000' } }],
-      ['l2', { summary: null, analysis: { spentUsd: '0.05000000' } }],
-      ['l3', { summary: null, analysis: null }],
+      [
+        'l1',
+        {
+          summary: { spentUsd: '0.20000000' },
+          analysis: { spentUsd: '0.30000000' },
+          world: { spentUsd: '0.40000000' },
+        },
+      ],
+      ['l2', { summary: null, analysis: { spentUsd: '0.05000000' }, world: null }],
+      ['l3', { summary: null, analysis: null, world: { spentUsd: '0.01000000' } }],
     ] as unknown as Array<[string, RunSections]>);
-    expect(sectionsSpent(sections).toFixed(8)).toBe('0.55000000');
+    expect(sectionsSpent(sections).toFixed(8)).toBe('0.96000000');
   });
 });

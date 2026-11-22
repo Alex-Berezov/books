@@ -2057,6 +2057,79 @@ describe('Translation run (e2e)', () => {
     ).expect(400);
   });
 
+  it('the estimate with Write World: a World line per language, upper by the source, its own total; the translation and the minimal limit do not change; without Write Analysis - 400 (F08-9b)', async () => {
+    const { versionId } = await englishBook([{ number: 1, title: 'One', content: LONG }]);
+    type Estimate = {
+      languages: Array<{
+        language: string;
+        worldUsd: string | null;
+        analysisUsd: string | null;
+        totalUsd: string;
+      }>;
+      translationsUsd: string;
+      analysisUsd: string | null;
+      worldUsd: string | null;
+      totalUsd: string;
+      minLimitUsd: string;
+    };
+    const url = `/admin/versions/${versionId}/translation-runs/estimate`;
+    const estimate = async (query: Record<string, string>) =>
+      (
+        await auth(
+          http()
+            .get(url)
+            .query({ languages: 'es,fr', ...query }),
+        ).expect(200)
+      ).body as Estimate;
+    const dec = (v: string) => new Prisma.Decimal(v);
+    const analysisOnly = await estimate({ writeAnalysis: 'true' });
+    const on = await estimate({ writeAnalysis: 'true', writeWorld: 'true' });
+    expect(analysisOnly.worldUsd).toBeNull();
+    expect(analysisOnly.languages.map((l) => l.worldUsd)).toEqual([null, null]);
+    expect(on.analysisUsd).toBe(analysisOnly.analysisUsd);
+    let sum = new Prisma.Decimal(0);
+    for (const [i, l] of on.languages.entries()) {
+      const world = dec(l.worldUsd as string);
+      expect(world.gt(0)).toBe(true);
+      expect(dec(l.totalUsd).sub(dec(analysisOnly.languages[i].totalUsd)).eq(world)).toBe(true);
+      sum = sum.add(world);
+    }
+    expect(dec(on.worldUsd as string).eq(sum)).toBe(true);
+    expect(dec(on.totalUsd).sub(dec(analysisOnly.totalUsd)).eq(sum)).toBe(true);
+    expect(on.translationsUsd).toBe(analysisOnly.translationsUsd);
+    expect(on.minLimitUsd).toBe(analysisOnly.minLimitUsd);
+    // Мир без анализа: героев у новой версии нет - отказ в запросе (Q2).
+    for (const query of [{ writeWorld: 'true' }, { writeWorld: 'true', writeAnalysis: 'false' }]) {
+      const res = await auth(
+        http()
+          .get(url)
+          .query({ languages: 'es', ...query }),
+      ).expect(400);
+      expect(res.body).toMatchObject({ code: 'WORLD_NEEDS_ANALYSIS' });
+    }
+    await auth(http().get(url).query({ languages: 'es', writeWorld: 'yes' })).expect(400);
+  });
+
+  it('start with Write World keeps the switch next to Write Analysis; Write World without Write Analysis - 400 and no run (F08-9b)', async () => {
+    const { bookId, versionId } = await englishBook([{ number: 1, title: 'One', content: SHORT }]);
+    const refused = await startRun(versionId, { languages: ['es'], writeWorld: true }).expect(400);
+    expect(refused.body).toMatchObject({ code: 'WORLD_NEEDS_ANALYSIS' });
+    expect(await runsOf(bookId)).toBe(0);
+    const res = await startRun(versionId, {
+      languages: ['es'],
+      writeAnalysis: true,
+      writeWorld: true,
+    }).expect(202);
+    expect(res.body).toMatchObject({ writeAnalysis: true, writeWorld: true });
+    const run = await prisma.translationRun.findUniqueOrThrow({
+      where: { id: res.body.id as string },
+      include: { operation: true },
+    });
+    expect([run.writeAnalysis, run.writeWorld]).toEqual([true, true]);
+    expect(run.operation.limitUsd.toString()).toBe('10');
+    await auth(http().post(`/admin/translation-runs/${run.id}/cancel`)).expect(200);
+  });
+
   it('a stop found while the pause button already stopped the run still sets its reason', async () => {
     // Одна модель перевода: её отказ - последний, пауза не обрывает переход на запасную.
     await withStages([{ stage: 'translate', model: TRANSLATOR, fallbacks: [] }], async () => {
@@ -2641,6 +2714,8 @@ describe('Translation run (e2e)', () => {
     expect(await runsOf(bookId)).toBe(1);
     expect(res.body.writeSummary).toBe(false);
     expect(res.body.writeAnalysis).toBe(false);
+    // «Write World» выключен по умолчанию (`F08-9b`, решение арбитра `F08 | F08-9b`, Q6).
+    expect(res.body.writeWorld).toBe(false);
 
     await drain();
 
@@ -3280,6 +3355,8 @@ describe('Translation run (e2e)', () => {
         summary: null,
         // Без «Write Analysis» - тоже (`F07-3b`).
         analysis: null,
+        // Без «Write World» - тоже (`F08-9b`).
+        world: null,
       },
     ]);
     expect(draft.bookVersionId).not.toBeNull();

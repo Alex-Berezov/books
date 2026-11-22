@@ -213,10 +213,12 @@ export class RunStepSupportService {
    */
   async finishLanguage(lang: LanguageRow): Promise<LlmTaskStepResult> {
     // Данные операций автозапуска - до транзакции (`L-020`): их отказ не держит `done` языка.
-    // Своя операция и задача на каждый включённый раздел (`F07-3b`, `product.md` §8 п.12).
+    // Своя операция и задача на каждый включённый раздел (`F07-3b`, `F08-9b`, `product.md` §8 п.12).
     const kinds: AutostartKind[] = [
       ...(lang.run.writeSummary ? (['summary_write'] as const) : []),
       ...(lang.run.writeAnalysis ? (['analysis_write'] as const) : []),
+      // Мир - своей задачей вместе с прочими: ждёт конца хода анализа языка (`F08 | F08-9b`, Q1).
+      ...(lang.run.writeWorld ? (['world_write'] as const) : []),
     ];
     const autostarts = kinds.length > 0 ? await this.autostartData(lang, kinds) : [];
     await this.prisma.$transaction(async (tx) => {

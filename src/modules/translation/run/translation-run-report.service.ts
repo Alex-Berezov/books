@@ -86,8 +86,8 @@ function finalCheckStatus(
  * тех же операций; вызовы без итоговой стоимости - отдельной строкой «в полёте» вне итога (решение
  * арбитра `F05 | F05-6`, 6c В8). Деньги по языкам - `breakdown` (экран перевода, 18.11.2026, запрос
  * владельца; снимает «денег по языкам нет» из 6c В8): язык вызова - через задачу исполнителя.
- * Траты разделов «Write Summary» (`F06-5`) и «Write Analysis» (`F07-3b`) - `summary.spentUsd`
- * и `analysis.spentUsd` языка; в `costs` и строки языков `breakdown` не входят, а не показанные
+ * Траты разделов «Write Summary» (`F06-5`), «Write Analysis» (`F07-3b`) и «Write World» (`F08-9b`) -
+ * `summary.spentUsd`, `analysis.spentUsd` и `world.spentUsd` языка; в `costs` и строки языков `breakdown` не входят, а не показанные
  * в строке языка (черновик удалён) - в остатке `breakdown.unattributedUsd`.
  */
 /**
@@ -111,8 +111,8 @@ export class TranslationRunReportService {
       select: { id: true, bookVersionId: true },
     });
     if (!run) throw new NotFoundException('Translation run not found');
-    // Перевод - без операций разделов (`F06-5`, `F07-3b`; решение арбитра `F06 | F06-5`, Р5): их
-    // траты - строки «Summary» и «Analysis» языка; итог `totalUsd` - все операции запуска, каждая
+    // Перевод - без операций разделов (`F06-5`, `F07-3b`, `F08-9b`; решение арбитра `F06 | F06-5`, Р5):
+    // их траты - строки «Summary», «Analysis» и «World» языка; итог `totalUsd` - все операции запуска, каждая
     // один раз.
     const ofRun = { operation: { translationRunId: id, kind: { not: 'draft' as const } } };
     // Один снимок на все чтения (RepeatableRead): итог, строки разбивки и разделы - один момент,
@@ -252,6 +252,7 @@ export class TranslationRunReportService {
           },
           summary: sections.get(l.id)?.summary ?? null,
           analysis: sections.get(l.id)?.analysis ?? null,
+          world: sections.get(l.id)?.world ?? null,
         };
       }),
       costs,

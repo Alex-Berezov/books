@@ -4607,6 +4607,8 @@ model TranslationRun {
   writeSummary       Boolean                  @default(false)
   /// «Write Analysis» окна запуска (`F07-3b`): по `done` языка ход анализа стартует сам.
   writeAnalysis      Boolean                  @default(false)
+  /// «Write World» окна запуска (`F08-9b`): по `done` языка ход мира стартует сам после хода анализа.
+  writeWorld         Boolean                  @default(false)
   createdAt          DateTime                 @default(now())
   updatedAt          DateTime                 @updatedAt
   languages          TranslationRunLanguage[]

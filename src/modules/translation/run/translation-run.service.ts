@@ -7,6 +7,8 @@ import {
 import { Language, LlmOperation, Prisma, TranslationRunLanguage } from '@prisma/client';
 import { RunSections, runSections } from './run-sections';
 import { analysisUpperUsd } from '../analysis-write/analysis-estimate';
+import { worldUpperUsd } from '../world-write/world-estimate';
+import { WORLD_NEEDS_ANALYSIS } from '../world-write/world-write.constants';
 import { summaryUpperUsd } from '../summary-write/summary-estimate';
 import { loadSectionUpperSource } from './section-upper-source';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -193,6 +195,7 @@ export class TranslationRunService {
             stageModels: dto.translateModel ? { [TRANSLATE_STAGE]: dto.translateModel } : {},
             writeSummary: dto.writeSummary === true,
             writeAnalysis: dto.writeAnalysis === true,
+            writeWorld: dto.writeWorld === true,
             languages: { create: [...dto.languages].sort().map((language) => ({ language })) },
           },
           include: { languages: true },
@@ -286,6 +289,7 @@ export class TranslationRunService {
         stageModels: (run.stageModels ?? {}) as TranslationRunStageModelsDto,
         writeSummary: run.writeSummary,
         writeAnalysis: run.writeAnalysis,
+        writeWorld: run.writeWorld,
         operation: toOperationDto(operation),
         createdAt: run.createdAt.toISOString(),
         createdBy,
@@ -362,6 +366,7 @@ export class TranslationRunService {
       stageModels: (run.stageModels ?? {}) as TranslationRunStageModelsDto,
       writeSummary: run.writeSummary,
       writeAnalysis: run.writeAnalysis,
+      writeWorld: run.writeWorld,
       operation: toOperationDto(run.operation),
       operations: operations.map(toOperationDto),
       createdAt: run.createdAt.toISOString(),
@@ -466,6 +471,17 @@ export class TranslationRunService {
     query: TranslationRunEstimateQueryDto,
   ): Promise<Estimate> {
     const sourceLanguage = await this.assertSource(versionId, query.languages);
+    // Мир пишется по героям анализа языка (решение арбитра `F08 | F08-9b`, Q2): без анализа у новой
+    // версии героев нет, ход заведомо упал бы - отказ в запросе, а не строка `failed` у каждого языка.
+    if (query.writeWorld && !query.writeAnalysis) {
+      throw new BadRequestException({
+        statusCode: 400,
+        error: 'Bad Request',
+        message:
+          'Write World needs Write Analysis: the world run takes the characters of the analysis',
+        code: WORLD_NEEDS_ANALYSIS,
+      });
+    }
     if (query.translateModel) await assertKnownModels(this.llm, [query.translateModel]);
     const call = await stageEstimatorFor(this.llm, TRANSLATE_STAGE, query.translateModel);
     // Потолок - по всем главам, пустые тоже: выборки шагов запуска (финальная проверка, «глава N
@@ -519,7 +535,7 @@ export class TranslationRunService {
     let summaryTotalUsd = zero();
     // Вход строк разделов - один раз на оценку (решение арбитра `F07 | F07-3b`, В1).
     const upperSource =
-      query.writeSummary || query.writeAnalysis
+      query.writeSummary || query.writeAnalysis || query.writeWorld
         ? await loadSectionUpperSource(this.llm, this.prisma, versionId)
         : null;
     const summaries =
@@ -531,6 +547,12 @@ export class TranslationRunService {
     const analyses =
       query.writeAnalysis && upperSource
         ? await analysisUpperUsd(this.llm, upperSource, query.languages)
+        : null;
+    // «Write World» (`F08-9b`; решение арбитра `F08 | F08-9b`, Q5) - так же, сверху.
+    let worldTotalUsd = zero();
+    const worlds =
+      query.writeWorld && upperSource
+        ? await worldUpperUsd(this.llm, upperSource, query.languages, sourceLanguage)
         : null;
     let minLimitUsd = context.dossier?.suggestedLimitUsd ?? zero();
     let contextUsd = context.dossier?.estimateUsd ?? zero();
@@ -601,6 +623,8 @@ export class TranslationRunService {
       if (summaryUsd) summaryTotalUsd = summaryTotalUsd.add(summaryUsd);
       const analysisUsd = analyses?.get(language) ?? null;
       if (analysisUsd) analysisTotalUsd = analysisTotalUsd.add(analysisUsd);
+      const worldUsd = worlds?.get(language) ?? null;
+      if (worldUsd) worldTotalUsd = worldTotalUsd.add(worldUsd);
       if (glossary) {
         minLimitUsd = minLimitUsd.add(glossary.suggestedLimitUsd);
         contextUsd = contextUsd.add(glossary.estimateUsd);
@@ -615,7 +639,13 @@ export class TranslationRunService {
         metadataUsd: moneyUsd(languageMetadataUsd),
         summaryUsd: summaryUsd && moneyUsd(summaryUsd),
         analysisUsd: analysisUsd && moneyUsd(analysisUsd),
-        totalUsd: moneyUsd(totalUsd.add(summaryUsd ?? zero()).add(analysisUsd ?? zero())),
+        worldUsd: worldUsd && moneyUsd(worldUsd),
+        totalUsd: moneyUsd(
+          totalUsd
+            .add(summaryUsd ?? zero())
+            .add(analysisUsd ?? zero())
+            .add(worldUsd ?? zero()),
+        ),
       });
     }
     const budget = await this.budget.getBudget();
@@ -635,8 +665,13 @@ export class TranslationRunService {
         translationsUsd: moneyUsd(translationsUsd),
         summaryUsd: query.writeSummary ? moneyUsd(summaryTotalUsd) : null,
         analysisUsd: query.writeAnalysis ? moneyUsd(analysisTotalUsd) : null,
+        worldUsd: query.writeWorld ? moneyUsd(worldTotalUsd) : null,
         totalUsd: moneyUsd(
-          translationsUsd.add(contextUsd).add(summaryTotalUsd).add(analysisTotalUsd),
+          translationsUsd
+            .add(contextUsd)
+            .add(summaryTotalUsd)
+            .add(analysisTotalUsd)
+            .add(worldTotalUsd),
         ),
         minLimitUsd: moneyUsd(minLimitUsd),
         defaultLimitUsd: moneyUsd(budget?.defaultRunLimitUsd ?? zero()),
@@ -851,6 +886,6 @@ function stageOf(
   return checking ? 'check' : 'translate';
 }
 
-/** Строки «Summary» и «Analysis» языка: нет ни операции, ни хода вида - `null` (`runSections`). */
+/** Строки «Summary», «Analysis» и «World» языка: нет ни операции, ни хода вида - `null` (`runSections`). */
 const sectionsOf = (sections: ReadonlyMap<string, RunSections>, id: string): RunSections =>
-  sections.get(id) ?? { summary: null, analysis: null };
+  sections.get(id) ?? { summary: null, analysis: null, world: null };

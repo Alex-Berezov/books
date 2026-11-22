@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Language, TranslationChapterStatus, TranslationRunLanguageStatus } from '@prisma/client';
 import { LLM_MONEY_PROPERTY } from '../../llm/dto/llm-response.dto';
 import { TranslationRunAnalysisDto } from './translation-run-analysis.dto';
+import { TranslationRunWorldDto } from './translation-run-world.dto';
 import { TranslationRunSummaryDto } from './translation-run-summary.dto';
 
 /**
@@ -233,6 +234,14 @@ export class TranslationReportLanguageDto {
       'Analysis run of this language (Write Analysis, F07-3b); null - the run has no Write Analysis or the language is not done',
   })
   analysis!: TranslationRunAnalysisDto | null;
+
+  @ApiProperty({
+    type: () => TranslationRunWorldDto,
+    nullable: true,
+    description:
+      'World run of this language (Write World, F08-9b); null - the run has no Write World or the language is not done',
+  })
+  world!: TranslationRunWorldDto | null;
 }
 
 export class TranslationReportCostDto {
@@ -280,7 +289,7 @@ export class TranslationReportBreakdownDto {
   @ApiProperty({
     type: () => [TranslationReportLanguageCostDto],
     description:
-      'Per language, in the order of languages; Write Summary and Write Analysis of a language - summary.spentUsd and analysis.spentUsd of its language row',
+      'Per language, in the order of languages; Write Summary, Write Analysis and Write World of a language - summary.spentUsd, analysis.spentUsd and world.spentUsd of its language row',
   })
   languages!: TranslationReportLanguageCostDto[];
 
@@ -294,7 +303,7 @@ export class TranslationReportBreakdownDto {
   @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'The rest of totalUsd that no line shows: calls without a task of a run language, other operation kinds, Write Summary and Write Analysis spending not shown in a language row. The report reads one snapshot, so lines plus this add up to totalUsd; a negative rest (never expected) is returned as zero',
+      'The rest of totalUsd that no line shows: calls without a task of a run language, other operation kinds, Write Summary, Write Analysis and Write World spending not shown in a language row. The report reads one snapshot, so lines plus this add up to totalUsd; a negative rest (never expected) is returned as zero',
   })
   unattributedUsd!: string;
 }
@@ -312,14 +321,14 @@ export class TranslationRunReportDto {
   @ApiProperty({
     type: () => [TranslationReportCostDto],
     description:
-      'Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary and Write Analysis - their spending is summary.spentUsd and analysis.spentUsd of each language; totalUsd covers all',
+      'Cost of the translation by stage and model: every operation of the run (the run, its dossier, glossaries and retries) but Write Summary, Write Analysis and Write World - their spending is summary.spentUsd, analysis.spentUsd and world.spentUsd of each language; totalUsd covers all',
   })
   costs!: TranslationReportCostDto[];
 
   @ApiProperty({
     type: () => TranslationReportBreakdownDto,
     description:
-      'Spending split for the report screen: translation and glossary per language, dossier, the rest; with summary.spentUsd and analysis.spentUsd of the languages it adds up to totalUsd (the rest takes the difference)',
+      'Spending split for the report screen: translation and glossary per language, dossier, the rest; with summary.spentUsd, analysis.spentUsd and world.spentUsd of the languages it adds up to totalUsd (the rest takes the difference)',
   })
   breakdown!: TranslationReportBreakdownDto;
 

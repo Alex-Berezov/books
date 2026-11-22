@@ -83,12 +83,13 @@ export function runCostBreakdown(
   };
 }
 
-/** Траты Summary и Analysis, показанные в строках языков отчёта (`summary.spentUsd`, `analysis.spentUsd`). */
+/** Траты Summary, Analysis и World, показанные в строках языков отчёта (`summary.spentUsd`, `analysis.spentUsd`, `world.spentUsd`). */
 export function sectionsSpent(sections: ReadonlyMap<string, RunSections>): Prisma.Decimal {
   let sum = new Prisma.Decimal(0);
   for (const s of sections.values()) {
     if (s.summary) sum = sum.add(s.summary.spentUsd);
     if (s.analysis) sum = sum.add(s.analysis.spentUsd);
+    if (s.world) sum = sum.add(s.world.spentUsd);
   }
   return sum;
 }

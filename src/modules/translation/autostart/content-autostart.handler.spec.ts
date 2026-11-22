@@ -7,12 +7,15 @@ import { LlmTaskContext } from '../../llm-worker/llm-task.types';
 import { llmTaskConflict } from '../../llm-worker/llm-worker.errors';
 import { AnalysisWriteService } from '../analysis-write/analysis-write.service';
 import { SummaryWriteService } from '../summary-write/summary-write.service';
+import { WorldWriteService } from '../world-write/world-write.service';
 import {
   ANALYSIS_AUTOSTART_TASK_KIND,
   AUTOSTART_DUPLICATE,
   AUTOSTART_TASK_KINDS,
   autostartKindOfTask,
   CONTENT_AUTOSTART_TASK_KIND,
+  WORLD_AUTOSTART_TASK_KIND,
+  WORLD_AUTOSTART_WAITS_FOR_ANALYSIS,
   AUTOSTART_SKIPPED_EXISTING,
   AUTOSTART_SKIPPED_IN_PROGRESS,
   AUTOSTART_SKIPPED_LLM_DISABLED,
@@ -45,11 +48,15 @@ function setup(lang: unknown = { id: 'l1', runId: 'r1', status: 'done', bookVers
   };
   const prisma = {
     translationRunLanguage: { findUnique: jest.fn().mockResolvedValue(lang) },
-    contentDraft: { findFirst: jest.fn().mockResolvedValue(null) },
+    contentDraft: {
+      findFirst: jest.fn().mockResolvedValue(null),
+      findMany: jest.fn().mockResolvedValue([]),
+    },
     llmOperation: {
       findUnique: jest
         .fn()
         .mockResolvedValue({ createdById: 'u1', status: 'active', createdAt: new Date() }),
+      findFirst: jest.fn().mockResolvedValue(null),
     },
     bookVersion: { findUnique: jest.fn().mockResolvedValue({ language: 'fr' }) },
   };
@@ -62,13 +69,15 @@ function setup(lang: unknown = { id: 'l1', runId: 'r1', status: 'done', bookVers
   };
   const summaryWrite = { start: jest.fn().mockResolvedValue({}) };
   const analysisWrite = { start: jest.fn().mockResolvedValue({}) };
+  const worldWrite = { start: jest.fn().mockResolvedValue({}) };
   const handler = new ContentAutostartHandler(
     prisma as unknown as PrismaService,
     tasks as unknown as LlmTaskService,
     summaryWrite as unknown as SummaryWriteService,
     analysisWrite as unknown as AnalysisWriteService,
+    worldWrite as unknown as WorldWriteService,
   );
-  return { handler, prisma, tasks, summaryWrite, analysisWrite, tx };
+  return { handler, prisma, tasks, summaryWrite, analysisWrite, worldWrite, tx };
 }
 
 describe('autostartOutcome', () => {
@@ -172,8 +181,10 @@ describe('ContentAutostartHandler', () => {
       expect(AUTOSTART_TASK_KINDS).toEqual({
         summary_write: CONTENT_AUTOSTART_TASK_KIND,
         analysis_write: ANALYSIS_AUTOSTART_TASK_KIND,
+        world_write: WORLD_AUTOSTART_TASK_KIND,
       });
       expect(autostartKindOfTask(ANALYSIS_AUTOSTART_TASK_KIND)).toBe('analysis_write');
+      expect(autostartKindOfTask(WORLD_AUTOSTART_TASK_KIND)).toBe('world_write');
       expect(autostartKindOfTask(CONTENT_AUTOSTART_TASK_KIND)).toBe('summary_write');
       // Чужой вид - ошибка регистрации, а не молчаливый старт пересказа.
       expect(() => autostartKindOfTask('content_draft')).toThrow('content_draft');
@@ -349,5 +360,178 @@ describe('ContentAutostartHandler', () => {
     await handler.handler.onFailed?.(task, 'X');
     expect(tasks.failOperation).toHaveBeenCalledTimes(1);
     expect(tasks.failOperation).toHaveBeenCalledWith('auto1');
+  });
+
+  /**
+   * Автозапуск мира (`F08-9b`; решение арбитра `F08 | F08-9b`, Q1, Q3): ждёт конца хода анализа
+   * версии языка - этого запуска или ручного - без счёта окна, без готового анализа - строка `failed`
+   * с причиной без старта, окно повторов - от готовности анализа.
+   */
+  describe('content_autostart_world', () => {
+    const worldTask = { ...task, kind: WORLD_AUTOSTART_TASK_KIND } as LlmTask;
+    const link = { translationRunLanguageId: 'l1', translationRunId: 'r1' };
+    const failedRow = (failedReason: string) => ({
+      data: {
+        bookVersionId: 'v-fr',
+        kind: 'world_write',
+        status: 'failed',
+        failedReason,
+        language: 'fr',
+        operationId: 'auto1',
+        translationRunLanguageId: 'l1',
+      },
+    });
+
+    /** Неотброшенные ходы анализа версии языка (ход этого запуска или ручной). */
+    function withAnalysis(runs: Array<{ status: string; updatedAt: Date }>) {
+      const env = setup();
+      env.prisma.contentDraft.findMany.mockResolvedValueOnce(runs);
+      return env;
+    }
+
+    it('ходы анализа ищутся по версии языка, не только по языку запуска: строящийся и готовый', async () => {
+      const env = withAnalysis([]);
+      await env.handler.handler.run(worldTask, ctx);
+      expect(env.prisma.contentDraft.findMany).toHaveBeenCalledTimes(1);
+      expect(env.prisma.contentDraft.findMany).toHaveBeenCalledWith({
+        where: {
+          bookVersionId: 'v-fr',
+          kind: 'analysis_write',
+          status: { in: ['building', 'ready'] },
+        },
+        select: { status: true, updatedAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 5,
+      });
+    });
+
+    it('ход анализа строится (в том числе на паузе) - wait без старта, окно не тратится', async () => {
+      const old = new Date(Date.now() - AUTOSTART_RETRY_WINDOW_MS - 1000);
+      // Строящийся главнее готового прежнего: новый анализ ещё пишется.
+      const env = withAnalysis([
+        { status: 'building', updatedAt: new Date() },
+        { status: 'ready', updatedAt: old },
+      ]);
+      // Операция мира старше окна: ожидание анализа окно не съедает.
+      env.prisma.llmOperation.findUnique.mockResolvedValueOnce({
+        createdById: 'u1',
+        status: 'active',
+        createdAt: old,
+      });
+      const result = await env.handler.handler.run(worldTask, ctx);
+      expect(result).toMatchObject({ kind: 'wait', reason: WORLD_AUTOSTART_WAITS_FOR_ANALYSIS });
+      expect(env.worldWrite.start).toHaveBeenCalledTimes(0);
+      expect(env.tasks.completeOperation).toHaveBeenCalledTimes(0);
+      expect(env.tasks.failOperation).toHaveBeenCalledTimes(0);
+    });
+
+    it('хода анализа ещё нет, операция анализа запуска не закрыта (active или paused) - wait', async () => {
+      const env = withAnalysis([]);
+      env.prisma.llmOperation.findFirst.mockResolvedValueOnce({ id: 'a-op' });
+      const result = await env.handler.handler.run(worldTask, ctx);
+      expect(result).toMatchObject({ kind: 'wait', reason: WORLD_AUTOSTART_WAITS_FOR_ANALYSIS });
+      expect(env.prisma.llmOperation.findFirst).toHaveBeenCalledTimes(1);
+      expect(env.prisma.llmOperation.findFirst).toHaveBeenCalledWith({
+        where: {
+          translationRunId: 'r1',
+          bookVersionId: 'v-fr',
+          kind: 'draft',
+          contentKind: 'analysis_write',
+          status: { in: ['active', 'paused'] },
+        },
+        select: { id: true },
+      });
+      expect(env.worldWrite.start).toHaveBeenCalledTimes(0);
+    });
+
+    it('готового и строящегося хода анализа нет, ждать нечего - строка World failed WORLD_ANALYSIS_MISSING, старта нет', async () => {
+      const env = withAnalysis([]);
+      await expect(env.handler.handler.run(worldTask, ctx)).resolves.toEqual({ kind: 'done' });
+      expect(env.worldWrite.start).toHaveBeenCalledTimes(0);
+      expect(env.tx.contentDraft.create).toHaveBeenCalledTimes(1);
+      expect(env.tx.contentDraft.create).toHaveBeenCalledWith(failedRow('WORLD_ANALYSIS_MISSING'));
+    });
+
+    it('готовый ход анализа версии (в том числе ручной) - старт мира с ссылкой на язык и запуск', async () => {
+      const env = withAnalysis([{ status: 'ready', updatedAt: new Date() }]);
+      await expect(env.handler.handler.run(worldTask, ctx)).resolves.toEqual({ kind: 'done' });
+      expect(env.worldWrite.start).toHaveBeenCalledTimes(1);
+      expect(env.worldWrite.start).toHaveBeenCalledWith('v-fr', undefined, 'u1', link);
+      expect(env.prisma.llmOperation.findFirst).toHaveBeenCalledTimes(0);
+      expect(env.summaryWrite.start).toHaveBeenCalledTimes(0);
+      expect(env.analysisWrite.start).toHaveBeenCalledTimes(0);
+      expect(env.tasks.completeOperation).toHaveBeenCalledTimes(1);
+    });
+
+    it('временный отказ: окно от позднего из создания операции и готовности анализа (F08 | F08-9b-1, 3)', async () => {
+      const old = new Date(Date.now() - AUTOSTART_RETRY_WINDOW_MS - 1000);
+      const operation = (createdAt: Date) => ({ createdById: 'u1', status: 'active', createdAt });
+      // Операция старая, анализ готов только что - окно от анализа.
+      const late = withAnalysis([{ status: 'ready', updatedAt: new Date() }]);
+      late.prisma.llmOperation.findUnique.mockResolvedValueOnce(operation(old));
+      late.worldWrite.start.mockRejectedValueOnce(llmModelsUnavailable());
+      await expect(late.handler.handler.run(worldTask, ctx)).resolves.toMatchObject({
+        kind: 'wait',
+        reason: 'LLM_MODELS_UNAVAILABLE',
+      });
+      expect(late.tasks.failOperation).toHaveBeenCalledTimes(0);
+
+      // Готовый ручной анализ давний, операция свежая - окно от операции: повтор, а не FAILED.
+      const manual = withAnalysis([{ status: 'ready', updatedAt: old }]);
+      manual.worldWrite.start.mockRejectedValueOnce(llmModelsUnavailable());
+      await expect(manual.handler.handler.run(worldTask, ctx)).resolves.toMatchObject({
+        kind: 'wait',
+        reason: 'LLM_MODELS_UNAVAILABLE',
+      });
+      expect(manual.tasks.failOperation).toHaveBeenCalledTimes(0);
+
+      // Оба давние - окно вышло: операция failed.
+      const stale = withAnalysis([{ status: 'ready', updatedAt: old }]);
+      stale.prisma.llmOperation.findUnique.mockResolvedValueOnce(operation(old));
+      stale.worldWrite.start.mockRejectedValueOnce(llmModelsUnavailable());
+      await expect(stale.handler.handler.run(worldTask, ctx)).resolves.toEqual({ kind: 'done' });
+      expect(stale.tasks.failOperation).toHaveBeenCalledTimes(1);
+      expect(stale.tasks.failOperation).toHaveBeenCalledWith('auto1');
+    });
+
+    it.each([
+      ['ready', 'AUTOSTART_SKIPPED_EXISTING'],
+      ['building', 'AUTOSTART_SKIPPED_IN_PROGRESS'],
+    ])(
+      'живой ход мира версии (%s) главнее «нет анализа»: пропуск с причиной, строки хода нет, анализ не читается',
+      async (status, reason) => {
+        const env = setup();
+        // Первое чтение - ход мира языка (нет), второе - живой ход мира версии.
+        env.prisma.contentDraft.findFirst
+          .mockResolvedValueOnce(null)
+          .mockResolvedValueOnce({ status });
+        await expect(env.handler.handler.run(worldTask, ctx)).resolves.toEqual({ kind: 'done' });
+        expect(env.prisma.contentDraft.findFirst).toHaveBeenCalledTimes(2);
+        expect(env.prisma.contentDraft.findFirst).toHaveBeenNthCalledWith(2, {
+          where: {
+            bookVersionId: 'v-fr',
+            kind: 'world_write',
+            status: { in: ['building', 'ready'] },
+          },
+          select: { status: true },
+        });
+        expect(env.prisma.contentDraft.findMany).toHaveBeenCalledTimes(0);
+        expect(env.worldWrite.start).toHaveBeenCalledTimes(0);
+        expect(env.tx.contentDraft.create).toHaveBeenCalledTimes(0);
+        expect(env.tx.llmOperation.update).toHaveBeenCalledTimes(1);
+        expect(env.tx.llmOperation.update).toHaveBeenCalledWith({
+          where: { id: 'auto1' },
+          data: { skipReason: reason },
+        });
+      },
+    );
+
+    it('отказ старта мира (нет героя main) - строка failed с причиной старта', async () => {
+      const env = withAnalysis([{ status: 'ready', updatedAt: new Date() }]);
+      env.worldWrite.start.mockRejectedValueOnce(llmTaskConflict('WORLD_ANALYSIS_MISSING', 'x'));
+      await env.handler.handler.run(worldTask, ctx);
+      expect(env.tx.contentDraft.create).toHaveBeenCalledTimes(1);
+      expect(env.tx.contentDraft.create).toHaveBeenCalledWith(failedRow('WORLD_ANALYSIS_MISSING'));
+    });
   });
 });

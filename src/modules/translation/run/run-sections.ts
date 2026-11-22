@@ -7,16 +7,22 @@ import {
   AUTOSTART_NOTHING_TO_START,
   AUTOSTART_KINDS,
 } from '../autostart/content-autostart.constants';
-import { ANALYSIS_REMARK_CODES, AnalysisRemarkCode } from '../draft-quality/text-checks';
+import {
+  ANALYSIS_REMARK_CODES,
+  AnalysisRemarkCode,
+  WORLD_REMARK_CODES,
+} from '../draft-quality/text-checks';
 import { TranslationRunAnalysisDto } from '../dto/translation-run-analysis.dto';
 import { TranslationRunSummaryDto } from '../dto/translation-run-summary.dto';
+import { TranslationRunWorldDto } from '../dto/translation-run-world.dto';
 import { hasText, readWriteData } from '../summary-write/summary-write.data';
+import { readWorldData, stepsTotalOf, WorldItem } from '../world-write/world-write.data';
 import { RUN_LANGUAGES_MAX } from './translation-run.constants';
 
 /** Операций раздела на язык и вид: автозапуск и ход (`F06-5`, решение арбитра `F06 | F06-5`, Р5). */
 const SECTION_OPERATIONS_PER_LANGUAGE = 2;
 
-/** Виды хода раздела, которые стартует автозапуск (`F06-5`, `F07-3b`) - общий список. */
+/** Виды хода раздела, которые стартует автозапуск (`F06-5`, `F07-3b`, `F08-9b`) - общий список. */
 const SECTION_KINDS = AUTOSTART_KINDS;
 
 export interface RunLanguageRef {
@@ -180,14 +186,73 @@ export function analysisOf(
   };
 }
 
-/** Разделы языка запуска: строки «Summary» и «Analysis» хода, истории и отчёта. */
+/**
+ * Замечания, которые вкладка World показывает как «Model flags»: коды ответа хода мира без метки
+ * «сверить факты» (`EXTERNAL_CHECK` снимает `checkOf` вкладки, books-front
+ * `components/admin/books/WorldTab/WorldWrite/worldWrite.utils.ts`).
+ */
+const WORLD_SHOWN_REMARKS = new Set<string>(
+  WORLD_REMARK_CODES.filter((c) => c !== 'EXTERNAL_CHECK'),
+);
+
+/**
+ * Блок мира с отметкой модели - правило вкладки World, как `isModelFlagged` у анализа (`T189`):
+ * вердикт `flags` и хотя бы одно показанное замечание; «Nothing to add» - без отметки проверки.
+ */
+const isWorldModelFlagged = (
+  item: Pick<WorldItem, 'verdict' | 'remarks' | 'outcome' | 'failedReason'>,
+): boolean =>
+  item.verdict === 'flags' &&
+  !(item.outcome === 'none' && item.failedReason === null) &&
+  item.remarks.some((r) => WORLD_SHOWN_REMARKS.has(r.code));
+
+/**
+ * Состояние мира языка (`F08-9b`) - как `analysisOf`: единица хода - шаг, счёт - блоки с отметкой
+ * модели (`isWorldModelFlagged`) и упавшие. Строка `failed` отказа старта
+ * (`WORLD_ANALYSIS_MISSING` - анализ языка не готов) -
+ * «не начат» с причиной; ждёт анализа - «ждёт старта».
+ */
+export function worldOf(
+  own: readonly SectionOperation[],
+  draft: SectionDraft | null,
+): TranslationRunWorldDto | null {
+  if (own.length === 0 && !draft) return null;
+  const spentUsd = spentOf(own);
+  if (draft && draft.data !== null) {
+    const op = own.find((o) => o.id === draft.operationId) ?? null;
+    const data = readWorldData(draft.data);
+    return {
+      status: draft.status,
+      reason: draft.failedReason,
+      draftId: draft.id,
+      operationStatus: op?.status ?? null,
+      pauseReason: op?.pauseReason ?? null,
+      stepsDone: data.steps.length,
+      stepsTotal: stepsTotalOf(data),
+      flaggedItems: data.items.filter(isWorldModelFlagged).length,
+      failedItems: data.items.filter((i) => i.verdict === 'failed').length,
+      spentUsd,
+    };
+  }
+  return {
+    ...notStarted(own, draft),
+    stepsDone: 0,
+    stepsTotal: null,
+    flaggedItems: 0,
+    failedItems: 0,
+    spentUsd,
+  };
+}
+
+/** Разделы языка запуска: строки «Summary», «Analysis» и «World» хода, истории и отчёта. */
 export interface RunSections {
   summary: TranslationRunSummaryDto | null;
   analysis: TranslationRunAnalysisDto | null;
+  world: TranslationRunWorldDto | null;
 }
 
 /**
- * Разделы по языку запуска (`F06-5`, `F07-3b`; `product.md` §5, §8 п.11): операции вида `draft`
+ * Разделы по языку запуска (`F06-5`, `F07-3b`, `F08-9b`; `product.md` §5, §8 п.11): операции вида `draft`
  * запуска - автозапуск и ход (у перегенераций `translationRunId` нет, Р4) - по своему
  * `contentKind` (`null` не толкуется, решение арбитра `F07 | F07-3`), строка хода - по
  * `ContentDraft.translationRunLanguageId` и виду, ядро анализа - по версии языка. Нет ни операции,
@@ -270,7 +335,8 @@ export async function runSections(
       draftOf(l, 'analysis_write'),
       coreReady,
     );
-    if (summary || analysis) result.set(l.id, { summary, analysis });
+    const world = worldOf(ownOf(l, 'world_write'), draftOf(l, 'world_write'));
+    if (summary || analysis || world) result.set(l.id, { summary, analysis, world });
   }
   return result;
 }

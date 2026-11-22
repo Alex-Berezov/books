@@ -129,6 +129,9 @@ export function registerWorldWriteStages(stages: LlmStageRegistry): void {
 export const WORLD_ANALYSIS_MISSING = 'WORLD_ANALYSIS_MISSING';
 export const WORLD_LANGUAGE_UNSUPPORTED = 'WORLD_LANGUAGE_UNSUPPORTED';
 
+/** Запуск перевода с «Write World» без «Write Analysis» - 400 (решение арбитра `F08 | F08-9b`, Q2). */
+export const WORLD_NEEDS_ANALYSIS = 'WORLD_NEEDS_ANALYSIS';
+
 /**
  * Отказы ручек `content-drafts/:id/*` хода мира - как у хода анализа (`F07 | F07-1`, В6):
  * `WORLD_WRITE_NOT_READY` - ход строится, упал или отброшен; `WORLD_ITEM_UNKNOWN` (400) - нет пункта

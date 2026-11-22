@@ -7,6 +7,7 @@ import { LlmService } from '../../llm/llm.service';
 import { LlmTaskService } from '../../llm-worker/llm-task.service';
 import {
   ANALYSIS_AUTOSTART_TASK_KIND,
+  WORLD_AUTOSTART_TASK_KIND,
   AUTOSTART_SKIPPED_LLM_DISABLED,
   CONTENT_AUTOSTART_TASK_KIND,
 } from '../autostart/content-autostart.constants';
@@ -204,6 +205,32 @@ describe('RunStepSupportService: автозапуск раздела', () => {
     ).toEqual([
       [CONTENT_AUTOSTART_TASK_KIND, 'autostart:l1:summary_write'],
       [ANALYSIS_AUTOSTART_TASK_KIND, 'autostart:l1:analysis_write'],
+    ]);
+  });
+
+  it('Write World (F08-9b) - третья операция вида world_write и задача своего вида, вместе с анализом', async () => {
+    const { support, tx, tasks, llm } = setup(0);
+    await support.finishLanguage(
+      withRun({ writeSummary: false, writeAnalysis: true, writeWorld: true }),
+    );
+    expect(llm.operationData).toHaveBeenCalledTimes(1);
+    expect(tx.llmOperation.create).toHaveBeenCalledTimes(2);
+    expect(tx.llmOperation.create).toHaveBeenCalledWith({
+      data: { ...opInput, settingsSnapshot: {}, contentKind: 'analysis_write' },
+      select: { id: true },
+    });
+    expect(tx.llmOperation.create).toHaveBeenCalledWith({
+      data: { ...opInput, settingsSnapshot: {}, contentKind: 'world_write' },
+      select: { id: true },
+    });
+    expect(
+      tasks.enqueue.mock.calls.map((c) => {
+        const input = c[0] as { kind: string; pairKey: string };
+        return [input.kind, input.pairKey];
+      }),
+    ).toEqual([
+      [ANALYSIS_AUTOSTART_TASK_KIND, 'autostart:l1:analysis_write'],
+      [WORLD_AUTOSTART_TASK_KIND, 'autostart:l1:world_write'],
     ]);
   });
 

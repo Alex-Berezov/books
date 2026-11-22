@@ -1,6 +1,7 @@
 import { ContentDraftKind, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
-import { analysisOf, runSections, summaryOf } from './run-sections';
+import { worldDataJson, emptyWorldData } from '../world-write/world-write.data';
+import { analysisOf, runSections, summaryOf, worldOf } from './run-sections';
 
 /**
  * Состояние раздела языка запуска (`F06-5`; `product.md` §5, §8 п.11): строка хода главнее
@@ -187,11 +188,135 @@ describe('analysisOf (F07-3b; решение арбитра F07 | F07-3b, В2)',
   });
 });
 
+const worldStep = (step: number, kind: string, key: string | null) => ({
+  step,
+  kind,
+  key,
+  verdict: 'ok',
+  remarks: [],
+  attempt: 1,
+  outcome: 'done',
+  failedReason: null,
+  authorModel: null,
+  review: null,
+  source: null,
+  dropped: [],
+});
+
+const remark = (code: string) => ({ code, where: 'x', note: 'y', by: 'model' });
+
+const worldItem = (verdict: string, patch: Record<string, unknown> = {}) => ({
+  key: 'a',
+  block: 'short',
+  step: 1,
+  verdict,
+  remarks: [],
+  review: null,
+  outcome: verdict === 'failed' ? 'none' : 'written',
+  value: 'Text.',
+  sources: null,
+  name: null,
+  base: null,
+  failedReason: verdict === 'failed' ? 'X' : null,
+  regen: null,
+  regenFailedReason: null,
+  ...patch,
+});
+
+describe('worldOf (F08-9b; решение арбитра F08 | F08-9b)', () => {
+  const draft = (patch: Record<string, unknown>) => ({
+    id: 'w-d1',
+    translationRunLanguageId: 'l1',
+    status: 'building' as const,
+    failedReason: null,
+    operationId: 'w-op',
+    data: null,
+    ...patch,
+  });
+
+  it('нет ни операции, ни хода - null (без «Write World» или язык не done)', () => {
+    expect(worldOf([], null)).toBeNull();
+  });
+
+  it('автозапуск ждёт анализа - pending без причины, шагов ещё нет', () => {
+    expect(worldOf([op()], null)).toMatchObject({
+      status: 'pending',
+      reason: null,
+      stepsDone: 0,
+      stepsTotal: null,
+    });
+  });
+
+  it('анализ языка не готов - строка failed без данных: «не начат» с WORLD_ANALYSIS_MISSING', () => {
+    const row = draft({
+      status: 'failed',
+      failedReason: 'WORLD_ANALYSIS_MISSING',
+      operationId: 'auto1',
+    });
+    expect(worldOf([op({ status: 'done' })], row)).toMatchObject({
+      status: 'skipped',
+      reason: 'WORLD_ANALYSIS_MISSING',
+      draftId: 'w-d1',
+    });
+  });
+
+  it('ход - шаги из данных, итог шагов после выбора, блоки с флагами и упавшие, траты обеих операций', () => {
+    const data = {
+      ...emptyWorldData(),
+      candidates: [
+        {
+          key: 'a',
+          name: 'A',
+          role: 'main',
+          aliases: [],
+          mentions: { chapters: [], perChapter: {} },
+        },
+      ],
+      pairs: [],
+      steps: [worldStep(0, 'select', null), worldStep(1, 'page', 'a')],
+      items: [
+        // Счёт - по правилу вкладки World (как T189 у анализа): видна отметка модели.
+        worldItem('flags', { remarks: [remark('GENERIC'), remark('EXTERNAL_CHECK')] }),
+        // Только «сверить факты» - метка человеку, не флаг модели.
+        worldItem('flags', { remarks: [remark('EXTERNAL_CHECK')] }),
+        // Проверяющая не ответила: флагов без замечаний вкладка не показывает.
+        worldItem('flags'),
+        // «Nothing to add» - без отметки проверки.
+        worldItem('flags', { outcome: 'none', remarks: [remark('GENERIC')] }),
+        worldItem('failed'),
+        worldItem('ok'),
+      ],
+    };
+    const own = [
+      op({ id: 'auto1', status: 'done', spentUsd: new Prisma.Decimal('0') }),
+      op({
+        id: 'w-op',
+        status: 'paused',
+        pauseReason: 'LIMIT_REACHED',
+        spentUsd: new Prisma.Decimal('0.25'),
+      }),
+    ];
+    const line = worldOf(own, draft({ data: worldDataJson(data as never) }));
+    expect(line).toMatchObject({
+      status: 'building',
+      draftId: 'w-d1',
+      operationStatus: 'paused',
+      pauseReason: 'LIMIT_REACHED',
+      stepsTotal: 3,
+      spentUsd: '0.25000000',
+    });
+    expect(line?.stepsDone).toBe(data.steps.length);
+    expect(line?.flaggedItems).toBe(1);
+    expect(line?.failedItems).toBe(1);
+  });
+});
+
 describe('runSections: траты разделов не смешиваются (хвост ревью F06-5a)', () => {
   it('операция анализа запуска - в строке Analysis, не в Summary; null-вид не толкуется', async () => {
     const operations = [
       op({ id: 's1', contentKind: 'summary_write', spentUsd: new Prisma.Decimal('0.1') }),
       op({ id: 'a1', contentKind: 'analysis_write', spentUsd: new Prisma.Decimal('0.7') }),
+      op({ id: 'w1', contentKind: 'world_write', spentUsd: new Prisma.Decimal('0.3') }),
       op({ id: 'n1', contentKind: null, spentUsd: new Prisma.Decimal('5') }),
     ];
     const llmFind = jest.fn((args: { where: { contentKind: { in: string[] } } }) =>
@@ -211,11 +336,13 @@ describe('runSections: траты разделов не смешиваются (
     expect(Number(line?.summary?.spentUsd)).toBe(0.1);
     expect(Number(line?.analysis?.spentUsd)).toBe(0.7);
     expect(line?.analysis?.coreReady).toBe(true);
+    // Операция мира запуска (`F08-9b`) - в строке World, не в Summary и Analysis.
+    expect(Number(line?.world?.spentUsd)).toBe(0.3);
     expect(llmFind).toHaveBeenCalledTimes(1);
     expect(llmFind).toHaveBeenCalledWith(
       expect.objectContaining({
         where: expect.objectContaining({
-          contentKind: { in: ['summary_write', 'analysis_write'] },
+          contentKind: { in: ['summary_write', 'analysis_write', 'world_write'] },
         }),
       }),
     );
