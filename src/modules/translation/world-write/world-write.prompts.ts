@@ -17,13 +17,13 @@ import type { WorldBlock, WorldStepKind } from './world-write.data';
 
 /**
  * Промпты хода мира (`F08-4a`; канон - промпт владельца `features/F08-book-wiki/prompts/world-character.md`,
- * эталон - `example-world.{ru,en}.json`): «Главные правила», «Планка качества текста», «Ядро» и
+ * эталоны - `example-world.<lang>.json` пяти языков): «Главные правила», «Планка качества текста», «Ядро» и
  * поля страницы перенесены по смыслу для своего шага. Отличия от канона: героев выбирает код
  * (герои `main` и `secondary` анализа версии, `F08-4` Q3, `F08-8b`), формы имени - отдельным шагом,
  * внешние блоки - отдельным шагом со ссылками утверждений на источники; ответ - по строгой форме,
  * поэтому «нет значения» - пустая строка, «нет года» - `0`. Текст глав, анализ, досье, глоссарий,
  * прошлый ответ и замечания - данные в оградах (`F05-14`), а не инструкция. Страница пары (`F08-8e`) -
- * по канону `prompts/world-pair.md` и эталону `example-world-pair.{ru,en}.json`; пары выбирает код
+ * по канону `prompts/world-pair.md` и эталону `example-world-pair.<lang>.json`; пары выбирает код
  * (условие заведения, решения арбитра `F08 | F08-8e-1` Q1, Q3), поэтому шаг пишет одну пару.
  */
 
@@ -240,8 +240,11 @@ const SELECT_RULES =
   'You list the name forms of the characters given in the CANDIDATES block, as they stand in the ' +
   'text of this version. For every candidate: key - exactly as given; name - the full name as in ' +
   'this version; aliases - every form by which the text names the character: the full name, the ' +
-  'surname, diminutives, forms of address, name and patronymic and, for ru, es, fr, pt, the case ' +
-  `forms ("Раскольникова", "Соню"); each form separately, at most ${L.aliases}. Only forms that ` +
+  'surname, diminutives, forms of address, name and patronymic and, for ru, the case forms ' +
+  '("Раскольникова", "Соню"); es, fr and pt have no case forms: there the forms are the spellings ' +
+  'exactly as this version writes them, accents as in the text, and its diminutives (es "Raskólnikov", "Sónechka"; ' +
+  `fr "Raskolnikov", "Sonietchka"; pt "Ródia", "Sônia"); each form separately, at most ${L.aliases}. ` +
+  'Only forms that ' +
   'really stand in the text: the code counts the chapters of the character by them and throws ' +
   'away a form that is not in the text. No common words that occur without the character ' +
   '("the old woman", "the student"), no forms shorter than 3 letters. Do not add characters.';

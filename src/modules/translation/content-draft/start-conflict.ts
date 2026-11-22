@@ -7,7 +7,7 @@ import { DRAFT_IN_PROGRESS } from './content-draft.constants';
 
 /**
  * Ход вида с артиклем - в тексте отказа («a summary run», «an analysis run», «a world run»). По виду
- * хода, а не автозапуска: ход мира `F08-4a` автозапуска не имеет (`F08-9`), а отказ старта - имеет.
+ * хода, а не автозапуска: ход мира `F08-4a` автозапуска не имеет (`F08-9b`), а отказ старта - имеет.
  */
 export const RUN_OF: Record<RunKind, string> = {
   summary_write: 'a summary run',

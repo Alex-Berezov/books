@@ -20,8 +20,11 @@ export const WORLD_REVIEW_STAGE = 'world_review';
 /** Вид задачи исполнителя хода мира (`ContentDraft` вида `world_write`). */
 export const WORLD_WRITE_TASK_KIND = 'world_write';
 
-/** Языки хода до `F08-9` (решение арбитра `F08 | F08-4`, Q5): промпт и эталоны есть только у них. */
-export const WORLD_WRITE_LANGUAGES = ['ru', 'en'] as const;
+/**
+ * Языки хода (`F08-9`; решения арбитра `F08 | F08-4` Q5, `F08 | F08-9` Q2): у каждого есть эталон в
+ * `examples/`. Список - страж нового языка enum `Language`: язык без эталона и правил промпта ход не берёт.
+ */
+export const WORLD_WRITE_LANGUAGES = ['ru', 'en', 'es', 'fr', 'pt'] as const;
 export type WorldWriteLanguage = (typeof WORLD_WRITE_LANGUAGES)[number];
 
 export const isWorldWriteLanguage = (language: string): language is WorldWriteLanguage =>
@@ -120,8 +123,8 @@ export function registerWorldWriteStages(stages: LlmStageRegistry): void {
 
 /**
  * Отказы старта и оценки (409, решение арбитра `F08 | F08-4`, Q4, Q5): у версии нет анализа или
- * в нём нет героя `main` - кандидатов нет, из досье они не берутся; язык версии не `ru`/`en` - до
- * `F08-9` (промпт и эталоны других языков).
+ * в нём нет героя `main` - кандидатов нет, из досье они не берутся; язык версии вне `WORLD_WRITE_LANGUAGES` -
+ * страж нового языка enum без эталона (`F08 | F08-9` Q2).
  */
 export const WORLD_ANALYSIS_MISSING = 'WORLD_ANALYSIS_MISSING';
 export const WORLD_LANGUAGE_UNSUPPORTED = 'WORLD_LANGUAGE_UNSUPPORTED';

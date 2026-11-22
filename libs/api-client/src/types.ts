@@ -22428,7 +22428,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description DRAFT_IN_PROGRESS: a world run is being built; WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: only ru and en versions for now; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      /** @description DRAFT_IN_PROGRESS: a world run is being built; WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: no Write World sample for the language of the version; SOURCE_HAS_NO_CHAPTERS: the version has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_CEILING_REACHED: the spending ceiling is reached; DOSSIER_TOO_LONG: the dossier is not built and its summary is refused at the start (estimate dossier.refusedTooLong); LLM_NO_PRICE; LLM_STAGE_DISABLED */
       409: {
         headers: {
           [name: string]: unknown;
@@ -22470,7 +22470,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: only ru and en versions for now; SOURCE_HAS_NO_CHAPTERS: the version or the dossier source has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_NO_PRICE; LLM_STAGE_DISABLED */
+      /** @description WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: no Write World sample for the language of the version; SOURCE_HAS_NO_CHAPTERS: the version or the dossier source has no chapter text; DOSSIER_STALE: the source changed after the dossier, rebuild it; RUN_LANGUAGE_UNFINISHED: the translation run is still writing this version; DRAFT_DOSSIER_MISSING: the run dossier of a translated version is gone; LLM_NO_PRICE; LLM_STAGE_DISABLED */
       409: {
         headers: {
           [name: string]: unknown;

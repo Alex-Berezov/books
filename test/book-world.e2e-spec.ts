@@ -237,9 +237,9 @@ describe('BookWorld e2e', () => {
     await app.close();
   });
 
-  it('эталоны ru/en сохраняются: 200; ядро по присутствию — после пересчёта очереди (F08-2, R2)', async () => {
+  it('эталоны пяти языков сохраняются: 200; ядро по присутствию — после пересчёта очереди (F08-2, R2)', async () => {
     const book = await createBookFixture(prisma, `book-world-ref-${unique()}`);
-    for (const language of [Language.ru, Language.en]) {
+    for (const language of [Language.ru, Language.en, Language.es, Language.fr, Language.pt]) {
       const body = JSON.parse(
         readFileSync(join(__dirname, 'fixtures', `example-world.${language}.json`), 'utf8'),
       ) as { language: Language; entities: { quotes: { text: string; chapter: number }[] }[] };
@@ -278,7 +278,7 @@ describe('BookWorld e2e', () => {
         ]);
       }
       // Пересчёт по тексту глав — это строки цитат эталона. Имя Сони стоит в её цитате
-      // («Сонечка», «Sonia»): ядро полное. Имени Раскольникова в его цитатах нет.
+      // («Сонечка», «Sonia»; es «Sónechka», fr «Sonietchka», pt «Sônietchka»): ядро полное. Имени Раскольникова в его цитатах нет.
       await drain(version.id);
       const sonya = await row(version.id, 'sonya');
       expect(sonya.hasCore).toBe(true);
@@ -288,7 +288,7 @@ describe('BookWorld e2e', () => {
       expect(raskolnikov.coreMissing).toEqual(['mentions']);
       await expectListedConsistent(version.id);
 
-      // F08-8c: эталон пары (`prompts/example-world-pair.{ru,en}.json`) — вторым импортом, когда
+      // F08-8c: эталон пары (`prompts/example-world-pair.<lang>.json`, пять языков с `F08-9`) — вторым импортом, когда
       // герои уже в мире; заводится связью героев в анализе. Его цитаты — из эталона героев.
       const pairBody = JSON.parse(
         readFileSync(join(__dirname, 'fixtures', `example-world-pair.${language}.json`), 'utf8'),

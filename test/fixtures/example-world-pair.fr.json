@@ -1,0 +1,59 @@
+{
+  "language": "fr",
+  "entities": [
+    {
+      "key": "raskolnikov--sonya",
+      "type": "pair",
+      "name": "Raskolnikov et Sonia Marmeladova",
+      "short": "Un ancien étudiant orgueilleux qui couve une idée dangereuse, et la fille d'un fonctionnaire ivrogne qu'il ne connaît d'abord que par la confession de son père. Dostoïevski les place côte à côte comme deux réponses à la même misère : lui cherche à en calculer l'issue, elle se donne pour sauver sa famille.",
+      "compare": [
+        {
+          "feature": "Place dans le monde",
+          "a": "Ancien étudiant en droit qui a quitté l'université faute d'argent ; il se cache de sa logeuse dans une mansarde sous les toits.",
+          "chapterA": 1,
+          "b": "Fille du fonctionnaire Marmeladov, née d'un premier mariage ; elle vit avec une belle-mère phtisique et de jeunes enfants affamés.",
+          "chapterB": 2
+        },
+        {
+          "feature": "Réponse à la misère",
+          "a": "Il fait de sa propre misère une théorie : dans la conversation du cabaret, il entend qu'une mort peut acheter cent vies et y voit un signe.",
+          "chapterA": 6,
+          "b": "Après le reproche de sa belle-mère, elle quitte la maison et revient avec trente roubles posés sans un mot sur la table : un sacrifice, non une théorie.",
+          "chapterB": 2
+        },
+        {
+          "feature": "Le sacrifice d'autrui",
+          "a": "Il refuse le sacrifice que sa sœur consent pour lui et mesure de tels sacrifices au destin de Sonia.",
+          "chapterA": 4,
+          "b": "Elle est elle-même le sacrifice que d'autres acceptent : son père boit son argent et s'en confesse au cabaret.",
+          "chapterB": 2
+        },
+        {
+          "feature": "Rapport à la violence",
+          "a": "Dans le rêve du cheval battu à mort, il se précipite pour embrasser son museau et s'épouvante de sa propre pensée du meurtre : à cet instant, sa conscience même rejette ce qu'il a projeté.",
+          "chapterA": 5,
+          "b": "Selon le récit de son père, elle sort dans la rue pour les enfants affamés et paie de sa personne, non de la vie d'autrui : elle n'a aucune idée de droit, et on peut la lire ainsi comme le contrepoids de son projet.",
+          "chapterB": 2
+        }
+      ],
+      "bonds": "On peut le lire ainsi : la même misère pétersbourgeoise les écrase tous deux, et tous deux accomplissent ce que le monde interdit. Raskolnikov se compare lui-même à Sonia : en lisant la lettre de sa mère, il mesure le sacrifice de sa sœur à son destin (chapitre 4).",
+      "differences": "Dans la première partie, la différence tient au mobile : lui mûrit son acte pour une idée et pour s'éprouver lui-même, elle se sacrifie pour sa famille et ne se prouve rien.",
+      "quotes": [
+        {
+          "text": "Sonietchka, Sonietchka Marmeladova, l'éternelle Sonietchka, tant que le monde durera !",
+          "chapter": 4,
+          "speakerKey": "raskolnikov",
+          "aboutKey": "sonya",
+          "interpretation": "En lisant la lettre de sa mère, il mesure le mariage de sa sœur au destin de Sonia : Sonia est pour lui l'image d'un sacrifice qu'il refuse d'accepter."
+        }
+      ],
+      "conclusion": "On peut lire ce couple comme la question centrale du livre posée de deux côtés : est-il permis de passer par-dessus autrui au nom d'une idée ? Le calcul de Raskolnikov et le sacrifice sans calcul de Sonia montrent deux réponses à la même misère.",
+      "faq": [
+        {
+          "question": "Pourquoi Dostoïevski compare-t-il Raskolnikov à Sonia ?",
+          "answer": "La misère pousse l'un et l'autre à franchir une limite interdite, ce qui permet à l'auteur d'opposer le crime commis pour une idée et le sacrifice consenti pour les autres."
+        }
+      ]
+    }
+  ]
+}

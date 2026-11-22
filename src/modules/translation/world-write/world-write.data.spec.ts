@@ -234,14 +234,15 @@ describe('world run stages', () => {
   });
 });
 
-// Q5: ход мира - только ru и en до `F08-9`; эталоны промпта есть только у них.
+// Q5, `F08 | F08-9` Q2: ход мира берёт все пять языков enum; язык без эталона - нет (страж нового языка).
 describe('world run languages', () => {
-  it('ru and en are taken, es, fr and pt are not', () => {
-    expect(['ru', 'en', 'es', 'fr', 'pt'].map(isWorldWriteLanguage)).toEqual([
+  it('ru, en, es, fr and pt are taken, a language without a sample is not', () => {
+    expect(['ru', 'en', 'es', 'fr', 'pt', 'de'].map(isWorldWriteLanguage)).toEqual([
       true,
       true,
-      false,
-      false,
+      true,
+      true,
+      true,
       false,
     ]);
   });

@@ -1,0 +1,179 @@
+{
+  "language": "es",
+  "entities": [
+    {
+      "key": "raskolnikov",
+      "type": "character",
+      "name": "Rodión Románovich Raskólnikov",
+      "role": "main",
+      "aliases": ["Raskólnikov", "Rodión Románovich", "Rodión", "Rodia"],
+      "short": "Antiguo estudiante que malvive en un cuartucho bajo el tejado de una casa de vecinos de San Petersburgo y no paga el alquiler a la patrona. Orgulloso, retraído y dolorosamente sensible a la humillación ajena, alimenta una idea que él mismo teme nombrar en voz alta.",
+      "profile": {
+        "position": "antiguo estudiante de Derecho que dejó la universidad por pobreza; alquila un cuartucho en el callejón S."
+      },
+      "appearance": "Dostoievski traza el retrato del protagonista en el primer capítulo y lo enfrenta a propósito con su ropa: Raskólnikov es extraordinariamente apuesto, alto, delgado y esbelto, de ojos oscuros, pero va vestido con unos harapos tan gastados que cualquier otro se avergonzaría de salir con ellos a la calle de día (capítulo 1). Belleza y miseria en una misma figura anuncian desde el principio la dualidad del personaje: un hombre capaz de mucho, reducido a un estado en el que ya le da igual su aspecto.\n\nLa fiebre y el insomnio lo transforman a ojos vistas: después del sueño del caballo (capítulo 5) y en vísperas de lo que ha planeado (capítulo 6) se mueve como en un delirio, casi sin ver la calle.",
+      "character": "Lo esencial en Raskólnikov es la ruptura entre el pensamiento y el sentimiento. Su pensamiento es frío y audaz: en la conversación entre un estudiante y un oficial en la taberna (capítulo 6) oye su propia idea, una muerte a cambio de cien vidas, y toma la coincidencia por una señal. Su sentimiento, en cambio, está vivo y se resiste: en el primer capítulo va a casa de la usurera a ensayar su plan y siente asco de sí mismo, y después del sueño del caballo apaleado (capítulo 5) está dispuesto a renunciar a la quimera que ahora él mismo maldice.\n\nEl segundo rasgo es un orgullo que no soporta el sacrificio ajeno. La carta de su madre sobre el compromiso de Dunia con Luzhin (capítulos 3–4) la lee como la historia de una hermana que se vende por él, y responde con furia y no con gratitud: aceptar esa ayuda sería reconocerse un don nadie.\n\nY, sin embargo, es capaz de una bondad repentina, casi temeraria: deja sus últimas monedas de cobre en la ventana de los Marmeládov (capítulo 2) y da veinte kopeks a un guardia para que se lleve del bulevar a una muchacha borracha (capítulo 4), y enseguida se enfada consigo mismo por ello. Esa incapacidad de convertirse del todo en lo que se ha propuesto ser sostiene todo su camino.",
+      "arc": {
+        "from": "un solitario pobre y orgulloso que se ha convencido de que el derecho al crimen puede calcularse",
+        "to": "un presidiario que, gracias al amor de Sonia, sale por primera vez de su teoría hacia la vida",
+        "stages": [
+          {
+            "title": "El ensayo",
+            "text": "La visita a la usurera con el pretexto de empeñar un reloj es un ensayo de lo que ha planeado. El protagonista cuenta los pasos, memoriza el piso y sale asqueado de sí mismo: la determinación y la repugnancia por su propia idea conviven en él a la vez.",
+            "chapter": 1
+          },
+          {
+            "title": "El sacrificio ajeno",
+            "text": "La carta de su madre le revela que Dunia se casa con Luzhin por el bien de su hermano. Raskólnikov se niega a aceptar ese sacrificio, y la negativa lo empuja hacia su propio plan: ahora le parece que ya no puede esperar más.",
+            "chapter": 4
+          },
+          {
+            "title": "La decisión",
+            "text": "Una conversación que oyó una vez en la taberna, en la que una muerte se cambiaba por cien vidas como en una simple cuenta, y la hora en que la vieja estará sola, sabida por casualidad la víspera, le parecen una sentencia del destino. Cose una presilla para colgar el hacha y va como si no lo llevara su voluntad, sino el azar.",
+            "chapter": 6
+          }
+        ]
+      },
+      "scenes": [
+        {
+          "chapter": 1,
+          "title": "El ensayo en casa de la usurera",
+          "text": "Raskólnikov lleva a empeñar el reloj de su padre, pero en realidad examina el piso de Aliona Ivánovna. La escena muestra hasta dónde ha llegado ya con el pensamiento y cuánto se avergüenza de ello."
+        },
+        {
+          "chapter": 5,
+          "title": "El sueño del caballo apaleado",
+          "text": "En sueños, el pequeño Rodia ve cómo el borracho Mikolka mata a palos a una yegua flaca y corre a besarle el hocico. Al despertar, el protagonista se pregunta con horror si de verdad tomará un hacha: la compasión del niño sigue viva en él."
+        },
+        {
+          "chapter": 6,
+          "title": "La conversación en la taberna",
+          "text": "Un estudiante le cuenta a un oficial que matar a la usurera para salvar cien vidas es simple aritmética. Raskólnikov oye su propia idea en boca ajena y desde ese momento actúa como si la decisión no fuera suya."
+        }
+      ],
+      "relations": [
+        {
+          "to": "sonya",
+          "label": "la ama"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "era notablemente apuesto, de hermosos ojos oscuros, cabello castaño oscuro, de estatura más que mediana, delgado y esbelto",
+          "chapter": 1,
+          "interpretation": "El retrato del narrador, colocado junto a la descripción de sus harapos. Una belleza que no sirve para nada es el primer rasgo de un hombre que podría hacer mucho, pero se ha encerrado en un cuartucho con su idea."
+        },
+        {
+          "text": "¡Qué empresa quiero acometer y, al mismo tiempo, qué pequeñeces me dan miedo!",
+          "chapter": 1,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Lo piensa camino de la usurera. Ya está aquí toda su discordia interior: considera grande la «empresa» y una nimiedad el miedo a la patrona, y no se da cuenta de que ese miedo es la voz de la conciencia."
+        },
+        {
+          "text": "¿será posible, será posible que de verdad tome un hacha, que la golpee en la cabeza, que le parta el cráneo",
+          "chapter": 5,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Sus primeras palabras después del sueño del caballo. Aquí se nombra por primera vez abiertamente lo que ha planeado, y se nombra con horror: el sentimiento se rebela contra la teoría antes de que se cometa el crimen."
+        },
+        {
+          "text": "¡Si no es la razón, será el demonio!",
+          "chapter": 6,
+          "speakerKey": "raskolnikov",
+          "interpretation": "El protagonista se explica la cadena de casualidades que lo llevan hasta la vieja. Deja de considerar suya la decisión y la carga sobre una fuerza exterior: así la teoría lo libera de la responsabilidad."
+        }
+      ],
+      "faq": [
+        {
+          "question": "¿Por qué la carta de su madre le duele tanto a Raskólnikov?",
+          "answer": "Por la carta (capítulos 3–4) entiende que Dunia se casa con Luzhin por él, para ayudar a su hermano con los estudios y la carrera. Para un hombre orgulloso, aceptar ese sacrificio es admitir su propia insignificancia; por eso decide que la boda no se celebrará, y esa decisión lo empuja todavía más hacia lo que ha planeado."
+        },
+        {
+          "question": "¿Qué significa el sueño de Raskólnikov sobre el caballo?",
+          "answer": "El sueño del capítulo 5 devuelve al protagonista a la infancia, donde llora por una yegua apaleada. Muestra que en él la compasión es más fuerte que la teoría: al despertar, casi renuncia a su plan. El sueño funciona como una última advertencia antes del crimen."
+        }
+      ]
+    },
+    {
+      "key": "sonya",
+      "type": "character",
+      "name": "Sofía Semiónovna Marmeládova (Sonia)",
+      "role": "main",
+      "aliases": ["Sonia", "Sónechka", "Sofía Semiónovna", "Marmeládova"],
+      "short": "Hija del primer matrimonio del funcionario alcoholizado Marmeládov. Para que su madrastra y los niños pequeños no mueran de hambre, se ha visto obligada a vivir con la cartilla amarilla. Callada y tímida, la sostiene una fe que nadie a su alrededor puede arrebatarle.",
+      "profile": {
+        "position": "hija de un consejero titular que ha perdido su empleo; para mantener a la familia se ha visto obligada a sacar la cartilla amarilla",
+        "relationToMain": "aquella en quien Raskólnikov confiará y que lo seguirá"
+      },
+      "appearance": "En los primeros capítulos Sonia no aparece en persona: el lector la ve con los ojos de su padre, en la confesión de Marmeládov en la taberna (capítulo 2), como una muchacha silenciosa que se acuesta de cara a la pared, envuelta en un chal, y a la que solo le tiemblan los hombros. Un gesto ocupa el lugar del retrato: de su aspecto no se dice casi nada, pero sí cómo lleva su vergüenza.",
+      "character": "Lo esencial en Sonia es un sacrificio que no pide gratitud. En el relato de Marmeládov (capítulo 2), ante el reproche de su madrastra, sale de casa en silencio, pasadas las ocho vuelve y deja, también en silencio, treinta rublos sobre la mesa, y después no dice ni una palabra de reproche. Su acto no se discute ni se explica, y en eso está su fuerza: pasa por encima de sí misma, no de otro.\n\nEl segundo rasgo es una mansedumbre que no se convierte en rencor. Marmeládov cuenta que Sonia no le niega ni siquiera el dinero para beber y que Katerina Ivánovna, que la hirió con sus palabras, esa misma noche le besa los pies. Alrededor de Sonia la gente se vuelve mejor de lo que es.\n\nPara Raskólnikov es desde los primeros capítulos una medida. Al leer la carta de su madre (capítulo 4), pone a Sonia junto a Dunia y llama eterno a su sacrificio: las dos se sacrifican por los suyos. Así, antes incluso de que se conozcan, Sonia se convierte en la respuesta a su pregunta sobre el precio del sacrificio ajeno.",
+      "arc": {
+        "from": "una muchacha humillada que se avergüenza de sí misma y a la que el lector conoce solo por la confesión de su padre",
+        "to": "la compañera de Raskólnikov en el presidio, querida por los presidiarios, cuyo amor lo devuelve a la vida",
+        "stages": [
+          {
+            "title": "Sacrificio por la familia",
+            "text": "Según el relato de su padre, Sonia sale de casa tras el reproche de su madrastra y vuelve con treinta rublos. Es lo primero que el lector sabe de ella: se sacrifica en silencio y sin reproches.",
+            "chapter": 2
+          },
+          {
+            "title": "Una imagen en la mente del protagonista",
+            "text": "Raskólnikov, que aún no la ha visto, la pone junto a su hermana y llama eterno a su sacrificio. Sonia se convierte para él en el signo de todo sacrificio que los fuertes aceptan de los débiles.",
+            "chapter": 4
+          }
+        ]
+      },
+      "scenes": [
+        {
+          "chapter": 2,
+          "title": "La confesión de Marmeládov",
+          "text": "Su padre, borracho, cuenta en la taberna cómo Sonia salió con la cartilla amarilla y dejó el dinero sobre la mesa sin decir nada. A través de un relato ajeno, Sonia entra en la novela como encarnación del sacrificio, y Raskólnikov, tras acompañar a Marmeládov a casa, deja en la ventana su último dinero."
+        },
+        {
+          "chapter": 4,
+          "title": "Cavilaciones sobre la carta de la madre",
+          "text": "Raskólnikov compara el sacrificio de Dunia con el de Sonia y comprende que su hermana va hacia el mismo sacrificio, solo que bajo la apariencia de un matrimonio legítimo. Desde esta escena, Sonia es para él la medida del sacrificio ajeno que se niega a aceptar."
+        }
+      ],
+      "relations": [
+        {
+          "to": "raskolnikov",
+          "label": "compañera"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "¿Comprende usted, comprende usted, señor mío, lo que significa no tener ya adónde ir?",
+          "chapter": 2,
+          "interpretation": "Marmeládov empieza el relato sobre su hija con una pregunta sobre el último límite. Sonia llegó a él antes que nadie en la familia, y su camino lo marca ese «no tener ya adónde ir»."
+        },
+        {
+          "text": "Llegó, fue derecha a Katerina Ivánovna y en silencio puso sobre la mesa, delante de ella, treinta rublos.",
+          "chapter": 2,
+          "interpretation": "El acto clave de Sonia, contado por su padre. «En silencio» importa más que la suma: no pide compasión ni gratitud, y ese silencio será su lenguaje en toda la novela."
+        },
+        {
+          "text": "¡A todo se acostumbra el canalla del hombre!",
+          "chapter": 2,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskólnikov piensa en cómo la familia Marmeládov se ha acostumbrado a vivir del dinero de Sonia. El sacrificio de Sonia lo lleva por primera vez a formular la idea de la bajeza humana de la que sacará su teoría."
+        },
+        {
+          "text": "¡Sónechka, Sónechka Marmeládova, eterna Sónechka mientras el mundo exista!",
+          "chapter": 4,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskólnikov convierte a Sonia en una imagen: «eterna» significa que esos sacrificios existirán siempre, mientras unos los acepten de otros. Antes de conocerla ya no ve en ella a una perdida, sino a alguien que se sacrifica."
+        }
+      ],
+      "faq": [
+        {
+          "question": "¿Por qué Sonia sacó la cartilla amarilla?",
+          "answer": "Por la confesión de Marmeládov (capítulo 2): el padre se lo bebe todo, la madrastra, Katerina Ivánovna, está enferma de tisis y sus niños pequeños pasan hambre. Ante un reproche amargo de la madrastra, Sonia sale de casa y trae treinta rublos. No es una caída, sino un sacrificio por la familia, y así lo lee Raskólnikov en el capítulo 4."
+        },
+        {
+          "question": "¿Cuándo aparece Sonia por primera vez en la novela?",
+          "answer": "Al principio solo en el relato de su padre en la taberna (capítulo 2) y en los pensamientos de Raskólnikov sobre la carta de su madre (capítulo 4). El lector conoce su acto antes de verla a ella: Dostoievski da primero el sacrificio y después a la persona."
+        }
+      ]
+    }
+  ]
+}

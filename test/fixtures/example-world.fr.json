@@ -1,0 +1,179 @@
+{
+  "language": "fr",
+  "entities": [
+    {
+      "key": "raskolnikov",
+      "type": "character",
+      "name": "Rodion Romanovitch Raskolnikov",
+      "role": "main",
+      "aliases": ["Raskolnikov", "Rodion Romanovitch", "Rodion", "Rodia", "Rodka"],
+      "short": "Ancien étudiant qui vit dans la misère, au fond d'une mansarde sous les toits d'un immeuble de Pétersbourg, et ne paie plus son loyer à sa logeuse. Orgueilleux, renfermé, douloureusement sensible à l'humiliation des autres, il couve une idée qu'il n'ose pas même formuler à voix haute.",
+      "profile": {
+        "position": "ancien étudiant en droit qui a quitté l'université faute d'argent ; loue une mansarde dans la ruelle S."
+      },
+      "appearance": "Dostoïevski fait son portrait dès le premier chapitre et l'oppose d'emblée à ses vêtements : Raskolnikov est remarquablement beau, grand, mince et bien fait, avec des yeux sombres, mais vêtu de haillons si misérables qu'un autre aurait honte de sortir ainsi en plein jour (chapitre 1). La beauté et la misère réunies dans une même silhouette annoncent tout de suite la dualité du héros : un homme capable de beaucoup, réduit à ne plus se soucier de son apparence.\n\nLa fièvre et l'insomnie le transforment à vue d'œil : après le rêve du cheval (chapitre 5) et à la veille de l'acte projeté (chapitre 6), il avance comme dans un délire, sans presque voir la rue.",
+      "character": "L'essentiel chez Raskolnikov tient à la fracture entre la pensée et le sentiment. Sa pensée est froide et audacieuse : dans la conversation d'un étudiant et d'un officier au cabaret (chapitre 6), il entend sa propre idée, une mort contre cent vies, et prend cette coïncidence pour un signe. Son sentiment, lui, est vivant et résiste : au premier chapitre, il va chez l'usurière pour mettre son projet à l'épreuve et se fait horreur, et après le rêve du cheval battu à mort (chapitre 5) il est prêt à renoncer à ce rêve qu'il maudit désormais.\n\nLe second trait est un orgueil qui ne supporte pas le sacrifice d'autrui. La lettre de sa mère sur les fiançailles de Dounia avec Loujine (chapitres 3–4), il la lit comme le récit d'une sœur qui se vend pour lui, et il y répond par la fureur plutôt que par la reconnaissance : accepter une telle aide reviendrait à s'avouer un moins que rien.\n\nIl est pourtant capable d'une bonté soudaine, presque irréfléchie : il laisse sa dernière monnaie de cuivre sur la fenêtre des Marmeladov (chapitre 2), donne vingt kopecks à un sergent de ville pour qu'il emmène une jeune fille ivre loin du boulevard (chapitre 4), et s'en veut aussitôt. Cette incapacité à devenir tout à fait celui qu'il a décidé d'être porte tout son chemin.",
+      "arc": {
+        "from": "un solitaire pauvre et orgueilleux, persuadé que le droit au crime peut se calculer",
+        "to": "un forçat qui, par l'amour de Sonia, sort pour la première fois de sa théorie vers la vie",
+        "stages": [
+          {
+            "title": "La répétition",
+            "text": "Il se rend chez l'usurière sous prétexte d'engager une montre, en répétition de l'acte projeté. Il compte ses pas, retient la disposition du logement et repart dégoûté de lui-même : la résolution et la répulsion devant sa propre idée vivent en lui côte à côte.",
+            "chapter": 1
+          },
+          {
+            "title": "Le sacrifice d'autrui",
+            "text": "La lettre de sa mère lui apprend que Dounia épouse Loujine pour le bien de son frère. Raskolnikov refuse ce sacrifice, et ce refus le pousse vers son propre projet : il lui semble désormais qu'il ne peut plus attendre.",
+            "chapter": 4
+          },
+          {
+            "title": "La décision",
+            "text": "Une conversation surprise autrefois au cabaret, où l'on échangeait une mort contre cent vies comme dans un simple calcul, et l'heure apprise la veille où la vieille restera seule, il les reçoit comme un arrêt du destin. Il coud un nœud coulant pour la hache et part comme si ce n'était pas sa volonté, mais le hasard qui le menait.",
+            "chapter": 6
+          }
+        ]
+      },
+      "scenes": [
+        {
+          "chapter": 1,
+          "title": "La répétition chez l'usurière",
+          "text": "Raskolnikov apporte en gage la montre de son père, mais en réalité il examine le logement d'Aliona Ivanovna. La scène montre jusqu'où il est déjà allé en pensée et combien il en a honte."
+        },
+        {
+          "chapter": 5,
+          "title": "Le rêve du cheval battu à mort",
+          "text": "En rêve, le petit Rodia voit l'ivrogne Mikolka battre à mort une vieille jument et se précipite pour embrasser son museau. Au réveil, le héros se demande avec horreur s'il prendra vraiment une hache : la compassion de l'enfant est encore vivante en lui."
+        },
+        {
+          "chapter": 6,
+          "title": "La conversation au cabaret",
+          "text": "Un étudiant explique à un officier que tuer l'usurière pour sauver cent vies est une simple arithmétique. Raskolnikov entend sa propre pensée dans la bouche d'un autre et, dès cet instant, agit comme si la décision n'était pas la sienne."
+        }
+      ],
+      "relations": [
+        {
+          "to": "sonya",
+          "label": "aime"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "il était remarquablement beau, avec de magnifiques yeux sombres, des cheveux châtain foncé, une taille au-dessus de la moyenne, mince et bien fait",
+          "chapter": 1,
+          "interpretation": "Le portrait du narrateur, placé juste à côté de la description des haillons du héros. Une beauté sans emploi est le premier signe d'un homme qui pourrait beaucoup, mais s'est enfermé dans une mansarde avec son idée."
+        },
+        {
+          "text": "À quelle entreprise je veux m'attaquer, et en même temps de quelles bagatelles j'ai peur !",
+          "chapter": 1,
+          "speakerKey": "raskolnikov",
+          "interpretation": "La pensée du héros en chemin vers l'usurière. Toute sa discorde intérieure y est déjà : il tient l'« entreprise » pour grande et sa peur de la logeuse pour une bagatelle, sans remarquer que cette peur est la voix de sa conscience."
+        },
+        {
+          "text": "est-ce possible, est-ce possible que je prenne vraiment une hache, que je la frappe à la tête, que je lui fracasse le crâne",
+          "chapter": 5,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Ses premiers mots après le rêve du cheval. Pour la première fois, ce qu'il projette est nommé ouvertement, et nommé avec horreur : le sentiment du héros se révolte contre sa théorie avant même que le crime soit commis."
+        },
+        {
+          "text": "Si ce n'est pas la raison, c'est le démon !",
+          "chapter": 6,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Le héros s'explique la chaîne de hasards qui le conduit chez la vieille. Il cesse de tenir la décision pour la sienne et la reporte sur une force extérieure : ainsi la théorie le décharge de sa responsabilité."
+        }
+      ],
+      "faq": [
+        {
+          "question": "Pourquoi la lettre de sa mère bouleverse-t-elle autant Raskolnikov ?",
+          "answer": "Par la lettre (chapitres 3–4), il comprend que Dounia épouse Loujine pour lui, afin d'aider son frère dans ses études et sa carrière. Pour ce héros orgueilleux, accepter un tel sacrifice revient à consentir à sa propre nullité ; il décide donc que ce mariage n'aura pas lieu, et cette décision le pousse plus encore vers son projet."
+        },
+        {
+          "question": "Que signifie le rêve de Raskolnikov sur le cheval ?",
+          "answer": "Le rêve du chapitre 5 ramène le héros à son enfance, où il pleure sur une jument battue à mort. Il montre que la compassion est en lui plus forte que la théorie : au réveil, il renonce presque à son projet. Le rêve agit comme un dernier avertissement avant le crime."
+        }
+      ]
+    },
+    {
+      "key": "sonya",
+      "type": "character",
+      "name": "Sofia Semionovna Marmeladova (Sonia)",
+      "role": "main",
+      "aliases": ["Sonia", "Sonietchka", "Sofia Semionovna", "Marmeladova"],
+      "short": "La fille que le fonctionnaire ivrogne Marmeladov a eue d'un premier mariage. Pour que sa belle-mère et les jeunes enfants de celle-ci ne meurent pas de faim, elle est contrainte de vivre avec le billet jaune. Silencieuse et timide, elle tient grâce à une foi que personne autour d'elle ne peut lui ôter.",
+      "profile": {
+        "position": "fille d'un conseiller titulaire qui a perdu sa place ; contrainte de prendre le billet jaune pour nourrir la famille",
+        "relationToMain": "celle à qui Raskolnikov se confiera et qui le suivra"
+      },
+      "appearance": "Dans les premiers chapitres, Sonia n'apparaît pas elle-même : le lecteur la voit par les yeux de son père, dans la confession de Marmeladov au cabaret (chapitre 2), jeune fille muette qui se couche le visage tourné vers le mur, enveloppée dans un châle, et dont seules les épaules tressaillent. Le geste tient lieu de portrait : presque rien n'est dit de son apparence, tout est dit de la manière dont elle porte sa honte.",
+      "character": "L'essentiel chez Sonia est un sacrifice qui n'exige aucune reconnaissance. Dans le récit de Marmeladov (chapitre 2), en réponse au reproche de sa belle-mère, elle quitte la maison sans un mot, pose de même en silence trente roubles sur la table vers neuf heures, puis ne prononce pas une parole de reproche. Son acte n'est ni discuté ni expliqué, et c'est là sa force : elle passe par-dessus elle-même, non par-dessus autrui.\n\nLe second trait est une douceur qui ne tourne jamais à l'aigreur. Marmeladov raconte que Sonia ne lui refuse même pas l'argent pour boire, et que Katerina Ivanovna, qui l'a blessée d'un mot, lui baise elle-même les pieds la nuit venue. Auprès de Sonia, les gens deviennent meilleurs qu'ils ne sont.\n\nPour Raskolnikov, elle est une mesure dès les premiers chapitres. En lisant la lettre de sa mère (chapitre 4), il place Sonia à côté de Dounia et dit son sacrifice éternel : toutes deux se sacrifient pour leurs proches. Ainsi, avant même que les deux héros se rencontrent, Sonia devient la réponse à sa question sur le prix du sacrifice d'autrui.",
+      "arc": {
+        "from": "une jeune fille humiliée, honteuse d'elle-même, que le lecteur ne connaît que par la confession de son père",
+        "to": "la compagne de Raskolnikov au bagne, aimée des forçats, dont l'amour le ramène à la vie",
+        "stages": [
+          {
+            "title": "Le sacrifice pour la famille",
+            "text": "Selon le récit de son père, Sonia quitte la maison après le reproche de sa belle-mère et revient avec trente roubles. C'est la première chose que le lecteur apprend d'elle : elle se sacrifie en silence et sans reproche.",
+            "chapter": 2
+          },
+          {
+            "title": "Une image dans l'esprit du héros",
+            "text": "Raskolnikov, qui ne l'a encore jamais vue, la place à côté de sa sœur et dit son sacrifice éternel. Sonia devient pour lui le signe de tout sacrifice que les forts acceptent des faibles.",
+            "chapter": 4
+          }
+        ]
+      },
+      "scenes": [
+        {
+          "chapter": 2,
+          "title": "La confession de Marmeladov",
+          "text": "Le père ivre raconte au cabaret comment Sonia a pris le billet jaune et a posé l'argent sur la table sans un mot. Par le récit d'un autre, Sonia entre dans le roman comme l'incarnation du sacrifice, et Raskolnikov, après avoir raccompagné Marmeladov chez lui, laisse sur la fenêtre ses derniers sous."
+        },
+        {
+          "chapter": 4,
+          "title": "Méditation sur la lettre de la mère",
+          "text": "Raskolnikov compare le sacrifice de Dounia à celui de Sonia et comprend que sa sœur consent au même sacrifice, simplement sous l'apparence d'un mariage légitime. À partir de cette scène, Sonia est pour lui la mesure du sacrifice d'autrui qu'il refuse."
+        }
+      ],
+      "relations": [
+        {
+          "to": "raskolnikov",
+          "label": "compagne"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "Comprenez-vous, comprenez-vous, monsieur, ce que cela veut dire, quand on n'a plus nulle part où aller ?",
+          "chapter": 2,
+          "interpretation": "Marmeladov ouvre le récit sur sa fille par une question sur l'ultime limite. Sonia l'a atteinte avant tous les siens, et son chemin est tout entier défini par ce « nulle part où aller »."
+        },
+        {
+          "text": "Elle est venue, droit à Katerina Ivanovna, et sans dire un mot elle a posé devant elle trente roubles sur la table.",
+          "chapter": 2,
+          "interpretation": "L'acte clé de Sonia, raconté par son père. Le « sans dire un mot » compte plus que la somme : elle ne demande ni pitié ni reconnaissance, et ce silence deviendra sa langue dans tout le roman."
+        },
+        {
+          "text": "L'homme s'habitue à tout, le misérable !",
+          "chapter": 2,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskolnikov pense à la façon dont la famille Marmeladov s'est habituée à vivre de l'argent de Sonia. Le sacrifice de Sonia l'amène pour la première fois à formuler l'idée de la bassesse humaine, dont il tirera sa théorie."
+        },
+        {
+          "text": "Sonietchka, Sonietchka Marmeladova, l'éternelle Sonietchka, tant que le monde durera !",
+          "chapter": 4,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskolnikov fait de Sonia une image : « éternelle » signifie que de tels sacrifices existeront toujours, tant que les uns les accepteront des autres. Avant même de la rencontrer, il voit en Sonia non une femme déchue, mais une femme qui se sacrifie."
+        }
+      ],
+      "faq": [
+        {
+          "question": "Pourquoi Sonia a-t-elle pris le billet jaune ?",
+          "answer": "D'après la confession de Marmeladov (chapitre 2) : le père boit tout, la belle-mère Katerina Ivanovna est phtisique, ses jeunes enfants ont faim. En réponse à un reproche amer de sa belle-mère, Sonia quitte la maison et rapporte trente roubles. Ce n'est pas une chute, mais un sacrifice pour la famille, et c'est ainsi que Raskolnikov le lit au chapitre 4."
+        },
+        {
+          "question": "Quand Sonia apparaît-elle pour la première fois dans le roman ?",
+          "answer": "D'abord seulement dans le récit de son père au cabaret (chapitre 2) et dans les pensées de Raskolnikov sur la lettre de sa mère (chapitre 4). Le lecteur apprend son acte avant de la voir elle-même : Dostoïevski donne d'abord le sacrifice, puis la personne."
+        }
+      ]
+    }
+  ]
+}

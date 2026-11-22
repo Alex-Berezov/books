@@ -1,0 +1,59 @@
+{
+  "language": "pt",
+  "entities": [
+    {
+      "key": "raskolnikov--sonya",
+      "type": "pair",
+      "name": "Raskólnikov e Sônia Marmeládova",
+      "short": "Um ex-estudante orgulhoso que alimenta uma ideia perigosa e a filha de um funcionário arruinado pela bebida, que ele a princípio só conhece pela confissão do pai dela. Dostoiévski os coloca lado a lado como duas respostas à mesma miséria: ele tenta calcular uma saída, ela se entrega para salvar a família.",
+      "compare": [
+        {
+          "feature": "Lugar no mundo",
+          "a": "Ex-estudante de Direito que largou a universidade por falta de dinheiro; esconde-se da senhoria num cubículo sob o telhado.",
+          "chapterA": 1,
+          "b": "Filha do primeiro casamento do funcionário Marmeládov; vive com a madrasta tuberculosa e crianças pequenas que passam fome.",
+          "chapterB": 2
+        },
+        {
+          "feature": "Resposta à miséria",
+          "a": "Transforma a própria miséria em teoria: numa conversa de taberna, ouve que uma morte pode comprar cem vidas e toma isso por um sinal.",
+          "chapterA": 6,
+          "b": "Depois da censura da madrasta, sai de casa e volta com trinta rublos, postos em silêncio sobre a mesa: um sacrifício, não uma teoria.",
+          "chapterB": 2
+        },
+        {
+          "feature": "O sacrifício alheio",
+          "a": "Não aceita o sacrifício que a irmã faz por ele e mede esses sacrifícios pelo destino de Sônia.",
+          "chapterA": 4,
+          "b": "Ela própria é o sacrifício que os outros aceitam: o pai bebe o dinheiro que ela ganha e se confessa disso na taberna.",
+          "chapterB": 2
+        },
+        {
+          "feature": "Atitude diante da violência",
+          "a": "No sonho com o cavalo espancado, corre a beijar o focinho do animal e se horroriza com a própria ideia de matar: naquele instante, a sua própria consciência rejeita o que planejou.",
+          "chapterA": 5,
+          "b": "Segundo o pai, ela vai para a rua pelas crianças famintas e paga com o próprio corpo, não com a vida de outro: não há nela nenhuma ideia de direito, e por isso pode ser lida como o contrapeso do plano dele.",
+          "chapterB": 2
+        }
+      ],
+      "bonds": "Uma leitura possível: os dois são esmagados pela mesma miséria de São Petersburgo, e os dois fazem aquilo que o mundo proíbe. O próprio Raskólnikov se compara a Sônia: ao ler a carta da mãe, mede o sacrifício da irmã pelo destino dela (capítulo 4).",
+      "differences": "Na primeira parte, a diferença está no motivo: ele amadurece o seu ato por uma ideia e para pôr a si mesmo à prova, ela se sacrifica pela família e não prova nada a si mesma.",
+      "quotes": [
+        {
+          "text": "Sônietchka, Sônietchka Marmeládova, eterna Sônietchka, enquanto o mundo existir!",
+          "chapter": 4,
+          "speakerKey": "raskolnikov",
+          "aboutKey": "sonya",
+          "interpretation": "Ao ler a carta da mãe, ele mede o casamento da irmã pelo destino de Sônia: para ele, Sônia é a imagem de um sacrifício que ele não aceita."
+        }
+      ],
+      "conclusion": "O par pode ser lido como a grande pergunta do livro feita por dois lados: é permitido passar por cima de outro em nome de uma ideia? O cálculo de Raskólnikov e o sacrifício sem cálculo de Sônia mostram duas respostas à mesma miséria.",
+      "faq": [
+        {
+          "question": "Por que Dostoiévski compara Raskólnikov com Sônia?",
+          "answer": "A miséria empurra os dois para além de uma linha proibida, e isso permite ao autor opor o crime em nome de uma ideia ao sacrifício em favor dos outros."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,179 @@
+{
+  "language": "pt",
+  "entities": [
+    {
+      "key": "raskolnikov",
+      "type": "character",
+      "name": "Rodion Románovitch Raskólnikov",
+      "role": "main",
+      "aliases": ["Raskólnikov", "Rodion Románovitch", "Rodion", "Ródia"],
+      "short": "Ex-estudante que vive à beira da fome num cubículo sob o telhado de um prédio de São Petersburgo e não paga o aluguel à senhoria. Orgulhoso, fechado e dolorosamente sensível à humilhação alheia, ele alimenta uma ideia que tem medo de dizer em voz alta até para si mesmo.",
+      "profile": {
+        "position": "ex-estudante de Direito que largou a faculdade por pobreza; aluga um cubículo na travessa S."
+      },
+      "appearance": "Dostoiévski apresenta o retrato do herói logo no primeiro capítulo e o choca de propósito com a roupa: Raskólnikov é de uma beleza fora do comum, alto, magro e esbelto, de olhos escuros, mas veste trapos tão gastos que qualquer outro teria vergonha de sair com eles à luz do dia (capítulo 1). Beleza e miséria numa só figura revelam de saída a duplicidade do herói: um homem capaz de muito, reduzido a um estado em que já não se importa com a própria aparência.\n\nA febre e a insônia o transformam a olhos vistos: depois do sonho com o cavalo (capítulo 5) e na véspera do que planejou (capítulo 6), ele anda como em delírio, quase sem perceber a rua.",
+      "character": "O centro de Raskólnikov é a ruptura entre o pensamento e o sentimento. O pensamento é frio e ousado: na conversa entre um estudante e um oficial na taberna (capítulo 6), ele ouve a própria ideia, uma morte em troca de cem vidas, e toma a coincidência por um sinal. Já o sentimento é vivo e resiste: no primeiro capítulo ele vai à casa da usurária testar o seu plano e sente nojo de si mesmo, e depois do sonho com o cavalo espancado (capítulo 5) está pronto a renunciar ao sonho que agora amaldiçoa.\n\nO segundo traço é um orgulho que não suporta o sacrifício alheio. A carta da mãe sobre o noivado de Dúnia com Lújin (capítulos 3–4) soa para ele como a história de uma irmã que se vende por sua causa, e ele responde com fúria, não com gratidão: aceitar essa ajuda seria admitir que não vale nada.\n\nAo mesmo tempo, é capaz de uma bondade súbita, quase insensata: deixa os últimos copeques na janela dos Marmeládov (capítulo 2), dá vinte copeques a um guarda para que leve uma menina embriagada para longe do bulevar (capítulo 4) e logo se irrita consigo mesmo por isso. Essa incapacidade de se tornar por inteiro aquilo que planejou ser sustenta todo o seu percurso.",
+      "arc": {
+        "from": "um solitário pobre e orgulhoso que se convenceu de que o direito ao crime pode ser calculado",
+        "to": "um condenado aos trabalhos forçados que, pelo amor de Sônia, sai pela primeira vez da sua teoria para a vida",
+        "stages": [
+          {
+            "title": "O ensaio",
+            "text": "A visita à usurária com o pretexto de empenhar um relógio é um ensaio do que planejou. O herói conta os passos, memoriza o apartamento e sai com nojo de si mesmo: a determinação e a repulsa pela própria ideia convivem nele ao mesmo tempo.",
+            "chapter": 1
+          },
+          {
+            "title": "O sacrifício alheio",
+            "text": "A carta da mãe revela que Dúnia vai se casar com Lújin por causa do irmão. Raskólnikov se recusa a aceitar esse sacrifício, e a recusa o empurra para o próprio plano: agora lhe parece que não pode mais esperar.",
+            "chapter": 4
+          },
+          {
+            "title": "A decisão",
+            "text": "Uma conversa que ouviu certa vez na taberna, em que uma morte era trocada por cem vidas como numa conta simples, e a hora, descoberta na véspera, em que a velha ficará sozinha soam para o herói como uma sentença do destino. Ele costura uma alça para o machado e vai como se não fosse levado pela vontade, mas pelo acaso.",
+            "chapter": 6
+          }
+        ]
+      },
+      "scenes": [
+        {
+          "chapter": 1,
+          "title": "O ensaio na casa da usurária",
+          "text": "Raskólnikov leva para empenhar o relógio do pai, mas na verdade examina o apartamento de Aliona Ivánovna. A cena mostra até onde ele já foi em pensamento e quanto se envergonha disso."
+        },
+        {
+          "chapter": 5,
+          "title": "O sonho com o cavalo espancado",
+          "text": "No sonho, o pequeno Ródia vê o bêbado Mikolka matar a pancadas uma égua velha e se lança a beijar o focinho dela. Ao acordar, o herói se pergunta com horror se vai mesmo pegar um machado: a compaixão da infância ainda está viva nele."
+        },
+        {
+          "chapter": 6,
+          "title": "A conversa na taberna",
+          "text": "Um estudante diz a um oficial que matar a usurária para salvar cem vidas é pura aritmética. Raskólnikov ouve a própria ideia na boca de outro e, a partir desse momento, age como se a decisão não tivesse sido tomada por ele."
+        }
+      ],
+      "relations": [
+        {
+          "to": "sonya",
+          "label": "ama"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "era notavelmente bonito, de belos olhos escuros, cabelos castanho-escuros, estatura acima da média, magro e esbelto",
+          "chapter": 1,
+          "interpretation": "O retrato feito pelo narrador, posto ao lado da descrição dos trapos do herói. A beleza sem uso é o primeiro sinal de um homem que poderia muito, mas se trancou num cubículo com a sua ideia."
+        },
+        {
+          "text": "Que coisa eu quero tentar e, ao mesmo tempo, de que ninharias tenho medo!",
+          "chapter": 1,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Pensamento do herói a caminho da casa da usurária. Nele já está todo o seu conflito: considera grandiosa a “coisa” e mesquinho o medo da senhoria, sem perceber que esse medo é a voz da consciência."
+        },
+        {
+          "text": "será possível, será possível que eu vá mesmo pegar um machado, bater-lhe na cabeça, esmagar-lhe o crânio",
+          "chapter": 5,
+          "speakerKey": "raskolnikov",
+          "interpretation": "As primeiras palavras depois do sonho com o cavalo. Pela primeira vez o que ele planejou é dito com todas as letras, e dito com horror: o sentimento do herói se rebela contra a teoria antes que o crime seja cometido."
+        },
+        {
+          "text": "Se não é a razão, é o demônio!",
+          "chapter": 6,
+          "speakerKey": "raskolnikov",
+          "interpretation": "O herói explica a si mesmo a cadeia de acasos que o leva até a velha. Deixa de considerar a decisão como sua e a transfere para uma força externa: assim a teoria o livra da responsabilidade."
+        }
+      ],
+      "faq": [
+        {
+          "question": "Por que a carta da mãe abala tanto Raskólnikov?",
+          "answer": "Pela carta (capítulos 3–4), ele entende que Dúnia vai se casar com Lújin por causa dele, para ajudar o irmão nos estudos e na carreira. Para um herói orgulhoso, aceitar esse sacrifício significa concordar com a própria insignificância; por isso decide que o casamento não vai acontecer, e essa decisão o empurra ainda mais para o que planejou."
+        },
+        {
+          "question": "O que significa o sonho de Raskólnikov com o cavalo?",
+          "answer": "O sonho do capítulo 5 leva o herói de volta à infância, quando chora sobre uma égua espancada até a morte. Mostra que a compaixão nele é mais forte que a teoria: ao acordar, ele quase desiste do plano. O sonho funciona como um último aviso antes do crime."
+        }
+      ]
+    },
+    {
+      "key": "sonya",
+      "type": "character",
+      "name": "Sófia Semiónovna Marmeládova (Sônia)",
+      "role": "main",
+      "aliases": ["Sônia", "Sônietchka", "Sófia Semiónovna", "Marmeládova"],
+      "short": "Filha do primeiro casamento de Marmeládov, um funcionário arruinado pela bebida. Para que a madrasta e os filhos pequenos dela não morram de fome, é obrigada a viver com o bilhete amarelo. Calada e tímida, ela se sustenta numa fé que ninguém à sua volta consegue lhe tirar.",
+      "profile": {
+        "position": "filha de um conselheiro titular que perdeu o emprego; para sustentar a família, é obrigada a tirar o bilhete amarelo",
+        "relationToMain": "aquela em quem Raskólnikov vai confiar e que vai segui-lo"
+      },
+      "appearance": "Nos primeiros capítulos Sônia não aparece em pessoa: o leitor a vê pelos olhos do pai, na confissão de Marmeládov na taberna (capítulo 2), como uma moça calada que se deita com o rosto voltado para a parede, enrolada num xale, e só os ombros estremecem. Aqui o gesto ocupa o lugar do retrato: quase nada se diz da aparência, mas se diz como ela carrega a sua vergonha.",
+      "character": "O centro de Sônia é o sacrifício que não pede gratidão. No relato de Marmeládov (capítulo 2), diante da censura da madrasta, ela sai de casa em silêncio e, depois das oito da noite, põe também em silêncio trinta rublos sobre a mesa, sem dizer depois nenhuma palavra de queixa. O seu gesto não é discutido nem explicado, e nisso está a sua força: ela passa por cima de si mesma, e não de outra pessoa.\n\nO segundo traço é uma mansidão que não se transforma em rancor. Marmeládov conta que Sônia não lhe recusa nem dinheiro para a bebida e que Catierina Ivánovna, que a feriu com uma palavra, naquela mesma noite lhe beija os pés. Perto de Sônia, as pessoas se tornam melhores do que são.\n\nPara Raskólnikov, ela é desde os primeiros capítulos uma medida. Ao ler a carta da mãe (capítulo 4), ele a põe ao lado de Dúnia e chama o seu sacrifício de eterno: as duas se sacrificam pelos seus. Assim, antes mesmo de os dois se conhecerem, Sônia se torna a resposta à pergunta dele sobre o preço do sacrifício alheio.",
+      "arc": {
+        "from": "uma moça humilhada, envergonhada de si mesma, que o leitor conhece apenas pela confissão do pai",
+        "to": "a companheira de Raskólnikov nos trabalhos forçados, querida pelos presos, cujo amor o devolve à vida",
+        "stages": [
+          {
+            "title": "O sacrifício pela família",
+            "text": "Segundo o relato do pai, depois da censura da madrasta Sônia sai de casa e volta com trinta rublos. É a primeira coisa que o leitor sabe dela: ela se sacrifica em silêncio e sem queixa.",
+            "chapter": 2
+          },
+          {
+            "title": "Uma imagem no pensamento do herói",
+            "text": "Raskólnikov, que ainda não a viu, a põe ao lado da irmã e chama o seu sacrifício de eterno. Sônia se torna para ele o sinal de todo sacrifício que os fortes aceitam dos fracos.",
+            "chapter": 4
+          }
+        ]
+      },
+      "scenes": [
+        {
+          "chapter": 2,
+          "title": "A confissão de Marmeládov",
+          "text": "O pai bêbado conta na taberna como Sônia passou a viver com o bilhete amarelo e pôs o dinheiro sobre a mesa sem dizer nada. Pelo relato de outro, Sônia entra no romance como a encarnação do sacrifício, e Raskólnikov, depois de levar Marmeládov para casa, deixa na janela o último dinheiro que tinha."
+        },
+        {
+          "chapter": 4,
+          "title": "Reflexões sobre a carta da mãe",
+          "text": "Raskólnikov compara o sacrifício de Dúnia com o de Sônia e entende que a irmã faz o mesmo sacrifício, só que disfarçado de casamento legítimo. A partir dessa cena, Sônia é para ele a medida do sacrifício alheio que ele recusa."
+        }
+      ],
+      "relations": [
+        {
+          "to": "raskolnikov",
+          "label": "companheira"
+        }
+      ],
+      "quotes": [
+        {
+          "text": "O senhor entende, entende, meu caro senhor, o que significa não ter mais para onde ir?",
+          "chapter": 2,
+          "interpretation": "Marmeládov começa a falar da filha com uma pergunta sobre o último limite. Sônia chegou lá antes de todos na família, e o seu caminho é definido por esse “não ter mais para onde ir”."
+        },
+        {
+          "text": "Chegou e foi direto até Catierina Ivánovna, e pôs em silêncio trinta rublos na mesa diante dela.",
+          "chapter": 2,
+          "interpretation": "O gesto decisivo de Sônia, contado pelo pai. A expressão “em silêncio” pesa mais que a quantia: ela não pede pena nem gratidão, e esse silêncio será a sua linguagem em todo o romance."
+        },
+        {
+          "text": "O homem se acostuma a tudo, o canalha!",
+          "chapter": 2,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskólnikov pensa em como a família Marmeládov se acostumou a viver do dinheiro de Sônia. O sacrifício dela o leva pela primeira vez a formular a ideia da baixeza humana, da qual ele vai tirar a sua teoria."
+        },
+        {
+          "text": "Sônietchka, Sônietchka Marmeládova, eterna Sônietchka, enquanto o mundo existir!",
+          "chapter": 4,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskólnikov transforma Sônia numa imagem: “eterna” quer dizer que sacrifícios assim existirão sempre, enquanto uns os aceitarem dos outros. Antes mesmo de conhecê-la, ele vê em Sônia não uma mulher perdida, mas alguém que se sacrifica."
+        }
+      ],
+      "faq": [
+        {
+          "question": "Por que Sônia passou a viver com o bilhete amarelo?",
+          "answer": "Pela confissão de Marmeládov (capítulo 2): o pai bebe tudo, a madrasta Catierina Ivánovna está tuberculosa e os filhos pequenos dela passam fome. Depois de uma censura amarga da madrasta, Sônia sai de casa e traz trinta rublos. Não é uma queda, mas um sacrifício pela família, e é assim que Raskólnikov a entende no capítulo 4."
+        },
+        {
+          "question": "Quando Sônia aparece pela primeira vez no romance?",
+          "answer": "No início, apenas no relato do pai na taberna (capítulo 2) e nos pensamentos de Raskólnikov sobre a carta da mãe (capítulo 4). O leitor conhece o gesto dela antes de vê-la: Dostoiévski mostra primeiro o sacrifício e só depois a pessoa."
+        }
+      ]
+    }
+  ]
+}

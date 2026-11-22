@@ -491,7 +491,7 @@ describe('World run «Write World» (e2e)', () => {
     expect(await prisma.contentDraft.count({ where: { bookVersionId: versionId } })).toBe(0);
   });
 
-  it('refusals: no analysis or no main character - 409 WORLD_ANALYSIS_MISSING; a version not in ru/en - 409 WORLD_LANGUAGE_UNSUPPORTED', async () => {
+  it('refusals: no analysis or no main character - 409 WORLD_ANALYSIS_MISSING; a fr version is taken (F08-9)', async () => {
     const bare = await version({ analysis: false });
     for (const path of [`${base(bare)}/estimate`, base(bare)]) {
       const res = await auth(path.endsWith('estimate') ? http().get(path) : http().post(path))
@@ -503,11 +503,10 @@ describe('World run «Write World» (e2e)', () => {
       data: { bookVersionId: bare, characters: [ANALYSIS_CHARACTERS[2]] },
     });
     expect((await start(bare).expect(409)).body.code).toBe('WORLD_ANALYSIS_MISSING');
+    // Язык вне хода - 409 WORLD_LANGUAGE_UNSUPPORTED - посажен юнитом на подставной язык (`F08 | F08-9` Q2).
     const fr = await version({ language: Language.fr });
-    expect((await start(fr).expect(409)).body.code).toBe('WORLD_LANGUAGE_UNSUPPORTED');
-    expect((await auth(http().get(`${base(fr)}/estimate`)).expect(409)).body.code).toBe(
-      'WORLD_LANGUAGE_UNSUPPORTED',
-    );
+    const frEstimate = await auth(http().get(`${base(fr)}/estimate`)).expect(200);
+    expect(frEstimate.body).toMatchObject({ candidates: 2, pairs: 1 });
     expect(calls).toHaveLength(0);
   });
 

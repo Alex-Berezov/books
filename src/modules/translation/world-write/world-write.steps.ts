@@ -195,7 +195,6 @@ function dossierNames(dossier: unknown): string {
   return lines.length > 0 ? lines.join('\n') : NONE;
 }
 
-/** Пример страницы для промпта: эталон языка версии (только `ru`/`en`, Q5). */
 /** Эталон языка версии; языка вне хода нет - старт и оценка ему отказывают (Q5), эталона нет. */
 const exampleOf = (language: Language): string =>
   isWorldWriteLanguage(language) ? JSON.stringify(EXAMPLE_WORLDS[language]) : NONE;

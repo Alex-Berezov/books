@@ -115,10 +115,10 @@ const ANALYSIS_ESTIMATE_CONFLICTS = [
 
 /**
  * Отказы старта хода мира (`F08-4a`): общие части ходов и свои - нет анализа с героем `main`
- * (решение арбитра `F08 | F08-4`, Q4), язык не `ru`/`en` (Q5).
+ * (решение арбитра `F08 | F08-4`, Q4), язык без эталона хода (Q5, `F08 | F08-9` Q2).
  */
 const WORLD_CONFLICTS =
-  'WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: only ru and en versions for now';
+  'WORLD_ANALYSIS_MISSING: the version has no analysis or no main character in it; WORLD_LANGUAGE_UNSUPPORTED: no Write World sample for the language of the version';
 
 const WORLD_START_CONFLICTS = [
   'DRAFT_IN_PROGRESS: a world run is being built',

@@ -136,7 +136,7 @@ export class WorldWriteService {
 
   /**
    * Ручной старт: прежний готовый или упавший ход отбрасывается; один строящийся ход вида на версию -
-   * частичным уникальным индексом (`DRAFT_IN_PROGRESS`). Автозапуска у хода мира нет до `F08-9`.
+   * частичным уникальным индексом (`DRAFT_IN_PROGRESS`). Автозапуска у хода мира нет до `F08-9b`.
    */
   async start(
     versionId: string,
@@ -458,7 +458,7 @@ export class WorldWriteService {
 
   /**
    * Оценка (`tech.md` §5) по числу героев `main` и `secondary` анализа (верхняя граница до порога
-   * глав) и главам версии; досье или глоссария ещё нет - вход сверху потолком их этапов. Отказы: нет глав, язык не `ru`/`en` (Q5), нет анализа
+   * глав) и главам версии; досье или глоссария ещё нет - вход сверху потолком их этапов. Отказы: нет глав, язык вне `WORLD_WRITE_LANGUAGES` (Q5, `F08 | F08-9` Q2), нет анализа
    * или в нём нет героя `main` (Q4).
    */
   private async estimateOf(versionId: string) {
@@ -470,7 +470,7 @@ export class WorldWriteService {
     if (!isWorldWriteLanguage(version.language)) {
       throw llmTaskConflict(
         WORLD_LANGUAGE_UNSUPPORTED,
-        'Write World takes only ru and en versions for now',
+        'Write World has no sample for the language of this version',
       );
     }
     const analysisRow = await this.prisma.bookAnalysis.findUnique({

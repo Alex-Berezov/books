@@ -554,8 +554,17 @@ describe('choosePairs: pairs of the run and what the choice left out (F08-8e)', 
     ]);
   });
 
+  it.each(['es', 'fr', 'pt'])(
+    '%s has a pair sample: the pair by common chapters (F08-9)',
+    (language) => {
+      const got = choosePairs(context(language), chosen);
+      expect(got.pairsOff).toBeNull();
+      expect(got.pairs.map((p) => p.key)).toEqual(['anna--boris']);
+    },
+  );
+
   it('a language without a pair sample: no pairs, WORLD_PAIR_LANGUAGE; the heroes are still left out with their reason', () => {
-    const got = choosePairs(context('es'), chosen);
+    const got = choosePairs(context('de'), chosen);
     expect(got).toEqual({
       pairs: [],
       pairsOff: 'WORLD_PAIR_LANGUAGE',
