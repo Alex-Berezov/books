@@ -20,6 +20,7 @@ import type {
   BookWorldRelationDto,
   BookWorldSceneDto,
 } from './dto/book-world-blocks.dto';
+import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
 import type { BookWorldEntityInputDto } from './dto/update-book-world.dto';
 import type {
   BookWorldEditorDto,
@@ -212,6 +213,7 @@ export function readStoredBlocks(blocks: unknown): StoredWorldBlocks {
 }
 
 export function readStoredEntity(row: WorldPublicRow): StoredWorldEntity {
+  const blocks = readStoredBlocks(row.blocks);
   return {
     key: row.key,
     type: row.type,
@@ -220,8 +222,27 @@ export function readStoredEntity(row: WorldPublicRow): StoredWorldEntity {
     aliases: readStringList(row.aliases),
     short: row.short,
     sources: (row.sources as BookAnalysisSourceDto[] | null) ?? null,
-    ...readStoredBlocks(row.blocks),
+    ...blocks,
+    scenes: withoutParagraph(blocks.scenes),
   };
+}
+
+/**
+ * Сцены без `paragraph`: номер абзаца не хранится, его считает выдача (`sceneParagraph`). Снимается
+ * и с хранимого (записи до `F08-10a`), и с входа - иначе карточка, сохранённая с номером из GET,
+ * или сдвиг абзаца пересчётом считались бы правкой текста и снимали страницу с сайта (R9,
+ * решение арбитра `F08 | F08-10a` Q1: «input ignored»).
+ */
+function withoutParagraph(
+  scenes: readonly BookWorldSceneDto[] | null | undefined,
+): BookWorldSceneDto[] | null {
+  // Колонка читается как есть: не массив или не объект в списке - прежнее значение, без падения.
+  if (!Array.isArray(scenes)) return (scenes as BookWorldSceneDto[] | null | undefined) ?? null;
+  return scenes.map((scene: unknown) => {
+    if (!isRecord(scene)) return scene as BookWorldSceneDto;
+    const rest = Object.fromEntries(Object.entries(scene).filter(([key]) => key !== 'paragraph'));
+    return rest as unknown as BookWorldSceneDto;
+  });
 }
 
 const numberList = (v: unknown): number[] =>
@@ -243,6 +264,24 @@ export function coPresenceWith(mentions: unknown, other: string): number[] {
   const chapters =
     isRecord(mentions) && isRecord(mentions.coPresence) ? mentions.coPresence[other] : undefined;
   return numberList(chapters).sort((x, y) => x - y);
+}
+
+/**
+ * Абзац сцены в главе `chapter` (с 1): первый абзац с формой имени по свежему подсчёту
+ * `mentions.paragraphs` (индексы `paragraphsOf(htmlToParagraphs)` с 0). Считается при чтении, а не
+ * хранится: пересчёт после правки главы сдвигает его сам, старые миры получают его без записи
+ * (решения арбитра `F08 | F08-10` Q2-Q3, `F08 | F08-10a` Q1). Нет главы или абзацев - `null`.
+ */
+export function sceneParagraph(mentions: unknown, chapter: number): number | null {
+  const at =
+    isRecord(mentions) && isRecord(mentions.paragraphs)
+      ? numberList(mentions.paragraphs[String(chapter)]).filter(
+          (n) => Number.isInteger(n) && n >= 0,
+        )
+      : [];
+  // Номер сверх предела входа DTO - `null`: GET -> PUT карточки не должен давать 400.
+  const first = at.length > 0 ? Math.min(...at) + 1 : null;
+  return first !== null && first <= BOOK_WORLD_LIMITS.paragraph ? first : null;
 }
 
 /**
@@ -338,7 +377,7 @@ export function mergeEntity(
   for (const key of CONTENT_KEYS) {
     const incoming = input[key];
     if (incoming === undefined) continue;
-    out[key] = compactBlock(incoming);
+    out[key] = compactBlock(key === 'scenes' ? withoutParagraph(input.scenes) : incoming);
   }
   return out as unknown as StoredWorldEntity;
 }
@@ -426,6 +465,18 @@ export function toEntityDto(
     s.scenes = s.scenes ? s.scenes.filter(fresh('scenes')) : null;
     if (s.arc?.stages) s.arc = { ...s.arc, stages: s.arc.stages.filter(fresh('arc.stages')) };
     s.compare = s.compare ? s.compare.filter((c) => !stale.has(worldCompareKey(c))) : null;
+  }
+  // Сохранённый `paragraph` не берётся: абзац сцены - из свежего подсчёта (`sceneParagraph`).
+  // Мусор в колонке (не массив, не объект в списке) отдаётся как лежит - без 500 у редактора.
+  if (Array.isArray(s.scenes)) {
+    s.scenes = s.scenes.map((scene: unknown) =>
+      isRecord(scene)
+        ? ({
+            ...scene,
+            paragraph: sceneParagraph(row.mentions, Number(scene.chapter)),
+          } as BookWorldSceneDto)
+        : (scene as BookWorldSceneDto),
+    );
   }
   return {
     ...toSummary(row),

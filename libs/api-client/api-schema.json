@@ -8775,8 +8775,8 @@
             "type": "number"
           },
           "paragraph": {
-            "description": "Paragraph index in the chapter (F08-10); optional",
-            "minimum": 0,
+            "description": "1-based paragraph number in the chapter (paragraphsOf(htmlToParagraphs)), the first paragraph with a name form of the entity; computed on read from the counted mentions, input ignored (F08-10a); null - no name form in the chapter",
+            "minimum": 1,
             "nullable": true,
             "type": "number"
           },

@@ -452,12 +452,63 @@ describe('BookWorld e2e', () => {
       .expect(200);
     expect(res.body.entity.short).toBe('A landowner who rarely leaves his sofa.');
     expect(res.body.entity.appearance).toBeNull();
+    // Присутствие не посчитано - абзаца сцены нет (F08-10a).
     expect(res.body.entity.scenes).toEqual([
-      { chapter: 2, title: 'Letter', text: 'He ignores the letter.' },
+      { chapter: 2, title: 'Letter', text: 'He ignores the letter.', paragraph: null },
     ]);
     expect(res.body.entity.quotes).toHaveLength(3);
     expect((await row(versionId, 'zakhar')).name).toBe('Zakhar');
     await expectListedConsistent(versionId);
+  });
+
+  // F08-10a, решение арбитра `F08 | F08-10a` Q1-Q2: абзац сцены считается при чтении из подсчёта
+  // присутствия (сохранённый игнорируется, старая сцена без него получает номер), номер с 1.
+  it('абзац сцены: из пересчёта присутствия читателю и редактору; 0 - 400', async () => {
+    const { versionId } = await createVersion();
+    // Пересчёт дописывает имя последним абзацем глав: в главе 1 - третий, в главе 3 - второй.
+    await makeListed(
+      versionId,
+      'oblomov',
+      hero('oblomov', {
+        scenes: [
+          { chapter: 1, title: 'Morning', text: 'He does not get up.', paragraph: 9 },
+          { chapter: 3, title: 'The dream', text: 'He dreams of his childhood.' },
+        ],
+      }),
+    );
+    const paragraphs = (body: { entity: { scenes: Array<{ paragraph: number | null }> } }) =>
+      body.entity.scenes.map((x) => x.paragraph);
+    const editor = await request(http())
+      .get(`/versions/${versionId}/world/oblomov`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(paragraphs(editor.body)).toEqual([3, 2]);
+    const reader = await request(http()).get(`/versions/${versionId}/world/oblomov`).expect(200);
+    expect(paragraphs(reader.body)).toEqual([3, 2]);
+    expect(JSON.stringify(reader.body)).not.toContain('"paragraphs"');
+
+    // Карточка админки сохраняет сущность целиком, с номерами из GET: это не правка текста -
+    // страница остаётся на сайте, `autoTextAt` не сдвигается, номер в базу не пишется.
+    const before = await row(versionId, 'oblomov');
+    await putEntity(versionId, 'oblomov', {
+      language: 'en',
+      key: 'oblomov',
+      type: 'character',
+      scenes: editor.body.entity.scenes,
+    }).expect(200);
+    const after = await row(versionId, 'oblomov');
+    expect(after.isListed).toBe(true);
+    expect(after.autoTextAt).toEqual(before.autoTextAt);
+    expect(JSON.stringify(after.blocks)).not.toContain('paragraph');
+
+    await put(versionId, {
+      language: 'en',
+      entities: [
+        hero('oblomov', {
+          scenes: [{ chapter: 1, title: 'Morning', text: 'He does not get up.', paragraph: 0 }],
+        }),
+      ],
+    }).expect(400);
   });
 
   it('PUT сущности: ключ тела ≠ адресу — 400; неверный ключ адреса — 404; запись и isListed', async () => {

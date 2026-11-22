@@ -7984,7 +7984,7 @@ export interface components {
     };
     BookWorldSceneDto: {
       chapter: number;
-      /** @description Paragraph index in the chapter (F08-10); optional */
+      /** @description 1-based paragraph number in the chapter (paragraphsOf(htmlToParagraphs)), the first paragraph with a name form of the entity; computed on read from the counted mentions, input ignored (F08-10a); null - no name form in the chapter */
       paragraph?: number | null;
       text: string;
       title: string;

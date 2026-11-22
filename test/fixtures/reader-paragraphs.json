@@ -1,0 +1,23 @@
+{
+  "_note": "Paragraph numbering shared by the backend (paragraphsOf(htmlToParagraphs)) and the reader (?chapter=N&p=K): paragraph K is paragraphs[K-1]. Byte-identical copy in books/test/fixtures and books-front/__tests__/fixtures (F08-10a).",
+  "html": "Root text before blocks <em>with emphasis</em><h1>Chapter One</h1><p>First <strong>plain</strong> paragraph.</p><p> </p><p><br></p><h3>A <u>sub</u>heading</h3><blockquote>Quoted line<p>Quoted paragraph.</p>tail of the quote</blockquote><ul><li>Item one</li><li>Item two<ul><li>Nested item</li></ul></li></ul><hr><ol><li>Numbered</li></ol><figure><img src=\"https://cdn.example.test/a.webp\" alt=\"Alt text\" title=\"Title text\"><figcaption>The caption</figcaption></figure><pre>Line one\nline two</pre>between blocks <a href=\"https://example.test\">a link</a><h2><img src=\"https://cdn.example.test/m.webp\" alt=\"Map\"></h2><h6>Last heading</h6><p>Line<br>break and <code>code</code>.</p>",
+  "paragraphs": [
+    "Root text before blocks with emphasis",
+    "## Chapter One",
+    "First plain paragraph.",
+    "## A subheading",
+    "Quoted line",
+    "Quoted paragraph.",
+    "tail of the quote",
+    "Item one",
+    "Item two",
+    "Nested item",
+    "Numbered",
+    "The caption",
+    "Line one line two",
+    "between blocks a link",
+    "##",
+    "## Last heading",
+    "Line break and code."
+  ]
+}

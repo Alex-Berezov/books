@@ -226,8 +226,9 @@ const ENTITIES_EN: EntitySeed[] = [
           { title: 'The end', text: 'She closes the map.', chapter: 3 },
         ],
       },
-      // «Полный» герой — все блоки страницы героя (`product.md` §5): кто говорит в цитате, абзац
-      // сцены, экранизации и внешние блоки с источниками.
+      // «Полный» герой — все блоки страницы героя (`product.md` §5): кто говорит в цитате,
+      // экранизации и внешние блоки с источниками. Абзац сцены не пишется: его считает выдача
+      // из `MENTIONS_EN` (`F08-10a`) - у сцен глав 1 и 2 это абзацы 1 и 2.
       quotes: QUOTES_EN.map(([chapter, text], i) => ({
         text,
         chapter,
@@ -238,7 +239,6 @@ const ENTITIES_EN: EntitySeed[] = [
         chapter,
         title,
         text: `${title} in chapter ${chapter}.`,
-        paragraph: 0,
       })),
       relations: [{ to: 'tom-reed', label: 'Friend and fellow traveller' }],
       adaptations: [
@@ -395,7 +395,8 @@ const ENTITIES_EN: EntitySeed[] = [
       chapters: [1, 2, 3],
       first: 1,
       perChapter: {},
-      paragraphs: {},
+      // Абзацы пары - объединение абзацев Анны и Тома по общим главам (`pairMentions`, F08-10a).
+      paragraphs: { '1': [0, 1, 2], '2': [1], '3': [0, 1] },
       coPresence: {},
       stale: [],
     },

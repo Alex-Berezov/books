@@ -25,6 +25,16 @@ describe('pairMentions (F08-8c)', () => {
     });
   });
 
+  // F08-10a, решение арбитра `F08 | F08-10a` Q1: абзацы пары - объединение абзацев обоих героев
+  // по общим главам.
+  it('абзацы пары по общим главам - объединение абзацев обоих героев', () => {
+    const byKey = new Map<string, WorldMentions>([
+      ['anna', { ...counted({ tom: [2, 5] }), paragraphs: { '1': [0], '2': [4, 1], '5': [3] } }],
+      ['tom', { ...counted({ anna: [2, 5] }), paragraphs: { '2': [1, 0], '3': [2] } }],
+    ]);
+    expect(pairMentions('anna--tom', byKey).paragraphs).toEqual({ '2': [0, 1, 4], '5': [3] });
+  });
+
   it('вместе нигде, героя нет в подсчёте или ключ не пары — глав нет', () => {
     const byKey = new Map([['anna', counted({ olga: [1] })]]);
     for (const key of ['anna--tom', 'olga--tom', 'anna']) {

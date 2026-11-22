@@ -99,8 +99,10 @@ export async function countWorldMentions(
 }
 
 /**
- * Присутствие пары (Q6): главы, где оба героя ключа, — `coPresence` первого со вторым; счёта по
- * главам, абзацев и соседей у пары нет. Героя нет в подсчёте — глав нет.
+ * Присутствие пары (Q6): главы, где оба героя ключа, — `coPresence` первого со вторым; абзацы
+ * по этим главам — объединение абзацев обоих героев (абзац сцены пары, решения арбитра
+ * `F08 | F08-10` Q3, `F08 | F08-10a` Q1); счёта по главам и соседей у пары нет. Героя нет
+ * в подсчёте — глав нет.
  */
 export function pairMentions(
   key: string,
@@ -108,5 +110,12 @@ export function pairMentions(
 ): WorldMentions {
   const members = pairMembers(key);
   const chapters = members ? coPresenceWith(counted.get(members[0]), members[1]) : [];
-  return { chapters, first: chapters[0] ?? null, perChapter: {}, paragraphs: {}, coPresence: {} };
+  const paragraphs: Record<string, number[]> = {};
+  for (const n of chapters) {
+    const at = new Set(
+      (members ?? ([] as string[])).flatMap((m) => counted.get(m)?.paragraphs[String(n)] ?? []),
+    );
+    if (at.size > 0) paragraphs[String(n)] = [...at].sort((a, b) => a - b);
+  }
+  return { chapters, first: chapters[0] ?? null, perChapter: {}, paragraphs, coPresence: {} };
 }

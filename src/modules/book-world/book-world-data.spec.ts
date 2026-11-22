@@ -5,6 +5,7 @@ import {
   WORLD_SUMMARY_SELECT,
   editorOf,
   mergeEntity,
+  readStoredEntity,
   readMentions,
   toEntityDto,
   toReaderSummary,
@@ -66,6 +67,74 @@ describe('worldContentChanged (F08-1, R9)', () => {
         mergeEntity(before, { key: 'oblomov', type: 'character', short: ' Who he is. ' }),
       ),
     ).toBe(false);
+  });
+
+  // F08-10a: номер абзаца сцены не хранится и не меняет содержание - его считает выдача.
+  it('сцена с номером абзаца из GET - без изменений, номер не хранится', () => {
+    const scene = { chapter: 1, title: 'T', text: 'S' };
+    const before = stored({ scenes: [scene] });
+    const merged = mergeEntity(before, {
+      key: 'oblomov',
+      type: 'character',
+      scenes: [{ ...scene, paragraph: 3 }],
+    });
+    expect(worldContentChanged(before, merged)).toBe(false);
+    expect(merged.scenes).toEqual([scene]);
+  });
+
+  it('хранимая сцена с номером (запись до F08-10a) - номер снят при чтении, без изменений', () => {
+    const scene = { chapter: 1, title: 'T', text: 'S' };
+    const row = {
+      key: 'oblomov',
+      type: 'character' as const,
+      name: 'Oblomov',
+      role: 'main',
+      aliases: null,
+      short: 'Who.',
+      sources: null,
+      blocks: { scenes: [{ ...scene, paragraph: 7 }] },
+    } as unknown as Parameters<typeof readStoredEntity>[0];
+    const existing = readStoredEntity(row);
+    expect(existing.scenes).toEqual([scene]);
+    const merged = mergeEntity(existing, { key: 'oblomov', type: 'character', short: 'Who.' });
+    expect(worldContentChanged(existing, merged)).toBe(false);
+  });
+
+  it('мусор в хранимых сценах читается без падения', () => {
+    const odd = (scenes: unknown) =>
+      readStoredEntity({
+        key: 'k',
+        type: 'character',
+        name: 'K',
+        role: null,
+        aliases: null,
+        short: null,
+        sources: null,
+        blocks: { scenes },
+      } as unknown as Parameters<typeof readStoredEntity>[0]).scenes;
+    expect(odd({})).toEqual({});
+    expect(odd([null])).toEqual([null]);
+  });
+
+  it('мусор в хранимых сценах - страница редактора отдаётся без падения', () => {
+    const row = {
+      key: 'k',
+      type: 'character',
+      name: 'K',
+      role: null,
+      aliases: null,
+      short: null,
+      sources: null,
+      mentions: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    for (const scenes of [{}, [null]]) {
+      const dto = toEntityDto({ ...row, blocks: { scenes } } as unknown as Parameters<
+        typeof toEntityDto
+      >[0]);
+      expect(dto.scenes).toEqual(scenes);
+    }
   });
 
   it('изменилось любое содержательное поле — изменение', () => {
@@ -239,6 +308,50 @@ describe('присутствие наружу (F08-2, решения арбит�
     expect(editor.scenes).toHaveLength(2);
     expect(editor.arc!.stages).toHaveLength(1);
     expect(editor.mentions!.coPresence).toHaveLength(2);
+  });
+
+  // F08-10a, решение арбитра `F08 | F08-10a` Q1: абзац сцены - из свежего подсчёта, а не сохранённый.
+  it('F08-10a: абзац сцены - первый абзац главы с формой имени (с 1), сохранённый не берётся', () => {
+    const counted = { ...mentions, paragraphs: { '1': [4, 2], '9': [] } };
+    const stored = {
+      ...row,
+      mentions: counted,
+      blocks: {
+        scenes: [
+          { chapter: 1, title: 'kept', text: 'y', paragraph: 7 },
+          { chapter: 2, title: 'no form', text: 'z' },
+          { chapter: 9, title: 'empty', text: 'w', paragraph: 1 },
+        ],
+      },
+    };
+    for (const dto of [toEntityDto(stored), toEntityDto(stored, { visibleKeys: new Set() })]) {
+      expect(dto.scenes!.map((x) => x.paragraph)).toEqual([3, null, null]);
+    }
+    // Номера абзацев наружу не отдаются: только число в сцене.
+    expect(JSON.stringify(toEntityDto(stored).mentions)).not.toContain('paragraphs');
+  });
+
+  it('F08-10a: без посчитанных абзацев (старый подсчёт) - null, а не сохранённое значение', () => {
+    const old = {
+      ...row,
+      mentions: { chapters: [1], first: 1 },
+      blocks: { scenes: [{ chapter: 1, title: 't', text: 'x', paragraph: 5 }] },
+    };
+    expect(toEntityDto(old).scenes!.map((x) => x.paragraph)).toEqual([null]);
+  });
+
+  it('F08-10a: номер сверх предела входа и мусор в колонке - null', () => {
+    const odd = {
+      ...row,
+      mentions: { ...mentions, paragraphs: { '1': [10_000], '2': [-1, 1.5, 'x'] } },
+      blocks: {
+        scenes: [
+          { chapter: 1, title: 'far', text: 'x' },
+          { chapter: 2, title: 'junk', text: 'y' },
+        ],
+      },
+    };
+    expect(toEntityDto(odd).scenes!.map((x) => x.paragraph)).toEqual([null, null]);
   });
 
   it('F08-3: первая глава присутствия — в сводке читателя (Q2)', () => {

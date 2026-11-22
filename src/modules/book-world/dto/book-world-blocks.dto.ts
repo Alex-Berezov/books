@@ -162,13 +162,16 @@ export class BookWorldSceneDto {
   @ApiPropertyOptional({
     type: Number,
     nullable: true,
-    minimum: 0,
-    description: 'Paragraph index in the chapter (F08-10); optional',
+    minimum: 1,
+    description:
+      '1-based paragraph number in the chapter (paragraphsOf(htmlToParagraphs)), the first paragraph ' +
+      'with a name form of the entity; computed on read from the counted mentions, input ignored ' +
+      '(F08-10a); null - no name form in the chapter',
   })
   @Type(() => Number)
   @IsOptional()
   @IsInt()
-  @Min(0)
+  @Min(1)
   @Max(BOOK_WORLD_LIMITS.paragraph)
   paragraph?: number | null;
 }
