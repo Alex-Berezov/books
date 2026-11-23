@@ -906,22 +906,11 @@ export class OpenRouterClient {
   }
 
   private headers(): Record<string, string> {
-    return {
-      Authorization: `Bearer ${this.config.apiKey() ?? ''}`,
-      'Content-Type': 'application/json',
-      'X-Title': 'Bibliaris',
-    };
+    return openRouterHeaders(this.config);
   }
 
-  /**
-   * Таймаут этапа - нижняя граница: общий, поднятый окружением выше, действует и на этап (решение
-   * арбитра `F05 | F05-13c`, круг 1); остановка шага прерывает вызов.
-   */
   private callSignal(request: LlmChatRequest): AbortSignal {
-    return withStop(
-      Math.max(request.callTimeoutMs ?? 0, this.config.callTimeoutMs()),
-      request.signal,
-    );
+    return callStopSignal(this.config, request);
   }
 
   private buildBody(request: LlmChatRequest, model: LlmCallModel): Record<string, unknown> {
@@ -1005,11 +994,31 @@ export class OpenRouterClient {
   }
 }
 
-function aborted(): LlmError {
+/** Заголовки запроса OpenRouter - одни на чат и картинки (`OpenRouterImageClient`, `F08-11a`). */
+export function openRouterHeaders(config: LlmConfig): Record<string, string> {
+  return {
+    Authorization: `Bearer ${config.apiKey() ?? ''}`,
+    'Content-Type': 'application/json',
+    'X-Title': 'Bibliaris',
+  };
+}
+
+/**
+ * Таймаут этапа - нижняя граница: общий, поднятый окружением выше, действует и на этап (решение
+ * арбитра `F05 | F05-13c`, круг 1); остановка шага прерывает вызов. Одно правило на чат и картинки.
+ */
+export function callStopSignal(
+  config: LlmConfig,
+  request: { callTimeoutMs?: number; signal?: AbortSignal },
+): AbortSignal {
+  return withStop(Math.max(request.callTimeoutMs ?? 0, config.callTimeoutMs()), request.signal);
+}
+
+export function aborted(): LlmError {
   return new LlmError('LLM_ABORTED', 'LLM call aborted');
 }
 
-function throwIfAborted(signal: AbortSignal | undefined): void {
+export function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw aborted();
 }
 
@@ -1021,7 +1030,7 @@ function backoffMs(retry: number): number {
  * Таймаут `AbortSignal.timeout` приходит как `DOMException`, а не `Error` в каждом окружении
  * (`instanceof` ломается между realm'ами), поэтому сверка по имени.
  */
-function isAbort(error: unknown): boolean {
+export function isAbort(error: unknown): boolean {
   const name = (error as { name?: unknown } | null)?.name;
   return name === 'TimeoutError' || name === 'AbortError';
 }
@@ -1030,7 +1039,7 @@ function isAbort(error: unknown): boolean {
  * `TypeError` без `cause` - запрос не собран у нас (undici кладёт сетевую причину в `cause`,
  * её разбирает `isBeforeConnect`).
  */
-function isLocalFailure(error: unknown): boolean {
+export function isLocalFailure(error: unknown): boolean {
   return (
     (error as { name?: unknown } | null)?.name === 'TypeError' &&
     (error as { cause?: unknown }).cause === undefined
@@ -1038,7 +1047,7 @@ function isLocalFailure(error: unknown): boolean {
 }
 
 /** Только по `cause.code` из белого списка; текст ошибки не разбирается (Р-Б). */
-function isBeforeConnect(error: unknown): boolean {
+export function isBeforeConnect(error: unknown): boolean {
   if (isAbort(error)) return false;
   const code = (error as { cause?: { code?: unknown } } | null)?.cause?.code;
   return typeof code === 'string' && BEFORE_CONNECT_CODES.has(code);

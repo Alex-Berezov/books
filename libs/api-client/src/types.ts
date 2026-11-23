@@ -3233,6 +3233,41 @@ export interface paths {
     patch?: never;
     trace?: never;
   };
+  '/admin/versions/{id}/world/{key}/image': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    /** Illustration of a world entity: accepted (shown on the site), pending (generated, waiting for Accept) and the latest generation */
+    get: operations['WorldImageController_state'];
+    put?: never;
+    /** Generate (or regenerate) the illustration of a main or secondary character in the background from its appearance text; the result becomes pending, the accepted one stays on the site until Accept */
+    post: operations['WorldImageController_generate'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
+  '/admin/versions/{id}/world/{key}/image/accept': {
+    parameters: {
+      query?: never;
+      header?: never;
+      path?: never;
+      cookie?: never;
+    };
+    get?: never;
+    put?: never;
+    /** Accept the pending illustration: it replaces the accepted one on the site for every language of the book */
+    post: operations['WorldImageController_accept'];
+    delete?: never;
+    options?: never;
+    head?: never;
+    patch?: never;
+    trace?: never;
+  };
   '/admin/world/stats': {
     parameters: {
       query?: never;
@@ -5344,6 +5379,10 @@ export interface components {
       confirmChapterChange?: boolean;
       /** @description Analysis run only: the print of the proposal the editor looked at (`print` of GET items/:index); another proposal now - 409 ANALYSIS_PROPOSAL_CHANGED. Absent - no check */
       expectedPrint?: string;
+    };
+    AcceptWorldImageDto: {
+      /** @description mediaId of the pending image the admin saw; 409 WORLD_IMAGE_CHANGED when it was regenerated since */
+      pendingMediaId: string;
     };
     ActivityBookVersionDto: {
       author: string;
@@ -7878,6 +7917,8 @@ export interface components {
       /** @description Chapter numbers of the version, ascending; chapter links are rendered only for these (empty without text) */
       chapterNumbers: number[];
       entity: components['schemas']['BookWorldEntityDto'];
+      /** @description Accepted illustration of the entity (one per book and key, all languages; F08-11a); null when there is none or it is not accepted yet - a generated image waiting for acceptance is never here, editors included */
+      image: components['schemas']['BookWorldImageDto'] | null;
       /**
        * @description Language of the version
        * @enum {string}
@@ -7909,6 +7950,14 @@ export interface components {
       type: components['schemas']['WorldEntityType'];
       /** Format: date-time */
       updatedAt: string;
+    };
+    BookWorldImageDto: {
+      /** @description Pixels, from the file header */
+      height: number | null;
+      /** @description Absolute public URL of the original file */
+      url: string;
+      /** @description Pixels, from the file header */
+      width: number | null;
     };
     BookWorldListEntityDto: {
       /** @description Editors only; absent for readers */
@@ -16662,6 +16711,38 @@ export interface components {
     };
     /** @enum {string} */
     WorldEntityType: 'character' | 'pair' | 'place' | 'object' | 'term' | 'event';
+    WorldImageFileDto: {
+      /** @description Pixels, from the file header */
+      height: number | null;
+      mediaId: string;
+      /** @description Absolute public URL of the original file */
+      url: string;
+      /** @description Pixels, from the file header */
+      width: number | null;
+    };
+    WorldImageGenerationDto: {
+      /** @description Why the generation failed: WORLD_IMAGE_NOT_IMAGE (the answer is not PNG/JPEG/WEBP), WORLD_IMAGE_TOO_SMALL (narrower than 1200 px), WORLD_IMAGE_TOO_LARGE, WORLD_IMAGE_INPUT_MISSING, or an LLM code (LLM_INSUFFICIENT_FUNDS, LLM_UNAVAILABLE...); null while it runs or after success */
+      failedReason: string | null;
+      operationId: string;
+      /** @description Spent on this generation, USD (decimal string) */
+      spentUsd: string;
+      status: components['schemas']['LlmOperationStatus'];
+    };
+    WorldImageStateDto: {
+      /** @description Accepted: shown on the site */
+      accepted: components['schemas']['WorldImageFileDto'] | null;
+      /** Format: date-time */
+      acceptedAt: string | null;
+      /** @description The entity may have an illustration: a main or secondary character with appearance text */
+      allowed: boolean;
+      /** @description Upper bound of one generation, USD (decimal string): the reserve of one image for the primary model and each fallback of the stage */
+      estimateUsd: string;
+      generation: components['schemas']['WorldImageGenerationDto'] | null;
+      /** @description Entity key: one illustration per book and key */
+      key: string;
+      /** @description Generated and waiting for acceptance: never shown on the site */
+      pending: components['schemas']['WorldImageFileDto'] | null;
+    };
     WorldSitemapEntityDto: {
       /** @description Languages where the entity with this key is public and indexable on a published version without editorial noindex; the version itself included */
       alternates: components['schemas']['WorldAlternateDto'][];
@@ -23214,6 +23295,111 @@ export interface operations {
         content: {
           'application/json': components['schemas']['TranslationSourceDto'];
         };
+      };
+    };
+  };
+  WorldImageController_state: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorldImageStateDto'];
+        };
+      };
+      /** @description No such entity in the version */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  WorldImageController_generate: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody?: never;
+    responses: {
+      202: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorldImageStateDto'];
+        };
+      };
+      /** @description No such entity in the version */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description WORLD_IMAGE_IN_PROGRESS - a generation is running (a paused one is cancelled and replaced); WORLD_IMAGE_NOT_ALLOWED - not a main or secondary character; WORLD_IMAGE_NO_APPEARANCE - no appearance text; LLM_CEILING_REACHED */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  WorldImageController_accept: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'application/json': components['schemas']['AcceptWorldImageDto'];
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorldImageStateDto'];
+        };
+      };
+      /** @description No such entity in the version */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description WORLD_IMAGE_NONE - nothing to accept (or its file was deleted); WORLD_IMAGE_CHANGED - the pending image is not the one sent; WORLD_IMAGE_NOT_ALLOWED - the entity is no longer a main or secondary character */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
       };
     };
   };

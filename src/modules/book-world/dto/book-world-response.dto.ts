@@ -284,6 +284,21 @@ export class BookWorldEntityDto extends BookWorldEntitySummaryDto {
   createdAt!: Date;
 }
 
+/**
+ * Принятая иллюстрация сущности (`F08-11a`): одна на книгу и ключ, общая для всех языков. Подпись
+ * и `alt` собирает страница по языку; непринятая (ожидающая) картинка сюда не попадает никогда.
+ */
+export class BookWorldImageDto {
+  @ApiProperty({ type: String, description: 'Absolute public URL of the original file' })
+  url!: string;
+
+  @ApiProperty({ type: Number, nullable: true, description: 'Pixels, from the file header' })
+  width!: number | null;
+
+  @ApiProperty({ type: Number, nullable: true, description: 'Pixels, from the file header' })
+  height!: number | null;
+}
+
 export class BookWorldEntityResponseDto {
   @ApiProperty({ enum: Language, description: 'Language of the version' })
   language!: Language;
@@ -306,6 +321,15 @@ export class BookWorldEntityResponseDto {
       'the page is not indexable (entity isIndexable=false, editorial noindex, draft)',
   })
   alternates!: WorldAlternateDto[];
+
+  @ApiProperty({
+    type: BookWorldImageDto,
+    nullable: true,
+    description:
+      'Accepted illustration of the entity (one per book and key, all languages; F08-11a); null when there is none ' +
+      'or it is not accepted yet - a generated image waiting for acceptance is never here, editors included',
+  })
+  image!: BookWorldImageDto | null;
 }
 
 export const BOOK_WORLD_WARNING_CODES = ['core_incomplete'] as const;

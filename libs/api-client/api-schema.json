@@ -15,6 +15,18 @@
         },
         "type": "object"
       },
+      "AcceptWorldImageDto": {
+        "properties": {
+          "pendingMediaId": {
+            "description": "mediaId of the pending image the admin saw; 409 WORLD_IMAGE_CHANGED when it was regenerated since",
+            "type": "string"
+          }
+        },
+        "required": [
+          "pendingMediaId"
+        ],
+        "type": "object"
+      },
       "ActivityBookVersionDto": {
         "properties": {
           "author": {
@@ -8381,6 +8393,16 @@
           "entity": {
             "$ref": "#/components/schemas/BookWorldEntityDto"
           },
+          "image": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldImageDto"
+              }
+            ],
+            "description": "Accepted illustration of the entity (one per book and key, all languages; F08-11a); null when there is none or it is not accepted yet - a generated image waiting for acceptance is never here, editors included",
+            "nullable": true,
+            "type": "object"
+          },
           "language": {
             "description": "Language of the version",
             "enum": [
@@ -8397,7 +8419,8 @@
           "language",
           "chapterNumbers",
           "entity",
-          "alternates"
+          "alternates",
+          "image"
         ],
         "type": "object"
       },
@@ -8499,6 +8522,30 @@
           "isIndexable",
           "mentionFirst",
           "updatedAt"
+        ],
+        "type": "object"
+      },
+      "BookWorldImageDto": {
+        "properties": {
+          "height": {
+            "description": "Pixels, from the file header",
+            "nullable": true,
+            "type": "number"
+          },
+          "url": {
+            "description": "Absolute public URL of the original file",
+            "type": "string"
+          },
+          "width": {
+            "description": "Pixels, from the file header",
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "url",
+          "width",
+          "height"
         ],
         "type": "object"
       },
@@ -33410,6 +33457,124 @@
         ],
         "type": "string"
       },
+      "WorldImageFileDto": {
+        "properties": {
+          "height": {
+            "description": "Pixels, from the file header",
+            "nullable": true,
+            "type": "number"
+          },
+          "mediaId": {
+            "type": "string"
+          },
+          "url": {
+            "description": "Absolute public URL of the original file",
+            "type": "string"
+          },
+          "width": {
+            "description": "Pixels, from the file header",
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "url",
+          "width",
+          "height",
+          "mediaId"
+        ],
+        "type": "object"
+      },
+      "WorldImageGenerationDto": {
+        "properties": {
+          "failedReason": {
+            "description": "Why the generation failed: WORLD_IMAGE_NOT_IMAGE (the answer is not PNG/JPEG/WEBP), WORLD_IMAGE_TOO_SMALL (narrower than 1200 px), WORLD_IMAGE_TOO_LARGE, WORLD_IMAGE_INPUT_MISSING, or an LLM code (LLM_INSUFFICIENT_FUNDS, LLM_UNAVAILABLE...); null while it runs or after success",
+            "nullable": true,
+            "type": "string"
+          },
+          "operationId": {
+            "type": "string"
+          },
+          "spentUsd": {
+            "description": "Spent on this generation, USD (decimal string)",
+            "type": "string"
+          },
+          "status": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmOperationStatus"
+              }
+            ]
+          }
+        },
+        "required": [
+          "operationId",
+          "status",
+          "failedReason",
+          "spentUsd"
+        ],
+        "type": "object"
+      },
+      "WorldImageStateDto": {
+        "properties": {
+          "accepted": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldImageFileDto"
+              }
+            ],
+            "description": "Accepted: shown on the site",
+            "nullable": true,
+            "type": "object"
+          },
+          "acceptedAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "allowed": {
+            "description": "The entity may have an illustration: a main or secondary character with appearance text",
+            "type": "boolean"
+          },
+          "estimateUsd": {
+            "description": "Upper bound of one generation, USD (decimal string): the reserve of one image for the primary model and each fallback of the stage",
+            "type": "string"
+          },
+          "generation": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldImageGenerationDto"
+              }
+            ],
+            "nullable": true,
+            "type": "object"
+          },
+          "key": {
+            "description": "Entity key: one illustration per book and key",
+            "type": "string"
+          },
+          "pending": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/WorldImageFileDto"
+              }
+            ],
+            "description": "Generated and waiting for acceptance: never shown on the site",
+            "nullable": true,
+            "type": "object"
+          }
+        },
+        "required": [
+          "key",
+          "allowed",
+          "accepted",
+          "acceptedAt",
+          "pending",
+          "generation",
+          "estimateUsd"
+        ],
+        "type": "object"
+      },
       "WorldSitemapEntityDto": {
         "properties": {
           "alternates": {
@@ -46210,6 +46375,164 @@
           }
         ],
         "summary": "Translation source of the book by the original language (D8): whether this version can be translated and into which languages",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/world/{key}/image": {
+      "get": {
+        "operationId": "WorldImageController_state",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldImageStateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "No such entity in the version"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Illustration of a world entity: accepted (shown on the site), pending (generated, waiting for Accept) and the latest generation",
+        "tags": [
+          "admin"
+        ]
+      },
+      "post": {
+        "operationId": "WorldImageController_generate",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldImageStateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "No such entity in the version"
+          },
+          "409": {
+            "description": "WORLD_IMAGE_IN_PROGRESS - a generation is running (a paused one is cancelled and replaced); WORLD_IMAGE_NOT_ALLOWED - not a main or secondary character; WORLD_IMAGE_NO_APPEARANCE - no appearance text; LLM_CEILING_REACHED"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Generate (or regenerate) the illustration of a main or secondary character in the background from its appearance text; the result becomes pending, the accepted one stays on the site until Accept",
+        "tags": [
+          "admin"
+        ]
+      }
+    },
+    "/admin/versions/{id}/world/{key}/image/accept": {
+      "post": {
+        "operationId": "WorldImageController_accept",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptWorldImageDto"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldImageStateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "description": "No such entity in the version"
+          },
+          "409": {
+            "description": "WORLD_IMAGE_NONE - nothing to accept (or its file was deleted); WORLD_IMAGE_CHANGED - the pending image is not the one sent; WORLD_IMAGE_NOT_ALLOWED - the entity is no longer a main or secondary character"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Accept the pending illustration: it replaces the accepted one on the site for every language of the book",
         "tags": [
           "admin"
         ]

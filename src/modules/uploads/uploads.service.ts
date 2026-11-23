@@ -23,21 +23,40 @@ const KEY_PREFIX: Record<UploadType, string> = {
   [UploadType.audio]: 'audio',
 };
 
+/**
+ * Префикс иллюстраций мира книги (`F08-11a`): ключ кладёт только генерация модели, загрузки с таким
+ * типом нет (решение арбитра `F08 | F08-11a` Q4). Ручкой `remove` не снимается: отвязанный файл
+ * забирает уборка сирот, ручное удаление обошло бы «только admin» (Р5).
+ */
+export const ILLUSTRATIONS_KEY_PREFIX = 'illustrations';
+
 /** Сегмент ключа: латиница, цифры, `.`, `_`, `-`; пустой, `.` и `..` отдельно отбиваются. */
 const KEY_SEGMENT = /^[\w.-]+$/;
 
 /**
- * Ключ, который выдал бы `presign` (`LEGACY-444`). Всё остальное в бакете - не загрузки: при R2
- * там же лежат файлы прав (`rights-private/...`) и чужие окружения. `.` и `..` не пропускаются:
- * `covers/./x` поиск ссылок по строке не нашёл бы, а локальный драйвер свёл бы путь к `covers/x`.
+ * Ключ, который выдал бы `presign` и который можно снять руками (`LEGACY-444`). Всё остальное в
+ * бакете - не загрузки: при R2 там же лежат файлы прав (`rights-private/...`) и чужие окружения;
+ * иллюстрации отбиваются раньше своим отказом. `.` и `..` не пропускаются: `covers/./x` поиск
+ * ссылок по строке не нашёл бы, а локальный драйвер свёл бы путь к `covers/x`.
  */
-function isUploadKey(key: string): boolean {
+function isRemovableKey(key: string): boolean {
   const [prefix, ...rest] = key.split('/');
   return (
     Object.values(KEY_PREFIX).includes(prefix) &&
     rest.length > 0 &&
     rest.every((segment) => KEY_SEGMENT.test(segment) && segment !== '.' && segment !== '..')
   );
+}
+
+/**
+ * Ключ объекта: `<префикс>/ГГГГ/ММ/ДД/<uuid>.<ext>`. Один на `presign` и на картинку, которую кладёт
+ * генерация (`F08-11a`, префикс `ILLUSTRATIONS_KEY_PREFIX`): ключ - всегда серверный.
+ */
+export function uploadObjectKey(prefix: string, ext: string, now = new Date()): string {
+  const y = now.getUTCFullYear();
+  const m = String(now.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(now.getUTCDate()).padStart(2, '0');
+  return `${prefix}/${y}/${m}/${d}/${randomUUID()}.${ext}`;
 }
 
 /** Допуск тела прямой загрузки сверх заявленного при presign размера: +10 %. */
@@ -133,7 +152,10 @@ export class UploadsService {
     key: string,
     actor: { userId: string; isModerator: boolean },
   ): Promise<DeleteMediaResponseDto> {
-    if (!isUploadKey(key)) throw new BadRequestException('Unsupported upload key');
+    if (key.split('/')[0] === ILLUSTRATIONS_KEY_PREFIX) {
+      throw new BadRequestException('Illustrations are removed by the orphan cleanup only');
+    }
+    if (!isRemovableKey(key)) throw new BadRequestException('Unsupported upload key');
     if (!actor.isModerator && !key.startsWith(`${KEY_PREFIX[UploadType.cover]}/`)) {
       throw new ForbiddenException('Only admin or content_manager can delete audio assets');
     }
@@ -221,12 +243,7 @@ export class UploadsService {
   }
 
   private generateKey(type: UploadType, ext: string): string {
-    const now = new Date();
-    const y = now.getUTCFullYear();
-    const m = String(now.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(now.getUTCDate()).padStart(2, '0');
-    const id = randomUUID();
-    return `${KEY_PREFIX[type]}/${y}/${m}/${d}/${id}.${ext}`;
+    return uploadObjectKey(KEY_PREFIX[type], ext);
   }
 
   private tokenKey(token: string) {

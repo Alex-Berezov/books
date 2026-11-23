@@ -6,6 +6,7 @@ import { LlmConfig } from './llm.config';
 import { LlmController } from './llm.controller';
 import { LlmService } from './llm.service';
 import { OpenRouterClient } from './openrouter.client';
+import { OpenRouterImageClient } from './openrouter-image.client';
 
 /**
  * LLM-конвейер (F05, ADR-021): клиент OpenRouter, настройки этапов, цены, бюджет и журнал
@@ -20,6 +21,7 @@ import { OpenRouterClient } from './openrouter.client';
     LlmModelsService,
     LlmBudgetService,
     OpenRouterClient,
+    OpenRouterImageClient,
     LlmService,
   ],
   // Бюджет и конфиг - для исполнителя `F05-1w` (чистка зависших вызовов, состояние воркера) и

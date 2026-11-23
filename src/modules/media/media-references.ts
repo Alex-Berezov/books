@@ -9,7 +9,7 @@ import { MEDIA_URL_COLUMNS } from './media-url-columns';
 /**
  * Кто ссылается на медиа-объект — внешним ключом или **строкой**: адресом, текстом или Json.
  *
- * Внешних ключей на `MediaAsset` пять (`MEDIA_FOREIGN_KEYS` ниже), и все они
+ * Внешних ключей на `MediaAsset` семь (`MEDIA_FOREIGN_KEYS` ниже), и все они
  * `onDelete: SetNull`: удаление ассета молча обнуляет ссылку, а не отказывает. Остальные
  * связи — текст адреса, и база их не защищает вовсе: обложка книги — это
  * `BookVersion.coverImageUrl`, обычная строка (`schema.prisma:60`).
@@ -106,6 +106,23 @@ const MEDIA_FOREIGN_KEYS: readonly MediaForeignKey[] = [
         select: { id: true, title: true },
         take,
       }),
+  },
+  // Иллюстрации мира книги (`F08-11a`): принятая и ожидающая ячейки - две связи одной строки.
+  {
+    relation: 'worldImagesAccepted',
+    describe: (row) => `world illustration "${row.title}" (${row.id})`,
+    matching: (prisma, assetId, take) =>
+      prisma.bookWorldImage
+        .findMany({ where: { imageMediaId: assetId }, select: { id: true, key: true }, take })
+        .then((rows) => rows.map((r) => ({ id: r.id, title: r.key }))),
+  },
+  {
+    relation: 'worldImagesPending',
+    describe: (row) => `pending world illustration "${row.title}" (${row.id})`,
+    matching: (prisma, assetId, take) =>
+      prisma.bookWorldImage
+        .findMany({ where: { pendingMediaId: assetId }, select: { id: true, key: true }, take })
+        .then((rows) => rows.map((r) => ({ id: r.id, title: r.key }))),
   },
 ];
 

@@ -7,7 +7,7 @@ import {
   UnsupportedMediaTypeException,
 } from '@nestjs/common';
 import type { Readable } from 'node:stream';
-import { UploadsService } from './uploads.service';
+import { ILLUSTRATIONS_KEY_PREFIX, UploadsService, uploadObjectKey } from './uploads.service';
 import { InMemoryCacheService } from '../../shared/cache/inmemory.cache';
 import { UploadType } from './dto/presign.dto';
 import type { PrismaService } from '../../prisma/prisma.service';
@@ -179,6 +179,16 @@ describe('UploadsService (unit)', () => {
     });
   });
 
+  describe('uploadObjectKey (F08-11a)', () => {
+    it('server key under the type prefix, UTC date and uuid', () => {
+      const now = new Date('2026-11-23T23:30:00Z');
+      expect(uploadObjectKey(ILLUSTRATIONS_KEY_PREFIX, 'png', now)).toMatch(
+        /^illustrations\/2026\/11\/23\/[0-9a-f-]{36}\.png$/,
+      );
+      expect(uploadObjectKey('covers', 'jpg', now)).toMatch(/^covers\/2026\/11\/23\//);
+    });
+  });
+
   describe('remove (LEGACY-444)', () => {
     const owner = { userId: 'u1', isModerator: false };
     const staff = { userId: 'm1', isModerator: true };
@@ -197,6 +207,15 @@ describe('UploadsService (unit)', () => {
       'covers/a b.jpg',
     ])('ключ %s вне формы presign - 400 даже модератору, ничего не тронуто', async (bad) => {
       await expect(service.remove(bad, staff)).rejects.toBeInstanceOf(BadRequestException);
+      expect(prisma.mediaAsset.findUnique).not.toHaveBeenCalled();
+      expect(deleteObject).not.toHaveBeenCalled();
+    });
+
+    // F08-11a, Q4: иллюстрация - не чужой ключ, а не снимаемый руками: свой отказ.
+    it('иллюстрацию не снимает никто - 400 со своей причиной, ничего не тронуто', async () => {
+      await expect(service.remove('illustrations/2026/11/23/x.png', staff)).rejects.toThrow(
+        'Illustrations are removed by the orphan cleanup only',
+      );
       expect(prisma.mediaAsset.findUnique).not.toHaveBeenCalled();
       expect(deleteObject).not.toHaveBeenCalled();
     });

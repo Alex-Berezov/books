@@ -84,6 +84,7 @@ import {
   worldListedWrite,
 } from './world-public';
 import { worldAlternates } from './world-alternates';
+import { acceptedWorldImage } from './world-image-public';
 import {
   checkWorldPair,
   checkCharacterKey,
@@ -218,7 +219,9 @@ export class BookWorldService {
       worldAlternates(this.prisma, bookVersionId, key),
     ]);
     if (!entity) throw notFoundEntity();
-    return { language, chapterNumbers, entity, alternates };
+    // Право на картинку - у сущности этой версии (решение `F08 | F08-11a` Q1): после неё, не рядом.
+    const image = await acceptedWorldImage(this.prisma, bookVersionId, key, entity);
+    return { language, chapterNumbers, entity, alternates, image };
   }
 
   /**

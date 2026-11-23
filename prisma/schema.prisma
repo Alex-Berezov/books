@@ -51,6 +51,9 @@ model Book {
   /// Досье книги по исходнику (F05-2, D1): поколения на версию-исходник.
   dossiers BookDossier[]
 
+  /// Иллюстрации мира книги (F08-11a): одна на ключ сущности, общая для всех языков.
+  worldImages BookWorldImage[]
+
   @@index([rightsIntakeId])
   @@index([currentRightsProfileId])
   @@index([approvedRightsReviewId])
@@ -713,6 +716,33 @@ model ReadingProgress {
 // Media Library
 // =====================
 
+/// Иллюстрация сущности мира книги (F08-11a, решение арбитра `F08 | F08-11` Р2, Р3): одна на книгу и
+/// ключ сущности, общая для всех языков. Две ячейки: принятая (`imageMediaId` + `imageReadAt`) - её
+/// видит читатель; ожидающая (`pendingMediaId`) - результат генерации до «Accept», только админке.
+model BookWorldImage {
+  id             String        @id @default(uuid())
+  bookId         String
+  /// Ключ сущности (`BookWorldEntity.key`), один на все версии книги.
+  key            String
+  imageMediaId   String?
+  /// Принятие администратором; публично только при нём.
+  imageReadAt    DateTime?
+  pendingMediaId String?
+  /// Последняя операция генерации: статус и причина отказа - по ней и её задаче.
+  operationId    String?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  book           Book          @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  image          MediaAsset?   @relation("BookWorldImageAccepted", fields: [imageMediaId], references: [id], onDelete: SetNull)
+  pending        MediaAsset?   @relation("BookWorldImagePending", fields: [pendingMediaId], references: [id], onDelete: SetNull)
+  operation      LlmOperation? @relation(fields: [operationId], references: [id], onDelete: SetNull)
+
+  @@unique([bookId, key])
+  @@index([imageMediaId])
+  @@index([pendingMediaId])
+  @@index([operationId])
+}
+
 model MediaAsset {
   id           String   @id @default(uuid())
   key          String   @unique
@@ -733,6 +763,8 @@ model MediaAsset {
   rightsLicenseDocuments RightsLicense[] @relation("RightsLicenseDocument")
   rightsClaimMediaAssets RightsClaim[] @relation("RightsClaimMediaAsset")
   rightsClaimAttachments RightsClaimAttachment[] @relation("RightsClaimAttachment")
+  worldImagesAccepted BookWorldImage[] @relation("BookWorldImageAccepted")
+  worldImagesPending  BookWorldImage[] @relation("BookWorldImagePending")
 
   @@index([createdAt])
   @@index([hash])
@@ -4241,6 +4273,8 @@ model LlmOperation {
   translationCompare TranslationCompare?
   /// Заготовка, которую строит эта операция (F05-10, вид `draft`).
   contentDraft       ContentDraft?
+  /// Иллюстрация мира, которую генерирует эта операция (F08-11a, вид `draft`).
+  worldImages        BookWorldImage[]
   /// Запуск перевода, который ведёт эта операция (F05-4, вид `translation_run`).
   translationRun     TranslationRun?    @relation("TranslationRunOperation")
   /// Запуск, ради которого заведена операция (досье, глоссарий, повтор куска) - для отчёта

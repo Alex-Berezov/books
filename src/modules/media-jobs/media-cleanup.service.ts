@@ -80,7 +80,7 @@ export class MediaCleanupService {
    *          (short transaction, `FOR UPDATE`, foreign keys re-checked in the delete itself) and
    *          the storage file after the commit.
    *
-   * All five foreign keys to MediaAsset are `ON DELETE SET NULL`: deleting a referenced row
+   * All seven foreign keys to MediaAsset are `ON DELETE SET NULL`: deleting a referenced row
    * does not fail, it silently nulls the reference. Both stages therefore see every one of
    * them (`MEDIA_UNREFERENCED_BY_FK`) plus every address, text and Json column — nothing
    * downstream refuses.
@@ -134,7 +134,7 @@ export class MediaCleanupService {
     const softCutoff = new Date(now.getTime() - softDays * 86400 * 1000);
     const hardCutoff = new Date(now.getTime() - hardDays * 86400 * 1000);
 
-    // Stage 1: find orphans — no row references the asset by any of the five foreign keys
+    // Stage 1: find orphans — no row references the asset by any of the seven foreign keys
     //
     // 🔴 Внешних ключей недостаточно (LEGACY-058). Обложка книги связана строкой
     // `BookVersion.coverImageUrl`, а не FK, поэтому по этому условию **любая обложка**

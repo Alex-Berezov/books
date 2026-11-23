@@ -30,6 +30,8 @@ const NOT_MEDIA_REFERENCES: Record<string, string> = {
   'Tag.key': 'идентификатор записи, не адрес',
   'BookWorldEntity.key':
     'ключ сущности мира книги, ^[a-z0-9-]{1,60}$ (BOOK_WORLD_KEY_REGEX в DTO и сервисе), не адрес (F08-1)',
+  'BookWorldImage.key':
+    'ключ сущности мира книги (тот же BOOK_WORLD_KEY_REGEX), не адрес; файлы картинки - внешними ключами imageMediaId и pendingMediaId (F08-11a)',
   'WorldDailyStat.key':
     'ключ сущности мира книги в счётчике или пустая строка общей страницы (F08-3a), не адрес',
   'LlmTask.pairKey':
@@ -431,6 +433,19 @@ const FK_ONLY: Array<[string, string, Row, string]> = [
     'rightsClaimAttachment',
     { id: 'att1', title: 'DMCA notice', mediaAssetId: 'm1' },
     'rights claim attachment "DMCA notice" (att1)',
+  ],
+  // F08-11a: принятая и ожидающая иллюстрации мира - две связи одной строки.
+  [
+    'BookWorldImage.imageMediaId',
+    'bookWorldImage',
+    { id: 'img1', key: 'oblomov', imageMediaId: 'm1' },
+    'world illustration "oblomov" (img1)',
+  ],
+  [
+    'BookWorldImage.pendingMediaId',
+    'bookWorldImage',
+    { id: 'img2', key: 'olga', pendingMediaId: 'm1' },
+    'pending world illustration "olga" (img2)',
   ],
 ];
 

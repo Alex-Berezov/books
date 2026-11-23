@@ -2,6 +2,14 @@ import { Module, OnModuleInit } from '@nestjs/common';
 import { BookVersionModule } from '../book-version/book-version.module';
 import { ChapterModule } from '../chapter/chapter.module';
 import { LlmModule } from '../llm/llm.module';
+import { StorageModule } from '../../shared/storage/storage.module';
+import { WorldImageController } from './world-image/world-image.controller';
+import { WorldImageHandler } from './world-image/world-image.handler';
+import { WorldImageService } from './world-image/world-image.service';
+import {
+  registerWorldImageStages,
+  WORLD_IMAGE_TASK_KIND,
+} from './world-image/world-image.constants';
 import { LlmStageRegistry } from '../llm/llm-stages.registry';
 import { LlmOperationKindRegistry } from '../llm-worker/llm-operation-kind.registry';
 import { LlmTaskHandlerRegistry } from '../llm-worker/llm-task-handler.registry';
@@ -102,6 +110,8 @@ import { WorldWriteService } from './world-write/world-write.service';
     SourceFetchModule,
     // Запись хода мира `F08-4a` - импортом мира `BookWorldService.saveEntity`, как ручка PUT сущности.
     BookWorldModule,
+    // Иллюстрация героя (`F08-11a`): файл картинки кладёт обработчик задачи.
+    StorageModule,
   ],
   controllers: [
     DossierController,
@@ -109,6 +119,7 @@ import { WorldWriteService } from './world-write/world-write.service';
     TranslationRunController,
     TranslationChunksController,
     ContentDraftController,
+    WorldImageController,
   ],
   providers: [
     TranslationSourceService,
@@ -145,6 +156,8 @@ import { WorldWriteService } from './world-write/world-write.service';
     WorldWriteHandler,
     WorldWriteService,
     ContentAutostartHandler,
+    WorldImageService,
+    WorldImageHandler,
   ],
 })
 export class TranslationModule implements OnModuleInit {
@@ -161,6 +174,7 @@ export class TranslationModule implements OnModuleInit {
     private readonly analysisWriteTasks: AnalysisWriteHandler,
     private readonly worldWriteTasks: WorldWriteHandler,
     private readonly autostartTasks: ContentAutostartHandler,
+    private readonly worldImageTasks: WorldImageHandler,
   ) {}
 
   onModuleInit(): void {
@@ -197,5 +211,9 @@ export class TranslationModule implements OnModuleInit {
     this.handlers.register(ANALYSIS_AUTOSTART_TASK_KIND, this.autostartTasks.handler);
     // Автозапуск мира (`F08-9b`) - тот же обработчик своим видом задачи (как `F07-3b`).
     this.handlers.register(WORLD_AUTOSTART_TASK_KIND, this.autostartTasks.handler);
+    // Иллюстрация героя (`F08-11a`): операция вида `draft` без строки хода - «Continue» ей нечего
+    // ставить (`ContentDraftTasksHandler.resumeTasks`), отказ закрывает её `failed`.
+    registerWorldImageStages(this.stages);
+    this.handlers.register(WORLD_IMAGE_TASK_KIND, this.worldImageTasks.handler);
   }
 }
