@@ -38,7 +38,6 @@ import {
   OpenRouterClient,
   reserveInputTokens,
 } from './openrouter.client';
-import { LlmImageResult, OpenRouterImageClient } from './openrouter-image.client';
 
 const PER_MTOK = new Prisma.Decimal(1_000_000);
 
@@ -127,7 +126,6 @@ export class LlmService implements OnModuleInit {
     private readonly models: LlmModelsService,
     private readonly budget: LlmBudgetService,
     private readonly client: OpenRouterClient,
-    private readonly imageClient: OpenRouterImageClient,
   ) {}
 
   /** Проверка конфига на старте (`tech.md` §8): выключенный модуль виден в логе, а не только в ручке. */
@@ -469,36 +467,6 @@ export class LlmService implements OnModuleInit {
       callTimeoutMs: setting.callTimeoutMs,
       truncationEndsModel: setting.truncationEndsModel,
       jsonSchema: options.jsonSchema,
-      beforeAttempt: options.beforeAttempt,
-      signal: options.signal,
-      taskId: options.taskId,
-    });
-  }
-
-  /**
-   * Картинка этапа (`F08-11a`): модель и запасные - из настройки этапа, без цены каталога: у моделей
-   * картинок цена за картинку, резерв попытки - `reserveUsd` вызывающего. Проверка байтов ответа -
-   * у вызывающего (`checkImageBase64`).
-   */
-  async callImageStage(
-    operationId: string,
-    stage: string,
-    prompt: string,
-    image: { reserveUsd: Prisma.Decimal; aspectRatio: string },
-    options: Pick<CallStageOptions, 'beforeAttempt' | 'signal' | 'taskId'> = {},
-  ): Promise<LlmImageResult> {
-    if (!this.config.enabled()) throw llmDisabled();
-    const setting = await this.getStageSetting(stage);
-    if (!setting.enabled)
-      throw new LlmError('LLM_STAGE_DISABLED', `LLM stage "${stage}" is disabled`);
-    return this.imageClient.generate({
-      operationId,
-      stage,
-      models: [setting.model, ...setting.fallbacks],
-      prompt,
-      reserveUsd: image.reserveUsd,
-      aspectRatio: image.aspectRatio,
-      callTimeoutMs: setting.callTimeoutMs,
       beforeAttempt: options.beforeAttempt,
       signal: options.signal,
       taskId: options.taskId,

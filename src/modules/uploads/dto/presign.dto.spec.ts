@@ -3,7 +3,7 @@ import { validate } from 'class-validator';
 import { PresignRequestDto } from './presign.dto';
 
 describe('PresignRequestDto', () => {
-  // F08-11a, решение арбитра `F08 | F08-11a` Q4: иллюстрации кладёт только генерация модели -
+  // F08-11a, решение арбитра `F08 | F08-11a` Q4: у `presign` нет типа иллюстраций -
   // типа загрузки «illustration» нет, запрос отбивается валидацией, а не сервисом.
   it('refuses an illustration upload: no such upload type', async () => {
     const dto = plainToInstance(PresignRequestDto, {

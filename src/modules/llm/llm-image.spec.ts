@@ -1,5 +1,5 @@
 import {
-  checkImageBase64,
+  checkImageBytes,
   IMAGE_NOT_IMAGE,
   IMAGE_TOO_LARGE,
   IMAGE_TOO_SMALL,
@@ -70,8 +70,6 @@ function webpVp8l(width: number, height: number): Buffer {
   return b;
 }
 
-const b64 = (b: Buffer) => b.toString('base64');
-
 describe('sniffImage (F08-11a, решение арбитра F08 | F08-11 Р1)', () => {
   it.each([
     ['png', png(1536, 1024), 'image/png', 1536, 1024],
@@ -95,52 +93,52 @@ describe('sniffImage (F08-11a, решение арбитра F08 | F08-11 Р1)',
   });
 });
 
-describe('checkImageBase64', () => {
+describe('checkImageBytes', () => {
   it('accepts an image at least 1200 px wide', () => {
-    const result = checkImageBase64(b64(png(1200, 1200)), LIMITS);
+    const result = checkImageBytes(png(1200, 1200), LIMITS);
     expect(result).toMatchObject({ ok: true, info: { mime: 'image/png', ext: 'png' } });
   });
 
   it('refuses a narrower image', () => {
-    expect(checkImageBase64(b64(png(1024, 1024)), LIMITS)).toEqual({
+    expect(checkImageBytes(png(1024, 1024), LIMITS)).toEqual({
       ok: false,
       reason: IMAGE_TOO_SMALL,
     });
   });
 
   it('refuses a strip that ignored the aspect ratio (2048 x 300)', () => {
-    expect(checkImageBase64(b64(png(2048, 300)), LIMITS)).toEqual({
+    expect(checkImageBytes(png(2048, 300), LIMITS)).toEqual({
       ok: false,
       reason: IMAGE_TOO_SMALL,
     });
   });
 
-  it('refuses an SVG whatever the provider claims', () => {
+  it('refuses an SVG whatever the declared type', () => {
     const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script/></svg>');
-    expect(checkImageBase64(b64(svg), LIMITS)).toEqual({ ok: false, reason: IMAGE_NOT_IMAGE });
+    expect(checkImageBytes(svg, LIMITS)).toEqual({ ok: false, reason: IMAGE_NOT_IMAGE });
   });
 
-  it('refuses a string over the limit before decoding it', () => {
-    const from = jest.spyOn(Buffer, 'from');
-    const huge = 'A'.repeat(Math.ceil(LIMITS.maxBytes / 3) * 4 + 4);
-    expect(checkImageBase64(huge, LIMITS)).toEqual({ ok: false, reason: IMAGE_TOO_LARGE });
-    expect(from).not.toHaveBeenCalled();
-    from.mockRestore();
+  it('refuses a file over the byte limit before reading its header', () => {
+    const big = Buffer.concat([png(1500, 1500), Buffer.alloc(LIMITS.maxBytes)]);
+    expect(checkImageBytes(big, LIMITS)).toEqual({ ok: false, reason: IMAGE_TOO_LARGE });
+    // Заголовок не читается: не-картинка сверх предела - тоже TOO_LARGE, а не NOT_IMAGE.
+    expect(checkImageBytes(Buffer.alloc(LIMITS.maxBytes + 1), LIMITS)).toEqual({
+      ok: false,
+      reason: IMAGE_TOO_LARGE,
+    });
   });
 
   it('refuses a header with more pixels than the ceiling', () => {
-    expect(checkImageBase64(b64(png(20_000, 20_000)), LIMITS)).toEqual({
+    expect(checkImageBytes(png(20_000, 20_000), LIMITS)).toEqual({
       ok: false,
       reason: IMAGE_TOO_LARGE,
     });
   });
 
   it.each([
-    ['not a string', null],
-    ['empty', ''],
-    ['not base64', '%%%%'],
-    ['a data URL', `data:image/png;base64,${b64(png(1500, 1500))}`],
-  ])('%s is not an image', (_, value) => {
-    expect(checkImageBase64(value, LIMITS)).toEqual({ ok: false, reason: IMAGE_NOT_IMAGE });
+    ['empty', Buffer.alloc(0)],
+    ['html', Buffer.from('<html></html>')],
+  ])('%s is not an image', (_, bytes) => {
+    expect(checkImageBytes(bytes, LIMITS)).toEqual({ ok: false, reason: IMAGE_NOT_IMAGE });
   });
 });

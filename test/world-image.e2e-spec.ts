@@ -3,9 +3,13 @@ import request from 'supertest';
 import { Test } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Language, RoleName } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { LLM_BUDGET_ID } from '../src/modules/llm/llm-budget.service';
+import { LlmStageRegistry } from '../src/modules/llm/llm-stages.registry';
+import { LlmTaskHandlerRegistry } from '../src/modules/llm-worker/llm-task-handler.registry';
+import { LlmTaskService } from '../src/modules/llm-worker/llm-task.service';
 import { LlmWorkerService } from '../src/modules/llm-worker/llm-worker.service';
 import { WorldMentionsSchedulerService } from '../src/modules/book-world/world-mentions-scheduler.service';
 import { httpServerOf } from './http-server';
@@ -13,36 +17,21 @@ import { createBookFixture } from './helpers/book-fixture';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
- * F08-11a: иллюстрация героя (`books-app-docs/features/F08-book-wiki/batches.md` F08-11 «Посадка»;
- * решения арбитра `F08 | F08-11` Р1-Р5): непринятая картинка не отдаётся публично; ответ модели
- * не картинкой - отказ с причиной; 403 всем, кроме admin.
+ * F08-11a, F08-11d-1: иллюстрация героя без генерации (решение владельца: сайт картинки
+ * не генерирует; решения арбитра `F08 | F08-11d` Q7, Q9, Q10). Ручки запуска генерации нет -
+ * 404 и ни одного внешнего запроса; ожидающая ячейка заводится прямо в базе; непринятая
+ * не отдаётся публично; принятая до снятия картинка на сайте как была (U8); 403 всем, кроме admin;
+ * задачи `world_image`, оставшиеся от генерации, закрываются без вызова модели.
  */
-describe('World image e2e (F08-11a)', () => {
+describe('World image e2e (F08-11a, F08-11d-1)', () => {
   const FAKE_KEY = 'sk-or-e2e-fake-key';
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let app: INestApplication;
-  let prisma: PrismaService;
+  let db: PrismaService;
   let worker: LlmWorkerService;
   let fetchSpy: jest.SpyInstance;
   const tokens: Record<'admin' | 'cm' | 'user', string> = { admin: '', cm: '', user: '' };
-  const prompts: Array<Record<string, unknown>> = [];
-  let image: () => { b64_json: string } = () => ({ b64_json: png(1536, 1536) });
 
-  /** Заголовок PNG с `IHDR`: проверке картинки (`sniffImage`) больше не нужно. */
-  function png(width: number, height: number): string {
-    const b = Buffer.alloc(64);
-    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b, 0);
-    b.writeUInt32BE(13, 8);
-    b.write('IHDR', 12, 'latin1');
-    b.writeUInt32BE(width, 16);
-    b.writeUInt32BE(height, 20);
-    return b.toString('base64');
-  }
-
-  const json = (body: unknown, status = 200) =>
-    new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
-  const urlOf = (input: unknown): string =>
-    typeof input === 'string' ? input : input instanceof URL ? input.href : (input as Request).url;
   const http = () => request(httpServerOf(app));
   const auth = (r: request.Test, who: 'admin' | 'cm' | 'user' = 'admin') =>
     r.set('Authorization', `Bearer ${tokens[who]}`);
@@ -51,19 +40,8 @@ describe('World image e2e (F08-11a)', () => {
   const publicEntity = (versionId: string, key = 'oblomov') =>
     http().get(`/versions/${versionId}/world/${key}`).expect(200);
 
-  const drain = async () => {
-    for (let i = 0; i < 20; i++) {
-      await worker.runOnce();
-      const left = await prisma.llmTask.count({
-        where: { status: { in: ['pending', 'running'] }, operation: { status: 'active' } },
-      });
-      if (left === 0) return;
-    }
-    throw new Error('drain did not finish');
-  };
-
   const resetBudget = () =>
-    prisma.llmBudget.upsert({
+    db.llmBudget.upsert({
       where: { id: LLM_BUDGET_ID },
       create: { id: LLM_BUDGET_ID, ceilingUsd: 100, defaultRunLimitUsd: 10 },
       update: { ceilingUsd: 100, reservedUsd: 0, spentUsd: 0, defaultRunLimitUsd: 10 },
@@ -73,9 +51,9 @@ describe('World image e2e (F08-11a)', () => {
   const version = async (
     bookId: string,
     language: Language,
-    hero: { role?: string; appearance?: string | null; key?: string } = {},
+    hero: { role?: string; appearance?: string | null } = {},
   ) => {
-    const v = await prisma.bookVersion.create({
+    const v = await db.bookVersion.create({
       data: {
         bookId,
         language,
@@ -88,41 +66,59 @@ describe('World image e2e (F08-11a)', () => {
         status: 'published',
       },
     });
-    await prisma.bookWorldEntity.create({
+    await db.bookWorldEntity.create({
       data: {
         bookVersionId: v.id,
-        key: hero.key ?? 'oblomov',
+        key: 'oblomov',
         type: 'character',
         name: 'Ilya Oblomov',
         role: hero.role ?? 'main',
         blocks:
           hero.appearance === null
             ? {}
-            : {
-                appearance:
-                  hero.appearance ?? 'A plump man of about thirty-two in a dressing gown.',
-              },
+            : { appearance: hero.appearance ?? 'A plump man of about thirty-two.' },
         hasCore: true,
         isListed: true,
         readAt: new Date(),
-      },
-    });
-    await prisma.bookAnalysis.create({
-      data: {
-        bookVersionId: v.id,
-        facts: { settingPlace: 'St Petersburg', settingTime: '1840s' },
       },
     });
     return v.id;
   };
 
   const book = async () =>
-    (
-      await createBookFixture(
-        prisma,
-        `world-image-${stamp}-${Math.random().toString(36).slice(2, 6)}`,
-      )
-    ).id;
+    (await createBookFixture(db, `world-image-${stamp}-${Math.random().toString(36).slice(2, 6)}`))
+      .id;
+
+  const asset = (width = 1536, height = 1536) => {
+    const key = `illustrations/2026/11/24/${randomUUID()}.png`;
+    return db.mediaAsset.create({
+      data: {
+        key,
+        url: `https://media.example.com/${key}`,
+        contentType: 'image/png',
+        size: 1024,
+        width,
+        height,
+      },
+    });
+  };
+
+  /** Ячейки строки картинки прямо в базе: загрузки ещё нет (`F08-11d-3`), генерации больше нет. */
+  const imageRow = async (
+    bookId: string,
+    cells: { pendingMediaId?: string; imageMediaId?: string; imageReadAt?: Date },
+  ) => db.bookWorldImage.create({ data: { bookId, key: 'oblomov', ...cells } });
+
+  const externalCalls = (): unknown[][] =>
+    (fetchSpy.mock.calls as unknown[][]).filter(([input]) => {
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : (input as Request).url;
+      return !url.startsWith('http://127.0.0.1') && !url.startsWith('http://localhost');
+    });
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
@@ -131,7 +127,7 @@ describe('World image e2e (F08-11a)', () => {
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
     );
     await app.init();
-    prisma = app.get(PrismaService);
+    db = app.get(PrismaService);
     worker = app.get(LlmWorkerService);
     await app.get(WorldMentionsSchedulerService).onModuleDestroy();
     const emails = {
@@ -155,25 +151,19 @@ describe('World image e2e (F08-11a)', () => {
 
   beforeEach(async () => {
     process.env.OPENROUTER_API_KEY = FAKE_KEY;
-    prompts.length = 0;
-    image = () => ({ b64_json: png(1536, 1536) });
     await resetBudget();
-    fetchSpy = jest.spyOn(global, 'fetch').mockImplementation((url, init) => {
-      if (urlOf(url).endsWith('/models')) return Promise.resolve(json({ data: [] }));
-      if (urlOf(url).endsWith('/images')) {
-        const body = JSON.parse((init as RequestInit).body as string) as Record<string, unknown>;
-        prompts.push(body);
-        return Promise.resolve(json({ model: body.model, data: [image()], usage: { cost: 0.04 } }));
-      }
-      return Promise.reject(new Error(`unexpected fetch ${urlOf(url)}`));
-    });
+    // Любой внешний запрос - отказ и след в шпионе: генерации нет, в сеть ходить некому.
+    fetchSpy = jest
+      .spyOn(global, 'fetch')
+      .mockImplementation(() => Promise.reject(new Error('unexpected fetch')));
   });
 
   afterEach(async () => {
     fetchSpy.mockRestore();
     process.env.OPENROUTER_API_KEY = '';
-    await prisma.llmTask.updateMany({
-      where: { status: { in: ['pending', 'running'] } },
+    // Только свои хвосты: база одна на воркер jest, задачи соседних сьютов не трогаем.
+    await db.llmTask.updateMany({
+      where: { kind: 'world_image', status: { in: ['pending', 'running'] } },
       data: { status: 'cancelled' },
     });
   });
@@ -182,76 +172,52 @@ describe('World image e2e (F08-11a)', () => {
     await app.close();
   });
 
-  it('access: every route is admin only; no token - 401', async () => {
+  it('access: GET and accept are admin only; no token - 401', async () => {
     const versionId = await version(await book(), Language.en);
     for (const [method, url] of [
       ['get', path(versionId)],
-      ['post', path(versionId)],
       ['post', `${path(versionId)}/accept`],
     ] as Array<['get' | 'post', string]>) {
       await http()[method](url).expect(401);
       await auth(http()[method](url), 'cm').expect(403);
       await auth(http()[method](url), 'user').expect(403);
     }
-    expect(prompts).toHaveLength(0);
   });
 
-  it('refusals: a minor character, a character without appearance, an unknown key', async () => {
-    const bookId = await book();
-    const minor = await version(bookId, Language.en, { role: 'minor' });
-    const noAppearance = await version(bookId, Language.ru, { appearance: null });
-    expect((await auth(http().post(path(minor))).expect(409)).body.code).toBe(
-      'WORLD_IMAGE_NOT_ALLOWED',
-    );
-    expect((await auth(http().post(path(noAppearance))).expect(409)).body.code).toBe(
-      'WORLD_IMAGE_NO_APPEARANCE',
-    );
-    await auth(http().post(path(minor, 'nobody'))).expect(404);
-    expect((await auth(http().get(path(minor))).expect(200)).body).toMatchObject({
-      allowed: false,
-      accepted: null,
-      pending: null,
-      generation: null,
-    });
-    expect(prompts).toHaveLength(0);
+  it('there is no generation: POST image - 404 for everyone, nothing created, no external call', async () => {
+    const versionId = await version(await book(), Language.en);
+    const opsBefore = await db.llmOperation.count({ where: { bookVersionId: versionId } });
+    for (const who of ['admin', 'cm', 'user'] as const) {
+      await auth(http().post(path(versionId)), who).expect(404);
+    }
+    await http().post(path(versionId)).expect(404);
+    expect(await db.llmOperation.count({ where: { bookVersionId: versionId } })).toBe(opsBefore);
+    expect(await db.llmTask.count({ where: { bookVersionId: versionId } })).toBe(0);
+    expect(externalCalls()).toHaveLength(0);
   });
 
-  it('generated image waits for Accept: not public until accepted, then on every language of the book; regenerate keeps the accepted one', async () => {
+  it('a pending image is not public until accepted, then on every language of the book; the state has no generation fields', async () => {
     const bookId = await book();
     const en = await version(bookId, Language.en);
     const ru = await version(bookId, Language.ru);
-
-    const started = await auth(http().post(path(en))).expect(202);
-    expect(started.body.generation).toMatchObject({ status: 'active', failedReason: null });
-    expect((await auth(http().post(path(en))).expect(409)).body.code).toBe(
-      'WORLD_IMAGE_IN_PROGRESS',
-    );
-    await drain();
-
-    // Промпт - по внешности и фактам анализа, без имени героя и названия книги (`product.md` §8).
-    expect(prompts).toHaveLength(1);
-    expect(prompts[0]).toMatchObject({
-      provider: { data_collection: 'deny' },
-      aspect_ratio: '1:1',
-    });
-    expect(String(prompts[0].prompt)).toContain('dressing gown');
-    expect(String(prompts[0].prompt)).toContain('St Petersburg');
-    expect(String(prompts[0].prompt)).not.toMatch(/Oblomov|Goncharov/);
+    const pending = await asset();
+    await imageRow(bookId, { pendingMediaId: pending.id });
 
     const waiting = (await auth(http().get(path(en))).expect(200)).body;
-    expect(waiting.generation).toMatchObject({ status: 'done', spentUsd: '0.04000000' });
-    expect(waiting.accepted).toBeNull();
-    expect(waiting.pending).toMatchObject({ width: 1536, height: 1536 });
-    expect(waiting.pending.url).toMatch(/illustrations\/\d{4}\/\d{2}\/\d{2}\/[\w-]+\.png$/);
-    const asset = await prisma.mediaAsset.findUniqueOrThrow({
-      where: { id: waiting.pending.mediaId },
+    expect(waiting).toEqual({
+      key: 'oblomov',
+      allowed: true,
+      roleAllowed: true,
+      accepted: null,
+      acceptedAt: null,
+      pending: { mediaId: pending.id, url: pending.url, width: 1536, height: 1536 },
     });
-    expect(asset.contentType).toBe('image/png');
 
     // Непринятая: ни читателю, ни редактору на странице сущности.
     expect((await publicEntity(en)).body.image).toBeNull();
-    const editorView = await auth(http().get(`/versions/${en}/world/oblomov`)).expect(200);
-    expect(editorView.body.image).toBeNull();
+    expect(
+      (await auth(http().get(`/versions/${en}/world/oblomov`)).expect(200)).body.image,
+    ).toBeNull();
 
     // Accept чужой картинки - 409; своей - картинка на сайте у обоих языков книги.
     expect(
@@ -262,81 +228,68 @@ describe('World image e2e (F08-11a)', () => {
       ).body.code,
     ).toBe('WORLD_IMAGE_CHANGED');
     await auth(http().post(`${path(en)}/accept`))
-      .send({ pendingMediaId: waiting.pending.mediaId })
+      .send({ pendingMediaId: pending.id })
       .expect(200);
-    const accepted = { url: waiting.pending.url, width: 1536, height: 1536 };
+    const accepted = { url: pending.url, width: 1536, height: 1536 };
     expect((await publicEntity(en)).body.image).toEqual(accepted);
     expect((await publicEntity(ru)).body.image).toEqual(accepted);
 
-    // Перегенерация пишет только в ожидающую: на сайте прежняя до нового Accept.
-    await auth(http().post(path(ru))).expect(202);
-    await drain();
-    const again = (await auth(http().get(path(ru))).expect(200)).body;
-    expect(again.accepted).toMatchObject(accepted);
-    expect(again.pending.mediaId).not.toBe(waiting.pending.mediaId);
-    expect((await publicEntity(en)).body.image).toEqual(accepted);
-
-    // Принимать нечего - 409.
-    await auth(http().post(`${path(ru)}/accept`))
-      .send({ pendingMediaId: again.pending.mediaId })
-      .expect(200);
+    // Принимать больше нечего - 409.
     expect(
       (
         await auth(http().post(`${path(ru)}/accept`))
-          .send({ pendingMediaId: again.pending.mediaId })
+          .send({ pendingMediaId: pending.id })
           .expect(409)
       ).body.code,
     ).toBe('WORLD_IMAGE_NONE');
+    expect(externalCalls()).toHaveLength(0);
   });
 
-  it('a Generate that waited for the row lock sees the generation committed meanwhile: 409, no second operation (L-019)', async () => {
-    const versionId = await version(await book(), Language.en);
-    await auth(http().post(path(versionId))).expect(202);
-    await drain();
-    const row = await prisma.bookWorldImage.findFirstOrThrow({
-      where: { key: 'oblomov', book: { versions: { some: { id: versionId } } } },
+  it('an image accepted before the removal is still shown on the site (U8); only the accepted cell goes out', async () => {
+    const bookId = await book();
+    const versionId = await version(bookId, Language.en);
+    const old = await asset();
+    const waiting = await asset(1600, 1600);
+    await imageRow(bookId, {
+      imageMediaId: old.id,
+      imageReadAt: new Date('2026-11-23T10:00:00Z'),
+      pendingMediaId: waiting.id,
     });
-    const opsBefore = await prisma.llmOperation.count({ where: { bookVersionId: versionId } });
-
-    // Детерминированное пересечение: «первая генерация» держит замок строки, вторая «Generate»
-    // встаёт на него в ожидание, первая заводит активную операцию и коммитит - только после этого
-    // вторая получает замок. Без барьера два запроса могли бы просто не пересечься.
-    let release!: () => void;
-    const released = new Promise<void>((resolve) => (release = resolve));
-    const holder = prisma.$transaction(
-      async (tx) => {
-        await tx.$queryRaw`SELECT "id" FROM "BookWorldImage" WHERE "id" = ${row.id} FOR UPDATE`;
-        await released;
-        const op = await tx.llmOperation.create({
-          data: { kind: 'draft', bookVersionId: versionId, limitUsd: 1, status: 'active' },
-          select: { id: true },
-        });
-        await tx.bookWorldImage.update({ where: { id: row.id }, data: { operationId: op.id } });
-      },
-      { timeout: 30_000, maxWait: 5_000 },
+    const page = (await publicEntity(versionId)).body as Record<string, unknown>;
+    expect(page.image).toEqual({ url: old.url, width: 1536, height: 1536 });
+    expect(Object.keys(page).sort()).toEqual(
+      ['alternates', 'chapterNumbers', 'entity', 'image', 'language'].sort(),
     );
-    const second = auth(http().post(path(versionId))).then((r) => r);
-    for (let i = 0; i < 200; i++) {
-      const waiting = await prisma.$queryRaw<Array<{ n: bigint }>>`
-        SELECT count(*) AS n FROM pg_stat_activity
-        WHERE wait_event_type = 'Lock' AND datname = current_database()`;
-      if (Number(waiting[0].n) > 0) break;
-      await new Promise((resolve) => setImmediate(resolve));
-    }
-    release();
-    await holder;
-    const answer = await second;
-
-    expect(answer.status).toBe(409);
-    expect(answer.body.code).toBe('WORLD_IMAGE_IN_PROGRESS');
-    // Ровно одна новая операция - та, что держала замок; вторая «Generate» свою не завела.
-    expect(await prisma.llmOperation.count({ where: { bookVersionId: versionId } })).toBe(
-      opsBefore + 1,
-    );
-    await prisma.llmOperation.updateMany({
-      where: { bookVersionId: versionId, status: 'active' },
-      data: { status: 'cancelled' },
+    expect((await auth(http().get(path(versionId))).expect(200)).body).toMatchObject({
+      accepted: { mediaId: old.id },
+      pending: { mediaId: waiting.id },
     });
+  });
+
+  it('allowed is the role alone (Q10): a hero without appearance may have one; a minor one may not, accept refuses; an unknown key - 404', async () => {
+    const bookId = await book();
+    const noAppearance = await version(bookId, Language.en, { appearance: null });
+    expect((await auth(http().get(path(noAppearance))).expect(200)).body).toMatchObject({
+      allowed: true,
+      roleAllowed: true,
+    });
+
+    const minorBook = await book();
+    const minor = await version(minorBook, Language.en, { role: 'minor' });
+    const pending = await asset();
+    await imageRow(minorBook, { pendingMediaId: pending.id });
+    expect((await auth(http().get(path(minor))).expect(200)).body).toMatchObject({
+      allowed: false,
+      roleAllowed: false,
+    });
+    expect(
+      (
+        await auth(http().post(`${path(minor)}/accept`))
+          .send({ pendingMediaId: pending.id })
+          .expect(409)
+      ).body.code,
+    ).toBe('WORLD_IMAGE_NOT_ALLOWED');
+    await auth(http().get(path(minor, 'nobody'))).expect(404);
   });
 
   it('accept body and path are validated: not a uuid - 400, an extra field - 400', async () => {
@@ -353,77 +306,113 @@ describe('World image e2e (F08-11a)', () => {
     await auth(http().get(`/admin/versions/not-a-uuid/world/oblomov/image`)).expect(400);
   });
 
-  it('a failed regeneration keeps the accepted image; a demoted character shows none, accept refuses (Q1)', async () => {
-    const versionId = await version(await book(), Language.en);
-    await auth(http().post(path(versionId))).expect(202);
-    await drain();
-    const first = (await auth(http().get(path(versionId))).expect(200)).body;
-    await auth(http().post(`${path(versionId)}/accept`))
-      .send({ pendingMediaId: first.pending.mediaId })
-      .expect(200);
-    const accepted = { url: first.pending.url, width: 1536, height: 1536 };
-
-    // Отказ модели поверх принятой: принятая на сайте как была, ожидающей нет.
-    image = () => ({ b64_json: png(1024, 1024) });
-    await auth(http().post(path(versionId))).expect(202);
-    await drain();
-    const failed = (await auth(http().get(path(versionId))).expect(200)).body;
-    expect(failed).toMatchObject({ accepted, pending: null });
-    expect(failed.generation).toMatchObject({ status: 'failed' });
-    const page = (await publicEntity(versionId)).body as Record<string, unknown>;
-    expect(page.image).toEqual(accepted);
-    // Наружу - только принятая картинка: ни ячеек, ни операции.
-    expect(Object.keys(page).sort()).toEqual(
-      ['alternates', 'chapterNumbers', 'entity', 'image', 'language'].sort(),
-    );
-
-    // Героя понизили: картинки на странице нет, «Accept» - 409; строка не тронута.
-    image = () => ({ b64_json: png(1536, 1536) });
-    await auth(http().post(path(versionId))).expect(202);
-    await drain();
-    const pending = (await auth(http().get(path(versionId))).expect(200)).body.pending;
-    await prisma.bookWorldEntity.update({
-      where: { bookVersionId_key: { bookVersionId: versionId, key: 'oblomov' } },
-      data: { role: 'secondary' },
-    });
-    expect((await publicEntity(versionId)).body.image).toEqual(accepted);
-    await prisma.bookWorldEntity.update({
-      where: { bookVersionId_key: { bookVersionId: versionId, key: 'oblomov' } },
-      data: { role: 'minor', isListed: true },
-    });
-    expect((await publicEntity(versionId)).body.image).toBeNull();
-    expect(
-      (
-        await auth(http().post(`${path(versionId)}/accept`))
-          .send({ pendingMediaId: pending.mediaId })
-          .expect(409)
-      ).body.code,
-    ).toBe('WORLD_IMAGE_NOT_ALLOWED');
+  it('the stage registry has no world_image; world_image tasks still have a handler', () => {
+    expect(app.get(LlmStageRegistry).get('world_image')).toBeUndefined();
+    expect(app.get(LlmTaskHandlerRegistry).kinds()).toContain('world_image');
   });
 
-  it.each([
-    [
-      'an SVG',
-      () => ({
-        b64_json: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"/>').toString('base64'),
-      }),
-      'WORLD_IMAGE_NOT_IMAGE',
-    ],
-    ['a 1024 px image', () => ({ b64_json: png(1024, 1024) }), 'WORLD_IMAGE_TOO_SMALL'],
-    ['no image at all', () => ({ b64_json: '' }), 'WORLD_IMAGE_NOT_IMAGE'],
-  ])(
-    'the model answers %s: the generation fails with its reason, nothing is stored',
-    async (_, answer, reason) => {
-      image = answer;
-      const versionId = await version(await book(), Language.en);
-      const assetsBefore = await prisma.mediaAsset.count();
-      await auth(http().post(path(versionId))).expect(202);
-      await drain();
-      const state = (await auth(http().get(path(versionId))).expect(200)).body;
-      expect(state.generation).toMatchObject({ status: 'failed', failedReason: reason });
-      expect(state.pending).toBeNull();
-      expect(await prisma.mediaAsset.count()).toBe(assetsBefore);
-      expect((await publicEntity(versionId)).body.image).toBeNull();
-    },
-  );
+  it('left-over world_image tasks (pending, running with an expired lease) fail without the model; the operation is closed, the stale reserve released', async () => {
+    const bookId = await book();
+    const versionId = await version(bookId, Language.en);
+    const past = new Date(Date.now() - 24 * 3600 * 1000);
+    const op = await db.llmOperation.create({
+      data: { kind: 'draft', bookVersionId: versionId, limitUsd: 1, status: 'active' },
+    });
+    await imageRow(bookId, {});
+    await db.bookWorldImage.update({
+      where: { bookId_key: { bookId, key: 'oblomov' } },
+      data: { operationId: op.id },
+    });
+    const pendingTask = await db.llmTask.create({
+      data: {
+        kind: 'world_image',
+        operationId: op.id,
+        bookVersionId: versionId,
+        status: 'pending',
+        runAfter: past,
+        payload: { key: 'oblomov' },
+        pairKey: `world_image:${op.id}`,
+      },
+    });
+    // Второй операции - шаг, оборванный выкатом посреди вызова: задача `running` с истёкшей арендой
+    // и незакрытый резерв её вызова.
+    const op2 = await db.llmOperation.create({
+      data: {
+        kind: 'draft',
+        bookVersionId: versionId,
+        limitUsd: 1,
+        reservedUsd: '0.25',
+        status: 'active',
+      },
+    });
+    const runningTask = await db.llmTask.create({
+      data: {
+        kind: 'world_image',
+        operationId: op2.id,
+        bookVersionId: versionId,
+        status: 'running',
+        attempt: 1,
+        ownerToken: randomUUID(),
+        leaseUntil: past,
+        runAfter: past,
+        payload: { key: 'oblomov' },
+        pairKey: `world_image:${op2.id}`,
+      },
+    });
+    const call = await db.llmCall.create({
+      data: {
+        operationId: op2.id,
+        stage: 'world_image',
+        requestedModel: 'bytedance-seed/seedream-4.5',
+        attempt: 1,
+        reservedUsd: '0.25',
+        startedAt: past,
+        taskId: runningTask.id,
+      },
+    });
+    await db.llmBudget.update({ where: { id: LLM_BUDGET_ID }, data: { reservedUsd: '0.25' } });
+
+    for (let i = 0; i < 5; i++) await worker.runOnce();
+
+    for (const [task, operation] of [
+      [pendingTask.id, op.id],
+      [runningTask.id, op2.id],
+    ]) {
+      expect(await db.llmTask.findUniqueOrThrow({ where: { id: task } })).toMatchObject({
+        status: 'failed',
+        lastError: 'WORLD_IMAGE_GENERATION_REMOVED',
+        ownerToken: null,
+      });
+      expect((await db.llmOperation.findUniqueOrThrow({ where: { id: operation } })).status).toBe(
+        'failed',
+      );
+    }
+    // Ни вызова модели, ни внешнего запроса.
+    expect(await db.llmCall.count({ where: { operationId: { in: [op.id, op2.id] } } })).toBe(1);
+    expect(externalCalls()).toHaveLength(0);
+
+    // Резерв оборванного вызова снимает чистка исполнителя - тем же путём, что у любого отказа.
+    await worker.housekeeping();
+    expect(
+      (await db.llmCall.findUniqueOrThrow({ where: { id: call.id } })).reserveReleasedAt,
+    ).not.toBeNull();
+    expect(
+      (await db.llmOperation.findUniqueOrThrow({ where: { id: op2.id } })).reservedUsd.toFixed(2),
+    ).toBe('0.00');
+    expect(
+      (await db.llmBudget.findUniqueOrThrow({ where: { id: LLM_BUDGET_ID } })).reservedUsd.toFixed(
+        2,
+      ),
+    ).toBe('0.00');
+
+    // Вид задачи с обработчиком: в счёт «без обработчика» он не попадает - счёт до и после новой
+    // задачи `world_image` один и тот же (чужие задачи базы не трогаем).
+    const unknownKinds = () =>
+      app.get(LlmTaskService).countUnknownKinds(app.get(LlmTaskHandlerRegistry).kinds());
+    const before = await unknownKinds();
+    await db.llmTask.create({
+      data: { kind: 'world_image', operationId: op.id, status: 'pending', runAfter: past },
+    });
+    expect(await unknownKinds()).toBe(before);
+  });
 });

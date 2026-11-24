@@ -18,7 +18,7 @@
       "AcceptWorldImageDto": {
         "properties": {
           "pendingMediaId": {
-            "description": "mediaId of the pending image the admin saw; 409 WORLD_IMAGE_CHANGED when it was regenerated since",
+            "description": "mediaId of the pending image the admin saw; 409 WORLD_IMAGE_CHANGED when it was replaced since",
             "type": "string"
           }
         },
@@ -33756,46 +33756,6 @@
         ],
         "type": "object"
       },
-      "WorldImageGenerationDto": {
-        "properties": {
-          "failedReason": {
-            "description": "Why the generation failed: WORLD_IMAGE_NOT_IMAGE (the answer is not PNG/JPEG/WEBP), WORLD_IMAGE_TOO_SMALL (narrower than 1200 px), WORLD_IMAGE_TOO_LARGE, WORLD_IMAGE_INPUT_MISSING, or an LLM code (LLM_INSUFFICIENT_FUNDS, LLM_UNAVAILABLE...); null while it runs or after success",
-            "nullable": true,
-            "type": "string"
-          },
-          "operationId": {
-            "type": "string"
-          },
-          "pauseReason": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/LlmPauseReason"
-              }
-            ],
-            "description": "Why the generation is paused (status paused), e.g. the spending ceiling; null otherwise (F08-12a, tail of F08-11b)",
-            "nullable": true
-          },
-          "spentUsd": {
-            "description": "Spent on this generation, USD (decimal string)",
-            "type": "string"
-          },
-          "status": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/LlmOperationStatus"
-              }
-            ]
-          }
-        },
-        "required": [
-          "operationId",
-          "status",
-          "pauseReason",
-          "failedReason",
-          "spentUsd"
-        ],
-        "type": "object"
-      },
       "WorldImageStateDto": {
         "properties": {
           "accepted": {
@@ -33814,21 +33774,8 @@
             "type": "string"
           },
           "allowed": {
-            "description": "The entity may have an illustration: a main or secondary character with appearance text",
+            "description": "The entity may have an illustration: a main or secondary character (the appearance text is not a condition)",
             "type": "boolean"
-          },
-          "estimateUsd": {
-            "description": "Upper bound of one generation, USD (decimal string): the reserve of one image for the primary model and each fallback of the stage",
-            "type": "string"
-          },
-          "generation": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/WorldImageGenerationDto"
-              }
-            ],
-            "nullable": true,
-            "type": "object"
           },
           "key": {
             "description": "Entity key: one illustration per book and key",
@@ -33840,12 +33787,12 @@
                 "$ref": "#/components/schemas/WorldImageFileDto"
               }
             ],
-            "description": "Generated and waiting for acceptance: never shown on the site",
+            "description": "Waiting for acceptance: never shown on the site",
             "nullable": true,
             "type": "object"
           },
           "roleAllowed": {
-            "description": "The entity type and role allow an illustration (main or secondary character), whatever the appearance text: false — Generate and Accept answer 409 WORLD_IMAGE_NOT_ALLOWED (F08-12a, tail of F08-11b)",
+            "description": "The entity type and role allow an illustration (main or secondary character); equals allowed since F08-11d-1: false — Accept answers 409 WORLD_IMAGE_NOT_ALLOWED (F08-12a, tail of F08-11b)",
             "type": "boolean"
           }
         },
@@ -33855,9 +33802,7 @@
           "roleAllowed",
           "accepted",
           "acceptedAt",
-          "pending",
-          "generation",
-          "estimateUsd"
+          "pending"
         ],
         "type": "object"
       },
@@ -46708,56 +46653,7 @@
             "bearer": []
           }
         ],
-        "summary": "Illustration of a world entity: accepted (shown on the site), pending (generated, waiting for Accept) and the latest generation",
-        "tags": [
-          "admin"
-        ]
-      },
-      "post": {
-        "operationId": "WorldImageController_generate",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "id",
-            "required": true,
-            "schema": {
-              "format": "uuid",
-              "type": "string"
-            }
-          },
-          {
-            "in": "path",
-            "name": "key",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WorldImageStateDto"
-                }
-              }
-            },
-            "description": ""
-          },
-          "404": {
-            "description": "No such entity in the version"
-          },
-          "409": {
-            "description": "WORLD_IMAGE_IN_PROGRESS - a generation is running (a paused one is cancelled and replaced); WORLD_IMAGE_NOT_ALLOWED - not a main or secondary character; WORLD_IMAGE_NO_APPEARANCE - no appearance text; LLM_CEILING_REACHED"
-          }
-        },
-        "security": [
-          {
-            "bearer": []
-          }
-        ],
-        "summary": "Generate (or regenerate) the illustration of a main or secondary character in the background from its appearance text; the result becomes pending, the accepted one stays on the site until Accept",
+        "summary": "Illustration of a world entity: accepted (shown on the site) and pending (waiting for Accept)",
         "tags": [
           "admin"
         ]
@@ -46810,7 +46706,7 @@
             "description": "No such entity in the version"
           },
           "409": {
-            "description": "WORLD_IMAGE_NONE - nothing to accept (or its file was deleted); WORLD_IMAGE_CHANGED - the pending image is not the one sent; WORLD_IMAGE_NOT_ALLOWED - the entity is no longer a main or secondary character"
+            "description": "WORLD_IMAGE_NONE - nothing to accept (or its file was deleted); WORLD_IMAGE_CHANGED - the pending image is not the one sent; WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character"
           }
         },
         "security": [

@@ -8,7 +8,6 @@ import { LlmStageRegistry } from './llm-stages.registry';
 import { LlmConfig } from './llm.config';
 import { LlmService } from './llm.service';
 import { LlmCallModel, OpenRouterClient, SUMMARY_INPUT_CHARS_PER_TOKEN } from './openrouter.client';
-import { OpenRouterImageClient } from './openrouter-image.client';
 
 const D = (v: string | number) => new Prisma.Decimal(v);
 
@@ -61,7 +60,6 @@ describe('LlmService', () => {
   };
   let budget: { getBudget: jest.Mock; updateBudget: jest.Mock };
   let client: { chat: jest.Mock };
-  let imageClient: { generate: jest.Mock };
   let models: { list: jest.Mock };
   let service: LlmService;
 
@@ -79,7 +77,6 @@ describe('LlmService', () => {
     };
     budget = { getBudget: jest.fn().mockResolvedValue(null), updateBudget: jest.fn() };
     client = { chat: jest.fn().mockResolvedValue({}) };
-    imageClient = { generate: jest.fn().mockResolvedValue({}) };
     models = { list: jest.fn().mockResolvedValue(MODELS) };
     const registry = new LlmStageRegistry();
     registry.register({
@@ -118,7 +115,6 @@ describe('LlmService', () => {
       models as unknown as LlmModelsService,
       budget as unknown as LlmBudgetService,
       client as unknown as OpenRouterClient,
-      imageClient as unknown as OpenRouterImageClient,
     );
   });
 
@@ -132,53 +128,6 @@ describe('LlmService', () => {
       spentUsd: null,
       reservedUsd: null,
       defaultRunLimitUsd: null,
-    });
-  });
-
-  describe('callImageStage (F08-11a)', () => {
-    const image = { reserveUsd: D('0.25'), aspectRatio: '1:1' };
-
-    it('without the key - LLM_DISABLED, no call', async () => {
-      key = '';
-      await expect(service.callImageStage('op', 'on', 'p', image)).rejects.toMatchObject({
-        response: { code: 'LLM_DISABLED' },
-      });
-      expect(imageClient.generate).not.toHaveBeenCalled();
-    });
-
-    it('a disabled stage is refused without calling the model', async () => {
-      await expect(service.callImageStage('op', 'jev', 'p', image)).rejects.toMatchObject({
-        code: 'LLM_STAGE_DISABLED',
-      });
-      expect(imageClient.generate).not.toHaveBeenCalled();
-    });
-
-    it('takes the model and fallbacks of the stage setting, no catalog price, the reserve of the caller', async () => {
-      prisma.llmStageSetting.findUnique.mockResolvedValue(
-        row({ stage: 'on', model: 'x/image', fallbacks: ['y/image'] }),
-      );
-      const signal = new AbortController().signal;
-      const beforeAttempt = jest.fn();
-      await service.callImageStage('op', 'on', 'prompt', image, {
-        taskId: 't-1',
-        signal,
-        beforeAttempt,
-      });
-      expect(imageClient.generate).toHaveBeenCalledTimes(1);
-      expect(imageClient.generate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          operationId: 'op',
-          stage: 'on',
-          models: ['x/image', 'y/image'],
-          prompt: 'prompt',
-          reserveUsd: image.reserveUsd,
-          aspectRatio: '1:1',
-          taskId: 't-1',
-          signal,
-          beforeAttempt,
-        }),
-      );
-      expect(models.list).not.toHaveBeenCalled();
     });
   });
 

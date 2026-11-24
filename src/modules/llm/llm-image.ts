@@ -1,8 +1,8 @@
 /**
- * Проверка картинки из ответа модели (`F08-11a`, решение арбитра `F08 | F08-11` Р1): ответ модели -
- * чужие байты, поэтому тип - только по сигнатуре, размеры - из заголовка, без разбора файла
- * целиком и без внешних зависимостей. Заявленный провайдером `media_type` не читается: SVG
- * с `image/png` в заголовке ответа - XSS с медиа-хоста.
+ * Проверка картинки (`F08-11a`, решение арбитра `F08 | F08-11` Р1): файл - чужие байты, поэтому
+ * тип - только по сигнатуре, размеры - из заголовка, без разбора файла целиком и без внешних
+ * зависимостей. Заявленный тип не читается: SVG с `image/png` в заголовке - XSS с медиа-хоста.
+ * Генерация моделью снята (`F08-11d-1`); проверка остаётся для загрузки файла (`F08-11d-3`).
  */
 
 export type LlmImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
@@ -14,7 +14,7 @@ export interface LlmImageInfo {
   height: number;
 }
 
-/** Причина отказа картинки - код задачи (`lastError`), его показывает вкладка World. */
+/** Причина отказа картинки. */
 export const IMAGE_NOT_IMAGE = 'WORLD_IMAGE_NOT_IMAGE';
 export const IMAGE_TOO_LARGE = 'WORLD_IMAGE_TOO_LARGE';
 export const IMAGE_TOO_SMALL = 'WORLD_IMAGE_TOO_SMALL';
@@ -34,17 +34,8 @@ export type LlmImageCheck =
   | { ok: true; bytes: Buffer; info: LlmImageInfo }
   | { ok: false; reason: string };
 
-const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
-
-/**
- * Base64 ответа -> проверенная картинка. Длина проверяется **до** декодирования: строка сверх
- * предела в `Buffer` не превращается.
- */
-export function checkImageBase64(base64: unknown, limits: LlmImageLimits): LlmImageCheck {
-  if (typeof base64 !== 'string' || base64.length === 0) return refuse(IMAGE_NOT_IMAGE);
-  if (base64.length > Math.ceil(limits.maxBytes / 3) * 4) return refuse(IMAGE_TOO_LARGE);
-  if (base64.length % 4 !== 0 || !BASE64.test(base64)) return refuse(IMAGE_NOT_IMAGE);
-  const bytes = Buffer.from(base64, 'base64');
+/** Байты -> проверенная картинка: размер файла, тип по сигнатуре, пиксели, наименьшие стороны. */
+export function checkImageBytes(bytes: Buffer, limits: LlmImageLimits): LlmImageCheck {
   if (bytes.length > limits.maxBytes) return refuse(IMAGE_TOO_LARGE);
   const info = sniffImage(bytes);
   if (!info) return refuse(IMAGE_NOT_IMAGE);

@@ -6,7 +6,7 @@ export class AcceptWorldImageDto {
   @ApiProperty({
     type: String,
     description:
-      'mediaId of the pending image the admin saw; 409 WORLD_IMAGE_CHANGED when it was regenerated since',
+      'mediaId of the pending image the admin saw; 409 WORLD_IMAGE_CHANGED when it was replaced since',
   })
   @IsUUID()
   pendingMediaId!: string;

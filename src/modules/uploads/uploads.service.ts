@@ -24,9 +24,9 @@ const KEY_PREFIX: Record<UploadType, string> = {
 };
 
 /**
- * Префикс иллюстраций мира книги (`F08-11a`): ключ кладёт только генерация модели, загрузки с таким
- * типом нет (решение арбитра `F08 | F08-11a` Q4). Ручкой `remove` не снимается: отвязанный файл
- * забирает уборка сирот, ручное удаление обошло бы «только admin» (Р5).
+ * Префикс иллюстраций мира книги (`F08-11a`): ключ - только серверный, у `presign` такого типа нет
+ * (решение арбитра `F08 | F08-11a` Q4). Ручкой `remove` не снимается: отвязанный файл забирает
+ * уборка сирот, ручное удаление обошло бы «только admin» (Р5).
  */
 export const ILLUSTRATIONS_KEY_PREFIX = 'illustrations';
 
@@ -48,10 +48,7 @@ function isRemovableKey(key: string): boolean {
   );
 }
 
-/**
- * Ключ объекта: `<префикс>/ГГГГ/ММ/ДД/<uuid>.<ext>`. Один на `presign` и на картинку, которую кладёт
- * генерация (`F08-11a`, префикс `ILLUSTRATIONS_KEY_PREFIX`): ключ - всегда серверный.
- */
+/** Ключ объекта: `<префикс>/ГГГГ/ММ/ДД/<uuid>.<ext>`; ключ - всегда серверный. */
 export function uploadObjectKey(prefix: string, ext: string, now = new Date()): string {
   const y = now.getUTCFullYear();
   const m = String(now.getUTCMonth() + 1).padStart(2, '0');
