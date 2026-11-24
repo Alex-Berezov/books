@@ -68,6 +68,10 @@ export const BOOK_WORLD_LIMITS = {
   chapter: BOOK_ANALYSIS_LIMITS.chapter,
   paragraph: 10_000,
   adaptationYear: BOOK_ANALYSIS_LIMITS.adaptationYear,
+  // Место (`F08-12a`, решение арбитра `F08 | F08-12` Q1): пределы — из уже заведённых чисел.
+  location: BOOK_ANALYSIS_LIMITS.mainIdea,
+  significance: BOOK_ANALYSIS_LIMITS.interpretation,
+  description: BOOK_ANALYSIS_LIMITS.mediumText,
 } as const;
 
 /** Ключ сущности — тот же, что у героя анализа: часть адреса `/wiki/{key}`. */
@@ -75,10 +79,21 @@ export const BOOK_WORLD_KEY_REGEX = BLOCK_KEY_REGEX;
 
 /**
  * Типы, которые импорт принимает сейчас; остальные `WorldEntityType` — пачками своего типа
- * (`batches.md` F08-1 п.2). Пара героев — с `F08-8c`.
+ * (`batches.md` F08-1 п.2). Пара героев — с `F08-8c`, место — с `F08-12a`.
  */
-export const BOOK_WORLD_IMPORT_TYPES = ['character', 'pair'] as const;
+export const BOOK_WORLD_IMPORT_TYPES = ['character', 'pair', 'place'] as const;
 export type BookWorldImportType = (typeof BOOK_WORLD_IMPORT_TYPES)[number];
+
+/** Место реальное или вымышленное (`product.md` §7); точка на карте — только у реального. */
+export const WORLD_PLACE_KINDS = ['real', 'fictional'] as const;
+export type WorldPlaceKind = (typeof WORLD_PLACE_KINDS)[number];
+
+/**
+ * Номер сущности Wikidata (`Q90`): источник координат места (решение арбитра `F08 | F08-12` Q2).
+ * Числа координат во входе не принимаются вовсе — их читает сервер из Wikidata.
+ */
+export const WIKIDATA_ID_REGEX = /^Q[1-9]\d*$/;
+export const WIKIDATA_ID_MAX = 16;
 
 /** Номер главы версии — обязателен: цитата сверяется по своей главе, сцена и этап ведут в читалку. */
 const RequiredChapter = () => applyDecorators(IsInt(), Min(1), Max(BOOK_WORLD_LIMITS.chapter));

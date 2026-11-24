@@ -10,6 +10,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import {
   WORLD_PAIRS,
+  WORLD_PLACES,
   computeWorldListed,
   pairMembersIn,
 } from '../src/modules/book-world/world-public';
@@ -19,6 +20,8 @@ import {
 } from '../src/modules/book-world/world-mentions.service';
 import { WorldMentionsSchedulerService } from '../src/modules/book-world/world-mentions-scheduler.service';
 import { BOOK_WORLD_LIMITS } from '../src/modules/book-world/dto/book-world-blocks.dto';
+import { WikidataClient } from '../src/modules/book-world/wikidata.client';
+import { WIKIDATA_EARTH } from '../src/modules/book-world/world-geo';
 import { createBookFixture } from './helpers/book-fixture';
 import { createBookWithRights } from './helpers/book-with-rights';
 import { markBookRightsFreshForTests } from './helpers/rights-fresh';
@@ -41,6 +44,27 @@ describe('BookWorld e2e', () => {
   let userAccess: string;
   let adminAccess: string;
   let managerAccess: string;
+  let wikidataCalls: string[] = [];
+  const PETERSBURG_ENTITY = {
+    entities: {
+      Q656: {
+        labels: { en: { value: 'Saint Petersburg' } },
+        aliases: { en: [{ value: 'Petersburg' }] },
+        claims: {
+          P625: [
+            {
+              rank: 'normal',
+              mainsnak: {
+                datavalue: {
+                  value: { latitude: 59.9375, longitude: 30.3086, globe: WIKIDATA_EARTH },
+                },
+              },
+            },
+          ],
+        },
+      },
+    },
+  };
 
   const http = (): import('http').Server => app.getHttpServer() as import('http').Server;
   const unique = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -212,7 +236,20 @@ describe('BookWorld e2e', () => {
   };
 
   beforeAll(async () => {
-    const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
+    // Wikidata в e2e не ходит в сеть (F08-12a): Q656 — Петербург с P625 на Земле, прочие номера — 404.
+    const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
+      .overrideProvider(WikidataClient)
+      .useValue(
+        new WikidataClient((url) => {
+          wikidataCalls.push(url);
+          return Promise.resolve(
+            url.endsWith('/Q656.json')
+              ? new Response(JSON.stringify(PETERSBURG_ENTITY), { status: 200 })
+              : new Response('', { status: 404 }),
+          );
+        }),
+      )
+      .compile();
     prisma = moduleRef.get(PrismaService);
     rightsContentHash = moduleRef.get(RightsContentHashService);
     worldMentions = moduleRef.get(WorldMentionsService);
@@ -411,7 +448,8 @@ describe('BookWorld e2e', () => {
     await put(versionId, { language: 'ru', entities: [hero()] }).expect(400);
     const res = await put(versionId, {
       language: 'en',
-      entities: [hero('x', { type: 'place' })],
+      // С F08-12a `place` принимается; неизвестный тип по-прежнему отбивает DTO.
+      entities: [hero('x', { type: 'item' })],
     }).expect(400);
     expect(JSON.stringify(res.body.message)).toContain('entities.0.type');
   });
@@ -552,7 +590,7 @@ describe('BookWorld e2e', () => {
       .expect(404);
     const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
     // F08-3a: без публичных сущностей и кластер hreflang пуст.
-    expect(list.body).toEqual({ language: 'en', entities: [], alternates: [] });
+    expect(list.body).toEqual({ language: 'en', entities: [], alternates: [], places: [] });
     const editor = await request(http())
       .get(`/versions/${versionId}/world/oblomov`)
       .set('Authorization', `Bearer ${adminAccess}`)
@@ -600,6 +638,13 @@ describe('BookWorld e2e', () => {
         'bonds',
         'differences',
         'conclusion',
+        // F08-12a: поля места и проверенная точка — тот же единый тип ответа, у героя null.
+        'kind',
+        'location',
+        'significance',
+        'description',
+        'wikidataId',
+        'point',
         'faq',
         'sources',
         'mentions',
@@ -2201,5 +2246,238 @@ describe('BookWorld e2e', () => {
     await request(http()).get(`/versions/${missing}/world`).expect(404);
     await put(missing, { language: 'en', entities: [hero()] }).expect(404);
     await flags(missing, 'oblomov', { isVisible: false }).expect(404);
+  });
+
+  describe('F08-12a: место (решения арбитра `F08 | F08-12` Q0-Q2, Q4)', () => {
+    afterEach(() => {
+      WORLD_PLACES.public = false;
+    });
+    /** Место с полным ядром кроме присутствия; сцены — в главах `TEXT`. */
+    const place = (key = 'petersburg', over: Body = {}): Body => ({
+      key,
+      type: 'place',
+      name: 'Petersburg',
+      short: 'The city of the novel.',
+      kind: 'real',
+      location: 'On the Neva',
+      significance: 'Where he lies on the sofa.',
+      description: 'Grey streets.',
+      wikidataId: 'Q656',
+      scenes: [
+        { chapter: 1, title: 'Morning', text: 'He does not get up.' },
+        { chapter: 3, title: 'The dream', text: 'Far from the city.' },
+      ],
+      ...over,
+    });
+    const anon = (versionId: string) => request(http()).get(`/versions/${versionId}/world`);
+
+    it('героя, на которого ссылаются как на героя, не сделать местом — 400 по пути type', async () => {
+      const { versionId } = await createVersion();
+      await put(versionId, {
+        language: 'en',
+        entities: [
+          hero('zakhar', { name: 'Zakhar' }),
+          hero('oblomov', { relations: [{ to: 'zakhar', label: 'Servant' }] }),
+        ],
+      }).expect(200);
+      const res = await putEntity(versionId, 'zakhar', {
+        language: 'en',
+        ...place('zakhar', { name: 'Zakhar', wikidataId: null, kind: 'fictional' }),
+        role: null,
+        character: null,
+        arc: null,
+        quotes: null,
+      }).expect(400);
+      expect(res.body.message).toEqual([
+        'type: other entities refer to "zakhar" as a character: oblomov; its type cannot change',
+      ]);
+      // Без ссылок тип меняется: герой без связей становится местом.
+      await put(versionId, {
+        language: 'en',
+        entities: [{ key: 'oblomov', type: 'character', relations: null }],
+      }).expect(200);
+      await putEntity(versionId, 'zakhar', {
+        language: 'en',
+        ...place('zakhar', { name: 'Zakhar', wikidataId: null, kind: 'fictional' }),
+        role: null,
+        character: null,
+        arc: null,
+        quotes: null,
+      }).expect(200);
+    });
+
+    it('ссылка цитатой (speakerKey) тоже держит тип героя — 400 по пути type', async () => {
+      const { versionId } = await createVersion();
+      await put(versionId, {
+        language: 'en',
+        entities: [
+          hero('zakhar', { name: 'Zakhar' }),
+          hero('oblomov', {
+            quotes: [
+              {
+                text: 'Zakhar grumbled in the hall.',
+                chapter: 1,
+                interpretation: 'Servant.',
+                speakerKey: 'zakhar',
+              },
+            ],
+          }),
+        ],
+      }).expect(200);
+      const res = await putEntity(versionId, 'zakhar', {
+        language: 'en',
+        ...place('zakhar', { name: 'Zakhar', wikidataId: null, kind: 'fictional' }),
+        role: null,
+        character: null,
+        arc: null,
+        quotes: null,
+      }).expect(400);
+      expect(res.body.message).toEqual([
+        'type: other entities refer to "zakhar" as a character: oblomov; its type cannot change',
+      ]);
+    });
+
+    it('поля чужого типа и координаты во входе — 400 с путём поля', async () => {
+      const { versionId } = await createVersion();
+      const res = await put(versionId, {
+        language: 'en',
+        entities: [
+          place('a', { role: 'main', character: 'Kind.' }),
+          place('b', { kind: 'fictional' }),
+        ],
+      }).expect(400);
+      expect(res.body.message).toEqual(
+        expect.arrayContaining([
+          'entities.0.character: character is not a field of a place',
+          'entities.0.role: role is not a field of a place',
+          'entities.1.wikidataId: wikidataId is only for a real place (kind: real)',
+        ]),
+      );
+      const geo = await put(versionId, {
+        language: 'en',
+        entities: [place('c', { geo: { lat: 1, lng: 2 } })],
+      }).expect(400);
+      expect(geo.body.message).toEqual(['entities.0.property geo should not exist']);
+    });
+
+    it('точка из Wikidata после записи; без смены номера — без запроса; updatedAt не сдвигается', async () => {
+      const { versionId } = await createVersion();
+      wikidataCalls = [];
+      const res = await putEntity(versionId, 'petersburg', { language: 'en', ...place() }).expect(
+        200,
+      );
+      expect(res.body.entity.point).toEqual({
+        lat: 59.9375,
+        lng: 30.3086,
+        sourceUrl: 'https://www.wikidata.org/wiki/Q656',
+      });
+      expect(res.body.entity.editor.geo).toMatchObject({ wikidataId: 'Q656', reason: null });
+      expect(wikidataCalls).toEqual(['https://www.wikidata.org/wiki/Special:EntityData/Q656.json']);
+      const saved = await row(versionId, 'petersburg');
+      expect(new Date(res.body.entity.updatedAt as string).getTime()).toBe(
+        saved.updatedAt.getTime(),
+      );
+
+      await putEntity(versionId, 'petersburg', {
+        language: 'en',
+        type: 'place',
+        short: 'Changed.',
+      }).expect(200);
+      expect(wikidataCalls).toHaveLength(1);
+
+      const unknown = await putEntity(versionId, 'petersburg', {
+        language: 'en',
+        type: 'place',
+        wikidataId: 'Q1',
+      }).expect(200);
+      expect(unknown.body.entity.point).toBeNull();
+      expect(unknown.body.entity.editor.geo).toMatchObject({
+        wikidataId: 'Q1',
+        reason: 'not_found',
+      });
+    });
+
+    it('рубильник выключен: место с ядром и «прочитано» не на сайте, places пуст', async () => {
+      const { versionId } = await createVersion();
+      await put(versionId, { language: 'en', entities: [place()] }).expect(200);
+      await setMentions(versionId, 'petersburg', [1, 3]);
+      await put(versionId, {
+        language: 'en',
+        entities: [{ key: 'petersburg', type: 'place' }],
+      }).expect(200);
+      await readLatest(versionId, 'petersburg');
+      const saved = await row(versionId, 'petersburg');
+      expect(saved.hasCore).toBe(true);
+      expect(saved.isListed).toBe(false);
+      const list = await anon(versionId).expect(200);
+      expect(list.body.places).toEqual([]);
+      expect(list.body.entities).toEqual([]);
+      await request(http()).get(`/versions/${versionId}/world/petersburg`).expect(404);
+      await expectListedConsistent(versionId);
+    });
+
+    it('рубильник включён: страница по ядру; карточка места без ядра; непрочитанное не показывается', async () => {
+      WORLD_PLACES.public = true;
+      const { versionId } = await createVersion();
+      const village = place('village', {
+        name: 'Village',
+        kind: 'fictional',
+        wikidataId: null,
+        significance: null,
+      });
+      await put(versionId, { language: 'en', entities: [place(), village] }).expect(200);
+      await setMentions(versionId, 'petersburg', [1, 3]);
+      await put(versionId, {
+        language: 'en',
+        entities: [{ key: 'petersburg', type: 'place' }],
+      }).expect(200);
+      await readLatest(versionId, 'petersburg');
+
+      // Непрочитанная деревня не видна, прочитанный Петербург — страница и карточка с точкой.
+      let list = await anon(versionId).expect(200);
+      expect(list.body.places.map((p: Body) => p.key)).toEqual(['petersburg']);
+      expect(list.body.places[0]).toEqual({
+        key: 'petersburg',
+        name: 'Petersburg',
+        short: 'The city of the novel.',
+        kind: 'real',
+        location: 'On the Neva',
+        hasPage: true,
+        point: { lat: 59.9375, lng: 30.3086, sourceUrl: 'https://www.wikidata.org/wiki/Q656' },
+        scenes: [
+          { title: 'Morning', chapter: 1, paragraph: 3 },
+          { title: 'The dream', chapter: 3, paragraph: 2 },
+        ],
+      });
+      expect(list.body.entities.map((e: Body) => e.key)).toEqual(['petersburg']);
+
+      await readLatest(versionId, 'village');
+      list = await anon(versionId).expect(200);
+      expect(list.body.places.find((p: Body) => p.key === 'village')).toMatchObject({
+        hasPage: false,
+        point: null,
+        kind: 'fictional',
+      });
+      // Без ядра — нет страницы: 404 читателю.
+      await request(http()).get(`/versions/${versionId}/world/village`).expect(404);
+      // Ответ записи версии несёт тот же набор мест, что видит читатель (одно условие).
+      const saved = await put(versionId, {
+        language: 'en',
+        entities: [{ key: 'village', type: 'place' }],
+      }).expect(200);
+      expect(saved.body.world.places.map((p: Body) => p.key)).toEqual(
+        list.body.places.map((p: Body) => p.key),
+      );
+
+      const page = await request(http()).get(`/versions/${versionId}/world/petersburg`).expect(200);
+      expect(page.body.entity).toMatchObject({
+        kind: 'real',
+        significance: 'Where he lies on the sofa.',
+      });
+      expect(page.body.entity.point).toMatchObject({ lat: 59.9375 });
+      expect(page.body.entity.geo).toBeUndefined();
+      expect(page.body.entity.editor).toBeUndefined();
+      await expectListedConsistent(versionId);
+    });
   });
 });

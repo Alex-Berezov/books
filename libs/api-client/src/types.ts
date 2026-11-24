@@ -7812,6 +7812,8 @@ export interface components {
        * @description First time on the site; after it the entity cannot be deleted
        */
       firstPublishedAt: string | null;
+      /** @description Entity page of a place only (F08-12a): Wikidata coordinate check for the current wikidataId and names (the same rule as point); null — a fictional place, a place without wikidataId, or not a place */
+      geo?: components['schemas']['BookWorldGeoCheckDto'] | null;
       /** @description The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); a pair also needs both its characters listed (F08-8c); the page exists when the version is also published with a slug */
       isListed: boolean;
       isVisible: boolean;
@@ -7846,6 +7848,8 @@ export interface components {
       /** Format: date-time */
       createdAt: string;
       critique: string | null;
+      /** @description Places only (F08-12a) */
+      description: string | null;
       /** @description Pairs only (F08-8c) */
       differences: string | null;
       /** @description Editors only; absent for readers */
@@ -7855,10 +7859,19 @@ export interface components {
       hasCore: boolean;
       isIndexable: boolean;
       key: string;
+      /**
+       * @description Places only (F08-12a)
+       * @enum {string|null}
+       */
+      kind: 'real' | 'fictional' | null;
+      /** @description Places only (F08-12a) */
+      location: string | null;
       /** @description First chapter the entity is found in (F08-2 count); null — not counted yet or not found */
       mentionFirst: number | null;
       mentions: components['schemas']['BookWorldMentionsDto'] | null;
       name: string;
+      /** @description Places only (F08-12a): Wikidata-checked point of a real place for its current wikidataId; otherwise null */
+      point: components['schemas']['BookWorldPointDto'] | null;
       profile: components['schemas']['BookWorldProfileDto'] | null;
       prototypes: string | null;
       quotes: components['schemas']['BookWorldQuoteDto'][] | null;
@@ -7867,10 +7880,14 @@ export interface components {
       role: 'main' | 'secondary' | 'minor' | null;
       scenes: components['schemas']['BookWorldSceneDto'][] | null;
       short: string | null;
+      /** @description Places only (F08-12a) */
+      significance: string | null;
       sources: components['schemas']['BookAnalysisSourceDto'][] | null;
       type: components['schemas']['WorldEntityType'];
       /** Format: date-time */
       updatedAt: string;
+      /** @description Places only (F08-12a): Wikidata item of a real place */
+      wikidataId: string | null;
     };
     BookWorldEntityInputDto: {
       adaptations?: components['schemas']['BookWorldAdaptationDto'][] | null;
@@ -7890,10 +7907,19 @@ export interface components {
       /** @description Pairs only: conclusion of the comparison; required for the page core */
       conclusion?: string | null;
       critique?: string | null;
+      /** @description Places only: how the place looks in the text */
+      description?: string | null;
       /** @description Pairs only: what sets the two characters apart */
       differences?: string | null;
       faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
       key: string;
+      /**
+       * @description Places only (F08-12a): real or fictional; required for the page core
+       * @enum {string|null}
+       */
+      kind?: 'real' | 'fictional' | null;
+      /** @description Places only: where the place is, as text */
+      location?: string | null;
       /** @description Required for a new entity */
       name?: string;
       profile?: components['schemas']['BookWorldProfileDto'] | null;
@@ -7904,12 +7930,16 @@ export interface components {
       role?: 'main' | 'secondary' | 'minor' | null;
       scenes?: components['schemas']['BookWorldSceneDto'][] | null;
       short?: string | null;
+      /** @description Places only: what the place means in the book; required for the page core */
+      significance?: string | null;
       sources?: components['schemas']['BookAnalysisSourceDto'][] | null;
       /**
-       * @description character or pair (F08-8c); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order
+       * @description character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order
        * @enum {string}
        */
-      type: 'character' | 'pair';
+      type: 'character' | 'pair' | 'place';
+      /** @description Places only, kind real: Wikidata item (Q90). The server reads the coordinates (P625) from Wikidata and checks the label against the name; coordinates are never taken from input */
+      wikidataId?: string | null;
     };
     BookWorldEntityResponseDto: {
       /** @description hreflang cluster of this page (same rule as GET /:lang/world/sitemap): languages of the book where the page exists on a published version with a slug and without editorial noindex, this version first; empty when the page is not indexable (entity isIndexable=false, editorial noindex, draft) */
@@ -7951,6 +7981,27 @@ export interface components {
       /** Format: date-time */
       updatedAt: string;
     };
+    BookWorldGeoCheckDto: {
+      /**
+       * Format: date-time
+       * @description When the current check ran; null — there is no check for the current wikidataId and names (reason unavailable)
+       */
+      checkedAt: string | null;
+      /**
+       * @description Why there is no point: not_found, no_coordinates (no P625), not_earth, out_of_range, name_mismatch (no Wikidata label or alias in the version language equals the name or a name form), unavailable (no check for the current wikidataId and names: Wikidata did not answer or the check has not run; checked again on the next save); null — the point is set
+       * @enum {string|null}
+       */
+      reason:
+        | 'not_found'
+        | 'no_coordinates'
+        | 'not_earth'
+        | 'out_of_range'
+        | 'name_mismatch'
+        | 'unavailable'
+        | null;
+      /** @description Wikidata item that was checked */
+      wikidataId: string;
+    };
     BookWorldImageDto: {
       /** @description Pixels, from the file header */
       height: number | null;
@@ -7988,6 +8039,8 @@ export interface components {
        * @enum {string}
        */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Places shown on the world page (F08-12a): visible, read after the model text, places switched on (empty until the place pages ship, F08-12c); with or without their own page. Same set for editors */
+      places: components['schemas']['BookWorldPlaceCardDto'][];
     };
     BookWorldMentionsDto: {
       /** @description Chapters the entity is found in, ascending; for a pair (F08-8c) — chapters where both characters are found */
@@ -7998,6 +8051,33 @@ export interface components {
       first: number | null;
       /** @description Mentions per chapter, ascending by chapter */
       perChapter: components['schemas']['BookWorldChapterCountDto'][];
+    };
+    BookWorldPlaceCardDto: {
+      /** @description The place has its own page /wiki/{key} (core, read, visible); otherwise a card without a link */
+      hasPage: boolean;
+      key: string;
+      /** @enum {string|null} */
+      kind: 'real' | 'fictional' | null;
+      /** @description Where the place is, as text */
+      location: string | null;
+      name: string;
+      /** @description Map point: a real place with Wikidata-checked coordinates only; otherwise null */
+      point: components['schemas']['BookWorldPointDto'] | null;
+      /** @description Scenes with chapters, stale ones left out */
+      scenes: components['schemas']['BookWorldPlaceSceneDto'][];
+      short: string | null;
+    };
+    BookWorldPlaceSceneDto: {
+      chapter: number;
+      /** @description First paragraph with a name form in the chapter (F08-10a); null — none */
+      paragraph: number | null;
+      title: string;
+    };
+    BookWorldPointDto: {
+      lat: number;
+      lng: number;
+      /** @description Wikidata item page the coordinates come from */
+      sourceUrl: string;
     };
     BookWorldProfileDto: {
       position?: string | null;
@@ -15806,16 +15886,25 @@ export interface components {
       /** @description Pairs only: conclusion of the comparison; required for the page core */
       conclusion?: string | null;
       critique?: string | null;
+      /** @description Places only: how the place looks in the text */
+      description?: string | null;
       /** @description Pairs only: what sets the two characters apart */
       differences?: string | null;
       faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
       /** @description Optional; must equal the key in the path */
       key?: string;
       /**
+       * @description Places only (F08-12a): real or fictional; required for the page core
+       * @enum {string|null}
+       */
+      kind?: 'real' | 'fictional' | null;
+      /**
        * @description Must equal the language of the version
        * @enum {string}
        */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Places only: where the place is, as text */
+      location?: string | null;
       /** @description Required for a new entity */
       name?: string;
       profile?: components['schemas']['BookWorldProfileDto'] | null;
@@ -15826,12 +15915,16 @@ export interface components {
       role?: 'main' | 'secondary' | 'minor' | null;
       scenes?: components['schemas']['BookWorldSceneDto'][] | null;
       short?: string | null;
+      /** @description Places only: what the place means in the book; required for the page core */
+      significance?: string | null;
       sources?: components['schemas']['BookAnalysisSourceDto'][] | null;
       /**
-       * @description character or pair (F08-8c); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order
+       * @description character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order
        * @enum {string}
        */
-      type: 'character' | 'pair';
+      type: 'character' | 'pair' | 'place';
+      /** @description Places only, kind real: Wikidata item (Q90). The server reads the coordinates (P625) from Wikidata and checks the label against the name; coordinates are never taken from input */
+      wikidataId?: string | null;
     };
     UpdateCategoryDto: {
       /** @description Whether the page is indexable by search engines */
@@ -16724,6 +16817,8 @@ export interface components {
       /** @description Why the generation failed: WORLD_IMAGE_NOT_IMAGE (the answer is not PNG/JPEG/WEBP), WORLD_IMAGE_TOO_SMALL (narrower than 1200 px), WORLD_IMAGE_TOO_LARGE, WORLD_IMAGE_INPUT_MISSING, or an LLM code (LLM_INSUFFICIENT_FUNDS, LLM_UNAVAILABLE...); null while it runs or after success */
       failedReason: string | null;
       operationId: string;
+      /** @description Why the generation is paused (status paused), e.g. the spending ceiling; null otherwise (F08-12a, tail of F08-11b) */
+      pauseReason: components['schemas']['LlmPauseReason'] | null;
       /** @description Spent on this generation, USD (decimal string) */
       spentUsd: string;
       status: components['schemas']['LlmOperationStatus'];
@@ -16742,6 +16837,8 @@ export interface components {
       key: string;
       /** @description Generated and waiting for acceptance: never shown on the site */
       pending: components['schemas']['WorldImageFileDto'] | null;
+      /** @description The entity type and role allow an illustration (main or secondary character), whatever the appearance text: false — Generate and Accept answer 409 WORLD_IMAGE_NOT_ALLOWED (F08-12a, tail of F08-11b) */
+      roleAllowed: boolean;
     };
     WorldSitemapEntityDto: {
       /** @description Languages where the entity with this key is public and indexable on a published version without editorial noindex; the version itself included */

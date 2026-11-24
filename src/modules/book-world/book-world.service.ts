@@ -29,7 +29,6 @@ import {
   readAliasChapterExclusions,
   readAliasExclusions,
   worldMentionSourceOf,
-  readStoredBlocks,
   readStoredEntity,
   toEntityDto,
   toEntityWrite,
@@ -84,6 +83,8 @@ import {
   worldListedWrite,
 } from './world-public';
 import { worldAlternates } from './world-alternates';
+import { worldPlaceCards } from './world-place-cards';
+import { WorldGeoService } from './world-geo.service';
 import { acceptedWorldImage } from './world-image-public';
 import {
   checkWorldPair,
@@ -91,11 +92,11 @@ import {
   checkWorldRefs,
   checkWorldTypeFields,
   duplicateWorldKeys,
+  entitiesReferring,
   pairEvidenceOf,
   pairMembers,
   pairsHolding,
   savedMentionsOf,
-  worldEntityRefs,
   type WorldRefError,
 } from './world-refs';
 
@@ -158,6 +159,7 @@ export class BookWorldService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly moderatorRoles: ModeratorRolesService,
+    private readonly geo: WorldGeoService,
   ) {}
 
   /** Список: читателю — только публичные сущности, редактору — все с отметками; без `blocks`. */
@@ -169,7 +171,7 @@ export class BookWorldService {
       actor,
     );
     // hreflang общей страницы — правилом карты сайта (решение арбитра `F08 | F08-3a`), одно для всех.
-    const [entities, alternates] = await Promise.all([
+    const [entities, alternates, places] = await Promise.all([
       editor
         ? this.prisma.bookWorldEntity
             .findMany({
@@ -188,8 +190,9 @@ export class BookWorldService {
             })
             .then((rows) => rows.map(toReaderSummary)),
       worldAlternates(this.prisma, bookVersionId),
+      worldPlaceCards(this.prisma, bookVersionId),
     ]);
-    return { language, entities, alternates };
+    return { language, entities, alternates, places };
   }
 
   /** Страница сущности: непубличная не редактору — 404, как и черновик версии. */
@@ -292,11 +295,15 @@ export class BookWorldService {
         return { planned: result, rows: world };
       },
     );
+    // Точки мест — после транзакции (решение арбитра `F08 | F08-12` Q2): запрос к Wikidata не держит
+    // замок мира, отказ Wikidata запись не валит; список ответа точек не несёт.
+    await this.geo.refresh(bookVersionId, language, placeKeys(planned));
     return {
       world: {
         language,
         entities: rows.map(withEditor),
         alternates: await worldAlternates(this.prisma, bookVersionId),
+        places: await worldPlaceCards(this.prisma, bookVersionId),
       },
       entities: planned.map(savedSummary),
     };
@@ -320,7 +327,7 @@ export class BookWorldService {
       throw new BadRequestException([`key: "${dto.key}" in the body is not "${key}" in the path`]);
     }
     if (!dryRun) assertExpectedRowShape(expected);
-    await writableVersionLanguage(this.prisma, bookVersionId, dto.language);
+    const language = await writableVersionLanguage(this.prisma, bookVersionId, dto.language);
     // `language` тела слиянию не мешает: `mergeEntity` читает только поля сущности.
     const input: BookWorldEntityInputDto = { ...dto, key };
     const prefix = () => '';
@@ -362,8 +369,24 @@ export class BookWorldService {
       if (within) await within(tx);
       return { row: written.row, planned: p, recountQueued, pending };
     });
+    // Точка места — после транзакции (Q2); записанная точка — в ответ, перечитанной строкой.
+    // В ответ берётся только колонка `geo` и только если строку после этой записи никто не правил
+    // (`updatedAt` тот же: запись точки его не сдвигает) — иначе ответ показал бы чужую правку
+    // с чужим `updatedAt`, и следующая запись вкладки прошла бы мимо сверки.
+    const geoWritten = await this.geo.refresh(bookVersionId, language, placeKeys([saved.planned]));
+    const fresh =
+      geoWritten > 0
+        ? await this.prisma.bookWorldEntity.findUnique({
+            where: { bookVersionId_key: { bookVersionId, key } },
+            select: { geo: true, updatedAt: true },
+          })
+        : null;
+    const row =
+      fresh && fresh.updatedAt.getTime() === saved.row.updatedAt.getTime()
+        ? { ...saved.row, geo: fresh.geo }
+        : saved.row;
     return {
-      entity: { ...toEntityDto(saved.row), editor: entityEditorOf(saved.row, saved.pending) },
+      entity: { ...toEntityDto(row), editor: entityEditorOf(row, saved.pending) },
       hasCore: saved.planned.core.hasCore,
       warnings: saved.planned.warnings,
       recountQueued: saved.recountQueued,
@@ -402,16 +425,11 @@ export class BookWorldService {
       // (`checkWorldRefs` принимает ключи анализа) — удалению она не мешает. Герой ключа пары —
       // только герой мира: его ключ анализа не заменяет (`F08-8c`); кто держит героя — `pairsHolding`,
       // одно правило со сменой типа героя.
-      const stillResolves = analysisCharacterKeys(analysis?.characters).has(key);
-      const holdingPairs = new Set(pairsHolding(key, others));
-      const referencedBy = others
-        .filter(
-          (o) =>
-            holdingPairs.has(o.key) ||
-            (!stillResolves &&
-              worldEntityRefs(readStoredBlocks(o.blocks)).some((r) => r.key === key)),
-        )
-        .map((o) => o.key);
+      const referring = new Set([
+        ...pairsHolding(key, others),
+        ...entitiesReferring(key, others, analysisCharacterKeys(analysis?.characters)),
+      ]);
+      const referencedBy = others.filter((o) => referring.has(o.key)).map((o) => o.key);
       if (referencedBy.length > 0) {
         throw codedConflict(
           WORLD_ENTITY_REFERENCED,
@@ -561,6 +579,9 @@ export class BookWorldService {
       analysisKeys: analysisCharacterKeys(analysis?.characters),
     };
 
+    // Герои, уходящие из героев сменой типа (с `F08-12a` — в место): на них не должны ссылаться
+    // другие сущности версии — то же правило, что у отказа удаления (`WORLD_ENTITY_REFERENCED`).
+    const leaving: { key: string; path: string }[] = [];
     const merged = inputs.map((input, i) => {
       const row = byKey.get(input.key) ?? null;
       const stored = row ? readStoredEntity(row) : null;
@@ -596,6 +617,7 @@ export class BookWorldService {
             message: `"${input.key}" is a character of pairs ${pairs.join(', ')}: its type cannot change`,
           });
         }
+        leaving.push({ key: input.key, path: `${prefix(i)}type` });
       }
       const keyErrors = checkCharacterKey(entity, row?.type ?? null);
       for (const e of [
@@ -618,6 +640,15 @@ export class BookWorldService {
       }
       return { row, stored, entity };
     });
+    errors.push(
+      ...(await referencedTypeChanges(
+        client,
+        bookVersionId,
+        leaving,
+        inputs.map((i) => i.key),
+        ctx.analysisKeys,
+      )),
+    );
     errors.push(
       ...(await checkChapters(
         client,
@@ -803,6 +834,49 @@ function coreMessage(m: WorldCoreResult['missing'][number], type: string): strin
   if (m.need === 1) return `${m.part} is empty; the page will not be published`;
   return `${m.part}: ${m.have} of ${m.need} with a chapter; the page will not be published`;
 }
+
+/**
+ * Смена типа героя, на которого ссылаются сохранённые сущности вне тела — 400 по пути `type`: ссылки
+ * героя ведут только на героев (`checkWorldRefs`), и ссылающийся герой после смены стал бы
+ * несохраняемым. Правило ссылающихся — `entitiesReferring`, общее с отказом удаления. Ссылки
+ * сущностей самого тела уже отбивает `checkWorldRefs` по типам после записи — второго отказа нет.
+ */
+async function referencedTypeChanges(
+  client: Prisma.TransactionClient,
+  bookVersionId: string,
+  leaving: readonly { key: string; path: string }[],
+  bodyKeys: readonly string[],
+  analysisKeys: ReadonlySet<string>,
+): Promise<WorldRefError[]> {
+  const checked = leaving.filter((l) => !analysisKeys.has(l.key));
+  if (checked.length === 0) return [];
+  const stored = await client.bookWorldEntity.findMany({
+    where: { bookVersionId, key: { notIn: [...bodyKeys] } },
+    select: { key: true, blocks: true },
+    orderBy: { key: 'asc' },
+    take: BOOK_WORLD_LIMITS.entities,
+  });
+  return checked.flatMap(({ key, path }) => {
+    const by = entitiesReferring(key, stored, analysisKeys);
+    return by.length > 0
+      ? [
+          {
+            path,
+            message: `other entities refer to "${key}" as a character: ${by.join(', ')}; its type cannot change`,
+          },
+        ]
+      : [];
+  });
+}
+
+/**
+ * Сущности тела записи, которым нужна проверка точки (`WorldGeoService.refresh`): места и строки,
+ * которые были местами до записи (смена типа снимает прежнюю проверку).
+ */
+const placeKeys = (planned: readonly PlannedEntity[]) =>
+  planned.flatMap((p) =>
+    p.merged.type === 'place' || p.existing?.type === 'place' ? [p.merged.key] : [],
+  );
 
 function savedSummary(p: PlannedEntity) {
   return {

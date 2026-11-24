@@ -6,7 +6,9 @@ import {
   IsNotEmpty,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
@@ -17,7 +19,9 @@ import {
   BookAnalysisSourceDto,
   type BookAnalysisRole,
 } from '../../book-analysis/dto/book-analysis-blocks.dto';
+import { Trim } from '../../../shared/validators/trim.decorator';
 import {
+  isAbsent,
   Key,
   Nested,
   NestedList,
@@ -36,7 +40,11 @@ import {
   BookWorldQuoteDto,
   BookWorldRelationDto,
   BookWorldSceneDto,
+  WIKIDATA_ID_MAX,
+  WIKIDATA_ID_REGEX,
+  WORLD_PLACE_KINDS,
   type BookWorldImportType,
+  type WorldPlaceKind,
 } from './book-world-blocks.dto';
 
 const trimEach = ({ value }: { value: unknown }) =>
@@ -58,11 +66,11 @@ export class BookWorldEntityInputDto {
   @ApiProperty({
     enum: BOOK_WORLD_IMPORT_TYPES,
     description:
-      'character or pair (F08-8c); other entity types come with their own batches. ' +
+      'character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. ' +
       'A pair key is {a}--{b}: two character keys of the version in alphabetical order',
   })
   @IsIn(BOOK_WORLD_IMPORT_TYPES, {
-    message: '$property must be character or pair (other types are not supported yet)',
+    message: '$property must be character, pair or place (other types are not supported yet)',
   })
   type!: BookWorldImportType;
 
@@ -197,6 +205,58 @@ export class BookWorldEntityInputDto {
   })
   @OptionalText(BOOK_WORLD_LIMITS.mediumText)
   conclusion?: string | null;
+
+  @ApiPropertyOptional({
+    enum: WORLD_PLACE_KINDS,
+    nullable: true,
+    description: 'Places only (F08-12a): real or fictional; required for the page core',
+  })
+  @Trim()
+  @ValidateIf((_o, value) => !isAbsent(value))
+  @IsIn(WORLD_PLACE_KINDS)
+  kind?: WorldPlaceKind | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: BOOK_WORLD_LIMITS.location,
+    description: 'Places only: where the place is, as text',
+  })
+  @OptionalText(BOOK_WORLD_LIMITS.location)
+  location?: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: BOOK_WORLD_LIMITS.significance,
+    description: 'Places only: what the place means in the book; required for the page core',
+  })
+  @OptionalText(BOOK_WORLD_LIMITS.significance)
+  significance?: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: BOOK_WORLD_LIMITS.description,
+    description: 'Places only: how the place looks in the text',
+  })
+  @OptionalText(BOOK_WORLD_LIMITS.description)
+  description?: string | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    pattern: WIKIDATA_ID_REGEX.source,
+    description:
+      'Places only, kind real: Wikidata item (Q90). The server reads the coordinates (P625) ' +
+      'from Wikidata and checks the label against the name; coordinates are never taken from input',
+  })
+  @Trim()
+  @ValidateIf((_o, value) => !isAbsent(value))
+  @IsString()
+  @MaxLength(WIKIDATA_ID_MAX)
+  @Matches(WIKIDATA_ID_REGEX)
+  wikidataId?: string | null;
 
   @ApiPropertyOptional({ type: [BookAnalysisFaqDto], nullable: true })
   @NestedList(() => BookAnalysisFaqDto, BOOK_WORLD_LIMITS.faq)

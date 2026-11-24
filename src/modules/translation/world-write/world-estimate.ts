@@ -78,7 +78,6 @@ export async function worldUpperUsd(
         },
         source.extra,
         pairStepsUpperBound(heroes, hasWorldPairExample(language)),
-        new Set(),
       ),
     ]),
   );

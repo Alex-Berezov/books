@@ -260,6 +260,15 @@ export class WorldWriteFields {
     items: readonly WorldItem[],
     within: (tx: Prisma.TransactionClient) => Promise<void>,
   ): Promise<void> {
+    // Ключ успели занять сущностью другого типа (место заводится импортом с `F08-12a`, во время хода):
+    // ход не пишет поверх неё — иначе место молча стало бы героем. Отказ — как у остальных отказов
+    // записи (`WORLD_WRITE_REFUSED`), по образцу `pairRefusal` (`pairKeyTaken`). Сверка
+    // `expectedUpdatedAt`/`expectedAbsent` ниже перечитает состояние, если ключ заняли после чтения.
+    if (state && state.entity.type !== kind.type) {
+      throw new BadRequestException([
+        `type: "${key}" is stored as a ${state.entity.type}; the run writes a ${kind.type}`,
+      ]);
+    }
     const body: Record<string, unknown> = { language, type: kind.type };
     if (!state) {
       const name = items.find((i) => i.name)?.name;

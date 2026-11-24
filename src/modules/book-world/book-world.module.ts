@@ -8,6 +8,8 @@ import { RateLimitModule } from '../../shared/rate-limit/rate-limit.module';
 import { WorldSitemapService } from './world-sitemap.service';
 import { WorldStatsService } from './world-stats.service';
 import { WorldStatsController } from './world-stats.controller';
+import { WikidataClient } from './wikidata.client';
+import { WorldGeoService } from './world-geo.service';
 
 /**
  * Мир книги (F08). `BookWorldService` экспортируется для хода «Write World» (`F08-4`);
@@ -28,6 +30,8 @@ import { WorldStatsController } from './world-stats.controller';
     WorldMentionsSchedulerService,
     WorldSitemapService,
     WorldStatsService,
+    WikidataClient,
+    WorldGeoService,
   ],
   exports: [BookWorldService, WorldMentionsService, WorldSitemapService],
 })

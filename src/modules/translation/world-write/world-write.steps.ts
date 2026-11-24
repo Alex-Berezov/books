@@ -100,9 +100,10 @@ const refusedPairForm = (key: string, stored: ReadonlySet<string>): boolean =>
  */
 export function mainCharacters(
   analysis: StoredBookAnalysis,
-  stored: ReadonlySet<string> = new Set(),
+  stored: ReadonlySet<string>,
+  taken: ReadonlySet<string>,
 ): WorldBaseCharacter[] {
-  return worldCharacters(analysis, stored).filter((c) => c.role === 'main');
+  return worldCharacters(analysis, stored, taken).filter((c) => c.role === 'main');
 }
 
 /**
@@ -124,16 +125,55 @@ export function pairFormCharacters(
  */
 export function worldCharacters(
   analysis: StoredBookAnalysis,
-  stored: ReadonlySet<string> = new Set(),
+  stored: ReadonlySet<string>,
+  taken: ReadonlySet<string>,
 ): WorldBaseCharacter[] {
-  return allRunCharacters(analysis).filter((c) => !refusedPairForm(c.key, stored));
+  return allRunCharacters(analysis).filter(
+    (c) => !refusedPairForm(c.key, stored) && !taken.has(c.key),
+  );
 }
+
+/**
+ * Ключи мира версии, занятые сущностью другого типа (пара, место — `F08-12a`): героя на таком ключе
+ * ход не пишет — запись слила бы страницу героя с полями места и получила 400 после платного шага
+ * (`checkWorldTypeFields`), или молча превратила бы место в героя.
+ */
+export const keysOfOtherTypes = (
+  entities: ReadonlyMap<string, Pick<StoredWorldEntity, 'type'>>,
+): Set<string> =>
+  new Set([...entities].flatMap(([key, e]) => (e.type !== 'character' ? [key] : [])));
 
 /** Ключи героев (`character`) мира версии - заведённые герои с `--` остаются в ходе (Q7). */
 export const storedCharacterKeys = (
   entities: ReadonlyMap<string, Pick<StoredWorldEntity, 'type'>>,
 ): Set<string> =>
   new Set([...entities].flatMap(([key, e]) => (e.type === 'character' ? [key] : [])));
+
+/** Анализ и сохранённые сущности версии на ключах его героев — вход отбора кандидатов хода. */
+export interface WorldRunSource {
+  analysis: StoredBookAnalysis;
+  entities: ReadonlyMap<string, Pick<StoredWorldEntity, 'type'>>;
+}
+
+/**
+ * Кандидаты хода по сохранённому миру версии (`entities`) — одна сборка на шаг выбора, проверку
+ * старта шага 0, старт и оценку хода (`WorldWriteService`): заведённые герои с ключом вида пары остаются (Q7), ключи пары и места
+ * в ход не идут (`keysOfOtherTypes`, `F08-12a`).
+ */
+export const runCharacters = (context: WorldRunSource): WorldBaseCharacter[] =>
+  worldCharacters(
+    context.analysis,
+    storedCharacterKeys(context.entities),
+    keysOfOtherTypes(context.entities),
+  );
+
+/** Герои `main` среди `runCharacters`: без них ход не стартует (Q4) и шаг 0 не идёт. */
+export const runMainCharacters = (context: WorldRunSource): WorldBaseCharacter[] =>
+  mainCharacters(
+    context.analysis,
+    storedCharacterKeys(context.entities),
+    keysOfOtherTypes(context.entities),
+  );
 
 /** Вход шага: запрос автора, запрос проверяющей, разбор ответа и проверки кода. */
 export interface WorldStepInput<T> {
@@ -630,9 +670,11 @@ export function worldPipelineUsd(
   context: WorldContext,
   extraInputTokens: number,
   pairs = 0,
-  stored: ReadonlySet<string> = storedCharacterKeys(context.entities),
+  run: WorldRunSource = context,
 ): Prisma.Decimal {
-  const candidates = worldCharacters(context.analysis, stored);
+  // Кандидаты — тем же правилом, что у выбора шага и старта (`runCharacters`); `run` — анализ и
+  // сущности на ключах его героев, когда в контексте оценки сохранённого мира нет (старт хода).
+  const candidates = runCharacters(run);
   const whole: WorldBook = { text: chaptersText(context.chapters) || NONE, partial: false };
   const quotes: ChapterIndex = new Map();
   let usd = worldStepUsd(

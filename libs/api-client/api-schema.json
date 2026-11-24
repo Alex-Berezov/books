@@ -7947,6 +7947,16 @@
             "nullable": true,
             "type": "string"
           },
+          "geo": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldGeoCheckDto"
+              }
+            ],
+            "description": "Entity page of a place only (F08-12a): Wikidata coordinate check for the current wikidataId and names (the same rule as point); null — a fictional place, a place without wikidataId, or not a place",
+            "nullable": true,
+            "type": "object"
+          },
           "isListed": {
             "description": "The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); a pair also needs both its characters listed (F08-8c); the page exists when the version is also published with a slug",
             "type": "boolean"
@@ -8059,6 +8069,11 @@
             "nullable": true,
             "type": "string"
           },
+          "description": {
+            "description": "Places only (F08-12a)",
+            "nullable": true,
+            "type": "string"
+          },
           "differences": {
             "description": "Pairs only (F08-8c)",
             "nullable": true,
@@ -8089,6 +8104,20 @@
           "key": {
             "type": "string"
           },
+          "kind": {
+            "description": "Places only (F08-12a)",
+            "enum": [
+              "real",
+              "fictional"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "location": {
+            "description": "Places only (F08-12a)",
+            "nullable": true,
+            "type": "string"
+          },
           "mentionFirst": {
             "description": "First chapter the entity is found in (F08-2 count); null — not counted yet or not found",
             "nullable": true,
@@ -8105,6 +8134,16 @@
           },
           "name": {
             "type": "string"
+          },
+          "point": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldPointDto"
+              }
+            ],
+            "description": "Places only (F08-12a): Wikidata-checked point of a real place for its current wikidataId; otherwise null",
+            "nullable": true,
+            "type": "object"
           },
           "profile": {
             "allOf": [
@@ -8153,6 +8192,11 @@
             "nullable": true,
             "type": "string"
           },
+          "significance": {
+            "description": "Places only (F08-12a)",
+            "nullable": true,
+            "type": "string"
+          },
           "sources": {
             "items": {
               "$ref": "#/components/schemas/BookAnalysisSourceDto"
@@ -8169,6 +8213,11 @@
           },
           "updatedAt": {
             "format": "date-time",
+            "type": "string"
+          },
+          "wikidataId": {
+            "description": "Places only (F08-12a): Wikidata item of a real place",
+            "nullable": true,
             "type": "string"
           }
         },
@@ -8197,9 +8246,15 @@
           "bonds",
           "differences",
           "conclusion",
+          "kind",
+          "location",
+          "significance",
+          "description",
+          "wikidataId",
           "faq",
           "sources",
           "mentions",
+          "point",
           "createdAt"
         ],
         "type": "object"
@@ -8281,6 +8336,12 @@
             "nullable": true,
             "type": "string"
           },
+          "description": {
+            "description": "Places only: how the place looks in the text",
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
           "differences": {
             "description": "Pairs only: what sets the two characters apart",
             "maxLength": 1500,
@@ -8296,6 +8357,21 @@
           },
           "key": {
             "pattern": "^[a-z0-9-]{1,60}$",
+            "type": "string"
+          },
+          "kind": {
+            "description": "Places only (F08-12a): real or fictional; required for the page core",
+            "enum": [
+              "real",
+              "fictional"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "location": {
+            "description": "Places only: where the place is, as text",
+            "maxLength": 600,
+            "nullable": true,
             "type": "string"
           },
           "name": {
@@ -8352,6 +8428,12 @@
             "nullable": true,
             "type": "string"
           },
+          "significance": {
+            "description": "Places only: what the place means in the book; required for the page core",
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
           "sources": {
             "items": {
               "$ref": "#/components/schemas/BookAnalysisSourceDto"
@@ -8360,11 +8442,18 @@
             "type": "array"
           },
           "type": {
-            "description": "character or pair (F08-8c); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order",
+            "description": "character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order",
             "enum": [
               "character",
-              "pair"
+              "pair",
+              "place"
             ],
+            "type": "string"
+          },
+          "wikidataId": {
+            "description": "Places only, kind real: Wikidata item (Q90). The server reads the coordinates (P625) from Wikidata and checks the label against the name; coordinates are never taken from input",
+            "nullable": true,
+            "pattern": "^Q[1-9]\\d*$",
             "type": "string"
           }
         },
@@ -8525,6 +8614,39 @@
         ],
         "type": "object"
       },
+      "BookWorldGeoCheckDto": {
+        "properties": {
+          "checkedAt": {
+            "description": "When the current check ran; null — there is no check for the current wikidataId and names (reason unavailable)",
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why there is no point: not_found, no_coordinates (no P625), not_earth, out_of_range, name_mismatch (no Wikidata label or alias in the version language equals the name or a name form), unavailable (no check for the current wikidataId and names: Wikidata did not answer or the check has not run; checked again on the next save); null — the point is set",
+            "enum": [
+              "not_found",
+              "no_coordinates",
+              "not_earth",
+              "out_of_range",
+              "name_mismatch",
+              "unavailable"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "wikidataId": {
+            "description": "Wikidata item that was checked",
+            "type": "string"
+          }
+        },
+        "required": [
+          "wikidataId",
+          "checkedAt",
+          "reason"
+        ],
+        "type": "object"
+      },
       "BookWorldImageDto": {
         "properties": {
           "height": {
@@ -8648,12 +8770,20 @@
               "ru"
             ],
             "type": "string"
+          },
+          "places": {
+            "description": "Places shown on the world page (F08-12a): visible, read after the model text, places switched on (empty until the place pages ship, F08-12c); with or without their own page. Same set for editors",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldPlaceCardDto"
+            },
+            "type": "array"
           }
         },
         "required": [
           "language",
           "alternates",
-          "entities"
+          "entities",
+          "places"
         ],
         "type": "object"
       },
@@ -8691,6 +8821,113 @@
           "first",
           "perChapter",
           "coPresence"
+        ],
+        "type": "object"
+      },
+      "BookWorldPlaceCardDto": {
+        "properties": {
+          "hasPage": {
+            "description": "The place has its own page /wiki/{key} (core, read, visible); otherwise a card without a link",
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "real",
+              "fictional"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
+          "location": {
+            "description": "Where the place is, as text",
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "point": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldPointDto"
+              }
+            ],
+            "description": "Map point: a real place with Wikidata-checked coordinates only; otherwise null",
+            "nullable": true,
+            "type": "object"
+          },
+          "scenes": {
+            "description": "Scenes with chapters, stale ones left out",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldPlaceSceneDto"
+            },
+            "type": "array"
+          },
+          "short": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "short",
+          "kind",
+          "location",
+          "hasPage",
+          "point",
+          "scenes"
+        ],
+        "type": "object"
+      },
+      "BookWorldPlaceSceneDto": {
+        "properties": {
+          "chapter": {
+            "minimum": 1,
+            "type": "number"
+          },
+          "paragraph": {
+            "description": "First paragraph with a name form in the chapter (F08-10a); null — none",
+            "minimum": 1,
+            "nullable": true,
+            "type": "number"
+          },
+          "title": {
+            "maxLength": 300,
+            "type": "string"
+          }
+        },
+        "required": [
+          "chapter",
+          "title",
+          "paragraph"
+        ],
+        "type": "object"
+      },
+      "BookWorldPointDto": {
+        "properties": {
+          "lat": {
+            "maximum": 90,
+            "minimum": -90,
+            "type": "number"
+          },
+          "lng": {
+            "maximum": 180,
+            "minimum": -180,
+            "type": "number"
+          },
+          "sourceUrl": {
+            "description": "Wikidata item page the coordinates come from",
+            "type": "string"
+          }
+        },
+        "required": [
+          "lat",
+          "lng",
+          "sourceUrl"
         ],
         "type": "object"
       },
@@ -31267,6 +31504,12 @@
             "nullable": true,
             "type": "string"
           },
+          "description": {
+            "description": "Places only: how the place looks in the text",
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
           "differences": {
             "description": "Pairs only: what sets the two characters apart",
             "maxLength": 1500,
@@ -31285,6 +31528,15 @@
             "pattern": "^[a-z0-9-]{1,60}$",
             "type": "string"
           },
+          "kind": {
+            "description": "Places only (F08-12a): real or fictional; required for the page core",
+            "enum": [
+              "real",
+              "fictional"
+            ],
+            "nullable": true,
+            "type": "string"
+          },
           "language": {
             "description": "Must equal the language of the version",
             "enum": [
@@ -31294,6 +31546,12 @@
               "pt",
               "ru"
             ],
+            "type": "string"
+          },
+          "location": {
+            "description": "Places only: where the place is, as text",
+            "maxLength": 600,
+            "nullable": true,
             "type": "string"
           },
           "name": {
@@ -31350,6 +31608,12 @@
             "nullable": true,
             "type": "string"
           },
+          "significance": {
+            "description": "Places only: what the place means in the book; required for the page core",
+            "maxLength": 3000,
+            "nullable": true,
+            "type": "string"
+          },
           "sources": {
             "items": {
               "$ref": "#/components/schemas/BookAnalysisSourceDto"
@@ -31358,11 +31622,18 @@
             "type": "array"
           },
           "type": {
-            "description": "character or pair (F08-8c); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order",
+            "description": "character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order",
             "enum": [
               "character",
-              "pair"
+              "pair",
+              "place"
             ],
+            "type": "string"
+          },
+          "wikidataId": {
+            "description": "Places only, kind real: Wikidata item (Q90). The server reads the coordinates (P625) from Wikidata and checks the label against the name; coordinates are never taken from input",
+            "nullable": true,
+            "pattern": "^Q[1-9]\\d*$",
             "type": "string"
           }
         },
@@ -33495,6 +33766,15 @@
           "operationId": {
             "type": "string"
           },
+          "pauseReason": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/LlmPauseReason"
+              }
+            ],
+            "description": "Why the generation is paused (status paused), e.g. the spending ceiling; null otherwise (F08-12a, tail of F08-11b)",
+            "nullable": true
+          },
           "spentUsd": {
             "description": "Spent on this generation, USD (decimal string)",
             "type": "string"
@@ -33510,6 +33790,7 @@
         "required": [
           "operationId",
           "status",
+          "pauseReason",
           "failedReason",
           "spentUsd"
         ],
@@ -33562,11 +33843,16 @@
             "description": "Generated and waiting for acceptance: never shown on the site",
             "nullable": true,
             "type": "object"
+          },
+          "roleAllowed": {
+            "description": "The entity type and role allow an illustration (main or secondary character), whatever the appearance text: false — Generate and Accept answer 409 WORLD_IMAGE_NOT_ALLOWED (F08-12a, tail of F08-11b)",
+            "type": "boolean"
           }
         },
         "required": [
           "key",
           "allowed",
+          "roleAllowed",
           "accepted",
           "acceptedAt",
           "pending",

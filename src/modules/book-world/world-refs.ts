@@ -1,13 +1,18 @@
 import { isFilled } from '../book-analysis/book-analysis-core';
 import { isRecord } from '../../shared/prisma/json-record.util';
 import {
-  WORLD_CHARACTER_BLOCK_KEYS,
-  WORLD_PAIR_BLOCK_KEYS,
+  BOOK_WORLD_BLOCK_KEYS,
+  WORLD_BLOCKS_OF_TYPE,
   coPresenceWith,
+  readStoredBlocks,
   type StoredWorldEntity,
 } from './book-world-data';
 import type { Prisma } from '@prisma/client';
-import { BOOK_WORLD_KEY_REGEX, BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
+import {
+  BOOK_WORLD_KEY_REGEX,
+  BOOK_WORLD_LIMITS,
+  type BookWorldImportType,
+} from './dto/book-world-blocks.dto';
 import { mentionChapters } from './world-core';
 
 /** Разделитель ключей героев в ключе пары `{a}--{b}` — одно место правила на books. */
@@ -205,9 +210,11 @@ export function worldEntityRefs(
 const hasValue = (v: unknown) => v !== null && v !== undefined;
 
 /**
- * Поля не своего типа (`F08-8c`): у пары нет роли, форм имени (решение арбитра Q6: её имя не
- * ищется в тексте), источников (внешних блоков у пары нет, `product.md` §6, Q2) и полей страницы
- * героя; у героя — полей пары и `quotes[].aboutKey`. Перечни полей — `book-world-data.ts`.
+ * Поля не своего типа: у каждого типа — свой перечень блоков (`WORLD_BLOCKS_OF_TYPE`,
+ * `book-world-data.ts`), остальные — 400 с путём поля, по одной ошибке на поле. У пары (`F08-8c`)
+ * нет роли, форм имени (решение арбитра Q6: её имя не ищется в тексте) и источников (внешних блоков
+ * у пары нет, `product.md` §6, Q2). У места (`F08-12a`, решение арбитра `F08 | F08-12` Q1) нет роли
+ * и источников; `wikidataId` — только у реального места. `quotes[].aboutKey` — только у пары.
  * `exclusions` — исключения форм после слияния (не содержание, лежат вне `StoredWorldEntity`).
  */
 export function checkWorldTypeFields(
@@ -217,20 +224,53 @@ export function checkWorldTypeFields(
   const errors: WorldRefError[] = [];
   const notFor = (path: string) =>
     errors.push({ path, message: `${path} is not a field of a ${entity.type}` });
+  const own: ReadonlySet<string> | undefined =
+    WORLD_BLOCKS_OF_TYPE[entity.type as BookWorldImportType];
+  for (const key of BOOK_WORLD_BLOCK_KEYS) {
+    if (hasValue(entity[key]) && !own?.has(key)) notFor(key);
+  }
   if (entity.type === 'pair') {
-    for (const key of WORLD_CHARACTER_BLOCK_KEYS) if (hasValue(entity[key])) notFor(key);
     if (hasValue(entity.role)) notFor('role');
     if (hasValue(entity.aliases)) notFor('aliases');
     if (hasValue(entity.sources)) notFor('sources');
     if (hasValue(exclusions.aliasExclusions)) notFor('aliasExclusions');
     if (hasValue(exclusions.aliasChapterExclusions)) notFor('aliasChapterExclusions');
-  } else {
-    for (const key of WORLD_PAIR_BLOCK_KEYS) if (hasValue(entity[key])) notFor(key);
-    (entity.quotes ?? []).forEach((q, j) => {
-      if (typeof q.aboutKey === 'string' && q.aboutKey !== '') notFor(`quotes.${j}.aboutKey`);
-    });
+    return errors;
   }
+  if (entity.type === 'place') {
+    if (hasValue(entity.role)) notFor('role');
+    if (hasValue(entity.sources)) notFor('sources');
+    if (hasValue(entity.wikidataId) && entity.kind !== 'real') {
+      errors.push({
+        path: 'wikidataId',
+        message: 'wikidataId is only for a real place (kind: real)',
+      });
+    }
+  }
+  (entity.quotes ?? []).forEach((q, j) => {
+    if (typeof q.aboutKey === 'string' && q.aboutKey !== '') notFor(`quotes.${j}.aboutKey`);
+  });
   return errors;
+}
+
+/**
+ * Сохранённые сущности, которые ссылаются на героя `key` (`relations[].to`, `quotes[].speakerKey`,
+ * `quotes[].aboutKey`; без героев ключа пары — их держит `pairsHolding`). Ключ, который есть и у
+ * героя анализа, ссылкой держится (`checkWorldRefs` принимает ключи анализа) — ссылающихся нет.
+ * Одно правило на отказ удаления (`WORLD_ENTITY_REFERENCED`) и на отказ смены типа героя.
+ */
+export function entitiesReferring(
+  key: string,
+  others: readonly { key: string; blocks: unknown }[],
+  analysisKeys: ReadonlySet<string>,
+): string[] {
+  if (analysisKeys.has(key)) return [];
+  return others
+    .filter(
+      (o) =>
+        o.key !== key && worldEntityRefs(readStoredBlocks(o.blocks)).some((r) => r.key === key),
+    )
+    .map((o) => o.key);
 }
 
 /**

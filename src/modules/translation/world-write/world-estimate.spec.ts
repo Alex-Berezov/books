@@ -43,7 +43,9 @@ describe('worldUpperUsd', () => {
     const analysis = upperWorldAnalysis();
     expect(analysis.characters).toHaveLength(BOOK_ANALYSIS_LIMITS.characters);
     expect(analysis.characters?.every((c) => c.role === 'main')).toBe(true);
-    expect(worldCharacters(analysis)).toHaveLength(BOOK_ANALYSIS_LIMITS.characters);
+    expect(worldCharacters(analysis, new Set(), new Set())).toHaveLength(
+      BOOK_ANALYSIS_LIMITS.characters,
+    );
   });
 
   it('по языку - вход ручного старта сверху на исходнике, пары - верхняя граница', async () => {
@@ -76,7 +78,6 @@ describe('worldUpperUsd', () => {
       },
       4000,
       WORLD_PAIRS_MAX,
-      new Set(),
     );
   });
 

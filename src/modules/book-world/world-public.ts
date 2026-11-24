@@ -22,6 +22,14 @@ export const WORLD_MIN_CHAPTERS = 3;
  */
 export const WORLD_PAIRS = { public: true };
 
+/**
+ * Рубильник публичности мест (решение арбитра `F08 | F08-12` Q0, по образцу `WORLD_PAIRS`):
+ * выключенный, он держит место вне сайта — списка, карточки `/wiki`, карты сайта и hreflang, —
+ * пока страницы места нет на фронте. Включается пачкой `F08-12c` тегом бэкенда, фронт пушится после.
+ * Объект, а не константа: e2e проверяют оба положения в одном процессе.
+ */
+export const WORLD_PLACES = { public: false };
+
 export interface WorldListedInput {
   /** Тип сущности; нет — герой. */
   type?: string;
@@ -58,10 +66,37 @@ export function worldRolePasses(role: string | null, chapters: number): boolean 
  */
 export function computeWorldListed(e: WorldListedInput): boolean {
   if (!e.hasCore || !e.isVisible) return false;
-  if (e.autoTextAt && (!e.readAt || e.readAt.getTime() < e.autoTextAt.getTime())) return false;
+  if (!readAfterAutoText(e)) return false;
   // Пара (решение арбитра `F08 | F08-8c` Q3): роли нет, вместо роли — оба героя ключа на сайте.
   if (e.type === 'pair') return WORLD_PAIRS.public && e.hasListedMembers === true;
+  // Место (решение арбитра `F08 | F08-12` Q1): роли нет, страница — по ядру без порога ролей.
+  if (e.type === 'place') return WORLD_PLACES.public;
   return worldRolePasses(e.role, mentionChapters(e.mentions).length);
+}
+
+/**
+ * «Прочитано» не раньше последнего текста модели (или текста модели нет, решение арбитра
+ * `F08 | F08-1` R5, `T184`) — одна копия условия на публичность страницы и карточку места.
+ */
+function readAfterAutoText(e: { readAt: Date | null; autoTextAt: Date | null }): boolean {
+  return !e.autoTextAt || (e.readAt !== null && e.readAt.getTime() >= e.autoTextAt.getTime());
+}
+
+/**
+ * Место показывается на общей странице `/wiki` (решение арбитра `F08 | F08-12` Q4): текстовым
+ * списком и точкой на карте — и без своей страницы (`product.md` §2: карточкой без адреса).
+ * Условие: рубильник мест, «показывать», «прочитано» не раньше текста модели; ядро не нужно —
+ * оно даёт только страницу (`isListed`). Опубликованность версии — условие самой ручки (404 на
+ * черновик не редактору). Единственная копия: список читателя (`BookWorldService.getList`) другой
+ * не держит. Карточка не даёт адреса, не идёт в карту сайта и hreflang.
+ */
+export function worldPlaceShown(e: {
+  type: string;
+  isVisible: boolean;
+  readAt: Date | null;
+  autoTextAt: Date | null;
+}): boolean {
+  return WORLD_PLACES.public && e.type === 'place' && e.isVisible && readAfterAutoText(e);
 }
 
 /**

@@ -6,6 +6,7 @@ import {
   checkWorldRefs,
   checkWorldTypeFields,
   duplicateWorldKeys,
+  entitiesReferring,
   pairEvidenceOf,
   missingPairMembers,
   pairFounded,
@@ -41,6 +42,11 @@ const entity = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
   bonds: null,
   differences: null,
   conclusion: null,
+  kind: null,
+  location: null,
+  significance: null,
+  description: null,
+  wikidataId: null,
   faq: null,
   ...over,
 });
@@ -442,5 +448,38 @@ describe('правила записи пары, общие с ходом мир�
       select: { key: true, mentions: true },
       take: 100,
     });
+  });
+});
+
+describe('entitiesReferring (F08-12a, ревью круга 4): одно правило удаления и смены типа героя', () => {
+  const others = [
+    { key: 'oblomov', blocks: { relations: [{ to: 'zakhar', label: 'Servant' }] } },
+    {
+      key: 'olga',
+      blocks: { quotes: [{ text: 'Q', chapter: 1, interpretation: 'I', speakerKey: 'zakhar' }] },
+    },
+    {
+      key: 'anna--zakhar',
+      blocks: { quotes: [{ text: 'Q', chapter: 1, interpretation: 'I', aboutKey: 'zakhar' }] },
+    },
+    { key: 'tarantiev', blocks: { relations: [{ to: 'oblomov', label: 'Friend' }] } },
+  ];
+
+  it('ссылки relations, speakerKey и aboutKey держат героя', () => {
+    expect(entitiesReferring('zakhar', others, new Set())).toEqual([
+      'oblomov',
+      'olga',
+      'anna--zakhar',
+    ]);
+  });
+
+  it('ключ героя анализа держится ссылкой — ссылающихся нет', () => {
+    expect(entitiesReferring('zakhar', others, new Set(['zakhar']))).toEqual([]);
+  });
+
+  it('ссылка на себя не в счёт; без ссылок — пусто', () => {
+    const self = [{ key: 'zakhar', blocks: { relations: [{ to: 'zakhar', label: 'Self' }] } }];
+    expect(entitiesReferring('zakhar', self, new Set())).toEqual([]);
+    expect(entitiesReferring('nobody', others, new Set())).toEqual([]);
   });
 });

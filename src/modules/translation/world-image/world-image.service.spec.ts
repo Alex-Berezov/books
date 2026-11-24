@@ -262,19 +262,21 @@ describe('WorldImageService (F08-11a)', () => {
         imageReadAt: new Date('2026-11-23T10:00:00Z'),
         image: { ...FILE, isDeleted: false },
         pending: { ...FILE, id: 'm-2', isDeleted: true },
-        operation: { id: 'op-1', status: 'failed', spentUsd: D('0.04') },
+        operation: { id: 'op-1', status: 'failed', pauseReason: null, spentUsd: D('0.04') },
       });
       prisma.llmTask.findFirst.mockResolvedValue({ lastError: 'WORLD_IMAGE_NOT_IMAGE' });
       const state = await service.state('v-1', 'oblomov');
       expect(state).toEqual({
         key: 'oblomov',
         allowed: true,
+        roleAllowed: true,
         accepted: { mediaId: 'm-1', url: FILE.url, width: 1536, height: 1536 },
         acceptedAt: new Date('2026-11-23T10:00:00Z'),
         pending: null,
         generation: {
           operationId: 'op-1',
           status: 'failed',
+          pauseReason: null,
           failedReason: 'WORLD_IMAGE_NOT_IMAGE',
           spentUsd: '0.04000000',
         },
@@ -291,6 +293,40 @@ describe('WorldImageService (F08-11a)', () => {
       });
       const state = await service.state('v-1', 'oblomov');
       expect(state).toMatchObject({ accepted: null, acceptedAt: null, generation: null });
+    });
+
+    it('roleAllowed is the role alone (F08-12a, tail of F08-11b): no appearance - allowed false, roleAllowed true', async () => {
+      prisma.bookWorldEntity.findUnique.mockResolvedValue({ ...ENTITY, blocks: {} });
+      prisma.bookWorldImage.findUnique.mockResolvedValue(null);
+      expect(await service.state('v-1', 'oblomov')).toMatchObject({
+        allowed: false,
+        roleAllowed: true,
+      });
+      prisma.bookWorldEntity.findUnique.mockResolvedValue({ ...ENTITY, role: 'minor' });
+      expect(await service.state('v-1', 'oblomov')).toMatchObject({
+        allowed: false,
+        roleAllowed: false,
+      });
+    });
+
+    it('a paused generation carries its pause reason (F08-12a, tail of F08-11b)', async () => {
+      prisma.bookWorldImage.findUnique.mockResolvedValue({
+        imageReadAt: null,
+        image: null,
+        pending: null,
+        operation: {
+          id: 'op-2',
+          status: 'paused',
+          pauseReason: 'CEILING_REACHED',
+          spentUsd: D('0'),
+        },
+      });
+      prisma.llmTask.findFirst.mockResolvedValue(null);
+      const state = await service.state('v-1', 'oblomov');
+      expect(state.generation).toMatchObject({
+        status: 'paused',
+        pauseReason: 'CEILING_REACHED',
+      });
     });
   });
 });

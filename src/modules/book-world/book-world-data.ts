@@ -6,6 +6,7 @@ import { stableJson } from '../../shared/json/stable-json';
 import { mentionChapters, mentionStale } from './world-core';
 import { stalePaths, worldCompareKey, worldItemKey } from './world-quote-check';
 import { publicMentionForms, type WorldChapterExclusion } from './world-mentions';
+import { currentGeo, geoInputOf, publicPoint, readGeo, type WorldGeoSubject } from './world-geo';
 import type {
   BookAnalysisFaqDto,
   BookAnalysisRole,
@@ -19,8 +20,9 @@ import type {
   BookWorldQuoteDto,
   BookWorldRelationDto,
   BookWorldSceneDto,
+  WorldPlaceKind,
 } from './dto/book-world-blocks.dto';
-import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
+import { BOOK_WORLD_LIMITS, type BookWorldImportType } from './dto/book-world-blocks.dto';
 import type { BookWorldEntityInputDto } from './dto/update-book-world.dto';
 import type {
   BookWorldEditorDto,
@@ -28,11 +30,13 @@ import type {
   BookWorldEntitySummaryDto,
   BookWorldListEntityDto,
   BookWorldMentionsDto,
+  BookWorldPlaceCardDto,
 } from './dto/book-world-response.dto';
 
 /**
  * Поля страницы сущности в колонке `blocks` (плоский JSON импорта, решение арбитра `F08 | F08-1` R7):
- * героя и пары (`compare`, `bonds`, `differences`, `conclusion` — `F08-8c`). Чужие типу поля
+ * героя, пары (`compare`, `bonds`, `differences`, `conclusion` — `F08-8c`) и места (`kind`,
+ * `location`, `significance`, `description`, `wikidataId` — `F08-12a`). Чужие типу поля
  * отбивает `checkWorldTypeFields` (`world-refs.ts`).
  */
 export interface StoredWorldBlocks {
@@ -50,6 +54,11 @@ export interface StoredWorldBlocks {
   bonds: string | null;
   differences: string | null;
   conclusion: string | null;
+  kind: WorldPlaceKind | null;
+  location: string | null;
+  significance: string | null;
+  description: string | null;
+  wikidataId: string | null;
   faq: BookAnalysisFaqDto[] | null;
 }
 
@@ -74,6 +83,11 @@ const TEXT_BLOCK_KEYS = [
   'bonds',
   'differences',
   'conclusion',
+  'kind',
+  'location',
+  'significance',
+  'description',
+  'wikidataId',
 ] as const;
 const JSON_BLOCK_KEYS = [
   'profile',
@@ -87,19 +101,36 @@ const JSON_BLOCK_KEYS = [
 ] as const;
 export const BOOK_WORLD_BLOCK_KEYS = [...TEXT_BLOCK_KEYS, ...JSON_BLOCK_KEYS] as const;
 
-/** Блоки пары героев (`F08-8c`) — у героя их нет (`checkWorldTypeFields`). */
+/** Блоки пары героев (`F08-8c`) — у героя и места их нет (`checkWorldTypeFields`). */
 export const WORLD_PAIR_BLOCK_KEYS = ['compare', 'bonds', 'differences', 'conclusion'] as const;
+/** Свои блоки места (`F08-12a`, решение арбитра `F08 | F08-12` Q1) — у героя и пары их нет. */
+export const WORLD_PLACE_BLOCK_KEYS = [
+  'kind',
+  'location',
+  'significance',
+  'description',
+  'wikidataId',
+] as const;
 /** Блоки любой сущности: цитаты и частые вопросы. */
 const WORLD_SHARED_BLOCK_KEYS: readonly string[] = ['quotes', 'faq'];
 /**
- * Блоки страницы героя — у пары их нет: всё, что не блок пары и не общее. Новое поле героя
- * попадает сюда само, без второго перечня.
+ * Блоки страницы героя — у пары и места их нет: всё, что не блок пары, не блок места и не общее.
+ * Новое поле героя попадает сюда само, без второго перечня; новое поле другого типа — в свой перечень.
  */
 export const WORLD_CHARACTER_BLOCK_KEYS = BOOK_WORLD_BLOCK_KEYS.filter(
   (k) =>
     !(WORLD_PAIR_BLOCK_KEYS as readonly string[]).includes(k) &&
+    !(WORLD_PLACE_BLOCK_KEYS as readonly string[]).includes(k) &&
     !WORLD_SHARED_BLOCK_KEYS.includes(k),
 );
+
+/** Блоки, которые сущность типа может нести (`checkWorldTypeFields`): свои и общие. */
+export const WORLD_BLOCKS_OF_TYPE: Readonly<Record<BookWorldImportType, ReadonlySet<string>>> = {
+  character: new Set([...WORLD_CHARACTER_BLOCK_KEYS, ...WORLD_SHARED_BLOCK_KEYS]),
+  pair: new Set([...WORLD_PAIR_BLOCK_KEYS, ...WORLD_SHARED_BLOCK_KEYS]),
+  // У места есть сцены (`product.md` §7: «что здесь происходит — сцены с главами»).
+  place: new Set([...WORLD_PLACE_BLOCK_KEYS, 'scenes', ...WORLD_SHARED_BLOCK_KEYS]),
+};
 /**
  * Содержательные поля сущности: их сливает импорт и по ним решается «текст изменился»
  * (решение арбитра R9). Ключ, тип и отметки (`isVisible`, `isIndexable`, `readAt`) сюда не входят.
@@ -168,8 +199,34 @@ export const BOOK_WORLD_PUBLIC_SELECT = {
   blocks: true,
   sources: true,
   mentions: true,
+  // Точка места (`F08-12a`): читателю из колонки уходит только проверенная точка (`publicPoint`).
+  geo: true,
   createdAt: true,
 } as const satisfies Prisma.BookWorldEntitySelect;
+
+/**
+ * Карточка места общей страницы `/wiki` (решение арбитра `F08 | F08-12` Q4): что нужно условию
+ * показа (`worldPlaceShown`), тексту списка мест со сценами и точке карты. Наружу — только
+ * `toPlaceCard`, белым списком.
+ */
+export const WORLD_PLACE_CARD_SELECT = {
+  key: true,
+  type: true,
+  name: true,
+  short: true,
+  // Формы имени — вход отпечатка проверки точки (`publicPoint`): точка только для текущих названий.
+  aliases: true,
+  isListed: true,
+  isVisible: true,
+  readAt: true,
+  autoTextAt: true,
+  blocks: true,
+  mentions: true,
+  geo: true,
+} as const satisfies Prisma.BookWorldEntitySelect;
+export type WorldPlaceCardRow = Prisma.BookWorldEntityGetPayload<{
+  select: typeof WORLD_PLACE_CARD_SELECT;
+}>;
 
 /**
  * Страница сущности для редактора и выборка записи: читательская плюс отметки, исключения форм
@@ -335,7 +392,7 @@ export function worldMentionSourceOf(row: WorldEditorRow) {
 }
 
 /** Список строк из Json-колонки: только строки; не массив — `null`. */
-function readStringList(value: unknown): string[] | null {
+export function readStringList(value: unknown): string[] | null {
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : null;
 }
 
@@ -462,22 +519,11 @@ export function toEntityDto(
       (item: { chapter: number; title?: string | null; text?: string | null }) =>
         !stale.has(worldItemKey(kind, item));
     s.quotes = s.quotes ? s.quotes.filter(fresh('quotes')) : null;
-    s.scenes = s.scenes ? s.scenes.filter(fresh('scenes')) : null;
+    s.scenes = freshScenes(s.scenes, row.mentions);
     if (s.arc?.stages) s.arc = { ...s.arc, stages: s.arc.stages.filter(fresh('arc.stages')) };
     s.compare = s.compare ? s.compare.filter((c) => !stale.has(worldCompareKey(c))) : null;
   }
-  // Сохранённый `paragraph` не берётся: абзац сцены - из свежего подсчёта (`sceneParagraph`).
-  // Мусор в колонке (не массив, не объект в списке) отдаётся как лежит - без 500 у редактора.
-  if (Array.isArray(s.scenes)) {
-    s.scenes = s.scenes.map((scene: unknown) =>
-      isRecord(scene)
-        ? ({
-            ...scene,
-            paragraph: sceneParagraph(row.mentions, Number(scene.chapter)),
-          } as BookWorldSceneDto)
-        : (scene as BookWorldSceneDto),
-    );
-  }
+  s.scenes = withSceneParagraph(s.scenes, row.mentions);
   return {
     ...toSummary(row),
     aliases: s.aliases,
@@ -495,10 +541,81 @@ export function toEntityDto(
     bonds: s.bonds,
     differences: s.differences,
     conclusion: s.conclusion,
+    kind: s.kind,
+    location: s.location,
+    significance: s.significance,
+    description: s.description,
+    wikidataId: s.wikidataId,
     faq: s.faq,
     sources: s.sources,
     mentions: readMentions(row.mentions, reader?.visibleKeys),
+    point: publicPoint(readGeo(row.geo), geoSubjectOf(row)),
     createdAt: row.createdAt,
+  };
+}
+
+/** Сцены без пунктов `mentions.stale` — что видит читатель (решение арбитра `F08 | F08-2` Q2). */
+function freshScenes(
+  scenes: BookWorldSceneDto[] | null,
+  mentions: unknown,
+): BookWorldSceneDto[] | null {
+  if (!Array.isArray(scenes)) return scenes;
+  const stale = mentionStale(mentions);
+  return scenes.filter((scene) => !stale.has(worldItemKey('scenes', scene)));
+}
+
+/**
+ * Абзац сцены из свежего подсчёта (`sceneParagraph`): сохранённый `paragraph` не берётся. Мусор
+ * в колонке (не массив, не объект в списке) отдаётся как лежит - без 500 у редактора.
+ */
+function withSceneParagraph(
+  scenes: BookWorldSceneDto[] | null,
+  mentions: unknown,
+): BookWorldSceneDto[] | null {
+  if (!Array.isArray(scenes)) return scenes;
+  return scenes.map((scene: unknown) =>
+    isRecord(scene)
+      ? ({
+          ...scene,
+          paragraph: sceneParagraph(mentions, Number(scene.chapter)),
+        } as BookWorldSceneDto)
+      : (scene as BookWorldSceneDto),
+  );
+}
+
+/**
+ * Карточка места (Q4): название, «Коротко», реальное или вымышленное, где находится, есть ли своя
+ * страница (`isListed`), проверенная точка и сцены белым списком `title`, `chapter`, `paragraph` —
+ * без текста сцены и без пунктов `mentions.stale`. Абзац сцены — из свежего подсчёта.
+ */
+export function toPlaceCard(row: WorldPlaceCardRow): BookWorldPlaceCardDto {
+  const blocks = readStoredBlocks(row.blocks);
+  // Сцены — тем же правилом, что страница сущности читателю (`freshScenes`, `withSceneParagraph`);
+  // в карточку — только сцены с заголовком и главой, белым списком полей.
+  const readerScenes = withSceneParagraph(
+    freshScenes(withoutParagraph(blocks.scenes), row.mentions),
+    row.mentions,
+  );
+  const scenes = (readerScenes ?? []).flatMap((scene: unknown) =>
+    isRecord(scene) && typeof scene.title === 'string' && Number.isInteger(scene.chapter)
+      ? [
+          {
+            title: scene.title,
+            chapter: scene.chapter as number,
+            paragraph: (scene.paragraph as number | null) ?? null,
+          },
+        ]
+      : [],
+  );
+  return {
+    key: row.key,
+    name: row.name,
+    short: row.short,
+    kind: blocks.kind,
+    location: blocks.location,
+    hasPage: row.isListed,
+    point: publicPoint(readGeo(row.geo), geoSubjectOf(row)),
+    scenes,
   };
 }
 
@@ -527,5 +644,43 @@ export function entityEditorOf(row: WorldEditorRow, recountPending: boolean): Bo
     stale: stalePaths(readStoredEntity(row), mentionStale(row.mentions)),
     mentionsAt: row.mentionsAt,
     recountPending,
+    geo: geoCheckOf(row),
   };
+}
+
+/**
+ * Вход проверки точки из строки — одна сборка на писателя (`WorldGeoService`), страницу и карточку
+ * (`publicPoint`): отпечатки записи и выдачи считаются от одних и тех же полей.
+ */
+export function geoSubjectOf(row: {
+  type: string;
+  name: string | null;
+  aliases: unknown;
+  blocks: unknown;
+}): WorldGeoSubject {
+  const blocks = readStoredBlocks(row.blocks);
+  return {
+    type: row.type,
+    kind: blocks.kind,
+    wikidataId: blocks.wikidataId,
+    name: row.name,
+    aliases: readStringList(row.aliases),
+  };
+}
+
+/**
+ * Итог проверки точки места редактору — тем же правилом, что точка читателю (`publicPoint`):
+ * итог для прежнего номера или названий не выдаётся за текущий. Реальное место с номером, для
+ * которого проверки нет (Wikidata не ответила или проверка ещё не прошла), — `unavailable` без
+ * даты: проверится при следующей записи. Не место, вымышленное или без номера — `null`.
+ */
+function geoCheckOf(row: WorldEditorRow): BookWorldEditorDto['geo'] {
+  const subject = geoSubjectOf(row);
+  // Подлежит ли проверке — правилом писателя (`geoInputOf`; язык здесь не нужен, только условие).
+  const input = geoInputOf(subject, '');
+  if (!input) return null;
+  const geo = currentGeo(readGeo(row.geo), subject);
+  return geo
+    ? { wikidataId: geo.wikidataId, checkedAt: geo.checkedAt, reason: geo.reason }
+    : { wikidataId: input.wikidataId, checkedAt: null, reason: 'unavailable' };
 }

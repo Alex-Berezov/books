@@ -122,8 +122,9 @@ import { WORLD_STEP_STAGES, WorldRegenSpec } from './world-write.prompts';
 import {
   externalInput,
   largestFitting,
-  mainCharacters,
   pageBook,
+  runCharacters,
+  runMainCharacters,
   pageInput,
   pairBook,
   pairChapters,
@@ -133,7 +134,6 @@ import {
   storedCharacterKeys,
   WorldBaseCharacter,
   WorldContext,
-  worldCharacters,
   worldInputFits,
   worldLoopSpec,
   WorldPairMembers,
@@ -520,10 +520,7 @@ export class WorldWriteHandler {
     const total = stepsTotalOf(data);
     if (total !== null && step >= total) return finishRun(this.tasks, row);
     const context = await this.contextOf(row, dossier);
-    if (
-      step === 0 &&
-      mainCharacters(context.analysis, storedCharacterKeys(context.entities)).length === 0
-    ) {
+    if (step === 0 && runMainCharacters(context).length === 0) {
       return failRun(this.tasks, row, WORLD_ANALYSIS_MISSING);
     }
     const record = await this.produceStep(row, gate, step, context, data, data.pending, ctx);
@@ -565,7 +562,7 @@ export class WorldWriteHandler {
     const empty = { droppedQuotes: [], droppedSources: [] };
 
     if (kind === 'select') {
-      const base = worldCharacters(context.analysis, storedCharacterKeys(context.entities));
+      const base = runCharacters(context);
       const index = quotes();
       const make = (count: number) =>
         selectInput(context, base, index, {

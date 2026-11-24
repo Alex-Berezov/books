@@ -75,15 +75,14 @@ import { worldReadyGate, WorldWriteFields } from './world-write.fields';
 import { WorldWriteHandler, worldWriteTaskInput } from './world-write.handler';
 import {
   externalInput,
-  mainCharacters,
-  pairFormCharacters,
   pageBook,
   pageInput,
   pairBook,
   pairChapters,
   pairInput,
   pairStepsUpperBound,
-  worldCharacters,
+  runCharacters,
+  runMainCharacters,
   worldPipelineUsd,
   worldStepUsd,
 } from './world-write.steps';
@@ -472,20 +471,21 @@ export class WorldWriteService {
       select: BOOK_ANALYSIS_SELECT,
     });
     const analysis = analysisRow ? readStoredAnalysis(analysisRow) : null;
-    // Заведённые герои с ключом вида пары остаются в ходе (Q7): ключи героев мира, которых это касается.
-    const pairForm = analysis ? pairFormCharacters(analysis).map((c) => c.key) : [];
-    const stored = new Set(
-      pairForm.length === 0
+    // Сущности мира на ключах героев анализа — одним запросом: заведённые герои с ключом вида пары
+    // остаются в ходе (Q7), ключи, занятые парой или местом, в ход не идут (`keysOfOtherTypes`,
+    // `F08-12a`) — то же правило, что у выбора шага.
+    const analysisKeys = (analysis?.characters ?? []).map((c) => c.key);
+    const onKeys = new Map(
+      (analysisKeys.length === 0
         ? []
-        : (
-            await this.prisma.bookWorldEntity.findMany({
-              where: { bookVersionId: versionId, type: 'character', key: { in: pairForm } },
-              select: { key: true },
-              take: BOOK_WORLD_LIMITS.entities,
-            })
-          ).map((e) => e.key),
+        : await this.prisma.bookWorldEntity.findMany({
+            where: { bookVersionId: versionId, key: { in: analysisKeys } },
+            select: { key: true, type: true },
+            take: BOOK_WORLD_LIMITS.entities,
+          })
+      ).map((e) => [e.key, e] as const),
     );
-    const mains = analysis ? mainCharacters(analysis, stored) : [];
+    const mains = analysis ? runMainCharacters({ analysis, entities: onKeys }) : [];
     if (!analysis || mains.length === 0) {
       throw llmTaskConflict(
         WORLD_ANALYSIS_MISSING,
@@ -502,7 +502,7 @@ export class WorldWriteService {
     const context = await this.drafts.draftContext(versionId, version);
     const upperBound = context.dossier === null || context.glossaryLine !== null;
     const extra = upperBound ? await contextUpperChars(this.llm) : 0;
-    const heroes = worldCharacters(analysis, stored).length;
+    const heroes = runCharacters({ analysis, entities: onKeys }).length;
     const pairs = pairStepsUpperBound(heroes, hasWorldPairExample(version.language));
     const usd = worldPipelineUsd(
       calls,
@@ -520,7 +520,7 @@ export class WorldWriteService {
       },
       extra,
       pairs,
-      stored,
+      { analysis, entities: onKeys },
     );
     const lines = contextLimits(context, usd);
     return {

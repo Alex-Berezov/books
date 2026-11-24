@@ -8,6 +8,10 @@ import {
   pairFormCharacters,
   pairInput,
   pairStepsUpperBound,
+  keysOfOtherTypes,
+  runCharacters,
+  runMainCharacters,
+  storedCharacterKeys,
   worldCharacters,
   WorldContext,
   worldPipelineUsd,
@@ -22,11 +26,11 @@ describe('world run candidates: who goes into the run (F08-8b)', () => {
         { key: 'anna', name: 'Anna', role: 'main' },
       ],
     } as unknown as StoredBookAnalysis;
-    expect(worldCharacters(analysis)).toEqual([
+    expect(worldCharacters(analysis, new Set(), new Set())).toEqual([
       { key: 'anna', name: 'Anna', role: 'main' },
       { key: 'boris', name: 'Boris', role: 'secondary' },
     ]);
-    expect(mainCharacters(analysis).map((c) => c.key)).toEqual(['anna']);
+    expect(mainCharacters(analysis, new Set(), new Set()).map((c) => c.key)).toEqual(['anna']);
   });
 });
 
@@ -40,8 +44,8 @@ describe('world run candidates: a pair-form key (F08-8e-1 Q7, LEGACY-507)', () =
   } as unknown as StoredBookAnalysis;
 
   it('a hero with "--" in the key is never a candidate, nor a main hero that lets the run start; it is listed as pair-form', () => {
-    expect(worldCharacters(analysis).map((c) => c.key)).toEqual(['boris']);
-    expect(mainCharacters(analysis)).toEqual([]);
+    expect(worldCharacters(analysis, new Set(), new Set()).map((c) => c.key)).toEqual(['boris']);
+    expect(mainCharacters(analysis, new Set(), new Set())).toEqual([]);
     expect(pairFormCharacters(analysis).map((c) => c.key)).toEqual(['anna--tom', 'vera--old']);
   });
 });
@@ -88,6 +92,19 @@ describe('world run estimate: pair steps (F08-8e-1 Q6, Q8)', () => {
     const none = worldPipelineUsd(calls, context, 0, 0);
     // Шаг - (автор + проверяющая) × 2 прохода: 200 на пару.
     expect(worldPipelineUsd(calls, context, 0, 3).sub(none).toNumber()).toBe(600);
+    // F08-12a (ревью кругов 4-5): герой на ключе места в оценку не входит — оценка ровно та же,
+    // что у анализа без этого героя.
+    const boris = new Map([['boris', { type: 'place' as const }]]);
+    const withoutBoris = worldPipelineUsd(calls, context, 0, 0, {
+      analysis: context.analysis,
+      entities: boris,
+    });
+    const onlyAnna = {
+      ...context,
+      analysis: { characters: [{ key: 'anna', name: 'Anna', role: 'main' }] },
+    } as unknown as WorldContext;
+    expect(withoutBoris.toString()).toBe(worldPipelineUsd(calls, onlyAnna, 0, 0).toString());
+    expect(withoutBoris.lessThan(none)).toBe(true);
   });
 });
 
@@ -160,6 +177,43 @@ describe('pair step input (F08-8e-1, review round 1)', () => {
   });
 });
 
+describe('world run candidates: a key taken by a place is not a hero candidate (F08-12a, code-review round 3)', () => {
+  const analysis = {
+    characters: [
+      { key: 'pemberley', name: 'Pemberley', role: 'main' },
+      { key: 'darcy', name: 'Darcy', role: 'main' },
+    ],
+  } as unknown as StoredBookAnalysis;
+
+  it('runCharacters / runMainCharacters — one rule for the select step, step 0, start and estimate', () => {
+    const entities = new Map([['pemberley', { type: 'place' as const }]]);
+    expect(runCharacters({ analysis, entities }).map((c) => c.key)).toEqual(['darcy']);
+    expect(runMainCharacters({ analysis, entities }).map((c) => c.key)).toEqual(['darcy']);
+    const onlyPlace = {
+      characters: [{ key: 'pemberley', name: 'Pemberley', role: 'main' }],
+    } as unknown as StoredBookAnalysis;
+    // Единственный main на ключе места: кандидатов нет — ход не стартует (WORLD_ANALYSIS_MISSING).
+    expect(runMainCharacters({ analysis: onlyPlace, entities })).toEqual([]);
+    expect(mainCharacters(onlyPlace, new Set(), new Set(['pemberley']))).toEqual([]);
+  });
+
+  it('the stored place key is left out before the paid step; heroes stay', () => {
+    const entities = new Map([
+      ['pemberley', { type: 'place' as const }],
+      ['darcy', { type: 'character' as const }],
+    ]);
+    expect(keysOfOtherTypes(entities)).toEqual(new Set(['pemberley']));
+    expect(keysOfOtherTypes(new Map([['anna--darcy', { type: 'pair' as const }]]))).toEqual(
+      new Set(['anna--darcy']),
+    );
+    expect(
+      worldCharacters(analysis, storedCharacterKeys(entities), keysOfOtherTypes(entities)).map(
+        (c) => c.key,
+      ),
+    ).toEqual(['darcy']);
+  });
+});
+
 describe('world run candidates: a stored hero with a pair-form key stays in the run (F08-8e-1 Q7)', () => {
   const analysis = {
     characters: [
@@ -170,8 +224,8 @@ describe('world run candidates: a stored hero with a pair-form key stays in the 
 
   it('the write takes a stored character with "--": it is a candidate and lets the run start; a new one is left out', () => {
     const stored = new Set(['anna--tom']);
-    expect(worldCharacters(analysis, stored).map((c) => c.key)).toEqual(['anna--tom']);
-    expect(mainCharacters(analysis, stored).map((c) => c.key)).toEqual(['anna--tom']);
+    expect(worldCharacters(analysis, stored, new Set()).map((c) => c.key)).toEqual(['anna--tom']);
+    expect(mainCharacters(analysis, stored, new Set()).map((c) => c.key)).toEqual(['anna--tom']);
     expect(pairFormCharacters(analysis, stored).map((c) => c.key)).toEqual(['vera--old']);
   });
 

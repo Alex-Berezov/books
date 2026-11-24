@@ -233,6 +233,13 @@ describe('WorldWriteFields.settleStep', () => {
     expect(data().items[0]).toMatchObject({ outcome: 'none', failedReason: 'WORLD_WRITE_REFUSED' });
   });
 
+  it('the key was taken by a place during the run (F08-12a, review round 5) - not written over it, the items refused', async () => {
+    const { fields, world, row, data } = setup([item('character', 'Text.')], { type: 'place' });
+    await expect(fields.settleStep(row(), worldRunGate('op1'), 1)).resolves.toBe('settled');
+    expect(world.saveEntity).toHaveBeenCalledTimes(0);
+    expect(data().items[0]).toMatchObject({ outcome: 'none', failedReason: 'WORLD_WRITE_REFUSED' });
+  });
+
   it('a run of another operation - gone, nothing is written', async () => {
     const { fields, world, row } = setup([item('character', 'Text.')], {});
     await expect(fields.settleStep(row(), worldRunGate('op2'), 1)).resolves.toBe('gone');
@@ -241,6 +248,17 @@ describe('WorldWriteFields.settleStep', () => {
 });
 
 describe('WorldWriteFields.accept', () => {
+  it('the key is a place now (F08-12a, review round 5) - 409 WORLD_WRITE_REFUSED, nothing written', async () => {
+    const proposed = item('short', 'Short.', { outcome: 'proposed', base: valuePrint(null) });
+    const { fields, world, row } = setup([proposed], { type: 'place' }, 'ready');
+    const error = await fields.accept(row(), 0).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ConflictException);
+    expect((error as ConflictException).getResponse()).toMatchObject({
+      code: 'WORLD_WRITE_REFUSED',
+    });
+    expect(world.saveEntity).toHaveBeenCalledTimes(0);
+  });
+
   it('the block changed after the proposal - 409 WORLD_BLOCK_CHANGED with the current block, nothing written', async () => {
     const proposed = item('short', 'Short.', {
       outcome: 'proposed',

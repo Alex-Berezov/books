@@ -101,14 +101,46 @@ describe('WorldWriteHandler: a regeneration and the external step', () => {
       contentDraft: { findUnique: jest.fn().mockResolvedValue({ ...row, ...rowPatch }) },
       bookDossier: { findUnique: jest.fn().mockResolvedValue({ data: {} }) },
     };
+    const updateMany = jest.fn().mockResolvedValue({ count: 1 });
     const tasks = {
       completeOperation: jest.fn((_id: string, fn?: (tx: unknown) => Promise<void>) =>
         fn ? fn({}).then(() => true) : Promise.resolve(true),
       ),
+      failOperation: jest.fn((_id: string, fn: (tx: unknown) => Promise<void>) =>
+        fn({ contentDraft: { updateMany } }).then(() => true),
+      ),
     };
     const handler = worldWriteHandler({ prisma: db, tasks, fields });
-    return { handler, tasks };
+    return { handler, tasks, updateMany };
   }
+
+  it('step 0: the only main hero sits on a place key (F08-12a, review round 5) - the run fails WORLD_ANALYSIS_MISSING before any paid call', async () => {
+    const fields = { read: jest.fn().mockResolvedValue(emptyWorldData()) };
+    const { handler, tasks, updateMany } = make({}, fields);
+    jest.spyOn(handler, 'contextOf').mockResolvedValue({
+      language: 'en',
+      dossier: {},
+      glossary: null,
+      bookTitle: 'Book',
+      author: 'Author',
+      originalLanguage: 'English',
+      chapters: [{ number: 1, title: 'C1', content: '<p>Paris.</p>' }],
+      analysis: { characters: [{ key: 'paris', name: 'Paris', role: 'main' }] } as never,
+      entities: new Map([['paris', { key: 'paris', type: 'place' }]]) as never,
+      names: { titles: ['Book'], authors: ['Author'] },
+    });
+    const task = { operationId: 'op1', payload: { draftId: 'd1' } };
+    // `llm` - пустой объект: платный вызов выбора здесь упал бы.
+    await expect(
+      handler.handler.run(task as never, { renewLease: jest.fn() } as never),
+    ).resolves.toEqual({ kind: 'done' });
+    expect(tasks.failOperation).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: 'failed', failedReason: 'WORLD_ANALYSIS_MISSING' },
+      }),
+    );
+  });
 
   it('a regeneration resumed with its item still waiting: the refused import is reported WORLD_WRITE_REFUSED, not dropped silently', async () => {
     const waiting = {

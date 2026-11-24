@@ -32,7 +32,7 @@ const IMAGE_SELECT = {
   imageReadAt: true,
   image: { select: WORLD_IMAGE_FILE_SELECT },
   pending: { select: WORLD_IMAGE_FILE_SELECT },
-  operation: { select: { id: true, status: true, spentUsd: true } },
+  operation: { select: { id: true, status: true, pauseReason: true, spentUsd: true } },
 } as const satisfies Prisma.BookWorldImageSelect;
 
 type ImageRow = Prisma.BookWorldImageGetPayload<{ select: typeof IMAGE_SELECT }>;
@@ -212,6 +212,8 @@ export class WorldImageService {
     return {
       key,
       allowed: subject.allowed && subject.appearance !== null,
+      // Роль отдельно от внешности: Accept зависит только от роли (`assertAllowed`), Generate — от обоих.
+      roleAllowed: subject.allowed,
       accepted: fileDto(accepted),
       acceptedAt: accepted && row ? row.imageReadAt : null,
       pending: fileDto(row?.pending && !row.pending.isDeleted ? row.pending : null),
@@ -219,6 +221,7 @@ export class WorldImageService {
         ? {
             operationId: op.id,
             status: op.status,
+            pauseReason: op.pauseReason,
             failedReason: failed?.lastError ?? null,
             spentUsd: moneyUsd(op.spentUsd),
           }

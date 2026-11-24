@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { LlmOperationStatus } from '@prisma/client';
+import { LlmOperationStatus, LlmPauseReason } from '@prisma/client';
 import { BookWorldImageDto } from '../../book-world/dto/book-world-response.dto';
 
 /** Файл картинки для админки: публичный адрес, размеры из заголовка и id медиа (для «Accept»). */
@@ -15,6 +15,15 @@ export class WorldImageGenerationDto {
 
   @ApiProperty({ enum: LlmOperationStatus, enumName: 'LlmOperationStatus' })
   status!: LlmOperationStatus;
+
+  @ApiProperty({
+    enum: LlmPauseReason,
+    enumName: 'LlmPauseReason',
+    nullable: true,
+    description:
+      'Why the generation is paused (status paused), e.g. the spending ceiling; null otherwise (F08-12a, tail of F08-11b)',
+  })
+  pauseReason!: LlmPauseReason | null;
 
   @ApiProperty({
     type: String,
@@ -44,6 +53,14 @@ export class WorldImageStateDto {
       'The entity may have an illustration: a main or secondary character with appearance text',
   })
   allowed!: boolean;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'The entity type and role allow an illustration (main or secondary character), whatever the appearance text: ' +
+      'false — Generate and Accept answer 409 WORLD_IMAGE_NOT_ALLOWED (F08-12a, tail of F08-11b)',
+  })
+  roleAllowed!: boolean;
 
   @ApiProperty({
     type: WorldImageFileDto,

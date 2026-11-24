@@ -4,8 +4,10 @@ import { Prisma } from '@prisma/client';
 import type { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { BookWorldService, WORLD_QUOTE_CHAPTERS_BATCH } from './book-world.service';
+import type { WorldGeoService } from './world-geo.service';
+import { geoFingerprint } from './world-geo';
 import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
-import type { UpdateBookWorldDto } from './dto/update-book-world.dto';
+import type { UpdateBookWorldDto, UpdateBookWorldEntityDto } from './dto/update-book-world.dto';
 
 /**
  * F08-1: ветки проверки импорта (`plan`) на подменённой базе. Полный путь с базой —
@@ -105,6 +107,8 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
         return Promise.resolve(saved.map((r) => ({ key: r.key })));
       }),
       findFirst: jest.fn().mockResolvedValue(null),
+      // Сверка записи сущности (`select.updatedAt`) и перечитывание точки после проверки (F08-12a).
+      findUnique: jest.fn().mockResolvedValue(null),
       count: jest.fn().mockResolvedValue(saved.length),
       create: jest.fn((args: { data: Row }) => Promise.resolve(savedRow('x', args.data))),
       update: jest.fn((args: { data: Row }) => Promise.resolve(savedRow('x', args.data))),
@@ -118,9 +122,11 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
       return fn(prisma);
     }),
   };
+  const geo = { refresh: jest.fn().mockResolvedValue(0) };
   const service = new BookWorldService(
     prisma as unknown as PrismaService,
     { isModerator: jest.fn() } as unknown as ModeratorRolesService,
+    geo as unknown as WorldGeoService,
   );
   const save = (entities: Row[], dryRun = true) =>
     service.saveVersion(
@@ -140,7 +146,7 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
   const onTransaction = (fn: () => void) => {
     between = fn;
   };
-  return { prisma, chapters, textCalls, countCalls, save, messages, onTransaction };
+  return { prisma, chapters, textCalls, countCalls, save, messages, onTransaction, geo, service };
 }
 
 const hero = (key: string, over: Row = {}): Row => ({
@@ -276,6 +282,110 @@ describe('BookWorldService: запись сущности и присутств�
     );
     // Герои в порядке тела, пара — после обоих (её isListed читает уже записанных героев).
     expect(written).toEqual(['character:b', 'character:a', 'pair:a--b']);
+  });
+
+  it('точки мест проверяются после записи и только у мест тела (F08-12a, Q2); dryRun — без проверки', async () => {
+    const { save, geo } = setup({ chapters: { 1: '<p>Hero came.</p>' } });
+    const place = { key: 'town', type: 'place', name: 'Town', kind: 'real', wikidataId: 'Q1' };
+    await save([hero('a'), place]);
+    expect(geo.refresh).not.toHaveBeenCalled();
+    await save([hero('a'), place], false);
+    expect(geo.refresh).toHaveBeenCalledTimes(1);
+    expect(geo.refresh).toHaveBeenCalledWith('v1', 'en', ['town']);
+  });
+
+  describe('ответ записи места после проверки точки (F08-12a, ревью круга 2-3)', () => {
+    const STORED_GEO = {
+      wikidataId: 'Q1',
+      checkedFor: geoFingerprint({ wikidataId: 'Q1', language: 'en', names: ['Town'] }),
+      language: 'en',
+      checkedAt: 't',
+      point: { lat: 1, lng: 2 },
+      reason: null,
+    };
+    const placeBody = {
+      language: 'en',
+      type: 'place',
+      name: 'Town',
+      kind: 'real',
+      wikidataId: 'Q1',
+    } as unknown as UpdateBookWorldEntityDto;
+    const run = async (sameUpdatedAt: boolean) => {
+      const ctx = setup({ chapters: { 1: '<p>Town.</p>' } });
+      ctx.geo.refresh.mockResolvedValue(1);
+      ctx.prisma.bookWorldEntity.findUnique.mockImplementation(
+        async (args: { select: Record<string, boolean> }) => {
+          if (!args.select.geo) return null;
+          const created = (await ctx.prisma.bookWorldEntity.create.mock.results[0].value) as Row;
+          const at = created.updatedAt as Date;
+          return {
+            geo: STORED_GEO,
+            updatedAt: sameUpdatedAt ? at : new Date(at.getTime() + 1000),
+          };
+        },
+      );
+      const res = await ctx.service.saveEntity('v1', 'town', placeBody, false);
+      return { res, ctx };
+    };
+
+    it('строку после записи никто не правил — в ответ берётся записанная точка', async () => {
+      const { res, ctx } = await run(true);
+      expect(ctx.geo.refresh).toHaveBeenCalledTimes(1);
+      expect(ctx.geo.refresh).toHaveBeenCalledWith('v1', 'en', ['town']);
+      // Перечитывается только колонка точки этой строки этой версии — один раз.
+      const geoReads = (
+        ctx.prisma.bookWorldEntity.findUnique.mock.calls as [{ select: Record<string, boolean> }][]
+      ).filter(([args]) => args.select.geo);
+      expect(geoReads).toHaveLength(1);
+      expect(ctx.prisma.bookWorldEntity.findUnique).toHaveBeenCalledWith({
+        where: { bookVersionId_key: { bookVersionId: 'v1', key: 'town' } },
+        select: { geo: true, updatedAt: true },
+      });
+      expect(res.entity?.point).toEqual({
+        lat: 1,
+        lng: 2,
+        sourceUrl: 'https://www.wikidata.org/wiki/Q1',
+      });
+      expect(res.entity?.editor?.geo).toMatchObject({ wikidataId: 'Q1', reason: null });
+    });
+
+    it('проверка ничего не записала — строка не перечитывается', async () => {
+      const ctx = setup({ chapters: { 1: '<p>Town.</p>' } });
+      await ctx.service.saveEntity('v1', 'town', placeBody, false);
+      expect(ctx.geo.refresh).toHaveBeenCalledTimes(1);
+      const geoReads = (
+        ctx.prisma.bookWorldEntity.findUnique.mock.calls as [{ select: Record<string, boolean> }][]
+      ).filter(([args]) => args.select.geo);
+      expect(geoReads).toEqual([]);
+    });
+
+    it('проверка сняла точку (geo null) — в ответе точки нет, причина unavailable', async () => {
+      const ctx = setup({ chapters: { 1: '<p>Town.</p>' } });
+      ctx.geo.refresh.mockResolvedValue(1);
+      ctx.prisma.bookWorldEntity.findUnique.mockImplementation(
+        async (args: { select: Record<string, boolean> }) => {
+          if (!args.select.geo) return null;
+          const created = (await ctx.prisma.bookWorldEntity.create.mock.results[0].value) as Row;
+          return { geo: null, updatedAt: created.updatedAt };
+        },
+      );
+      const res = await ctx.service.saveEntity('v1', 'town', placeBody, false);
+      expect(res.entity?.point).toBeNull();
+      expect(res.entity?.editor?.geo).toEqual({
+        wikidataId: 'Q1',
+        checkedAt: null,
+        reason: 'unavailable',
+      });
+    });
+
+    it('строку успели править — ответ из своей записи, чужое содержимое не берётся', async () => {
+      const { res } = await run(false);
+      const created = res.entity!;
+      // Ответ — своя запись: её имя и номер, без точки чужой версии строки.
+      expect(created).toMatchObject({ key: 'town', name: 'Town', wikidataId: 'Q1', kind: 'real' });
+      expect(created.point).toBeNull();
+      expect(created.editor?.geo).toMatchObject({ reason: 'unavailable', checkedAt: null });
+    });
   });
 
   it('dryRun ничего не ставит в очередь и глав для присутствия не читает', async () => {

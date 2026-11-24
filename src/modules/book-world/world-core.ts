@@ -18,6 +18,13 @@ export const WORLD_CHARACTER_CORE = { quotes: 3, scenes: 2, mentionChapters: 1 }
  */
 export const WORLD_PAIR_CORE = { compare: 4, mentionChapters: 1 } as const;
 
+/**
+ * Ядро места (`F08-12a`, решение арбитра `F08 | F08-12` Q1): «Коротко», реальное или вымышленное,
+ * значение в книге, не меньше 2 сцен с главой (`product.md` §2), посчитанное присутствие хотя бы
+ * в одной главе. Цитата в ядро не входит (`product.md` §3: «цитата или упоминания»).
+ */
+export const WORLD_PLACE_CORE = { scenes: 2, mentionChapters: 1 } as const;
+
 export type WorldCorePart =
   | 'short'
   | 'character'
@@ -26,7 +33,9 @@ export type WorldCorePart =
   | 'scenes'
   | 'mentions'
   | 'compare'
-  | 'conclusion';
+  | 'conclusion'
+  | 'kind'
+  | 'significance';
 
 export interface WorldCoreResult {
   hasCore: boolean;
@@ -35,7 +44,7 @@ export interface WorldCoreResult {
 }
 
 type CoreInput = Pick<StoredWorldEntity, 'short' | 'character' | 'arc' | 'quotes' | 'scenes'> &
-  Partial<Pick<StoredWorldEntity, 'compare' | 'conclusion'>> & {
+  Partial<Pick<StoredWorldEntity, 'compare' | 'conclusion' | 'kind' | 'significance'>> & {
     /** Тип сущности; нет — герой (вход без типа — только герой, до `F08-8c`). */
     type?: StoredWorldEntity['type'];
     /** Колонка `mentions` как есть (`WorldMentions` подсчёта `F08-2`, `world-mentions.ts`). */
@@ -63,6 +72,7 @@ export function mentionStale(mentions: unknown): Set<string> {
 
 export function computeWorldCore(entity: CoreInput): WorldCoreResult {
   if (entity.type === 'pair') return computePairCore(entity);
+  if (entity.type === 'place') return computePlaceCore(entity);
   const stale = mentionStale(entity.mentions);
   const quotes = (entity.quotes ?? []).filter(
     (q) => isFilled(q.text) && hasChapter(q.chapter) && !stale.has(worldItemKey('quotes', q)),
@@ -116,5 +126,25 @@ function computePairCore(entity: CoreInput): WorldCoreResult {
     missing.push({ part: 'mentions', have: chapters, need: WORLD_PAIR_CORE.mentionChapters });
   }
   if (!isFilled(entity.conclusion)) missing.push({ part: 'conclusion', have: 0, need: 1 });
+  return { hasCore: missing.length === 0, missing };
+}
+
+function computePlaceCore(entity: CoreInput): WorldCoreResult {
+  const stale = mentionStale(entity.mentions);
+  const scenes = (entity.scenes ?? []).filter(
+    (s) => isFilled(s.text) && hasChapter(s.chapter) && !stale.has(worldItemKey('scenes', s)),
+  ).length;
+  const chapters = mentionChapters(entity.mentions).length;
+
+  const missing: WorldCoreResult['missing'] = [];
+  if (!isFilled(entity.short)) missing.push({ part: 'short', have: 0, need: 1 });
+  if (!isFilled(entity.kind)) missing.push({ part: 'kind', have: 0, need: 1 });
+  if (!isFilled(entity.significance)) missing.push({ part: 'significance', have: 0, need: 1 });
+  if (scenes < WORLD_PLACE_CORE.scenes) {
+    missing.push({ part: 'scenes', have: scenes, need: WORLD_PLACE_CORE.scenes });
+  }
+  if (chapters < WORLD_PLACE_CORE.mentionChapters) {
+    missing.push({ part: 'mentions', have: chapters, need: WORLD_PLACE_CORE.mentionChapters });
+  }
   return { hasCore: missing.length === 0, missing };
 }

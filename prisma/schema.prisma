@@ -347,6 +347,10 @@ model BookWorldEntity {
   /// Первая глава присутствия (`mentions.first`, F08-2) — колонкой: «впервые — глава N» в списке читателя
   /// без Json (решение арбитра `F08 | F08-3` Q2); пишет тот же пересчёт, что `mentionChapters`.
   mentionFirst     Int?
+  /// Точка реального места (`F08-12a`, решение арбитра `F08 | F08-12` Q2): итог проверки Wikidata P625
+  /// `{ wikidataId, checkedFor, checkedAt, point: {lat, lng} | null, reason }`; пишет только сервер
+  /// (`WorldGeoService`), во входе импорта поля нет.
+  geo              Json?
   /// Ядро заполнено (`world-core.ts`), пересчитывается каждой записью.
   hasCore          Boolean         @default(false)
   /// Чего не хватает до ядра (`computeWorldCore().missing`), пишется вместе с `hasCore`.

@@ -60,8 +60,20 @@ describe('UpdateBookWorldDto (F08-1)', () => {
     expect(errorsOf(hero())).toEqual([]);
   });
 
-  it("type: 'place' — отказ до своей пачки", () => {
-    expect(errorsOf(hero({ type: 'place' }))).toEqual(['entities.0.type']);
+  it("type: 'place' принимается с F08-12a; неизвестный тип — отказ", () => {
+    expect(errorsOf(hero({ type: 'place' }))).toEqual([]);
+    expect(errorsOf(hero({ type: 'item' }))).toEqual(['entities.0.type']);
+  });
+
+  it('поля места (F08-12a): kind из двух значений, wikidataId по форме Q-номера, координат во входе нет', () => {
+    expect(errorsOf(hero({ type: 'place', kind: 'real', wikidataId: 'Q90' }))).toEqual([]);
+    expect(errorsOf(hero({ type: 'place', kind: 'mythic' }))).toEqual(['entities.0.kind']);
+    expect(errorsOf(hero({ type: 'place', wikidataId: '90' }))).toEqual(['entities.0.wikidataId']);
+    expect(errorsOf(hero({ type: 'place', wikidataId: 'Q0' }))).toEqual(['entities.0.wikidataId']);
+    expect(errorsOf(hero({ type: 'place', geo: { lat: 1, lng: 2 } }))).toEqual(['entities.0.geo']);
+    expect(errorsOf(hero({ type: 'place', significance: 'x'.repeat(L.significance + 1) }))).toEqual(
+      ['entities.0.significance'],
+    );
   });
 
   it('12 цитат проходят, 13 — отказ', () => {
