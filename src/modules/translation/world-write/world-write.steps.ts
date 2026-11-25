@@ -337,6 +337,12 @@ export function pageInput(
     mentionChapters: new Set(candidate.mentions.chapters),
     refKeys: refKeys(context),
     glossary: glossaryNames(context.glossary),
+    storedAppearance:
+      regen?.block === 'imageBrief'
+        ? (context.entities.get(candidate.key)?.appearance ?? null)
+        : null,
+    briefRegen: regen?.block === 'imageBrief',
+    role: context.entities.get(candidate.key)?.role ?? candidate.role,
   };
   const onlyBlock = (draft: WorldPageDraft): WorldPageDraft =>
     regen
@@ -371,6 +377,7 @@ export function pageInput(
         bookIsPartial: book.partial,
         regen,
         redo,
+        storedAppearance: check.storedAppearance,
       }),
     review: (draft) =>
       worldReviewRequest({

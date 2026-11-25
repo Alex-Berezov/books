@@ -1045,6 +1045,8 @@ export class WorldWriteHandler {
             outcome: 'waiting',
             value: fresh.value,
             sources: fresh.sources,
+            // Новое ТЗ — с отпечатком той «Внешности», по которой написано (решение `F08 | F08-11d-2`).
+            basis: fresh.basis ?? null,
             base: null,
             failedReason: null,
             regenFailedReason: null,
@@ -1206,9 +1208,29 @@ export function pageRecord(
   if (!regen && candidate.aliases.length > 0) {
     items.push({ ...emptyItem(candidate.key, 'aliases', step), value: candidate.aliases, name });
   }
-  items.push(...blockItems(step, candidate.key, name, result));
+  // ТЗ без «Внешности» не пишется (решение `F08 | F08-11d` Q10): «Внешность», отбитая импортом, не
+  // запишется — не пишется и ТЗ, построенное по ней.
+  const blocks = blockItems(step, candidate.key, name, result);
+  const lookRejected = blocks.some((i) => i.block === 'appearance' && i.outcome === 'none');
+  const fixes = [...result.draft.fixes];
+  if (lookRejected && blocks.some((i) => i.block === 'imageBrief')) {
+    fixes.push({
+      code: 'BRIEF_WITHOUT_APPEARANCE',
+      path: 'imageBrief',
+      note: 'appearance is not written: the brief is removed',
+    });
+  }
+  items.push(
+    ...blocks.flatMap((i) =>
+      i.block !== 'imageBrief'
+        ? [i]
+        : lookRejected
+          ? []
+          : [{ ...i, basis: result.draft.briefFor ?? null }],
+    ),
+  );
   return {
-    step: doneStep(step, 'page', candidate.key, result, result.remarks, source, result.draft.fixes),
+    step: doneStep(step, 'page', candidate.key, result, result.remarks, source, fixes),
     items,
     droppedQuotes: result.draft.droppedQuotes,
     droppedSources: [],

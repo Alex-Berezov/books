@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { Prisma, WorldEntityType } from '@prisma/client';
 import { compactBlock } from '../../shared/prisma/compact-block.util';
 import { jsonField } from '../../shared/prisma/json-field.util';
@@ -59,6 +60,17 @@ export interface StoredWorldBlocks {
   significance: string | null;
   description: string | null;
   wikidataId: string | null;
+  /**
+   * ТЗ на иллюстрацию героя `main`/`secondary` для редакции (решения `F08 | F08-11d` Q3–Q5): по-английски,
+   * с названием книги и автором. Только редактору — читателю и в публичный DTO не идёт; вне сравнения
+   * «текст изменился» (`NON_CONTENT_BLOCK_KEYS`, решение `F08 | F08-11d-2` R9).
+   */
+  imageBrief: string | null;
+  /**
+   * Отпечаток «Внешности», по которой написано ТЗ (`appearancePrint`, решение `F08 | F08-11d-2`):
+   * служебный, из тела не берётся — его считает сервер; не совпал с текущей — ТЗ устарело.
+   */
+  imageBriefFor: string | null;
   faq: BookAnalysisFaqDto[] | null;
 }
 
@@ -88,6 +100,8 @@ const TEXT_BLOCK_KEYS = [
   'significance',
   'description',
   'wikidataId',
+  'imageBrief',
+  'imageBriefFor',
 ] as const;
 const JSON_BLOCK_KEYS = [
   'profile',
@@ -132,8 +146,9 @@ export const WORLD_BLOCKS_OF_TYPE: Readonly<Record<BookWorldImportType, Readonly
   place: new Set([...WORLD_PLACE_BLOCK_KEYS, 'scenes', ...WORLD_SHARED_BLOCK_KEYS]),
 };
 /**
- * Содержательные поля сущности: их сливает импорт и по ним решается «текст изменился»
- * (решение арбитра R9). Ключ, тип и отметки (`isVisible`, `isIndexable`, `readAt`) сюда не входят.
+ * Поля сущности, которые сливает и пишет импорт (`mergeEntity`, `toEntityWrite`). Ключ, тип и отметки
+ * (`isVisible`, `isIndexable`, `readAt`) сюда не входят. «Текст изменился» (решение арбитра R9)
+ * решается по ним же за вычетом `NON_CONTENT_BLOCK_KEYS`.
  */
 const CONTENT_KEYS = [
   'name',
@@ -143,6 +158,33 @@ const CONTENT_KEYS = [
   'sources',
   ...BOOK_WORLD_BLOCK_KEYS,
 ] as const;
+
+/**
+ * Служебные блоки: пишутся и сливаются, но страницу с сайта не снимают — их правка не ставит
+ * `autoTextAt` (решение арбитра `F08 | F08-11d-2` R9).
+ */
+const NON_CONTENT_BLOCK_KEYS: readonly (typeof CONTENT_KEYS)[number][] = [
+  'imageBrief',
+  'imageBriefFor',
+];
+const CHANGE_KEYS = CONTENT_KEYS.filter((key) => !NON_CONTENT_BLOCK_KEYS.includes(key));
+
+/**
+ * Отпечаток «Внешности» для ТЗ на иллюстрацию (решение `F08 | F08-11d-2`): «Внешности» нет — `null`.
+ * Один на ход, импорт и проверку устаревания: ТЗ, написанное по другой «Внешности», — устаревшее.
+ */
+export function appearancePrint(appearance: string | null | undefined): string | null {
+  if (typeof appearance !== 'string' || appearance.trim() === '') return null;
+  return createHash('sha256').update(stableJson(appearance.trim())).digest('hex').slice(0, 16);
+}
+
+/** ТЗ устарело: написано не по текущей «Внешности» или без отпечатка (решение `F08 | F08-11d-2`). */
+export function imageBriefStale(
+  e: Pick<StoredWorldBlocks, 'appearance' | 'imageBrief' | 'imageBriefFor'>,
+): boolean {
+  if (!e.imageBrief) return false;
+  return e.imageBriefFor === null || e.imageBriefFor !== appearancePrint(e.appearance);
+}
 
 /**
  * Белый список строки списка читателя: поля сводки, без `blocks` и прочих Json-колонок
@@ -436,20 +478,48 @@ export function mergeEntity(
     if (incoming === undefined) continue;
     out[key] = compactBlock(key === 'scenes' ? withoutParagraph(input.scenes) : incoming);
   }
+  // Отпечаток ТЗ (решение `F08 | F08-11d-2`): пишется вместе с ТЗ — от хода (по «Внешности» ответа),
+  // иначе по «Внешности» после слияния; ТЗ в теле нет — прежний; ТЗ очищено — нет и отпечатка.
+  // То же ТЗ ещё раз (повторный импорт) отпечаток не трогает: иначе устаревшее ТЗ стало бы свежим.
+  const briefSame = stableJson(out.imageBrief) === stableJson(base.imageBrief);
+  if (input.imageBrief !== undefined && !(briefSame && input.imageBriefFor === undefined)) {
+    out.imageBriefFor = out.imageBrief
+      ? (input.imageBriefFor ?? appearancePrint(out.appearance as string | null))
+      : null;
+  }
   return out as unknown as StoredWorldEntity;
 }
 
 /**
  * Изменилось ли содержание после слияния (решение арбитра R9): новая сущность — да; иначе
- * сравниваются содержательные поля и тип в хранимом виде.
+ * сравниваются содержательные поля (без `NON_CONTENT_BLOCK_KEYS`) и тип в хранимом виде.
  */
 export function worldContentChanged(
   existing: StoredWorldEntity | null,
   merged: StoredWorldEntity,
 ): boolean {
+  return differsBy(CHANGE_KEYS, existing, merged);
+}
+
+/**
+ * Изменилась ли запись после слияния — нужна ли запись вообще: как `worldContentChanged`, но и по
+ * служебным блокам (`NON_CONTENT_BLOCK_KEYS`) — правка одного `imageBrief` пишется, `autoTextAt` не ставит.
+ */
+export function worldEntityEdited(
+  existing: StoredWorldEntity | null,
+  merged: StoredWorldEntity,
+): boolean {
+  return differsBy(CONTENT_KEYS, existing, merged);
+}
+
+function differsBy(
+  keys: readonly (typeof CONTENT_KEYS)[number][],
+  existing: StoredWorldEntity | null,
+  merged: StoredWorldEntity,
+): boolean {
   if (!existing) return true;
   if (existing.type !== merged.type) return true;
-  return CONTENT_KEYS.some((key) => stableJson(existing[key]) !== stableJson(merged[key]));
+  return keys.some((key) => stableJson(existing[key]) !== stableJson(merged[key]));
 }
 
 /** Колонки к записи: `null` у Json-колонки — `DbNull` (`jsonField`); блоки — одним объектом. */
@@ -637,6 +707,7 @@ export function editorOf(row: WorldEditorSummaryRow): BookWorldEditorDto {
  * и `recountPending` — у версии стоит строка очереди пересчёта (решение арбитра `F08 | F08-2` S5).
  */
 export function entityEditorOf(row: WorldEditorRow, recountPending: boolean): BookWorldEditorDto {
+  const blocks = readStoredBlocks(row.blocks);
   return {
     ...editorOf(row),
     aliasExclusions: readAliasExclusions(row.aliasExclusions),
@@ -644,6 +715,8 @@ export function entityEditorOf(row: WorldEditorRow, recountPending: boolean): Bo
     stale: stalePaths(readStoredEntity(row), mentionStale(row.mentions)),
     mentionsAt: row.mentionsAt,
     recountPending,
+    imageBrief: blocks.imageBrief,
+    imageBriefStale: imageBriefStale(blocks),
     geo: geoCheckOf(row),
   };
 }

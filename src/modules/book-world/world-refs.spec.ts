@@ -47,6 +47,8 @@ const entity = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
   significance: null,
   description: null,
   wikidataId: null,
+  imageBrief: null,
+  imageBriefFor: null,
   faq: null,
   ...over,
 });
@@ -308,6 +310,28 @@ describe('пара героев (F08-8c, решения арбитра `F08 | F0
       { path: 'quotes.0.aboutKey', message: 'quotes.0.aboutKey is not a field of a character' },
     ]);
     expect(checkWorldTypeFields(pair('anna--tom'), none)).toEqual([]);
+  });
+
+  // F08-11d-2, решение `F08 | F08-11d-2` (импорт): ТЗ — поле героя любой роли; у пары и места — отказ.
+  it('imageBrief: поле героя (любой роли, с «Внешностью» и без); у пары и места — не своё', () => {
+    const none = { aliasExclusions: null, aliasChapterExclusions: null };
+    const brief = { imageBrief: 'Square 1:1 portrait.' };
+    expect(checkWorldTypeFields(entity(brief), none)).toEqual([]);
+    expect(checkWorldTypeFields(entity({ ...brief, role: 'minor' }), none)).toEqual([]);
+    expect(checkWorldTypeFields(pair('anna--tom', brief), none)).toEqual([
+      { path: 'imageBrief', message: 'imageBrief is not a field of a pair' },
+    ]);
+    expect(
+      checkWorldTypeFields(entity({ ...brief, type: 'place', role: null }), none).map(
+        (e) => e.path,
+      ),
+    ).toEqual(['imageBrief']);
+    // Отпечаток идёт за ТЗ и в теле не задаётся: смена типа называет только ТЗ.
+    expect(
+      checkWorldTypeFields(pair('anna--tom', { ...brief, imageBriefFor: 'p' }), none).map(
+        (e) => e.path,
+      ),
+    ).toEqual(['imageBrief']);
   });
 
   it('worldEntityRefs: герои ключа пары — ссылки (героя из-под пары не удалить), aboutKey — тоже', () => {

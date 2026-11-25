@@ -57,6 +57,7 @@ const PAGE_SHAPE: Shape = {
       array: { object: { text: str, chapter: int, speakerKey: str, interpretation: str } },
     },
     faq: { array: { object: { question: str, answer: str } } },
+    imageBrief: str,
   },
 };
 
@@ -157,7 +158,10 @@ function pageRules(language: Language): string {
     'Do not invent: no dates, biography, prototypes, adaptations, critics or links in this step. ' +
       'Present the disputable as an interpretation ("can be read as…").',
     `Write for the reader of ${LANGUAGE_NAMES[language]} (language code "${language}"), not a ` +
-      'translation from English. Names as in the glossary and in the known translations.',
+      'translation from English. Names as in the glossary and in the known translations. ' +
+      'The only exception: imageBrief is a brief for the editors, not a text for the reader - it ' +
+      'is always in English, names the book and its author, and its look rests only on appearance ' +
+      '(the rules about scenes, quotations and replacing the name or the title do not apply to it).',
     'Plain text: no HTML, no Markdown, no emoji. Paragraphs of a long text are separated by an ' +
       `empty line. Quotation marks of the language: ${QUOTE_MARKS[language]}.`,
     'Do not speak for the site: no "our editors think", no "we have prepared".',
@@ -233,6 +237,14 @@ const PAGE_FIELDS =
   'or about them; speakerKey - the key of the speaker from KEYS, or "" when the narrator speaks or ' +
   `the speaker has no key; interpretation - 1-3 sentences: what the line shows. faq - at most ${L.faq} questions ` +
   'as a reader of this language searches for them, the answer direct in its first sentence.' +
+  `\nimageBrief - the brief for an image-generation service that makes the portrait of the character ` +
+  `for the editors of the site, always in English, at most ${L.imageBrief} characters, not for the reader: ` +
+  'a square 1:1 portrait, at least 1200x1200 px; the title of the book and the name of its author ' +
+  'in their widely known English form when you are sure of it, otherwise as in the data; the look of ' +
+  'the character only from appearance; the epoch and the setting only from the text of this version ' +
+  'and the analysis. No text, lettering or watermarks in the picture; no faces of real actors, no ' +
+  'stills of film or stage adaptations, no style of a recognisable artist. Empty appearance - ' +
+  'imageBrief "".' +
   '\nA field without reliable data - "" or an empty list; a short exact quotation is better than ' +
   'a long one.';
 
@@ -416,9 +428,15 @@ export interface PagePromptInput {
   bookIsPartial: boolean;
   regen: WorldRegenSpec | null;
   redo: WorldRedo | null;
+  /**
+   * «Внешность» сохранённой сущности — вход перегенерации одного блока `imageBrief`: облик ТЗ берётся
+   * только из неё (решение `F08 | F08-11d-2`); в остальных случаях не передаётся.
+   */
+  storedAppearance?: string | null;
 }
 
 export function pageWriteRequest(input: PagePromptInput): ShapedRequest {
+  const briefRegen = input.regen?.block === 'imageBrief';
   const system =
     'You write the page of one character of a book for the site: the reader comes for this ' +
     'character - who they are, how they change, by which scenes and lines they are recognised. ' +
@@ -445,6 +463,7 @@ export function pageWriteRequest(input: PagePromptInput): ShapedRequest {
     ['ANALYSIS', input.analysis],
     ['GLOSSARY', input.glossary],
     ...regenItems(input.regen),
+    ...(briefRegen ? [['APPEARANCE', input.storedAppearance || 'none'] as const] : []),
     ['EXAMPLE', input.example],
     [input.bookIsPartial ? 'CHAPTERS_AND_SUMMARIES' : 'CHAPTERS_TEXT', input.book],
   ];
@@ -459,6 +478,7 @@ export function pageWriteRequest(input: PagePromptInput): ShapedRequest {
     'the analysis of this book (do not repeat it)',
     'the glossary',
     ...(input.regen ? ['the current content of the block to rewrite', 'the editor remark'] : []),
+    ...(briefRegen ? ['the stored appearance of the character (the only source of the look)'] : []),
     'a sample page of another book in this language',
     'the text of the chapters with the character',
   ];

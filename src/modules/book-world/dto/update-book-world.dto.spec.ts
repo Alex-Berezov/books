@@ -60,6 +60,17 @@ describe('UpdateBookWorldDto (F08-1)', () => {
     expect(errorsOf(hero())).toEqual([]);
   });
 
+  it('imageBrief (F08-11d-2): строка до предела; длиннее и не строка — отказ', () => {
+    expect(errorsOf(hero({ imageBrief: 'x'.repeat(L.imageBrief) }))).toEqual([]);
+    expect(errorsOf(hero({ imageBrief: null }))).toEqual([]);
+    expect(errorsOf(hero({ imageBrief: 'x'.repeat(L.imageBrief + 1) }))).toEqual([
+      'entities.0.imageBrief',
+    ]);
+    expect(errorsOf(hero({ imageBrief: 5 }))).toEqual(['entities.0.imageBrief']);
+    // Отпечаток «Внешности» считает сервер (решение `F08 | F08-11d-2`): в теле — лишнее поле.
+    expect(errorsOf(hero({ imageBriefFor: 'abc' }))).toEqual(['entities.0.imageBriefFor']);
+  });
+
   it("type: 'place' принимается с F08-12a; неизвестный тип — отказ", () => {
     expect(errorsOf(hero({ type: 'place' }))).toEqual([]);
     expect(errorsOf(hero({ type: 'item' }))).toEqual(['entities.0.type']);

@@ -7813,6 +7813,10 @@ export interface components {
       firstPublishedAt: string | null;
       /** @description Entity page of a place only (F08-12a): Wikidata coordinate check for the current wikidataId and names (the same rule as point); null — a fictional place, a place without wikidataId, or not a place */
       geo?: components['schemas']['BookWorldGeoCheckDto'] | null;
+      /** @description Entity page only: illustration brief of this version (English, with the book title and author; F08-11d-2); null — not written. Never in the public entity */
+      imageBrief?: string | null;
+      /** @description Entity page only: the brief was written for another Appearance or before the check existed (F08-11d-2) — regenerate it; false when there is no brief */
+      imageBriefStale?: boolean;
       /** @description The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); a pair also needs both its characters listed (F08-8c); the page exists when the version is also published with a slug */
       isListed: boolean;
       isVisible: boolean;
@@ -7911,6 +7915,8 @@ export interface components {
       /** @description Pairs only: what sets the two characters apart */
       differences?: string | null;
       faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
+      /** @description Characters only: illustration brief for the editors (English, with the book title and author); editor-only, never in the public entity (F08-11d-2) */
+      imageBrief?: string | null;
       key: string;
       /**
        * @description Places only (F08-12a): real or fictional; required for the page core
@@ -15890,6 +15896,8 @@ export interface components {
       /** @description Pairs only: what sets the two characters apart */
       differences?: string | null;
       faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
+      /** @description Characters only: illustration brief for the editors (English, with the book title and author); editor-only, never in the public entity (F08-11d-2) */
+      imageBrief?: string | null;
       /** @description Optional; must equal the key in the path */
       key?: string;
       /**
@@ -16987,7 +16995,9 @@ export interface components {
         | 'KEY_UNKNOWN'
         | 'SOURCE_UNREACHABLE'
         | 'SOURCE_UNRELATED'
-        | 'SOURCE_UNVERIFIED';
+        | 'SOURCE_UNVERIFIED'
+        | 'BRIEF_WITHOUT_APPEARANCE'
+        | 'BRIEF_NOT_ALLOWED';
       note: string;
       /** @description Path in the answer of the step */
       path: string;
@@ -17005,6 +17015,7 @@ export interface components {
         | 'relations'
         | 'quotes'
         | 'faq'
+        | 'imageBrief'
         | 'critique'
         | 'prototypes'
         | 'adaptations'

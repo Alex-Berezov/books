@@ -30,6 +30,8 @@ export const WORLD_PAGE_BLOCKS = [
   'relations',
   'quotes',
   'faq',
+  // ТЗ на иллюстрацию для редакции (`F08-11d-2`, решения `F08 | F08-11d` Q3–Q5): по-английски.
+  'imageBrief',
 ] as const;
 /** Блоки внешнего шага: только с проверенным источником (`product.md` §5, правило 6 канона). */
 export const WORLD_EXTERNAL_BLOCKS = ['critique', 'prototypes', 'adaptations'] as const;
@@ -52,6 +54,7 @@ export const WORLD_TEXT_BLOCKS: ReadonlySet<string> = new Set([
   'bonds',
   'differences',
   'conclusion',
+  'imageBrief',
 ]);
 export type WorldPageBlock = (typeof WORLD_PAGE_BLOCKS)[number];
 export type WorldExternalBlock = (typeof WORLD_EXTERNAL_BLOCKS)[number];
@@ -161,6 +164,10 @@ export const WORLD_FIX_CODES = [
   'SOURCE_UNREACHABLE',
   'SOURCE_UNRELATED',
   'SOURCE_UNVERIFIED',
+  // ТЗ на иллюстрацию без «Внешности» (решения `F08 | F08-11d` Q10, `F08 | F08-11d-2`): снято кодом.
+  'BRIEF_WITHOUT_APPEARANCE',
+  // ТЗ у сущности, которой иллюстрация не положена (не герой `main`/`secondary`, Q2): снято кодом.
+  'BRIEF_NOT_ALLOWED',
 ] as const;
 export type WorldFixCode = (typeof WORLD_FIX_CODES)[number];
 
@@ -264,6 +271,11 @@ export interface WorldItem {
   failedReason: string | null;
   regen: WorldRegen | null;
   regenFailedReason: string | null;
+  /**
+   * Только у пункта `imageBrief`: отпечаток «Внешности», по которой написано ТЗ (решение
+   * `F08 | F08-11d-2`); едет в запись вместе с ТЗ — и сразу, и при «Accept».
+   */
+  basis?: string | null;
 }
 
 export interface PendingWorldStep {
@@ -545,6 +557,7 @@ function itemOf(v: unknown): WorldItem | null {
           }
         : null,
     regenFailedReason: stringOf(v.regenFailedReason),
+    ...(stringOf(v.basis) !== null ? { basis: stringOf(v.basis) } : {}),
   };
 }
 

@@ -40,6 +40,9 @@ const check: WorldPageCheck = {
   mentionChapters: new Set([1]),
   refKeys: new Set(['anna', 'boris']),
   glossary: [],
+  storedAppearance: null,
+  briefRegen: false,
+  role: 'main',
 };
 const quote = (text: string, chapter: number, speakerKey = '') => ({
   text,

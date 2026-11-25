@@ -35,6 +35,7 @@ import {
   toReaderSummary,
   toSummary,
   worldContentChanged,
+  worldEntityEdited,
   type StoredWorldEntity,
   type WorldEditorRow,
   type WorldEditorSummaryRow,
@@ -115,6 +116,11 @@ interface PlannedEntity {
   merged: StoredWorldEntity & { name: string };
   /** Содержание изменилось после слияния — импорт ставит `autoTextAt` (решение арбитра R9). */
   changed: boolean;
+  /**
+   * Запись изменилась после слияния, включая служебные блоки (`imageBrief`, решение `F08 | F08-11d-2`
+   * R9): по нему решается, писать ли строку; `autoTextAt` — только по `changed`.
+   */
+  edited: boolean;
   /** Исключения форм имени после слияния: не содержание (решение арбитра `F08 | F08-2` Q4). */
   exclusions: string[] | null;
   /** Исключённые главы у формы после слияния (`F08-8a`): тоже не содержание, `autoTextAt` не ставят. */
@@ -679,6 +685,7 @@ export class BookWorldService {
         existing: row,
         merged: entity as StoredWorldEntity & { name: string },
         changed: worldContentChanged(stored, entity),
+        edited: worldEntityEdited(stored, entity),
         exclusions,
         chapterExclusions,
         core,
@@ -973,7 +980,7 @@ async function writePlanned(
   // (сверка второй вкладки) не сдвигается от повторного импорта того же JSON.
   if (
     p.existing &&
-    !p.changed &&
+    !p.edited &&
     !exclusionsChanged &&
     worldDerivedUnchanged(p.existing, { hasCore: p.core.hasCore, coreMissing }, listed)
   ) {

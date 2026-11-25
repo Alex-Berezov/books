@@ -169,6 +169,59 @@ describe('WorldWriteHandler: a regeneration and the external step', () => {
     expect(clear).toHaveBeenCalledWith('op9', expect.anything(), 'WORLD_WRITE_REFUSED');
   });
 
+  // F08-11d-2, решение `F08 | F08-11d-2` (отпечаток): перегенерированное ТЗ несёт отпечаток своей «Внешности».
+  it('a regenerated brief replaces the print of its item with the print of the new answer', async () => {
+    const regenItem = {
+      key: 'anna',
+      block: 'imageBrief',
+      step: 1,
+      verdict: 'ok',
+      remarks: [],
+      review: null,
+      outcome: 'proposed',
+      value: 'Old brief.',
+      sources: null,
+      name: 'Anna',
+      base: null,
+      failedReason: null,
+      basis: 'old-print',
+      regen: { operationId: 'op9', remark: null, pending: null, previous: null },
+      regenFailedReason: null,
+    };
+    let data: unknown = { ...emptyWorldData(), items: [regenItem] };
+    const fields = {
+      read: jest.fn(() => Promise.resolve(data)),
+      mutate: jest.fn(async (_row: unknown, _gate: unknown, apply: (d: unknown) => unknown) => {
+        data = (await apply(data)) ?? data;
+        return data;
+      }),
+      settleStep: jest.fn().mockResolvedValue('settled'),
+    };
+    const { handler } = make({ status: 'ready', dossierId: 'ds1' }, fields);
+    jest.spyOn(handler, 'contextOf').mockResolvedValue({ entities: new Map() } as never);
+    jest.spyOn(handler, 'clearRegenMark').mockResolvedValue(undefined);
+    jest
+      .spyOn(handler as unknown as { produceStep: () => Promise<unknown> }, 'produceStep')
+      .mockResolvedValue({
+        step: { outcome: 'done' },
+        items: [
+          {
+            ...regenItem,
+            value: 'New brief.',
+            basis: 'new-print',
+            regen: null,
+            outcome: 'waiting',
+          },
+        ],
+        droppedQuotes: [],
+        droppedSources: [],
+      } as never);
+    const task = { operationId: 'op9', payload: { draftId: 'd1', index: 0 } };
+    await handler.handler.run(task as never, { renewLease: jest.fn() } as never);
+    const [saved] = (data as { items: Array<{ value: unknown; basis?: string | null }> }).items;
+    expect(saved).toMatchObject({ value: 'New brief.', basis: 'new-print' });
+  });
+
   it('the page step is done but wrote nothing (no entity): the external step fails WORLD_PAGE_MISSING before any paid call', async () => {
     const data = {
       ...emptyWorldData(),
@@ -1079,6 +1132,37 @@ describe('pageRecord / pairRecord: the items of a written step (F08-8e-5)', () =
       },
     ]);
     expect(got.step).toMatchObject({ step: 4, kind: 'page', key: 'anna', outcome: 'done' });
+  });
+
+  // F08-11d-2, решение `F08 | F08-11d` Q10: ТЗ не пишется без «Внешности», и отбитая импортом — тоже без.
+  it('a page whose appearance is refused by the import: the brief is not an item, the step names the reason', () => {
+    const look = {
+      code: 'IMPORT_INVALID' as const,
+      where: 'appearance',
+      note: 'too long',
+      by: 'code' as const,
+    };
+    const draft = {
+      name: 'Anna K.',
+      blocks: { appearance: 'x', imageBrief: 'Square 1:1 portrait.' },
+      fixes: [],
+      droppedQuotes: [],
+    };
+    const refused = pageRecord(4, anna, loopDraft(draft, [look]), 'text', true);
+    expect(refused.items.map((i) => [i.block, i.outcome])).toEqual([['appearance', 'none']]);
+    expect(refused.step.dropped).toEqual([
+      {
+        code: 'BRIEF_WITHOUT_APPEARANCE',
+        path: 'imageBrief',
+        note: 'appearance is not written: the brief is removed',
+      },
+    ]);
+    const kept = pageRecord(4, anna, loopDraft({ ...draft, briefFor: 'p1' }, []), 'text', true);
+    expect(kept.items.map((i) => [i.block, i.outcome, i.basis])).toEqual([
+      ['appearance', 'waiting', undefined],
+      ['imageBrief', 'waiting', 'p1'],
+    ]);
+    expect(kept.step.dropped).toEqual([]);
   });
 
   it('a page regenerated: no name forms item; without the reviewer - flags; no name from the model - the hero name', () => {

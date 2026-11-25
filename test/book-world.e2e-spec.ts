@@ -668,6 +668,63 @@ describe('BookWorld e2e', () => {
     await expectListedConsistent(versionId);
   });
 
+  // F08-11d-2, решения `F08 | F08-11d` Q3 и `F08 | F08-11d-2` R9: ТЗ — только редактору, правка не снимает страницу.
+  it('ТЗ на иллюстрацию: читателю нет ни в странице, ни в списке; редактору — в editor; правка ТЗ не снимает страницу', async () => {
+    const BRIEF = 'Square 1:1 portrait of Oblomov from the novel Oblomov by Ivan Goncharov.';
+    const { versionId } = await createVersion();
+    await makeListed(versionId, 'oblomov', {
+      ...hero('oblomov'),
+      appearance: 'Plump.',
+      imageBrief: BRIEF,
+    });
+
+    const page = await request(http()).get(`/versions/${versionId}/world/oblomov`).expect(200);
+    expect(page.body.entity).not.toHaveProperty('imageBrief');
+    expect(page.text).not.toContain(BRIEF);
+    const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
+    expect(list.text).not.toContain(BRIEF);
+
+    const editor = await request(http())
+      .get(`/versions/${versionId}/world/oblomov`)
+      .set('Authorization', `Bearer ${adminAccess}`)
+      .expect(200);
+    expect(editor.body.entity.editor.imageBrief).toBe(BRIEF);
+    expect(editor.body.entity).not.toHaveProperty('imageBrief');
+
+    const before = await row(versionId, 'oblomov');
+    await put(versionId, {
+      language: 'en',
+      entities: [{ key: 'oblomov', type: 'character', imageBrief: `${BRIEF} Dawn light.` }],
+    }).expect(200);
+    const after = await row(versionId, 'oblomov');
+    // Правка одного ТЗ пишется (решение `F08 | F08-11d-2` R9: в слиянии и записи), страницу не снимает.
+    expect((after.blocks as { imageBrief?: string }).imageBrief).toBe(`${BRIEF} Dawn light.`);
+    expect(after.autoTextAt?.toISOString()).toBe(before.autoTextAt?.toISOString());
+    expect(after.isListed).toBe(true);
+
+    // Решение `F08 | F08-11d-2` (отпечаток): ТЗ по текущей «Внешности» — свежее; «Внешность» сменили — устарело.
+    const editorOf = async (): Promise<{ imageBrief?: string; imageBriefStale?: boolean }> => {
+      const res = await request(http())
+        .get(`/versions/${versionId}/world/oblomov`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+      return (
+        res.body as { entity: { editor: { imageBrief?: string; imageBriefStale?: boolean } } }
+      ).entity.editor;
+    };
+    expect((await editorOf()).imageBriefStale).toBe(false);
+    await put(versionId, {
+      language: 'en',
+      entities: [
+        { key: 'oblomov', type: 'character', appearance: 'Stout, in a worn dressing gown.' },
+      ],
+    }).expect(200);
+    expect(await editorOf()).toMatchObject({
+      imageBrief: `${BRIEF} Dawn light.`,
+      imageBriefStale: true,
+    });
+  });
+
   it('второстепенный герой: на сайте только от WORLD_MIN_CHAPTERS глав (PM-3)', async () => {
     const { versionId } = await createVersion();
     await put(versionId, {

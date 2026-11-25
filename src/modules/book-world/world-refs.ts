@@ -227,6 +227,8 @@ export function checkWorldTypeFields(
   const own: ReadonlySet<string> | undefined =
     WORLD_BLOCKS_OF_TYPE[entity.type as BookWorldImportType];
   for (const key of BOOK_WORLD_BLOCK_KEYS) {
+    // Отпечаток ТЗ идёт за `imageBrief` и в теле не задаётся: ошибка — только на самом ТЗ.
+    if (key === 'imageBriefFor') continue;
     if (hasValue(entity[key]) && !own?.has(key)) notFor(key);
   }
   if (entity.type === 'pair') {

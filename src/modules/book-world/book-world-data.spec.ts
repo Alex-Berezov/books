@@ -4,6 +4,9 @@ import {
   WORLD_READER_SUMMARY_SELECT,
   WORLD_SUMMARY_SELECT,
   editorOf,
+  appearancePrint,
+  entityEditorOf,
+  imageBriefStale,
   mergeEntity,
   readStoredEntity,
   readMentions,
@@ -46,6 +49,8 @@ const stored = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
   significance: null,
   description: null,
   wikidataId: null,
+  imageBrief: null,
+  imageBriefFor: null,
   faq: null,
   ...over,
 });
@@ -441,5 +446,158 @@ describe('пара читателю (F08-8c): несошедшаяся стро�
 
   it('в списке читателя у пары нет форм имени — «A и B» не цель перелинковки', () => {
     expect(toReaderSummary(row).forms).toEqual([]);
+  });
+});
+
+// F08-11d-2: ТЗ на иллюстрацию — служебный блок (решение `F08 | F08-11d-2` R9), только редактору (Q3).
+describe('ТЗ на иллюстрацию героя (F08-11d-2)', () => {
+  const BRIEF = 'Square 1:1 portrait of Oblomov from the novel Oblomov by Ivan Goncharov.';
+
+  it('правка одного imageBrief не снимает страницу: «текст изменился» — нет', () => {
+    const before = stored();
+    const merged = mergeEntity(before, { key: 'oblomov', type: 'character', imageBrief: BRIEF });
+    expect(merged.imageBrief).toBe(BRIEF);
+    expect(worldContentChanged(before, merged)).toBe(false);
+    expect(worldContentChanged(stored({ imageBrief: BRIEF }), stored())).toBe(false);
+  });
+
+  it('тело без imageBrief (сохранение карточки) не стирает ТЗ; смена «Внешности» — изменение', () => {
+    const before = stored({ imageBrief: BRIEF });
+    const merged = mergeEntity(before, {
+      key: 'oblomov',
+      type: 'character',
+      appearance: 'Stout.',
+    });
+    expect(merged.imageBrief).toBe(BRIEF);
+    expect(worldContentChanged(before, merged)).toBe(true);
+  });
+
+  const row = {
+    key: 'oblomov',
+    type: 'character' as const,
+    name: 'Oblomov',
+    geo: null,
+    role: 'main',
+    short: 'Who he is.',
+    hasCore: true,
+    isIndexable: true,
+    mentionFirst: 1,
+    updatedAt: new Date(),
+    createdAt: new Date(),
+    aliases: null,
+    sources: null,
+    mentions: null,
+    blocks: { appearance: 'Stout.', imageBrief: BRIEF },
+  };
+
+  it('страница сущности — без ТЗ ни читателю, ни в общей части ответа редактора', () => {
+    for (const dto of [toEntityDto(row, { visibleKeys: new Set() }), toEntityDto(row)]) {
+      expect(dto).not.toHaveProperty('imageBrief');
+      expect(JSON.stringify(dto)).not.toContain(BRIEF);
+      expect(dto.appearance).toBe('Stout.');
+    }
+  });
+
+  it('ТЗ — только в отметках редактора страницы; нет в колонке — null', () => {
+    const editorRow = {
+      ...row,
+      isVisible: true,
+      readAt: null,
+      autoTextAt: null,
+      firstPublishedAt: null,
+      coreMissing: [],
+      mentionChapters: null,
+      isListed: true,
+      aliasExclusions: null,
+      aliasChapterExclusions: null,
+      mentionsAt: null,
+    } as unknown as Parameters<typeof entityEditorOf>[0];
+    expect(entityEditorOf(editorRow, false)).toMatchObject({
+      imageBrief: BRIEF,
+      // В строке нет отпечатка (ТЗ до проверки) — устаревшее.
+      imageBriefStale: true,
+    });
+    const fresh = {
+      ...editorRow,
+      blocks: { appearance: 'Stout.', imageBrief: BRIEF, imageBriefFor: appearancePrint('Stout.') },
+    };
+    expect(entityEditorOf(fresh, false).imageBriefStale).toBe(false);
+    expect(
+      entityEditorOf({ ...editorRow, blocks: { appearance: 'Stout.' } }, false).imageBrief,
+    ).toBeNull();
+  });
+});
+
+// F08-11d-2, решение `F08 | F08-11d-2` (отпечаток ТЗ): ТЗ, написанное не по текущей «Внешности», — устаревшее.
+describe('отпечаток «Внешности» у ТЗ (F08-11d-2)', () => {
+  const BRIEF = 'Square 1:1 portrait.';
+
+  it('appearancePrint: пустая «Внешность» — null; пробелы по краям не меняют отпечаток', () => {
+    expect(appearancePrint(null)).toBeNull();
+    expect(appearancePrint('  ')).toBeNull();
+    expect(appearancePrint(' Stout. ')).toBe(appearancePrint('Stout.'));
+    expect(appearancePrint('Stout.')).not.toBe(appearancePrint('Thin.'));
+  });
+
+  it('импорт ТЗ: отпечаток по «Внешности» после слияния; от хода — его; ТЗ очищено — без отпечатка', () => {
+    const before = stored({ appearance: 'Stout.' });
+    const imported = mergeEntity(before, { key: 'oblomov', type: 'character', imageBrief: BRIEF });
+    expect(imported.imageBriefFor).toBe(appearancePrint('Stout.'));
+    const both = mergeEntity(before, {
+      key: 'oblomov',
+      type: 'character',
+      appearance: 'Thin.',
+      imageBrief: BRIEF,
+    });
+    expect(both.imageBriefFor).toBe(appearancePrint('Thin.'));
+    const fromRun = mergeEntity(before, {
+      key: 'oblomov',
+      type: 'character',
+      imageBrief: BRIEF,
+      imageBriefFor: appearancePrint('Thin.'),
+    });
+    expect(fromRun.imageBriefFor).toBe(appearancePrint('Thin.'));
+    const cleared = mergeEntity(stored({ imageBrief: BRIEF, imageBriefFor: 'x' }), {
+      key: 'oblomov',
+      type: 'character',
+      imageBrief: null,
+    });
+    expect(cleared).toMatchObject({ imageBrief: null, imageBriefFor: null });
+  });
+
+  it('смена «Внешности» без ТЗ в теле: отпечаток прежний — ТЗ устарело', () => {
+    const before = stored({
+      appearance: 'Stout.',
+      imageBrief: BRIEF,
+      imageBriefFor: appearancePrint('Stout.'),
+    });
+    expect(imageBriefStale(before)).toBe(false);
+    const after = mergeEntity(before, { key: 'oblomov', type: 'character', appearance: 'Thin.' });
+    expect(after.imageBriefFor).toBe(appearancePrint('Stout.'));
+    expect(imageBriefStale(after)).toBe(true);
+  });
+
+  it('повторный импорт того же ТЗ с новой «Внешностью»: отпечаток прежний — ТЗ остаётся устаревшим', () => {
+    const before = stored({
+      appearance: 'Stout.',
+      imageBrief: BRIEF,
+      imageBriefFor: appearancePrint('Stout.'),
+    });
+    const again = mergeEntity(before, {
+      key: 'oblomov',
+      type: 'character',
+      appearance: 'Thin.',
+      imageBrief: BRIEF,
+    });
+    expect(again.imageBriefFor).toBe(appearancePrint('Stout.'));
+    expect(imageBriefStale(again)).toBe(true);
+  });
+
+  it('устаревание: нет ТЗ — нет; ТЗ без отпечатка — да; «Внешность» стёрта — да', () => {
+    expect(imageBriefStale(stored())).toBe(false);
+    expect(imageBriefStale(stored({ appearance: 'Stout.', imageBrief: BRIEF }))).toBe(true);
+    expect(
+      imageBriefStale(stored({ imageBrief: BRIEF, imageBriefFor: appearancePrint('Stout.') })),
+    ).toBe(true);
   });
 });

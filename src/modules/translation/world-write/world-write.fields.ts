@@ -283,6 +283,8 @@ export class WorldWriteFields {
     let sources = state?.entity.sources ?? null;
     for (const item of items) {
       body[item.block] = item.value;
+      // Отпечаток «Внешности» едет вместе с ТЗ (решение `F08 | F08-11d-2`): из тела запроса его не взять.
+      if (item.block === 'imageBrief' && item.basis) body.imageBriefFor = item.basis;
       if (item.sources && item.sources.length > 0) {
         sources = withWorldSources(sources, item.sources);
         // Список полон: внешний блок без своих проверенных источников не пишется (правило 6 канона).
@@ -419,6 +421,10 @@ const saveData = (
  */
 function alreadyIn(state: EntityState, item: WorldItem): boolean {
   if (valuePrint(entityBlock(state.entity, item.block)) !== valuePrint(item.value)) return false;
+  // Тот же текст ТЗ по другой «Внешности» — не «уже записан»: отпечаток надо обновить (`F08 | F08-11d-2`).
+  if (item.block === 'imageBrief' && item.basis && state.entity.imageBriefFor !== item.basis) {
+    return false;
+  }
   const stored = new Set((state.entity.sources ?? []).map((s) => sourceKey(s.url)));
   return (item.sources ?? []).every((s) => stored.has(sourceKey(s.url)));
 }

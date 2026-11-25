@@ -11,6 +11,8 @@ import type {
   BookWorldRelationDto,
   BookWorldSceneDto,
 } from '../../book-world/dto/book-world-blocks.dto';
+import { appearancePrint } from '../../book-world/book-world-data';
+import { WORLD_IMAGE_ROLES } from '../../book-world/world-image-public';
 import { BookWorldEntityInputDto } from '../../book-world/dto/update-book-world.dto';
 import { computeWorldCore, WORLD_PAIR_CORE, type WorldCorePart } from '../../book-world/world-core';
 import { countInParagraph, foldMention, mentionForms } from '../../book-world/world-mentions';
@@ -199,6 +201,7 @@ export interface WorldPageBlocks {
   relations?: BookWorldRelationDto[];
   quotes?: BookWorldQuoteDto[];
   faq?: BookAnalysisFaqDto[];
+  imageBrief?: string;
 }
 
 export interface WorldPageDraft {
@@ -206,6 +209,8 @@ export interface WorldPageDraft {
   blocks: WorldPageBlocks;
   fixes: WorldFix[];
   droppedQuotes: DroppedWorldQuote[];
+  /** Отпечаток «Внешности», по которой написано ТЗ (`appearancePrint`); ТЗ нет — поля нет. */
+  briefFor?: string | null;
 }
 
 export const EMPTY_PAGE: WorldPageDraft = { name: null, blocks: {}, fixes: [], droppedQuotes: [] };
@@ -220,6 +225,15 @@ export interface WorldPageCheck {
   /** Ключи, на которые можно ссылаться: кандидаты, герои анализа, сущности мира версии. */
   refKeys: ReadonlySet<string>;
   glossary: readonly NameEntry[];
+  /**
+   * «Внешность» сохранённой сущности — только при перегенерации одного блока `imageBrief`: ответ
+   * несёт только его, и условие ТЗ (Q10) проверяется по записанному тексту; иначе `null`.
+   */
+  storedAppearance: string | null;
+  /** Перегенерация одного блока `imageBrief`: облик — только `storedAppearance`, «Внешность» ответа не в счёт. */
+  briefRegen: boolean;
+  /** Роль героя: сохранённой сущности, иначе кандидата. ТЗ — только у `main`/`secondary` (Q2, Q10). */
+  role: string | null;
 }
 
 /** Глава из версии: одно правило на сцены, этапы, строки сравнения и цитаты страницы и пары. */
@@ -277,6 +291,28 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
   if (appearance) blocks.appearance = appearance;
   const character = textOrNull(v.character);
   if (character) blocks.character = character;
+  // ТЗ — только у героя `main`/`secondary` и только с «Внешностью» (решения `F08 | F08-11d` Q2, Q10 и
+  // `F08 | F08-11d-2`): решает код, а не ответ модели. Отпечаток — по той «Внешности», по которой написано.
+  const imageBrief = textOrNull(v.imageBrief);
+  // При перегенерации одного ТЗ облик — сохранённая «Внешность»: «Внешность» ответа отбрасывается.
+  const look = check.briefRegen ? check.storedAppearance : appearance;
+  let briefFor: string | null | undefined;
+  if (imageBrief && !(WORLD_IMAGE_ROLES as readonly string[]).includes(check.role ?? '')) {
+    fixes.push({
+      code: 'BRIEF_NOT_ALLOWED',
+      path: 'imageBrief',
+      note: 'not a main or secondary character: the brief is removed',
+    });
+  } else if (imageBrief && !look) {
+    fixes.push({
+      code: 'BRIEF_WITHOUT_APPEARANCE',
+      path: 'imageBrief',
+      note: 'no appearance: the brief is removed',
+    });
+  } else if (imageBrief) {
+    blocks.imageBrief = imageBrief;
+    briefFor = appearancePrint(look);
+  }
   const profile = rec(v.profile);
   const position = textOrNull(profile.position);
   const relationToMain = textOrNull(profile.relationToMain);
@@ -376,7 +412,13 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
   });
   if (faq.length > 0) blocks.faq = limited(faq, BOOK_WORLD_LIMITS.faq, 'faq', fixes);
 
-  return { name: nameOf(v.name), blocks, fixes, droppedQuotes };
+  return {
+    name: nameOf(v.name),
+    blocks,
+    fixes,
+    droppedQuotes,
+    ...(briefFor !== undefined ? { briefFor } : {}),
+  };
 }
 
 const chapterFix = (path: string, chapter: number | null): WorldFix => ({

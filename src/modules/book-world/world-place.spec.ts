@@ -46,6 +46,8 @@ const place = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
   significance: 'The idyll he never leaves.',
   description: 'A sleepy village.',
   wikidataId: null,
+  imageBrief: null,
+  imageBriefFor: null,
   faq: null,
   ...over,
 });

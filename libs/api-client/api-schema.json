@@ -7957,6 +7957,15 @@
             "nullable": true,
             "type": "object"
           },
+          "imageBrief": {
+            "description": "Entity page only: illustration brief of this version (English, with the book title and author; F08-11d-2); null — not written. Never in the public entity",
+            "nullable": true,
+            "type": "string"
+          },
+          "imageBriefStale": {
+            "description": "Entity page only: the brief was written for another Appearance or before the check existed (F08-11d-2) — regenerate it; false when there is no brief",
+            "type": "boolean"
+          },
           "isListed": {
             "description": "The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); a pair also needs both its characters listed (F08-8c); the page exists when the version is also published with a slug",
             "type": "boolean"
@@ -8354,6 +8363,12 @@
             },
             "nullable": true,
             "type": "array"
+          },
+          "imageBrief": {
+            "description": "Characters only: illustration brief for the editors (English, with the book title and author); editor-only, never in the public entity (F08-11d-2)",
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
           },
           "key": {
             "pattern": "^[a-z0-9-]{1,60}$",
@@ -31523,6 +31538,12 @@
             "nullable": true,
             "type": "array"
           },
+          "imageBrief": {
+            "description": "Characters only: illustration brief for the editors (English, with the book title and author); editor-only, never in the public entity (F08-11d-2)",
+            "maxLength": 1500,
+            "nullable": true,
+            "type": "string"
+          },
           "key": {
             "description": "Optional; must equal the key in the path",
             "pattern": "^[a-z0-9-]{1,60}$",
@@ -34251,7 +34272,9 @@
               "KEY_UNKNOWN",
               "SOURCE_UNREACHABLE",
               "SOURCE_UNRELATED",
-              "SOURCE_UNVERIFIED"
+              "SOURCE_UNVERIFIED",
+              "BRIEF_WITHOUT_APPEARANCE",
+              "BRIEF_NOT_ALLOWED"
             ],
             "type": "string"
           },
@@ -34284,6 +34307,7 @@
               "relations",
               "quotes",
               "faq",
+              "imageBrief",
               "critique",
               "prototypes",
               "adaptations",

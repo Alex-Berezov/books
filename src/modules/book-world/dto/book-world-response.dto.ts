@@ -148,6 +148,23 @@ export class BookWorldEditorDto {
       '(the same rule as point); null — a fictional place, a place without wikidataId, or not a place',
   })
   geo?: BookWorldGeoCheckDto | null;
+
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    description:
+      'Entity page only: illustration brief of this version (English, with the book title and author; ' +
+      'F08-11d-2); null — not written. Never in the public entity',
+  })
+  imageBrief?: string | null;
+
+  @ApiPropertyOptional({
+    type: Boolean,
+    description:
+      'Entity page only: the brief was written for another Appearance or before the check existed ' +
+      '(F08-11d-2) — regenerate it; false when there is no brief',
+  })
+  imageBriefStale?: boolean;
 }
 
 export class BookWorldEntitySummaryDto {

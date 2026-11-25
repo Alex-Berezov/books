@@ -258,6 +258,23 @@ export class BookWorldEntityInputDto {
   @Matches(WIKIDATA_ID_REGEX)
   wikidataId?: string | null;
 
+  @ApiPropertyOptional({
+    type: String,
+    nullable: true,
+    maxLength: BOOK_WORLD_LIMITS.imageBrief,
+    description:
+      'Characters only: illustration brief for the editors (English, with the book title and author); ' +
+      'editor-only, never in the public entity (F08-11d-2)',
+  })
+  @OptionalText(BOOK_WORLD_LIMITS.imageBrief)
+  imageBrief?: string | null;
+
+  /**
+   * Только для записи ходом «Write World»: отпечаток «Внешности», по которой модель написала ТЗ
+   * (решение `F08 | F08-11d-2`). Без декораторов — в теле запроса это лишнее поле, 400 whitelist.
+   */
+  declare imageBriefFor?: string | null;
+
   @ApiPropertyOptional({ type: [BookAnalysisFaqDto], nullable: true })
   @NestedList(() => BookAnalysisFaqDto, BOOK_WORLD_LIMITS.faq)
   faq?: BookAnalysisFaqDto[] | null;

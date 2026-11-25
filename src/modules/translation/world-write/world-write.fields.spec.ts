@@ -127,6 +127,33 @@ function setup(
 }
 
 describe('WorldWriteFields.settleStep', () => {
+  // F08-11d-2, решение `F08 | F08-11d-2` (отпечаток ТЗ): отпечаток «Внешности» едет в запись вместе с ТЗ.
+  it('the brief item carries the print of its appearance into the write; without the brief - no print', async () => {
+    const { fields, world, row } = setup(
+      [{ ...item('imageBrief', 'Square 1:1 portrait.'), basis: 'abc123' }, item('short', 'Short.')],
+      null,
+    );
+    await expect(fields.settleStep(row(), worldRunGate('op1'), 1)).resolves.toBe('settled');
+    const body = world.saveEntity.mock.calls[0][2] as Record<string, unknown>;
+    expect(body).toMatchObject({ imageBrief: 'Square 1:1 portrait.', imageBriefFor: 'abc123' });
+    const plain = setup([item('short', 'Short.')], null);
+    await plain.fields.settleStep(plain.row(), worldRunGate('op1'), 1);
+    expect(plain.world.saveEntity.mock.calls[0][2]).not.toHaveProperty('imageBriefFor');
+  });
+
+  it('the same brief text for another appearance is not «already written»: it is proposed to renew the print; the same print - written', async () => {
+    const brief = (basis: string) => ({ ...item('imageBrief', 'Square 1:1 portrait.'), basis });
+    const stored = { blocks: { imageBrief: 'Square 1:1 portrait.', imageBriefFor: 'old-print' } };
+    const renewed = setup([brief('new-print')], stored);
+    await renewed.fields.settleStep(renewed.row(), worldRunGate('op1'), 1);
+    // Блок не пуст — предложение; «Accept» запишет ТЗ с новым отпечатком.
+    expect(renewed.data().items.map((i) => i.outcome)).toEqual(['proposed']);
+    const same = setup([brief('old-print')], stored);
+    await same.fields.settleStep(same.row(), worldRunGate('op1'), 1);
+    expect(same.world.saveEntity).not.toHaveBeenCalled();
+    expect(same.data().items.map((i) => i.outcome)).toEqual(['written']);
+  });
+
   it('no entity: it is created by all items of the step, with the name and the role main, expectedAbsent', async () => {
     const { fields, world, row, data } = setup(
       [item('short', 'Short.'), item('character', 'Text.')],

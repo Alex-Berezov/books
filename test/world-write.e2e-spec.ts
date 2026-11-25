@@ -167,6 +167,8 @@ describe('World run «Write World» (e2e)', () => {
           ]
         : [quote(LINES.bell, 2), quote(LINES.silent, 2), quote(LINES.stayed, 3)],
     faq: [],
+    // Схема ответа страницы требует ТЗ (`F08-11d-2`); без «Внешности» оно пустое.
+    imageBrief: '',
     ...patch,
   });
   const sourceUrl = (host: string) => `https://${host}:${sourcePort}/page`;

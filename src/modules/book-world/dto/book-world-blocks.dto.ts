@@ -72,6 +72,8 @@ export const BOOK_WORLD_LIMITS = {
   location: BOOK_ANALYSIS_LIMITS.mainIdea,
   significance: BOOK_ANALYSIS_LIMITS.interpretation,
   description: BOOK_ANALYSIS_LIMITS.mediumText,
+  // ТЗ на иллюстрацию героя (`F08-11d-2`, решение `F08 | F08-11d` Q3).
+  imageBrief: BOOK_ANALYSIS_LIMITS.mediumText,
 } as const;
 
 /** Ключ сущности — тот же, что у героя анализа: часть адреса `/wiki/{key}`. */

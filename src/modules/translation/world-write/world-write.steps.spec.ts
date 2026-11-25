@@ -1,3 +1,4 @@
+import { appearancePrint } from '../../book-world/book-world-data';
 import { Prisma } from '@prisma/client';
 import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
 import {
@@ -6,6 +7,7 @@ import {
   pairChapters,
   pairFallbackName,
   pairFormCharacters,
+  pageInput,
   pairInput,
   pairStepsUpperBound,
   keysOfOtherTypes,
@@ -238,5 +240,154 @@ describe('world run candidates: a stored hero with a pair-form key stays in the 
       mentions: { chapters: [1], perChapter: {} },
     });
     expect(pairFallbackName('en', { a: long('anna'), b: long('boris') })).toBe('anna and boris');
+  });
+});
+
+// F08-11d-2, решения `F08 | F08-11d` Q3–Q5, Q10 и `F08 | F08-11d-2`: ТЗ на иллюстрацию в шаге страницы.
+describe('page step: the illustration brief (F08-11d-2)', () => {
+  const candidate = {
+    key: 'anna',
+    role: 'main' as const,
+    name: 'Anna',
+    aliases: [],
+    mentions: { chapters: [1], perChapter: { '1': 1 } },
+  };
+  const context = (appearance: string | null, role = 'main') =>
+    ({
+      language: 'ru',
+      dossier: null,
+      glossary: null,
+      bookTitle: 'Река',
+      author: 'Иван Петров',
+      originalLanguage: '',
+      chapters: [{ number: 1, title: 'C1', content: 'Анна у реки.' }],
+      analysis: { characters: [] },
+      entities: new Map(appearance === null ? [] : [['anna', { appearance, role }]]),
+      names: { titles: ['Река'], authors: ['Иван Петров'] },
+    }) as unknown as WorldContext;
+  const quotes = new Map([[1, [{ raw: 'Анна у реки.' }]]]) as never;
+  const book = { text: 'Анна у реки.', partial: false };
+  // Длиной с настоящее ТЗ: проверка языка смотрит абзацы от 40 слов (`FOREIGN_WINDOW_WORDS`).
+  const BRIEF =
+    'Square 1:1 portrait, at least 1200x1200 px, of Anna from the novel The River by Ivan Petrov. ' +
+    'A tall young woman in an old shawl standing on the bank of a cold river at dawn, her face turned ' +
+    'to the water and her hands folded. Setting: a small provincial town, the end of the nineteenth ' +
+    'century. No text, lettering or watermarks; no faces of real actors, no style of a recognisable artist.';
+  const text = (messages: ReadonlyArray<{ content: unknown }>) =>
+    messages.map((m) => String(m.content)).join('\n');
+
+  it('the prompt asks for an English brief with the book and the author, without actors and artists; the check knows the exception', () => {
+    const input = pageInput(context(null), candidate, quotes, book);
+    const author = text(input.author(null).messages);
+    expect(author).toContain('The only exception: imageBrief is a brief for the editors');
+    expect(author).toContain('the brief for an image-generation service');
+    expect(author).not.toContain('by hand');
+    expect(author).toContain('a square 1:1 portrait, at least 1200x1200 px');
+    expect(author).toContain('the title of the book and the name of its author');
+    expect(author).toContain('no faces of real actors');
+    expect(author).toContain('no style of a recognisable artist');
+    expect(author).toContain('Empty appearance - imageBrief ""');
+    expect(author).toContain('Река');
+    expect(author).toContain('Иван Петров');
+    const review = text(
+      input.review({ name: 'Анна', blocks: {}, fixes: [], droppedQuotes: [] }).messages,
+    );
+    expect(review).toContain('The only exception: imageBrief is a brief for the editors');
+  });
+
+  it('a brief without appearance is removed by the code, with the reason; with appearance it stays', () => {
+    const input = pageInput(context(null), candidate, quotes, book);
+    const bare = input.read({ imageBrief: BRIEF });
+    expect(bare.blocks.imageBrief).toBeUndefined();
+    expect(bare.fixes).toEqual([
+      {
+        code: 'BRIEF_WITHOUT_APPEARANCE',
+        path: 'imageBrief',
+        note: 'no appearance: the brief is removed',
+      },
+    ]);
+    const full = input.read({ appearance: 'Высокая, в старом платке.', imageBrief: BRIEF });
+    expect(full.blocks.imageBrief).toBe(BRIEF);
+    expect(full.fixes).toEqual([]);
+  });
+
+  it('regenerating only the brief: the appearance of the stored hero counts, the answer holds the brief alone', () => {
+    const spec = { block: 'imageBrief' as const, current: null, remark: null };
+    const stored = pageInput(context('Высокая.'), candidate, quotes, book, spec);
+    expect(stored.read({ imageBrief: BRIEF }).blocks).toEqual({ imageBrief: BRIEF });
+    const none = pageInput(context(null), candidate, quotes, book, spec);
+    expect(none.read({ imageBrief: BRIEF }).blocks).toEqual({});
+    // Ответ обязан нести «Внешность» (строгая форма), но при перегенерации ТЗ она не в счёт.
+    const answered = none.read({ appearance: 'Высокая.', imageBrief: BRIEF });
+    expect(answered.blocks).toEqual({});
+    expect(answered.fixes.map((f) => f.code)).toEqual(['BRIEF_WITHOUT_APPEARANCE']);
+  });
+
+  it('a brief over the import limit is IMPORT_INVALID on its path; a brief of spaces is no brief', () => {
+    const input = pageInput(context(null), candidate, quotes, book);
+    const long = input.read({ appearance: 'Высокая.', imageBrief: 'x'.repeat(1501) });
+    expect(
+      input
+        .codeCheck(long)
+        .filter((r) => r.code === 'IMPORT_INVALID')
+        .map((r) => r.where),
+    ).toEqual(['imageBrief']);
+    const blank = input.read({ appearance: 'Высокая.', imageBrief: '   ' });
+    expect(blank.blocks).not.toHaveProperty('imageBrief');
+    expect(blank.fixes).toEqual([]);
+  });
+
+  it('the brief carries the print of the appearance it was written for', () => {
+    const input = pageInput(context(null), candidate, quotes, book);
+    expect(input.read({ appearance: 'Высокая.', imageBrief: BRIEF }).briefFor).toBe(
+      appearancePrint('Высокая.'),
+    );
+    expect(input.read({ appearance: 'Высокая.' })).not.toHaveProperty('briefFor');
+  });
+
+  it('regenerating the brief: the print is of the stored appearance, not of an appearance in the answer', () => {
+    const spec = { block: 'imageBrief' as const, current: BRIEF, remark: null };
+    const input = pageInput(context('Высокая.'), candidate, quotes, book, spec);
+    const draft = input.read({ appearance: 'Другая.', imageBrief: BRIEF });
+    expect(draft.blocks).toEqual({ imageBrief: BRIEF });
+    expect(draft.briefFor).toBe(appearancePrint('Высокая.'));
+  });
+
+  it('a whole page step: the stored appearance does not save a brief the answer wrote without one', () => {
+    const input = pageInput(context('Высокая.'), candidate, quotes, book);
+    const draft = input.read({ imageBrief: BRIEF });
+    expect(draft.blocks.imageBrief).toBeUndefined();
+    expect(draft.fixes.map((f) => f.code)).toEqual(['BRIEF_WITHOUT_APPEARANCE']);
+  });
+
+  it('a stored hero demoted to minor: the brief is removed with its reason (Q2)', () => {
+    const input = pageInput(context('Высокая.', 'minor'), candidate, quotes, book);
+    const draft = input.read({ appearance: 'Высокая.', imageBrief: BRIEF });
+    expect(draft.blocks.imageBrief).toBeUndefined();
+    expect(draft.fixes.map((f) => f.code)).toEqual(['BRIEF_NOT_ALLOWED']);
+  });
+
+  it('regenerating the brief: the model gets the stored appearance as the only source of the look', () => {
+    const spec = { block: 'imageBrief' as const, current: BRIEF, remark: null };
+    const regen = text(
+      pageInput(context('Высокая, в старом платке.'), candidate, quotes, book, spec).author(null)
+        .messages,
+    );
+    expect(regen).toContain('the stored appearance of the character');
+    expect(regen).toContain('Высокая, в старом платке.');
+    const other = { block: 'short' as const, current: 'x', remark: null };
+    expect(
+      text(
+        pageInput(context('Высокая, в старом платке.'), candidate, quotes, book, other).author(null)
+          .messages,
+      ),
+    ).not.toContain('the stored appearance of the character');
+  });
+
+  it('an English brief on a Russian page is not a language remark', () => {
+    const input = pageInput(context(null), candidate, quotes, book);
+    const draft = input.read({ appearance: 'Высокая, в старом платке.', imageBrief: BRIEF });
+    const paths = input.codeCheck(draft).map((r) => r.where.split(':')[0]);
+    expect(paths).not.toContain('imageBrief');
   });
 });
