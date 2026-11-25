@@ -2,24 +2,28 @@
  * Проверка картинки (`F08-11a`, решение арбитра `F08 | F08-11` Р1): файл - чужие байты, поэтому
  * тип - только по сигнатуре, размеры - из заголовка, без разбора файла целиком и без внешних
  * зависимостей. Заявленный тип не читается: SVG с `image/png` в заголовке - XSS с медиа-хоста.
- * Генерация моделью снята (`F08-11d-1`); проверка остаётся для загрузки файла (`F08-11d-3`).
+ * Перенесена из модуля LLM в `shared/` (`F08-11d-3`): генерации моделью нет, проверка служит загрузке файла.
  */
 
-export type LlmImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
+export type ImageMime = 'image/png' | 'image/jpeg' | 'image/webp';
 
-export interface LlmImageInfo {
-  mime: LlmImageMime;
+export interface ImageInfo {
+  mime: ImageMime;
   ext: 'png' | 'jpg' | 'webp';
   width: number;
   height: number;
 }
 
-/** Причина отказа картинки. */
-export const IMAGE_NOT_IMAGE = 'WORLD_IMAGE_NOT_IMAGE';
-export const IMAGE_TOO_LARGE = 'WORLD_IMAGE_TOO_LARGE';
-export const IMAGE_TOO_SMALL = 'WORLD_IMAGE_TOO_SMALL';
+/**
+ * Причина отказа картинки - без домена: код ответа ручки называет её потребитель
+ * (иллюстрация героя - `WORLD_IMAGE_REFUSAL_CODES`).
+ */
+export const IMAGE_NOT_IMAGE = 'NOT_IMAGE';
+export const IMAGE_TOO_LARGE = 'TOO_LARGE';
+export const IMAGE_TOO_SMALL = 'TOO_SMALL';
+export type ImageRefusal = typeof IMAGE_NOT_IMAGE | typeof IMAGE_TOO_LARGE | typeof IMAGE_TOO_SMALL;
 
-export interface LlmImageLimits {
+export interface ImageLimits {
   /** Наибольший файл после декодирования, байт. */
   maxBytes: number;
   /** Наименьшая ширина, px (`product.md` §8: исходник от 1200 px). */
@@ -30,12 +34,12 @@ export interface LlmImageLimits {
   maxPixels: number;
 }
 
-export type LlmImageCheck =
-  | { ok: true; bytes: Buffer; info: LlmImageInfo }
-  | { ok: false; reason: string };
+export type ImageCheck =
+  | { ok: true; bytes: Buffer; info: ImageInfo }
+  | { ok: false; reason: ImageRefusal };
 
 /** Байты -> проверенная картинка: размер файла, тип по сигнатуре, пиксели, наименьшие стороны. */
-export function checkImageBytes(bytes: Buffer, limits: LlmImageLimits): LlmImageCheck {
+export function checkImageBytes(bytes: Buffer, limits: ImageLimits): ImageCheck {
   if (bytes.length > limits.maxBytes) return refuse(IMAGE_TOO_LARGE);
   const info = sniffImage(bytes);
   if (!info) return refuse(IMAGE_NOT_IMAGE);
@@ -46,19 +50,19 @@ export function checkImageBytes(bytes: Buffer, limits: LlmImageLimits): LlmImage
   return { ok: true, bytes, info };
 }
 
-function refuse(reason: string): LlmImageCheck {
+function refuse(reason: ImageRefusal): ImageCheck {
   return { ok: false, reason };
 }
 
 /** Тип и размеры по сигнатуре; `null` - не PNG, не JPEG и не WEBP (SVG, GIF, HTML - сюда же). */
-export function sniffImage(bytes: Buffer): LlmImageInfo | null {
+export function sniffImage(bytes: Buffer): ImageInfo | null {
   return png(bytes) ?? jpeg(bytes) ?? webp(bytes);
 }
 
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
 /** PNG: сигнатура, первый чанк - `IHDR`, ширина и высота - его первые 8 байт. */
-function png(b: Buffer): LlmImageInfo | null {
+function png(b: Buffer): ImageInfo | null {
   if (b.length < 24 || !b.subarray(0, 8).equals(PNG_SIGNATURE)) return null;
   if (b.toString('latin1', 12, 16) !== 'IHDR') return null;
   return sized('image/png', 'png', b.readUInt32BE(16), b.readUInt32BE(20));
@@ -68,7 +72,7 @@ function png(b: Buffer): LlmImageInfo | null {
  * JPEG: `FFD8`, дальше сегменты до первого SOF (`C0`-`CF`, кроме `C4` DHT, `C8` JPG, `CC` DAC):
  * высота и ширина - в нём. Длина сегмента ведёт по файлу, разбор не уходит за конец буфера.
  */
-function jpeg(b: Buffer): LlmImageInfo | null {
+function jpeg(b: Buffer): ImageInfo | null {
   if (b.length < 4 || b[0] !== 0xff || b[1] !== 0xd8) return null;
   let at = 2;
   while (at + 4 <= b.length) {
@@ -97,7 +101,7 @@ function jpeg(b: Buffer): LlmImageInfo | null {
 }
 
 /** WEBP: `RIFF....WEBP` и чанк `VP8 ` (с потерями), `VP8L` (без потерь) или `VP8X` (расширенный). */
-function webp(b: Buffer): LlmImageInfo | null {
+function webp(b: Buffer): ImageInfo | null {
   if (b.length < 30) return null;
   if (b.toString('latin1', 0, 4) !== 'RIFF' || b.toString('latin1', 8, 12) !== 'WEBP') return null;
   const chunk = b.toString('latin1', 12, 16);
@@ -118,11 +122,11 @@ function webp(b: Buffer): LlmImageInfo | null {
 }
 
 function sized(
-  mime: LlmImageMime,
-  ext: LlmImageInfo['ext'],
+  mime: ImageMime,
+  ext: ImageInfo['ext'],
   width: number,
   height: number,
-): LlmImageInfo | null {
+): ImageInfo | null {
   if (!(width > 0 && height > 0)) return null;
   return { mime, ext, width, height };
 }

@@ -46681,6 +46681,80 @@
         "tags": [
           "admin"
         ]
+      },
+      "post": {
+        "operationId": "WorldImageController_upload",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "properties": {
+                  "file": {
+                    "format": "binary",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "file"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WorldImageStateDto"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "No file, a broken form, or a refused file: WORLD_IMAGE_NOT_IMAGE (not PNG, JPEG or WEBP by signature), WORLD_IMAGE_TOO_LARGE (over 40 Mpx), WORLD_IMAGE_TOO_SMALL (a side under 1200 px)"
+          },
+          "404": {
+            "description": "No such entity in the version"
+          },
+          "409": {
+            "description": "WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character"
+          },
+          "413": {
+            "description": "WORLD_IMAGE_TOO_LARGE - the file is over 12 MB"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Upload the illustration file into the pending cell (the accepted one stays until Accept)",
+        "tags": [
+          "admin"
+        ]
       }
     },
     "/admin/versions/{id}/world/{key}/image/accept": {

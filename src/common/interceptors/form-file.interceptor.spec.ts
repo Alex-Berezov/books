@@ -22,6 +22,12 @@ class ProbeController {
     return { ok: true };
   }
 
+  @Post('coded')
+  @UseInterceptors(FormFileInterceptor('file', FILE_LIMIT, 0, { fileTooLargeCode: 'X_TOO_LARGE' }))
+  coded() {
+    return { ok: true };
+  }
+
   @Post('boom')
   @UseInterceptors(FormFileInterceptor('file', FILE_LIMIT, 2))
   boom(): never {
@@ -95,7 +101,26 @@ describe('FormFileInterceptor', () => {
   });
 
   it('keeps 413 for an oversized file', async () => {
-    await post('/ok', Buffer.alloc(FILE_LIMIT + 1)).expect(413);
+    const res = await post('/ok', Buffer.alloc(FILE_LIMIT + 1)).expect(413);
+    expect(res.body.code).toBeUndefined();
+  });
+
+  it('names an oversized file by the route code when given (F08-11d-3)', async () => {
+    const res = await post('/coded', Buffer.alloc(FILE_LIMIT + 1)).expect(413);
+    expect(res.body).toMatchObject({ statusCode: 413, code: 'X_TOO_LARGE' });
+    await post('/coded', Buffer.alloc(FILE_LIMIT)).expect(201);
+  });
+
+  it('keeps any other form refusal on a coded route a plain 400 without the code', async () => {
+    const res = await request(app.getHttpServer() as Server)
+      .post('/coded')
+      .field('extra', 'x')
+      .attach('file', Buffer.from('bytes'), {
+        filename: 'a.bin',
+        contentType: 'application/octet-stream',
+      })
+      .expect(400);
+    expect(res.body.code).toBeUndefined();
   });
 
   // LEGACY-482: голый `Error` busboy и multer — отказ клиента. Нет boundary и оборванное тело Nest

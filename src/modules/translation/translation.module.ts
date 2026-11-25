@@ -2,6 +2,7 @@ import { Module, OnModuleInit } from '@nestjs/common';
 import { BookVersionModule } from '../book-version/book-version.module';
 import { ChapterModule } from '../chapter/chapter.module';
 import { LlmModule } from '../llm/llm.module';
+import { StorageModule } from '../../shared/storage/storage.module';
 import { WorldImageController } from './world-image/world-image.controller';
 import { WorldImageHandler } from './world-image/world-image.handler';
 import { WorldImageService } from './world-image/world-image.service';
@@ -106,6 +107,8 @@ import { WorldWriteService } from './world-write/world-write.service';
     SourceFetchModule,
     // Запись хода мира `F08-4a` - импортом мира `BookWorldService.saveEntity`, как ручка PUT сущности.
     BookWorldModule,
+    // Загрузка файла иллюстрации героя (`F08-11d-3`): файл кладёт `WorldImageService`.
+    StorageModule,
   ],
   controllers: [
     DossierController,

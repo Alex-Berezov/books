@@ -3243,7 +3243,8 @@ export interface paths {
     /** Illustration of a world entity: accepted (shown on the site) and pending (waiting for Accept) */
     get: operations['WorldImageController_state'];
     put?: never;
-    post?: never;
+    /** Upload the illustration file into the pending cell (the accepted one stays until Accept) */
+    post: operations['WorldImageController_upload'];
     delete?: never;
     options?: never;
     head?: never;
@@ -23414,6 +23415,63 @@ export interface operations {
       };
       /** @description No such entity in the version */
       404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+    };
+  };
+  WorldImageController_upload: {
+    parameters: {
+      query?: never;
+      header?: never;
+      path: {
+        id: string;
+        key: string;
+      };
+      cookie?: never;
+    };
+    requestBody: {
+      content: {
+        'multipart/form-data': {
+          /** Format: binary */
+          file: string;
+        };
+      };
+    };
+    responses: {
+      200: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content: {
+          'application/json': components['schemas']['WorldImageStateDto'];
+        };
+      };
+      /** @description No file, a broken form, or a refused file: WORLD_IMAGE_NOT_IMAGE (not PNG, JPEG or WEBP by signature), WORLD_IMAGE_TOO_LARGE (over 40 Mpx), WORLD_IMAGE_TOO_SMALL (a side under 1200 px) */
+      400: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description No such entity in the version */
+      404: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character */
+      409: {
+        headers: {
+          [name: string]: unknown;
+        };
+        content?: never;
+      };
+      /** @description WORLD_IMAGE_TOO_LARGE - the file is over 12 MB */
+      413: {
         headers: {
           [name: string]: unknown;
         };

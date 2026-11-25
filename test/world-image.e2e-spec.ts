@@ -23,7 +23,7 @@ import { grantStaffRoles } from './helpers/staff-roles';
  * не отдаётся публично; принятая до снятия картинка на сайте как была (U8); 403 всем, кроме admin;
  * задачи `world_image`, оставшиеся от генерации, закрываются без вызова модели.
  */
-describe('World image e2e (F08-11a, F08-11d-1)', () => {
+describe('World image e2e (F08-11a, F08-11d-1, F08-11d-3: file upload)', () => {
   const FAKE_KEY = 'sk-or-e2e-fake-key';
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   let app: INestApplication;
@@ -103,7 +103,7 @@ describe('World image e2e (F08-11a, F08-11d-1)', () => {
     });
   };
 
-  /** Ячейки строки картинки прямо в базе: загрузки ещё нет (`F08-11d-3`), генерации больше нет. */
+  /** Ячейки строки картинки прямо в базе (подготовка состояния до загрузки или «Accept»). */
   const imageRow = async (
     bookId: string,
     cells: { pendingMediaId?: string; imageMediaId?: string; imageReadAt?: Date },
@@ -184,16 +184,93 @@ describe('World image e2e (F08-11a, F08-11d-1)', () => {
     }
   });
 
-  it('there is no generation: POST image - 404 for everyone, nothing created, no external call', async () => {
-    const versionId = await version(await book(), Language.en);
+  /** PNG из одного заголовка: сигнатура и IHDR хватает `sniffImage`. */
+  const pngBytes = (width: number, height: number): Buffer => {
+    const b = Buffer.alloc(64);
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(b);
+    b.write('IHDR', 12, 'latin1');
+    b.writeUInt32BE(width, 16);
+    b.writeUInt32BE(height, 20);
+    return b;
+  };
+  const send = (versionId: string, bytes: Buffer, who: 'admin' | 'cm' | 'user' = 'admin') =>
+    auth(http().post(path(versionId)), who).attach('file', bytes, 'portrait.png');
+
+  it('upload (F08-11d-3): the file goes to the pending cell only; nothing is generated, no external call', async () => {
+    const bookId = await book();
+    const versionId = await version(bookId, Language.en);
     const opsBefore = await db.llmOperation.count({ where: { bookVersionId: versionId } });
-    for (const who of ['admin', 'cm', 'user'] as const) {
-      await auth(http().post(path(versionId)), who).expect(404);
-    }
-    await http().post(path(versionId)).expect(404);
+    const res = await send(versionId, pngBytes(1536, 1536)).expect(200);
+    expect(res.body.accepted).toBeNull();
+    expect(res.body.pending).toMatchObject({ width: 1536, height: 1536 });
+    // Автор файла - пользователь из токена (`req.user.userId`), а не пусто.
+    const stored = await db.mediaAsset.findUniqueOrThrow({
+      where: { id: res.body.pending.mediaId },
+      select: { createdById: true, key: true },
+    });
+    const admin = await db.user.findUniqueOrThrow({
+      where: { email: `f0811-admin-${stamp}@test.com` },
+      select: { id: true },
+    });
+    expect(stored.createdById).toBe(admin.id);
+    expect(stored.key).toMatch(/^illustrations[/]/);
+    expect((await publicEntity(versionId)).body.image).toBeNull();
     expect(await db.llmOperation.count({ where: { bookVersionId: versionId } })).toBe(opsBefore);
     expect(await db.llmTask.count({ where: { bookVersionId: versionId } })).toBe(0);
     expect(externalCalls()).toHaveLength(0);
+  });
+
+  it('upload: only admin; a refused file is 400 with its code; a minor character is 409', async () => {
+    const bookId = await book();
+    const versionId = await version(bookId, Language.en);
+    await http().post(path(versionId)).attach('file', pngBytes(1536, 1536), 'p.png').expect(401);
+    for (const who of ['cm', 'user'] as const) {
+      await send(versionId, pngBytes(1536, 1536), who).expect(403);
+    }
+    const assetsBefore = await db.mediaAsset.count();
+    const small = await send(versionId, pngBytes(1200, 800)).expect(400);
+    expect(small.body.code).toBe('WORLD_IMAGE_TOO_SMALL');
+    const text = await send(versionId, Buffer.from('<svg></svg>'.padEnd(64))).expect(400);
+    expect(text.body.code).toBe('WORLD_IMAGE_NOT_IMAGE');
+    // Файл больше 12 МБ отбивает разбор формы - тем же кодом, что и проверка байтов.
+    const huge = Buffer.concat([pngBytes(1536, 1536), Buffer.alloc(12 * 1024 * 1024)]);
+    const large = await send(versionId, huge).expect(413);
+    expect(large.body.code).toBe('WORLD_IMAGE_TOO_LARGE');
+    await auth(http().post(path(versionId))).expect(400);
+    await send(versionId, pngBytes(1536, 1536)).expect(200);
+    expect(await db.mediaAsset.count()).toBe(assetsBefore + 1);
+    await auth(http().post(path(versionId, 'no-such-hero')))
+      .attach('file', pngBytes(1536, 1536), 'p.png')
+      .expect(404);
+    const minorBook = await book();
+    const minorVersion = await version(minorBook, Language.en, { role: 'minor' });
+    const minor = await send(minorVersion, pngBytes(1536, 1536)).expect(409);
+    expect(minor.body.code).toBe('WORLD_IMAGE_NOT_ALLOWED');
+  });
+
+  it('upload over an accepted image: the accepted one stays on the site until Accept, the new file replaces the pending one', async () => {
+    const bookId = await book();
+    const versionId = await version(bookId, Language.en);
+    const old = await asset();
+    const oldPending = await asset();
+    await imageRow(bookId, {
+      imageMediaId: old.id,
+      imageReadAt: new Date('2026-11-23T10:00:00Z'),
+      pendingMediaId: oldPending.id,
+    });
+    const uploaded = (await send(versionId, pngBytes(2048, 2048)).expect(200)).body;
+    expect(uploaded.accepted.mediaId).toBe(old.id);
+    expect(uploaded.pending).toMatchObject({ width: 2048, height: 2048 });
+    expect(uploaded.pending.mediaId).not.toBe(oldPending.id);
+    expect((await publicEntity(versionId)).body.image).toEqual({
+      url: old.url,
+      width: 1536,
+      height: 1536,
+    });
+    await auth(http().post(`${path(versionId)}/accept`))
+      .send({ pendingMediaId: uploaded.pending.mediaId })
+      .expect(200);
+    expect((await publicEntity(versionId)).body.image).toMatchObject({ width: 2048, height: 2048 });
   });
 
   it('a pending image is not public until accepted, then on every language of the book; the state has no generation fields', async () => {

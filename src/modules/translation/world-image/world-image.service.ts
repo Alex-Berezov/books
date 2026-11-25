@@ -1,8 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { checkImageBytes } from '../../../shared/image/image-check';
 import { utcTimestamp } from '../../../shared/prisma/utc-timestamp';
+import { STORAGE_SERVICE, StorageService } from '../../../shared/storage/storage.interface';
+import { ILLUSTRATIONS_KEY_PREFIX, uploadObjectKey } from '../../uploads/uploads.service';
 import {
   acceptedImageOf,
   WORLD_IMAGE_FILE_SELECT,
@@ -10,11 +13,14 @@ import {
   worldImageAllowed,
 } from '../../book-world/world-image-public';
 import { codedConflict } from '../../../shared/errors/coded-conflict';
+import { codedBadRequest } from '../../../shared/errors/coded-error';
 import { DRAFT_TX_OPTIONS } from '../content-draft/content-draft.constants';
 import { WorldImageFileDto, WorldImageStateDto } from '../dto/world-image-response.dto';
 import {
   WORLD_IMAGE_CHANGED,
+  WORLD_IMAGE_LIMITS,
   WORLD_IMAGE_NONE,
+  WORLD_IMAGE_REFUSAL_CODES,
   WORLD_IMAGE_NOT_ALLOWED,
 } from './world-image.constants';
 
@@ -50,7 +56,75 @@ const notAllowed = () =>
  */
 @Injectable()
 export class WorldImageService {
-  constructor(private readonly prisma: PrismaService) {}
+  private readonly logger = new Logger(WorldImageService.name);
+
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(STORAGE_SERVICE) private readonly storage: StorageService,
+  ) {}
+
+  /**
+   * Загрузка файла (`F08-11d-3`, решение арбитра `F08 | F08-11d` Q6): байты проверяются по сигнатуре
+   * и размерам (`checkImageBytes`, `WORLD_IMAGE_LIMITS`), файл ложится в хранилище под серверным
+   * ключом, `MediaAsset` и ожидающая ячейка - одной транзакцией под замком строки. Принятая не
+   * трогается; прежняя ожидающая остаётся без ссылки - её убирает уборка сирот.
+   */
+  async upload(
+    bookVersionId: string,
+    key: string,
+    bytes: Buffer | undefined,
+    userId: string,
+  ): Promise<WorldImageStateDto> {
+    const subject = await this.subject(bookVersionId, key);
+    if (!subject.allowed) throw notAllowed();
+    if (!bytes || bytes.length === 0) throw new BadRequestException('File is required');
+    const checked = checkImageBytes(bytes, WORLD_IMAGE_LIMITS);
+    if (!checked.ok) {
+      const code = WORLD_IMAGE_REFUSAL_CODES[checked.reason];
+      throw codedBadRequest(code, `The image was refused: ${code}`);
+    }
+    // Файл ложится до транзакции; не лёг файл целиком или не легла запись - файл удаляется сразу
+    // (без `MediaAsset` уборка его не увидит).
+    const objectKey = uploadObjectKey(ILLUSTRATIONS_KEY_PREFIX, checked.info.ext);
+    let linked = false;
+    try {
+      await this.storage.save(objectKey, checked.bytes, { contentType: checked.info.mime });
+      await this.prisma.$transaction(async (tx) => {
+        const row = await lockImageRow(tx, subject.bookId, key);
+        const asset = await tx.mediaAsset.create({
+          data: {
+            key: objectKey,
+            url: this.storage.getPublicUrl(objectKey),
+            contentType: checked.info.mime,
+            size: checked.bytes.length,
+            width: checked.info.width,
+            height: checked.info.height,
+            createdById: userId,
+          },
+          select: { id: true },
+        });
+        await tx.bookWorldImage.update({
+          where: { id: row.id },
+          data: { pendingMediaId: asset.id },
+        });
+      }, DRAFT_TX_OPTIONS);
+      linked = true;
+    } finally {
+      if (!linked) await this.dropFile(objectKey);
+    }
+    return this.state(bookVersionId, key);
+  }
+
+  /** Файл, который не лёг в строку: удалить; сбой - в лог. */
+  private async dropFile(objectKey: string): Promise<void> {
+    try {
+      await this.storage.delete(objectKey);
+    } catch (error) {
+      this.logger.warn(
+        `World image file was not removed: key=${objectKey} error=${error instanceof Error ? error.name : typeof error}`,
+      );
+    }
+  }
 
   async state(bookVersionId: string, key: string): Promise<WorldImageStateDto> {
     const subject = await this.subject(bookVersionId, key);

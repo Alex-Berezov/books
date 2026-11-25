@@ -5,12 +5,14 @@ import {
   Injectable,
   mixin,
   NestInterceptor,
+  PayloadTooLargeException,
   Type,
 } from '@nestjs/common';
 import { FileInterceptor, MulterModuleOptions } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import type { MulterError } from 'multer';
 import type { Observable } from 'rxjs';
+import { codedPayloadTooLarge } from '../../shared/errors/coded-error';
 
 /**
  * LEGACY-475. Потолки текстовых полей multipart-формы. Без `fieldArrayIndexLimit` имя поля
@@ -59,6 +61,15 @@ function isFormParseFailure(error: unknown): error is Error {
   );
 }
 
+/** Опции `FormFileInterceptor`. */
+export interface FormFileOptions {
+  /**
+   * Код в теле 413 на файл больше `fileSizeBytes`: ручка, у которой отказы файла названы кодами
+   * (`F08-11d-3`: `WORLD_IMAGE_TOO_LARGE`), отдаёт его и здесь. Без него - 413 Nest как есть.
+   */
+  fileTooLargeCode?: string;
+}
+
 /**
  * `FileInterceptor` с потолками полей формы и отказом разбора формы в 400.
  *
@@ -75,6 +86,7 @@ export function FormFileInterceptor(
   fieldName: string,
   fileSizeBytes: number,
   fields: number,
+  options: FormFileOptions = {},
 ): Type<NestInterceptor> {
   const Multer = FileInterceptor(fieldName, formFileOptions(fileSizeBytes, fields));
 
@@ -86,6 +98,9 @@ export function FormFileInterceptor(
       try {
         return await this.multer.intercept(context, next);
       } catch (error) {
+        if (options.fileTooLargeCode && error instanceof PayloadTooLargeException) {
+          throw codedPayloadTooLarge(options.fileTooLargeCode, error.message);
+        }
         if (isMulterError(error)) {
           throw new BadRequestException(
             error.field ? `${error.message} - ${error.field}` : error.message,

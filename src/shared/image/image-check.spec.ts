@@ -3,11 +3,11 @@ import {
   IMAGE_NOT_IMAGE,
   IMAGE_TOO_LARGE,
   IMAGE_TOO_SMALL,
-  LlmImageLimits,
+  ImageLimits,
   sniffImage,
-} from './llm-image';
+} from './image-check';
 
-const LIMITS: LlmImageLimits = {
+const LIMITS: ImageLimits = {
   maxBytes: 4096,
   minWidth: 1200,
   minHeight: 1200,
@@ -104,6 +104,26 @@ describe('checkImageBytes', () => {
       ok: false,
       reason: IMAGE_TOO_SMALL,
     });
+  });
+
+  it.each([
+    ['only the width is short (1000 x 2000)', 1000, 2000],
+    ['only the height is short (2000 x 1000)', 2000, 1000],
+  ])('refuses when %s', (_, width, height) => {
+    expect(checkImageBytes(png(width, height), LIMITS)).toEqual({
+      ok: false,
+      reason: IMAGE_TOO_SMALL,
+    });
+  });
+
+  it('takes a file of exactly the byte limit and exactly the pixel ceiling', () => {
+    const exact = png(1500, 1500);
+    const padded = Buffer.concat([exact, Buffer.alloc(LIMITS.maxBytes - exact.length)]);
+    expect(padded.length).toBe(LIMITS.maxBytes);
+    expect(checkImageBytes(padded, LIMITS)).toMatchObject({ ok: true });
+    const side = Math.floor(Math.sqrt(LIMITS.maxPixels));
+    const atCeiling = { ...LIMITS, maxPixels: side * side };
+    expect(checkImageBytes(png(side, side), atCeiling)).toMatchObject({ ok: true });
   });
 
   it('refuses a strip that ignored the aspect ratio (2048 x 300)', () => {
