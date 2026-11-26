@@ -7814,9 +7814,9 @@ export interface components {
       firstPublishedAt: string | null;
       /** @description Entity page of a place only (F08-12a): Wikidata coordinate check for the current wikidataId and names (the same rule as point); null — a fictional place, a place without wikidataId, or not a place */
       geo?: components['schemas']['BookWorldGeoCheckDto'] | null;
-      /** @description Entity page only: illustration brief of this version (English, with the book title and author; F08-11d-2); null — not written. Never in the public entity */
+      /** @description Entity page only: illustration brief of this version (English, with the book title and author; a character 1:1 by Appearance F08-11d-2, a place 16:9 by Description F08-12b); null — not written. Never in the public entity */
       imageBrief?: string | null;
-      /** @description Entity page only: the brief was written for another Appearance or before the check existed (F08-11d-2) — regenerate it; false when there is no brief */
+      /** @description Entity page only: the brief was written for another Appearance (a character) or Description (a place, F08-12b) or before the check existed (F08-11d-2) — regenerate it; false when there is no brief */
       imageBriefStale?: boolean;
       /** @description The entity is public apart from the version: core, read after the model text, visible (computeWorldListed); a pair also needs both its characters listed (F08-8c); the page exists when the version is also published with a slug */
       isListed: boolean;
@@ -7916,7 +7916,7 @@ export interface components {
       /** @description Pairs only: what sets the two characters apart */
       differences?: string | null;
       faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
-      /** @description Characters only: illustration brief for the editors (English, with the book title and author); editor-only, never in the public entity (F08-11d-2) */
+      /** @description Characters and places (F08-12b): illustration brief for the editors (English, with the book title and author; a character by Appearance, a place 16:9 by Description); editor-only, never in the public entity (F08-11d-2) */
       imageBrief?: string | null;
       key: string;
       /**
@@ -15897,7 +15897,7 @@ export interface components {
       /** @description Pairs only: what sets the two characters apart */
       differences?: string | null;
       faq?: components['schemas']['BookAnalysisFaqDto'][] | null;
-      /** @description Characters only: illustration brief for the editors (English, with the book title and author); editor-only, never in the public entity (F08-11d-2) */
+      /** @description Characters and places (F08-12b): illustration brief for the editors (English, with the book title and author; a character by Appearance, a place 16:9 by Description); editor-only, never in the public entity (F08-11d-2) */
       imageBrief?: string | null;
       /** @description Optional; must equal the key in the path */
       key?: string;
@@ -16780,12 +16780,19 @@ export interface components {
        * @enum {string|null}
        */
       pairsOff: 'WORLD_PAIR_LANGUAGE' | null;
+      /** @description Places of the run (F08-12b), their steps go after the steps of the pairs; null - not chosen yet; [] for a run started before F08-12b */
+      places: components['schemas']['WorldWritePlaceDto'][] | null;
+      /**
+       * @description The run writes no places: WORLD_PLACE_LANGUAGE - no place sample for the language
+       * @enum {string|null}
+       */
+      placesOff: 'WORLD_PLACE_LANGUAGE' | null;
       /** @description Proposals left as proposals by their own refusal, with its code */
       skipped: components['schemas']['WorldAcceptAllSkippedDto'][];
       /** @enum {string} */
       status: 'building' | 'ready' | 'failed' | 'discarded';
       steps: components['schemas']['WorldWriteStepDto'][];
-      /** @description Steps of the run: 1 + 2 per character + 1 per pair; null - the characters are not chosen yet */
+      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place; null - the characters are not chosen yet */
       stepsTotal: number | null;
       /** Format: date-time */
       updatedAt: string;
@@ -16948,10 +16955,17 @@ export interface components {
        * @enum {string|null}
        */
       pairsOff: 'WORLD_PAIR_LANGUAGE' | null;
+      /** @description Places of the run (F08-12b), their steps go after the steps of the pairs; null - not chosen yet; [] for a run started before F08-12b */
+      places: components['schemas']['WorldWritePlaceDto'][] | null;
+      /**
+       * @description The run writes no places: WORLD_PLACE_LANGUAGE - no place sample for the language
+       * @enum {string|null}
+       */
+      placesOff: 'WORLD_PLACE_LANGUAGE' | null;
       /** @enum {string} */
       status: 'building' | 'ready' | 'failed' | 'discarded';
       steps: components['schemas']['WorldWriteStepDto'][];
-      /** @description Steps of the run: 1 + 2 per character + 1 per pair; null - the characters are not chosen yet */
+      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place; null - the characters are not chosen yet */
       stepsTotal: number | null;
       /** Format: date-time */
       updatedAt: string;
@@ -16967,9 +16981,11 @@ export interface components {
       glossary: components['schemas']['CompareContextLineDto'] | null;
       /** @description Up to N pair pages (F08-8e): min(10, candidates·(candidates−1)/2) before the chapter count, 0 on a language without a pair sample; one page each, included in stageUsd */
       pairs: number;
+      /** @description Up to N place pages (F08-12b): min(10, places of the dossier) before the chapter count (10 when the dossier is not ready), 0 on a language without a place sample; one page each, included in stageUsd */
+      places: number;
       /**
        * Format: decimal
-       * @description Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages on the whole version text, plus the reviewer of each step, each step × 2 passes
+       * @description Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages and up to places place pages on the whole version text, plus the reviewer of each step, each step × 2 passes
        * @example 100.00000000
        */
       stageUsd: string;
@@ -16998,7 +17014,8 @@ export interface components {
         | 'SOURCE_UNRELATED'
         | 'SOURCE_UNVERIFIED'
         | 'BRIEF_WITHOUT_APPEARANCE'
-        | 'BRIEF_NOT_ALLOWED';
+        | 'BRIEF_NOT_ALLOWED'
+        | 'BRIEF_WITHOUT_DESCRIPTION';
       note: string;
       /** @description Path in the answer of the step */
       path: string;
@@ -17023,7 +17040,11 @@ export interface components {
         | 'compare'
         | 'bonds'
         | 'differences'
-        | 'conclusion';
+        | 'conclusion'
+        | 'kind'
+        | 'location'
+        | 'significance'
+        | 'description';
       /** @description Why the block is not written: IMPORT_INVALID, EXTERNAL_UNVERIFIED (no checked source), WORLD_WRITE_REFUSED (the world import refused) */
       failedReason: string | null;
       index: number;
@@ -17058,6 +17079,21 @@ export interface components {
       key: string;
       /** @description The characters are related in the analysis of the version */
       linked: boolean;
+    };
+    WorldWritePlaceDto: {
+      /** @description Name forms found in the text of the version */
+      aliases: string[];
+      /** @description Chapters where the name forms found the place (counted at the choice step) */
+      chapters: number[];
+      /** @description Key of the place (the dossier key) */
+      key: string;
+      name: string;
+    };
+    WorldWritePlaceKindDto: {
+      /** @enum {string|null} */
+      kind: 'real' | 'fictional' | null;
+      /** @description Wikidata item (Q…) of a real place */
+      wikidataId: string | null;
     };
     WorldWriteRemarkDto: {
       /** @enum {string} */
@@ -17101,12 +17137,12 @@ export interface components {
     WorldWriteSkipDto: {
       /** @description Chapters of the character or common chapters of the pair */
       chapters: number | null;
-      /** @description Key of the character or the pair */
+      /** @description Key of the character, the pair or the place */
       key: string;
-      /** @description Names to caption the entry: one for a character, two for a pair in key order; empty for a run saved before this field */
+      /** @description Names to caption the entry: one for a character or a place, two for a pair in key order; empty for a run saved before this field */
       names: string[];
       /**
-       * @description BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run
+       * @description BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b)
        * @enum {string}
        */
       reason:
@@ -17114,7 +17150,10 @@ export interface components {
         | 'KEY_PAIR_FORM'
         | 'PAIR_KEY_INVALID'
         | 'PAIR_KEY_TAKEN'
-        | 'PAIRS_MAX';
+        | 'PAIRS_MAX'
+        | 'PLACE_BELOW_MIN_CHAPTERS'
+        | 'PLACE_KEY_TAKEN'
+        | 'PLACES_MAX';
     };
     WorldWriteStateDto: {
       draft: components['schemas']['WorldWriteDto'] | null;
@@ -17124,12 +17163,12 @@ export interface components {
       attempt: number;
       authorModel: string | null;
       dropped: components['schemas']['WorldWriteFixDto'][];
-      /** @description Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (a pair not linked in the analysis has no shared chapters - new or stored; or a new pair is not founded by the saved presence), WORLD_MENTIONS_MOVED (the text moved during the presence recount) */
+      /** @description Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (a pair not linked in the analysis has no shared chapters - new or stored; or a new pair is not founded by the saved presence), WORLD_MENTIONS_MOVED (the text moved during the presence recount); a place step (F08-12b): WORLD_PLACE_NOT_FOUND (the name forms found the place in no chapter), without a call - WORLD_PLACE_KEY_TAKEN (the place key belongs to an entity of another type) */
       failedReason: string | null;
       /** @description Key of the character or of the pair; null - the choice step */
       key: string | null;
       /** @enum {string} */
-      kind: 'select' | 'page' | 'external' | 'pair';
+      kind: 'select' | 'page' | 'external' | 'pair' | 'place';
       /** @enum {string} */
       outcome: 'done' | 'failed';
       remarks: components['schemas']['WorldWriteRemarkDto'][];
@@ -17151,6 +17190,8 @@ export interface components {
       /** @description Pair comparison table */
       compare: components['schemas']['BookWorldCompareDto'][] | null;
       faq: components['schemas']['BookAnalysisFaqDto'][] | null;
+      /** @description The kind item of a place (F08-12b, R3): real or fictional with its Wikidata item, one proposal */
+      place: components['schemas']['WorldWritePlaceKindDto'] | null;
       /** @description Print of the proposal: send it as expectedPrint of «Accept» */
       print: string;
       profile: components['schemas']['BookWorldProfileDto'] | null;
@@ -17159,7 +17200,7 @@ export interface components {
       scenes: components['schemas']['BookWorldSceneDto'][] | null;
       /** @description Checked sources of an external block: «Accept» adds them to the sources of the entity */
       sources: components['schemas']['BookAnalysisSourceDto'][] | null;
-      /** @description short, appearance, character, critique, prototypes, bonds, differences, conclusion */
+      /** @description short, appearance, character, critique, prototypes, bonds, differences, conclusion, imageBrief; places (F08-12b) - location, significance, description */
       text: string | null;
     };
   };

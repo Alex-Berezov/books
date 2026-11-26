@@ -34,6 +34,8 @@ const L = BOOK_WORLD_LIMITS;
 const SELECT_SHAPE: Shape = {
   object: {
     characters: { array: { object: { key: str, name: str, aliases: { array: str } } } },
+    // Формы названий мест (`F08-12b`, решение `F08 | F08-12b` Q1): падежи ru дают присутствие места.
+    places: { array: { object: { key: str, name: str, aliases: { array: str } } } },
   },
 };
 
@@ -80,6 +82,25 @@ const PAIR_SHAPE: Shape = {
   },
 };
 
+/** Страница места (`F08-12b`): блоки места, сцены, цитаты, вопросы и ТЗ на иллюстрацию 16:9. */
+const PLACE_SHAPE: Shape = {
+  object: {
+    name: str,
+    short: str,
+    kind: str,
+    location: str,
+    significance: str,
+    description: str,
+    wikidataId: str,
+    scenes: { array: { object: { chapter: int, title: str, text: str } } },
+    quotes: {
+      array: { object: { text: str, chapter: int, speakerKey: str, interpretation: str } },
+    },
+    faq: { array: { object: { question: str, answer: str } } },
+    imageBrief: str,
+  },
+};
+
 const REFS = { array: int } as const;
 
 const EXTERNAL_SHAPE: Shape = {
@@ -100,6 +121,7 @@ export const WORLD_STEP_SHAPES: Record<WorldStepKind, Shape> = {
   page: PAGE_SHAPE,
   external: EXTERNAL_SHAPE,
   pair: PAIR_SHAPE,
+  place: PLACE_SHAPE,
 };
 
 export const WORLD_STEP_STAGES: Record<WorldStepKind, string> = {
@@ -107,6 +129,8 @@ export const WORLD_STEP_STAGES: Record<WorldStepKind, string> = {
   page: WORLD_PAGE_WRITE_STAGE,
   external: WORLD_EXTERNAL_WRITE_STAGE,
   pair: WORLD_PAIR_WRITE_STAGE,
+  // Место пишется этапом страницы (`F08-12b`): своя форма ответа, модель и настройки - страницы.
+  place: WORLD_PAGE_WRITE_STAGE,
 };
 
 /** Коды проверяющей мира (`product.md` §5): `SHORT_SPOILER` - исход в «Коротко» (Q6). */
@@ -196,6 +220,64 @@ function pairRules(language: Language): string {
   ]);
 }
 
+/** «Главные правила» страницы места (`F08-12b`, `product.md` §7) по тексту версии. */
+function placeRules(language: Language): string {
+  return numbered([
+    'A place of the book, not a retelling: what the place is, where it is, what happens here and ' +
+      'what it means for the book. Name a scene only as much as it shows the place. Do not ' +
+      'repeat the analysis, the summary or the character pages.',
+    'Every statement rests on a scene or a detail with its chapter number from the list of ' +
+      'chapters of this version, and only chapters where the place is (the list of chapters with ' +
+      'the place is given): a scene in a chapter without the place is a defect. Not sure of the ' +
+      'chapter - leave the scene out.',
+    '"short" - 2-3 sentences without the ending: what this place is and who lives or comes here. ' +
+      'No outcome, no turn of the last third.',
+    'kind - "real" for a place that exists outside the book (a city, a street, a square, a ' +
+      'river), "fictional" for a place made up by the author (a room, a house, an invented town). ' +
+      'wikidataId - only for a real place, the Wikidata item number (Q and digits) you are sure ' +
+      'of; not sure, or a fictional place - "". The code checks the number on Wikidata and draws ' +
+      'no point without it.',
+    'Quotations only word for word from the text of this version given in the data, with the ' +
+      'number of the chapter where the words stand - words that describe the place or are said ' +
+      'in it. Not sure - leave the quotation out. No quotations in quotation marks inside the ' +
+      'prose fields.',
+    'Do not invent: no dates, history, sources or links beyond the text of this version. Present ' +
+      'the disputable as an interpretation ("can be read as…").',
+    `Write for the reader of ${LANGUAGE_NAMES[language]} (language code "${language}"), not a ` +
+      'translation from English. Names as in the glossary and in the known translations. ' +
+      'The only exception: imageBrief is a brief for the editors, not a text for the reader - it ' +
+      'is always in English, names the book and its author, and its look rests only on ' +
+      'description (the rules about scenes and quotations do not apply to it).',
+    'Plain text: no HTML, no Markdown, no emoji. Paragraphs of a long text are separated by an ' +
+      `empty line. Quotation marks of the language: ${QUOTE_MARKS[language]}.`,
+    'Do not speak for the site: no "our editors think".',
+  ]);
+}
+
+const PLACE_FIELDS =
+  'The core - without it there is no page: short, kind, significance and at least 2 scenes with ' +
+  'their chapters.' +
+  `\nname - the name of the place as in the text of this version (at most ${L.name} characters). ` +
+  `short - at most ${L.short} characters. kind - "real" or "fictional". location - where the ` +
+  `place is, as the text says (a city, a street, a house), at most ${L.location}, or "". ` +
+  `significance - what the place means for the book, a thesis with its scenes, at most ` +
+  `${L.significance}. description - how the place looks, only what the text says, at most ` +
+  `${L.description}. wikidataId - see the rules, or "". scenes - 2-${L.scenes} key scenes in this ` +
+  'place (chapter, title, text - 1-2 sentences: what happens here and what it says about the ' +
+  `place). quotes - at most ${L.quotes}, each at most ${L.quote} characters; speakerKey - the key ` +
+  'of the speaker from KEYS, or "" when the narrator speaks; interpretation - 1-3 sentences: what ' +
+  `the line shows about the place. faq - at most ${L.faq} questions as a reader of this language ` +
+  'searches for them, the answer direct in its first sentence.' +
+  `\nimageBrief - the brief for an image-generation service that makes the picture of the place ` +
+  `for the editors of the site, always in English, at most ${L.imageBrief} characters, not for the ` +
+  'reader: a wide 16:9 view, at least 1200 px wide; the title of the book and the name of its ' +
+  'author in their widely known English form when you are sure of it, otherwise as in the data; ' +
+  'the look of the place only from description; the epoch and the setting only from the text of ' +
+  'this version and the analysis. No text, lettering or watermarks in the picture; no recognisable ' +
+  'faces, no faces of real actors, no stills of film or stage adaptations, no style of a ' +
+  'recognisable artist. Empty description - imageBrief "".' +
+  '\nA field without reliable data - "" or an empty list.';
+
 const PAIR_FIELDS =
   `The core - without it there is no page: short, at least 4 rows of compare with both sides and ` +
   'their chapters, conclusion.' +
@@ -259,7 +341,12 @@ const SELECT_RULES =
   'Only forms that ' +
   'really stand in the text: the code counts the chapters of the character by them and throws ' +
   'away a form that is not in the text. No common words that occur without the character ' +
-  '("the old woman", "the student"), no forms shorter than 3 letters. Do not add characters.';
+  '("the old woman", "the student"), no forms shorter than 3 letters. Do not add characters.' +
+  '\nThe same for the places given in the PLACE_CANDIDATES block (none - "places" []): key exactly ' +
+  'as given; name - the name of the place as in this version; aliases - every form by which the ' +
+  'text names the place, for ru with the case forms ("в Петербурге", "Петербурга" - each form ' +
+  'without the preposition: "Петербурге"). No common words ("the room", "the street") unless they ' +
+  'are the only name of this place. Do not add places.';
 
 function externalRules(language: Language): string {
   return numbered([
@@ -370,6 +457,8 @@ export interface SelectPromptInput {
   bookTitle: string;
   author: string;
   candidates: string;
+  /** Кандидаты-места (`F08-12b`): «ключ - название» досье, `none` - мест нет. */
+  places: string;
   dossierNames: string;
   glossary: string;
   book: string;
@@ -385,6 +474,7 @@ export function selectWriteRequest(input: SelectPromptInput): ShapedRequest {
     ['BOOK_TITLE', input.bookTitle],
     ['AUTHOR', input.author],
     ['CANDIDATES', input.candidates],
+    ['PLACE_CANDIDATES', input.places],
     ['DOSSIER_NAMES', input.dossierNames],
     ['GLOSSARY', input.glossary],
     ['BOOK_TEXT', input.book],
@@ -400,11 +490,12 @@ export function selectWriteRequest(input: SelectPromptInput): ShapedRequest {
           'The title of the book is',
           'the author',
           'the candidates (key - name in the analysis)',
+          'the place candidates (key - name in the dossier)',
           'the names and variants of the dossier',
           'the glossary',
           'the text of this version',
         ],
-        'List the name forms of every candidate.',
+        'List the name forms of every candidate and every place candidate.',
       ),
       input.redo,
     ),
@@ -572,6 +663,94 @@ export function pairWriteRequest(input: PairPromptInput): ShapedRequest {
   );
 }
 
+export interface PlacePromptInput {
+  language: Language;
+  bookTitle: string;
+  author: string;
+  key: string;
+  name: string;
+  aliases: string;
+  chapterList: string;
+  mentionChapters: string;
+  keys: string;
+  analysis: string;
+  glossary: string;
+  example: string;
+  book: string;
+  bookIsPartial: boolean;
+  regen: WorldRegenSpec | null;
+  redo: WorldRedo | null;
+  /**
+   * «Описание» сохранённого места — вход перегенерации одного блока `imageBrief`: вид ТЗ берётся
+   * только из него (решение `F08 | F08-12b` Q2); в остальных случаях не передаётся.
+   */
+  storedDescription?: string | null;
+}
+
+/** Страница одного места (`F08-12b`): этап страницы, форма `PLACE_SHAPE`, эталон места языка. */
+export function placeWriteRequest(input: PlacePromptInput): ShapedRequest {
+  const briefRegen = input.regen?.block === 'imageBrief';
+  const system =
+    'You write the page of one place of a book for the site: the reader comes for this place - ' +
+    'what it is, where it is, what happens here and why the book needs it. This is the text for ' +
+    'publication, not a draft.\nMain rules (breaking any is a defect):\n' +
+    placeRules(input.language) +
+    `\n${PLACE_FIELDS}` +
+    (input.bookIsPartial
+      ? '\nThe whole text with the place does not fit: you get the chapters with the most ' +
+        'mentions of the place and the chapter summaries of the dossier. Quote and place scenes ' +
+        'only in the chapters whose text is given.'
+      : '') +
+    (input.regen ? regenRule(input.regen) : '') +
+    // Вид и номер Wikidata - один пункт (R3): при перегенерации `kind` модель пишет оба поля.
+    (input.regen?.block === 'kind'
+      ? ' The block "kind" is one proposal with "wikidataId": write both.'
+      : '') +
+    '\nBefore answering, check: the core is complete; every chapter is in the list of chapters ' +
+    'with the place; every quotation is a line of this text word for word; "short" has no ' +
+    'ending; no empty template values.';
+  const items: Array<readonly [string, string]> = [
+    ['BOOK_TITLE', input.bookTitle],
+    ['AUTHOR', input.author],
+    ['PLACE', `${input.key} - ${input.name}`],
+    ['NAME_FORMS', input.aliases],
+    ['CHAPTERS_LIST', input.chapterList],
+    ['CHAPTERS_WITH_PLACE', input.mentionChapters],
+    ['KEYS', input.keys],
+    ['ANALYSIS', input.analysis],
+    ['GLOSSARY', input.glossary],
+    ...regenItems(input.regen),
+    ...(briefRegen ? [['DESCRIPTION', input.storedDescription || 'none'] as const] : []),
+    ['EXAMPLE', input.example],
+    [input.bookIsPartial ? 'CHAPTERS_AND_SUMMARIES' : 'CHAPTERS_TEXT', input.book],
+  ];
+  const labels = [
+    'The title of the book is',
+    'the author',
+    'the place (key - name)',
+    'the name forms of the place',
+    'the chapters of this version (number - title)',
+    'the chapters where the place is (number - mentions)',
+    'the keys to refer to (speakerKey)',
+    'the analysis of this book (do not repeat it)',
+    'the glossary',
+    ...(input.regen ? ['the current content of the block to rewrite', 'the editor remark'] : []),
+    ...(briefRegen ? ['the stored description of the place (the only source of the look)'] : []),
+    'a sample place page of another book in this language',
+    'the text of the chapters with the place',
+  ];
+  return shapedRequest(
+    WORLD_PAGE_WRITE_STAGE,
+    PLACE_SHAPE,
+    messages(
+      system,
+      items,
+      leadOf(labels, 'The sample shows the form and the level only: never take its content.'),
+      input.redo,
+    ),
+  );
+}
+
 export interface ExternalPromptInput {
   language: Language;
   bookTitle: string;
@@ -626,6 +805,7 @@ const REVIEW_STEP: Record<WorldStepKind, string> = {
   page: 'the page of one character',
   external: 'the external blocks of one character page (criticism, prototypes, adaptations)',
   pair: 'the page of one pair of characters (a comparison of the two)',
+  place: 'the page of one place of the book',
 };
 
 export interface WorldReviewInput {
@@ -653,9 +833,11 @@ export function worldReviewRequest(input: WorldReviewInput): ShapedRequest {
       ? `The rules the answer must follow:\n${pageRules(input.language)}\n${QUALITY_BAR}`
       : input.kind === 'pair'
         ? `The rules the answer must follow:\n${pairRules(input.language)}\n${PAIR_FIELDS}`
-        : input.kind === 'select'
-          ? `The rules the answer must follow:\n${SELECT_RULES}`
-          : `The rules the answer must follow:\n${externalRules(input.language)}`) +
+        : input.kind === 'place'
+          ? `The rules the answer must follow:\n${placeRules(input.language)}\n${PLACE_FIELDS}`
+          : input.kind === 'select'
+            ? `The rules the answer must follow:\n${SELECT_RULES}`
+            : `The rules the answer must follow:\n${externalRules(input.language)}`) +
     '\nRemark codes:' +
     (external
       ? ''
@@ -664,7 +846,7 @@ export function worldReviewRequest(input: WorldReviewInput): ShapedRequest {
     '\n- GENERIC: the text is true for any character (replace the name - nothing changes).' +
     '\n- CONTRADICTION: the fields contradict each other or the analysis of the book.' +
     '\n- RETELLING: a retelling of the plot instead of a characterisation.' +
-    (input.kind === 'page' || input.kind === 'pair'
+    (input.kind === 'page' || input.kind === 'pair' || input.kind === 'place'
       ? '\n- SHORT_SPOILER: "short" tells the outcome, the ending or a turn of the last third. ' +
         'where: short.'
       : '') +

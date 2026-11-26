@@ -8,7 +8,9 @@ import {
 } from '../../book-analysis/book-analysis-data';
 import {
   BOOK_WORLD_PUBLIC_SELECT,
+  briefBasisBlock,
   readAliasChapterExclusions,
+  type StoredWorldEntity,
   readStoredEntity,
 } from '../../book-world/book-world-data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
@@ -50,7 +52,7 @@ import {
   QualityLoopResume,
   runQualityLoop,
 } from '../draft-quality/quality-loop';
-import { ChapterIndex, indexChapters } from '../draft-quality/quote-check';
+import { ChapterIndex } from '../draft-quality/quote-check';
 import {
   clearRegenMarkOf,
   draftRowOf,
@@ -71,8 +73,10 @@ import {
   verifyWorldExternal,
   WorldExternalDraft,
   WorldExternalVerdict,
+  placeDossierForms,
   WorldPageDraft,
   WorldPairDraft,
+  WorldPlaceDraft,
   WorldSelectDraft,
 } from './world-write.checks';
 import {
@@ -81,6 +85,8 @@ import {
   WORLD_PAIR_KEY_TAKEN,
   WORLD_PAIR_MEMBER_MISSING,
   WORLD_PAIR_NOT_FOUNDED,
+  WORLD_PLACE_KEY_TAKEN,
+  WORLD_PLACE_NOT_FOUND,
   WORLD_REVIEW_STAGE,
   WORLD_WRITE_REFUSED,
   WORLD_WRITE_TASK_KIND,
@@ -100,12 +106,17 @@ import {
   WorldItem,
   WorldPairCandidate,
   WorldPairsOffReason,
+  WorldPlaceCandidate,
+  WorldPlaceKindValue,
+  WorldPlacesOffReason,
   WorldSkip,
   WorldSource,
   WorldStep,
   WorldStepKind,
   WorldStepSource,
   WorldWriteData,
+  blockIsEmpty,
+  entityBlock,
   withItem,
   withoutRegen,
   worldDataJson,
@@ -120,8 +131,9 @@ import {
 } from './world-write.fields';
 import { WORLD_STEP_STAGES, WorldRegenSpec } from './world-write.prompts';
 import {
+  chapterIndexOf,
   externalInput,
-  largestFitting,
+  fittingInput,
   pageBook,
   runCharacters,
   runMainCharacters,
@@ -130,6 +142,7 @@ import {
   pairChapters,
   pairFallbackName,
   pairInput,
+  placeInput,
   selectInput,
   storedCharacterKeys,
   WorldBaseCharacter,
@@ -140,6 +153,13 @@ import {
   WorldStepInput,
 } from './world-write.steps';
 import { ChosenCandidates, choosePairs } from './world-write.pairs';
+import {
+  choosePlaces,
+  placeKeyTaken,
+  placesAfterPairs,
+  placesToChoose,
+  type WorldBasePlace,
+} from './world-write.places';
 
 /** Задача хода мира: одна задача - один шаг; `index` - перегенерация пункта `index` своей операцией. */
 export const worldWriteTaskInput = (
@@ -302,6 +322,9 @@ interface StepRecord {
   pairs?: WorldPairCandidate[];
   leftOut?: WorldSkip[];
   pairsOff?: WorldPairsOffReason | null;
+  /** Итог выбора мест (`F08-12b`): места хода и причина хода без мест. */
+  places?: WorldPlaceCandidate[];
+  placesOff?: WorldPlacesOffReason | null;
   droppedQuotes: DroppedWorldQuote[];
   droppedSources: DroppedWorldSource[];
 }
@@ -398,6 +421,8 @@ function withStep(data: WorldWriteData, record: StepRecord): WorldWriteData {
     pairs: record.pairs ?? data.pairs,
     leftOut: record.leftOut ?? data.leftOut,
     pairsOff: record.pairsOff === undefined ? data.pairsOff : record.pairsOff,
+    places: record.places ?? data.places,
+    placesOff: record.placesOff === undefined ? data.placesOff : record.placesOff,
     steps: [...data.steps, record.step],
     items: [...data.items, ...record.items],
     droppedQuotes: [...data.droppedQuotes, ...record.droppedQuotes],
@@ -556,29 +581,50 @@ export class WorldWriteHandler {
   ): Promise<StepRecord | null> {
     const { kind, candidate: at } = stepOfData(data, step);
     // Индекс глав - только выбору и странице: внешний шаг текста книги не читает.
-    const quotes = () =>
-      indexChapters(new Map(context.chapters.map((c) => [c.number, htmlToParagraphs(c.content)])));
+    const quotes = () => chapterIndexOf(context);
     const fits = <T>(input: WorldStepInput<T>) => worldInputFits(this.llm, input);
     const empty = { droppedQuotes: [], droppedSources: [] };
 
     if (kind === 'select') {
       const base = runCharacters(context);
+      // Места (`F08-12b`, Q1): места досье не на ключе героя анализа или сущности другого типа (`placesToChoose`).
+      const placeBase = placesToChoose(
+        context.language,
+        data.places,
+        context.dossier,
+        context.entities,
+        new Set((context.analysis.characters ?? []).map((c) => c.key)),
+      );
       const index = quotes();
       const make = (count: number) =>
-        selectInput(context, base, index, {
-          text: chaptersText(context.chapters.slice(0, count)) || 'none',
-          partial: count < context.chapters.length,
-        });
+        selectInput(
+          context,
+          base,
+          index,
+          {
+            text: chaptersText(context.chapters.slice(0, count)) || 'none',
+            partial: count < context.chapters.length,
+          },
+          placeBase.places,
+        );
       // Весь текст сначала; не влез - наибольший префикс глав, как у страницы.
-      const whole = make(context.chapters.length);
-      const input = (await fits(whole))
-        ? whole
-        : await largestFitting(context.chapters.length, make, fits);
+      const input = await fittingInput(
+        context.chapters.length,
+        (count) => make(count ?? context.chapters.length),
+        fits,
+      );
       const result = input ? await this.loop(row, gate, input, step, pending, ctx, null) : null;
       if (result === null && input !== null) return null;
       const answer = result?.ok ? result.draft : null;
       const chosen = await this.candidatesOf(row.bookVersionId, context, base, answer, index);
       const choice = choosePairs(context, chosen, data.pairs);
+      const afterPairs = placesAfterPairs(placeBase, new Set(choice.pairs.map((p) => p.key)));
+      const placeChoice = choosePlaces(
+        context.language,
+        await this.placesOf(row.bookVersionId, context, afterPairs.free, answer, index),
+        afterPairs.taken,
+        data.places,
+      );
       const stepRecord =
         input === null
           ? failedStep(step, kind, null, DRAFT_TOO_LONG, null)
@@ -590,12 +636,19 @@ export class WorldWriteHandler {
         items: [],
         candidates: chosen.candidates,
         ...choice,
+        places: placeChoice.places,
+        placesOff: placeChoice.placesOff,
+        leftOut: [...choice.leftOut, ...placeChoice.leftOut],
         ...empty,
       };
     }
 
     if (kind === 'pair') {
       return this.pairStep(row, gate, step, at ?? -1, context, data, pending, ctx, regen);
+    }
+
+    if (kind === 'place') {
+      return this.placeStep(row, gate, step, at ?? -1, context, data, pending, ctx, regen);
     }
 
     const candidate = data.candidates?.[at ?? -1];
@@ -619,10 +672,7 @@ export class WorldWriteHandler {
           pageBook(context, candidate, top),
           regen?.spec ?? null,
         );
-      const whole = make(null);
-      const input = (await fits(whole))
-        ? whole
-        : await largestFitting(candidate.mentions.chapters.length, (n) => make(n), fits);
+      const input = await fittingInput(candidate.mentions.chapters.length, make, fits);
       if (input === null) {
         return {
           step: failedStep(step, kind, candidate.key, DRAFT_TOO_LONG, null),
@@ -829,9 +879,7 @@ export class WorldWriteHandler {
     }
     const members: WorldPairMembers = { a, b };
     const chapters = pairChapters(pair, members);
-    const index = indexChapters(
-      new Map(context.chapters.map((c) => [c.number, htmlToParagraphs(c.content)])),
-    );
+    const index = chapterIndexOf(context);
     const make = (count: number | null) =>
       pairInput(
         context,
@@ -842,15 +890,134 @@ export class WorldWriteHandler {
         regen?.spec ?? null,
       );
     const fits = <T>(input: WorldStepInput<T>) => worldInputFits(this.llm, input);
-    const whole = make(null);
-    const input = (await fits(whole))
-      ? whole
-      : await largestFitting(chapters.length, (n) => make(n), fits);
+    const input = await fittingInput(chapters.length, make, fits);
     if (input === null) return fail(DRAFT_TOO_LONG);
     const result = await this.loop(row, gate, input, step, pending, ctx, regen);
     if (result === null) return null;
     if (!result.ok) return fail(DRAFT_INVALID_RESPONSE, input.source);
     return pairRecord(step, context.language, pair, members, result, input.source);
+  }
+
+  /**
+   * Шаг места (`F08-12b`): страница места этапом страницы по главам, где формы названия нашли место
+   * (не влезло - главы с наибольшим числом упоминаний и краткое содержание глав досье). Место не нашлось
+   * ни в одной главе - `WORLD_PLACE_NOT_FOUND`; ключ занят сущностью другого типа
+   * (её завели после выбора) - `WORLD_PLACE_KEY_TAKEN` без платного вызова (Q1).
+   */
+  private async placeStep(
+    row: ContentDraft,
+    gate: WorldGate,
+    step: number,
+    at: number,
+    context: WorldContext,
+    data: WorldWriteData,
+    pending: PendingWorldStep | null,
+    ctx: LlmTaskContext,
+    regen: { spec: WorldRegenSpec; index: number } | null,
+  ): Promise<StepRecord | null> {
+    const place = data.places?.[at];
+    const fail = (reason: string, source: WorldStepSource | null = null): StepRecord => ({
+      step: failedStep(step, 'place', place?.key ?? null, reason, source),
+      items: [],
+      droppedQuotes: [],
+      droppedSources: [],
+    });
+    if (!place) return fail(DRAFT_DATA_INVALID);
+    if (placeKeyTaken(context.entities.get(place.key)?.type)) return fail(WORLD_PLACE_KEY_TAKEN);
+    if (place.mentions.chapters.length === 0) return fail(WORLD_PLACE_NOT_FOUND);
+    const index = chapterIndexOf(context);
+    const make = (top: number | null) =>
+      placeInput(context, place, index, pageBook(context, place, top), regen?.spec ?? null);
+    const fits = <T>(input: WorldStepInput<T>) => worldInputFits(this.llm, input);
+    const input = await fittingInput(place.mentions.chapters.length, make, fits);
+    if (input === null) return fail(DRAFT_TOO_LONG);
+    const result = await this.loop(row, gate, input, step, pending, ctx, regen);
+    if (result === null) return null;
+    if (!result.ok) return fail(DRAFT_INVALID_RESPONSE, input.source);
+    return placeRecord(step, place, result, input.source, regen !== null);
+  }
+
+  /**
+   * Сущности шага выбора с формами и присутствием - общее у героев и мест (решение арбитра
+   * `F08 | F08-12b` R4): имя и формы из ответа выбора (нет ответа - имя входа), сохранённые формы
+   * первыми (их мог дописать редактор), формы досье и глоссария (`formsOf`, только стоящие в тексте),
+   * исключения форм и исключённые главы сохранённой сущности (`F08-8a`) - тем же правилом, что
+   * пересчёт; присутствие по текстам глав - в памяти, без записи (R2), с общими главами входа.
+   */
+  private async countedOf<T extends { key: string; name: string }>(
+    bookVersionId: string,
+    context: WorldContext,
+    base: readonly T[],
+    found: (key: string) => { name: string; aliases: string[] } | undefined,
+    formsOf: (entry: T) => string[],
+  ): Promise<{
+    entries: Array<T & { name: string; aliases: string[]; mentions: CandidateMentions }>;
+    coPresence: ReadonlyMap<string, Record<string, number[]>>;
+  }> {
+    if (base.length === 0) return { entries: [], coPresence: new Map() };
+    const exclusions = await this.prisma.bookWorldEntity.findMany({
+      where: { bookVersionId, key: { in: base.map((e) => e.key) } },
+      select: { key: true, aliasExclusions: true, aliasChapterExclusions: true },
+      take: BOOK_WORLD_LIMITS.entities,
+    });
+    const byKey = new Map(exclusions.map((e) => [e.key, e]));
+    const named = base.map((entry) => {
+      const answer = found(entry.key);
+      const stored = context.entities.get(entry.key);
+      const row = byKey.get(entry.key);
+      return {
+        entry,
+        key: entry.key,
+        name: answer?.name ?? stored?.name ?? entry.name,
+        aliases: [
+          ...new Set([...(stored?.aliases ?? []), ...(answer?.aliases ?? []), ...formsOf(entry)]),
+        ].slice(0, BOOK_WORLD_LIMITS.aliases),
+        exclusions: Array.isArray(row?.aliasExclusions)
+          ? row.aliasExclusions.filter((x): x is string => typeof x === 'string')
+          : [],
+        chapterExclusions: row ? readAliasChapterExclusions(row.aliasChapterExclusions) : null,
+      };
+    });
+    const counted = countCandidates(context.chapters, named);
+    return {
+      entries: named.map((n) => {
+        const m = counted.get(n.key);
+        return {
+          ...n.entry,
+          name: n.name,
+          aliases: n.aliases,
+          mentions: { chapters: m?.chapters ?? [], perChapter: m?.perChapter ?? {} },
+        };
+      }),
+      coPresence: new Map(named.map((n) => [n.key, counted.get(n.key)?.coPresence ?? {}])),
+    };
+  }
+
+  /**
+   * Места после выбора (`F08-12b`, Q1): формы - ответа выбора, сохранённые, название досье и глоссарий
+   * того же ключа (`placeDossierForms`); присутствие - `countedOf`. Порог и потолок - `choosePlaces`.
+   */
+  private async placesOf(
+    bookVersionId: string,
+    context: WorldContext,
+    base: readonly WorldBasePlace[],
+    answer: WorldSelectDraft | null,
+    index: ChapterIndex,
+  ): Promise<WorldPlaceCandidate[]> {
+    const folded = foldedVersion(index);
+    const { entries } = await this.countedOf(
+      bookVersionId,
+      context,
+      base,
+      (key) => answer?.places.find((a) => a.key === key),
+      (p) => placeDossierForms(p.key, context.dossier, context.glossary, folded),
+    );
+    return entries.map((p) => ({
+      key: p.key,
+      name: p.name,
+      aliases: p.aliases,
+      mentions: p.mentions,
+    }));
   }
 
   /**
@@ -913,57 +1080,15 @@ export class WorldWriteHandler {
     index: ChapterIndex,
   ): Promise<ChosenCandidates> {
     const folded = foldedVersion(index);
-    const exclusions = await this.prisma.bookWorldEntity.findMany({
-      where: { bookVersionId, key: { in: base.map((c) => c.key) } },
-      select: { key: true, aliasExclusions: true, aliasChapterExclusions: true },
-      take: BOOK_WORLD_LIMITS.entities,
-    });
-    // Исключённые главы у формы (`F08-8a`): кандидат считается тем же правилом, что пересчёт.
-    const chapterExcluded = new Map(
-      exclusions.map((e) => [e.key, readAliasChapterExclusions(e.aliasChapterExclusions)]),
+    // Формы - ответа модели (или сохранённые), плюс досье (имя, варианты, обращения к герою) и
+    // глоссарий запуска (`tech.md` §4); каждая - только если стоит в тексте версии.
+    const { entries: all, coPresence } = await this.countedOf(
+      bookVersionId,
+      context,
+      base,
+      (key) => answer?.characters.find((a) => a.key === key),
+      (c) => dossierForms({ key: c.key, name: c.name }, context.dossier, context.glossary, folded),
     );
-    const excluded = new Map(
-      exclusions.map((e) => [
-        e.key,
-        Array.isArray(e.aliasExclusions)
-          ? e.aliasExclusions.filter((x): x is string => typeof x === 'string')
-          : [],
-      ]),
-    );
-    const named = base.map((c) => {
-      const found = answer?.characters.find((a) => a.key === c.key);
-      const stored = context.entities.get(c.key);
-      // Формы - ответа модели (или сохранённые), плюс досье (имя, варианты, обращения к герою) и
-      // глоссарий запуска (`tech.md` §4); каждая - только если стоит в тексте версии.
-      const forms = dossierForms(
-        { key: c.key, name: c.name },
-        context.dossier,
-        context.glossary,
-        folded,
-      );
-      return {
-        key: c.key,
-        role: c.role,
-        name: found?.name ?? stored?.name ?? c.name,
-        // Сохранённые формы (их мог дописать редактор) - первыми: ответ модели их не вытесняет.
-        aliases: [
-          ...new Set([...(stored?.aliases ?? []), ...(found?.aliases ?? []), ...forms]),
-        ].slice(0, BOOK_WORLD_LIMITS.aliases),
-        exclusions: excluded.get(c.key) ?? [],
-        chapterExclusions: chapterExcluded.get(c.key) ?? null,
-      };
-    });
-    const counted = countCandidates(context.chapters, named);
-    const all = named.map((c) => {
-      const m = counted.get(c.key);
-      return {
-        key: c.key,
-        role: c.role,
-        name: c.name,
-        aliases: c.aliases,
-        mentions: { chapters: m?.chapters ?? [], perChapter: m?.perChapter ?? {} },
-      };
-    });
     // Второстепенный ниже порога глав на сайт не выйдет (`F08-8b`): страницу ему не пишут.
     const passes = (c: WorldCandidate) => worldRolePasses(c.role, c.mentions.chapters.length);
     return {
@@ -976,7 +1101,7 @@ export class WorldWriteHandler {
           names: [c.name],
           chapters: c.mentions.chapters.length,
         })),
-      coPresence: new Map(all.map((c) => [c.key, counted.get(c.key)?.coPresence ?? {}])),
+      coPresence,
     };
   }
 
@@ -1009,7 +1134,7 @@ export class WorldWriteHandler {
       const stored = context.entities.get(item.key);
       const spec: WorldRegenSpec = {
         block: item.block,
-        current: (stored ? stored[item.block] : null) ?? item.value,
+        current: regenCurrent(stored, item),
         remark: item.regen.remark,
       };
       const record = await this.produceStep(
@@ -1195,29 +1320,63 @@ export function pairRecord(
   };
 }
 
-/** Итог страницы: пункт на блок (формы имени - из выбора), неверные по импорту - не пишутся. */
-export function pageRecord(
+/**
+ * Что переписывает перегенерация пункта (CURRENT_BLOCK промпта): блок сохранённой сущности в виде пункта
+ * (`entityBlock`: у места `kind` - пара вида и номера, R3), а пустой блок или сущности нет -
+ * само предложение (/qa F08-12b: пустая пара `{kind: null, wikidataId: null}` не подменяет его).
+ */
+export function regenCurrent(
+  stored: StoredWorldEntity | undefined,
+  item: Pick<WorldItem, 'block' | 'value'>,
+): unknown {
+  const block = stored ? entityBlock(stored, item.block) : null;
+  return block !== null && !blockIsEmpty(block) ? block : item.value;
+}
+
+/** Ответ шага страницы с ТЗ после кода (герой или место): блоки - значения пунктов. */
+interface BriefPageDraft {
+  name: string | null;
+  blocks: Partial<Record<WorldBlock, unknown>>;
+  fixes: WorldFix[];
+  droppedQuotes: DroppedWorldQuote[];
+  briefFor?: string | null;
+}
+
+/** Сущность записанного шага страницы: ключ, имя по умолчанию и формы имени из выбора. */
+interface BriefPageSubject {
+  key: string;
+  name: string;
+  aliases: string[];
+}
+
+/**
+ * Пункты шага страницы с ТЗ - общие у героя и места (решение арбитра `F08 | F08-12b` R4): формы имени
+ * из выбора первыми (не у перегенерации), пункт на блок, неверные по импорту - не пишутся; ТЗ - с
+ * отпечатком основы (`briefBasisBlock`: «Внешность» героя, «Описание» места), а основа, отбитая
+ * импортом, снимает и ТЗ с кодом основы (решения `F08 | F08-11d` Q10, `F08 | F08-12b` Q2).
+ */
+function briefPageRecord<D extends BriefPageDraft>(
   step: number,
-  candidate: WorldCandidate,
-  result: Extract<QualityLoopResult<WorldPageDraft>, { ok: true }>,
+  kind: 'page' | 'place',
+  subject: BriefPageSubject,
+  result: Extract<QualityLoopResult<D>, { ok: true }>,
   source: WorldStepSource,
   regen: boolean,
 ): StepRecord {
-  const name = result.draft.name ?? candidate.name;
+  const name = result.draft.name ?? subject.name;
   const items: WorldItem[] = [];
-  if (!regen && candidate.aliases.length > 0) {
-    items.push({ ...emptyItem(candidate.key, 'aliases', step), value: candidate.aliases, name });
+  if (!regen && subject.aliases.length > 0) {
+    items.push({ ...emptyItem(subject.key, 'aliases', step), value: subject.aliases, name });
   }
-  // ТЗ без «Внешности» не пишется (решение `F08 | F08-11d` Q10): «Внешность», отбитая импортом, не
-  // запишется — не пишется и ТЗ, построенное по ней.
-  const blocks = blockItems(step, candidate.key, name, result);
-  const lookRejected = blocks.some((i) => i.block === 'appearance' && i.outcome === 'none');
+  const basis = briefBasisBlock(kind === 'place' ? 'place' : 'character');
+  const blocks = blockItems(step, subject.key, name, result);
+  const lookRejected = blocks.some((i) => i.block === basis && i.outcome === 'none');
   const fixes = [...result.draft.fixes];
   if (lookRejected && blocks.some((i) => i.block === 'imageBrief')) {
     fixes.push({
-      code: 'BRIEF_WITHOUT_APPEARANCE',
+      code: basis === 'description' ? 'BRIEF_WITHOUT_DESCRIPTION' : 'BRIEF_WITHOUT_APPEARANCE',
       path: 'imageBrief',
-      note: 'appearance is not written: the brief is removed',
+      note: `${basis} is not written: the brief is removed`,
     });
   }
   items.push(
@@ -1230,9 +1389,58 @@ export function pageRecord(
     ),
   );
   return {
-    step: doneStep(step, 'page', candidate.key, result, result.remarks, source, fixes),
+    step: doneStep(step, kind, subject.key, result, result.remarks, source, fixes),
     items,
     droppedQuotes: result.draft.droppedQuotes,
     droppedSources: [],
   };
+}
+
+/**
+ * Вид и номер Wikidata места - один пункт `kind` (`WorldPlaceKindValue`, решение арбитра
+ * `F08 | F08-12b` R3): правило сервера «номер только у реального места» - форма пункта, «Accept» не
+ * соберёт запись, которую импорт отбивает 400. Замечание по номеру - замечание пункта `kind`.
+ */
+function withPlaceKind(
+  result: Extract<QualityLoopResult<WorldPlaceDraft>, { ok: true }>,
+): Extract<QualityLoopResult<BriefPageDraft>, { ok: true }> {
+  const { kind, wikidataId } = result.draft.blocks;
+  if (kind === undefined && wikidataId === undefined) return result;
+  const value: WorldPlaceKindValue = { kind: kind ?? null, wikidataId: wikidataId ?? null };
+  // Порядок блоков ответа сохраняется: пункт `kind` - на месте вида (или номера, если вида нет).
+  const blocks: Partial<Record<WorldBlock, unknown>> = {};
+  for (const [block, v] of Object.entries(result.draft.blocks)) {
+    if (block === 'kind' || block === 'wikidataId') {
+      if (!('kind' in blocks)) blocks.kind = value;
+    } else blocks[block as WorldBlock] = v;
+  }
+  return {
+    ...result,
+    remarks: result.remarks.map((r) =>
+      blockOfPath(r.where) === 'wikidataId' ? { ...r, where: `kind.${r.where}` } : r,
+    ),
+    draft: { ...result.draft, blocks },
+  };
+}
+
+/** Итог шага места (`F08-12b`): как страница героя, ТЗ - по «Описанию», вид и номер - один пункт. */
+export function placeRecord(
+  step: number,
+  place: WorldPlaceCandidate,
+  result: Extract<QualityLoopResult<WorldPlaceDraft>, { ok: true }>,
+  source: WorldStepSource,
+  regen: boolean,
+): StepRecord {
+  return briefPageRecord(step, 'place', place, withPlaceKind(result), source, regen);
+}
+
+/** Итог страницы героя: пункт на блок (формы имени - из выбора), неверные по импорту - не пишутся. */
+export function pageRecord(
+  step: number,
+  candidate: WorldCandidate,
+  result: Extract<QualityLoopResult<WorldPageDraft>, { ok: true }>,
+  source: WorldStepSource,
+  regen: boolean,
+): StepRecord {
+  return briefPageRecord(step, 'page', candidate, result, source, regen);
 }

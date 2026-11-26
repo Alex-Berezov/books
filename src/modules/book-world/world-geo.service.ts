@@ -40,6 +40,17 @@ export const WORLD_GEO_PARALLEL = 4;
 export const WORLD_GEO_BUDGET_MS = 30_000;
 
 /**
+ * Проход хода «Write World» по записям (`F08-12b`, решение арбитра `F08 | F08-12b` Q3): шаг хода или
+ * «Accept all». Wikidata не ответила на одной записи прохода - до конца прохода она не запрашивается
+ * (иначе «Accept all» по десятку мест ждал бы срок запроса на каждом пункте). Живёт только в памяти
+ * прохода, в базу не пишется; места без проверки проверятся при следующей записи (`geoNeedsCheck`, R1).
+ * Ручная запись вкладки прохода не несёт - проверяет как прежде.
+ */
+export class WorldGeoPass {
+  unavailable = false;
+}
+
+/**
  * Точка места из Wikidata (`F08-12a`, решение арбитра `F08 | F08-12` Q2). Зовётся записью мира
  * **после** её транзакции: сетевой запрос не держит замок мира и отказ Wikidata запись не валит.
  * Итог пишется под замком мира, только если вход проверки за время запроса не сменился (иначе
@@ -64,10 +75,15 @@ export class WorldGeoService {
    * моменту уже закоммичена, и отказ Wikidata или замка не должен превращать её ответ в ошибку —
    * непроверенное место проверится при следующей записи (`geoNeedsCheck`).
    */
-  async refresh(bookVersionId: string, language: string, keys: readonly string[]): Promise<number> {
+  async refresh(
+    bookVersionId: string,
+    language: string,
+    keys: readonly string[],
+    pass: WorldGeoPass | null = null,
+  ): Promise<number> {
     if (keys.length === 0) return 0;
     try {
-      return await this.refreshRows(bookVersionId, language, keys);
+      return await this.refreshRows(bookVersionId, language, keys, pass);
     } catch (error) {
       this.logger.warn(
         `geo refresh ${bookVersionId}: ${error instanceof Error ? error.message : 'error'}`,
@@ -80,6 +96,7 @@ export class WorldGeoService {
     bookVersionId: string,
     language: string,
     keys: readonly string[],
+    pass: WorldGeoPass | null,
   ): Promise<number> {
     // Без отбора по типу: строка, переставшая быть местом, тоже снимает свою проверку.
     const rows = await this.prisma.bookWorldEntity.findMany({
@@ -100,7 +117,8 @@ export class WorldGeoService {
     }
     // Порциями по `WORLD_GEO_PARALLEL` в пределах `WORLD_GEO_BUDGET_MS`: запрос записи не ждёт
     // сотню запросов подряд. Wikidata не ответила в порции — новых запросов в этой записи нет.
-    const checks = jobs.filter((j) => j.input !== null);
+    // Проход хода уже видел отказ Wikidata (Q3): запросов в нём больше нет.
+    const checks = pass?.unavailable ? [] : jobs.filter((j) => j.input !== null);
     const deadline = this.now() + WORLD_GEO_BUDGET_MS;
     for (let at = 0; at < checks.length && this.now() < deadline; at += WORLD_GEO_PARALLEL) {
       const batch = checks.slice(at, at + WORLD_GEO_PARALLEL);
@@ -108,7 +126,10 @@ export class WorldGeoService {
         batch.map((job) => this.checkOne(bookVersionId, language, job.key, job.input)),
       );
       written += results.filter((r) => r.written).length;
-      if (results.some((r) => r.unavailable)) break;
+      if (results.some((r) => r.unavailable)) {
+        if (pass) pass.unavailable = true;
+        break;
+      }
     }
     return written;
   }

@@ -13,6 +13,9 @@ describe('world image public (F08-11a, решения F08 | F08-11 Р3, F08 | F0
       [{ type: 'character', role: null }, false],
       [{ type: 'pair', role: null }, false],
       [{ type: 'place', role: 'main' }, false],
+      // F08-12b (решение `F08 | F08-12b` R1): у места в 12b только ТЗ - картинка на общем ключе
+      // BookWorldImage(bookId,key) подменила бы портрет героя другой версии.
+      [{ type: 'place', role: null }, false],
     ])('%j -> %s', (entity, allowed) => {
       expect(worldImageAllowed(entity)).toBe(allowed);
     });

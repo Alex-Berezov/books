@@ -61,13 +61,13 @@ export interface StoredWorldBlocks {
   description: string | null;
   wikidataId: string | null;
   /**
-   * ТЗ на иллюстрацию героя `main`/`secondary` для редакции (решения `F08 | F08-11d` Q3–Q5): по-английски,
+   * ТЗ на иллюстрацию героя `main`/`secondary` и места (`F08-12b` Q2) для редакции (решения `F08 | F08-11d` Q3–Q5): по-английски,
    * с названием книги и автором. Только редактору — читателю и в публичный DTO не идёт; вне сравнения
    * «текст изменился» (`NON_CONTENT_BLOCK_KEYS`, решение `F08 | F08-11d-2` R9).
    */
   imageBrief: string | null;
   /**
-   * Отпечаток «Внешности», по которой написано ТЗ (`appearancePrint`, решение `F08 | F08-11d-2`):
+   * Отпечаток основы ТЗ — «Внешности» героя, «Описания» места (`briefBasisOf`, решение `F08 | F08-11d-2`):
    * служебный, из тела не берётся — его считает сервер; не совпал с текущей — ТЗ устарело.
    */
   imageBriefFor: string | null;
@@ -143,7 +143,14 @@ export const WORLD_BLOCKS_OF_TYPE: Readonly<Record<BookWorldImportType, Readonly
   character: new Set([...WORLD_CHARACTER_BLOCK_KEYS, ...WORLD_SHARED_BLOCK_KEYS]),
   pair: new Set([...WORLD_PAIR_BLOCK_KEYS, ...WORLD_SHARED_BLOCK_KEYS]),
   // У места есть сцены (`product.md` §7: «что здесь происходит — сцены с главами»).
-  place: new Set([...WORLD_PLACE_BLOCK_KEYS, 'scenes', ...WORLD_SHARED_BLOCK_KEYS]),
+  // У места есть ТЗ на иллюстрацию 16:9 по «Описанию» (решение `F08 | F08-12b` Q2).
+  place: new Set([
+    ...WORLD_PLACE_BLOCK_KEYS,
+    'scenes',
+    'imageBrief',
+    'imageBriefFor',
+    ...WORLD_SHARED_BLOCK_KEYS,
+  ]),
 };
 /**
  * Поля сущности, которые сливает и пишет импорт (`mergeEntity`, `toEntityWrite`). Ключ, тип и отметки
@@ -178,12 +185,29 @@ export function appearancePrint(appearance: string | null | undefined): string |
   return createHash('sha256').update(stableJson(appearance.trim())).digest('hex').slice(0, 16);
 }
 
-/** ТЗ устарело: написано не по текущей «Внешности» или без отпечатка (решение `F08 | F08-11d-2`). */
+/**
+ * Блок основы ТЗ на иллюстрацию: у героя — «Внешность», у места — «Описание» (решение `F08 | F08-12b` Q2:
+ * «ТЗ на место — вид по описанию в тексте»). Одно правило на ход, импорт и проверку устаревания.
+ */
+export const briefBasisBlock = (type: string): 'appearance' | 'description' =>
+  type === 'place' ? 'description' : 'appearance';
+
+/** Текст основы ТЗ сущности по её типу (`briefBasisBlock`). */
+export const briefBasisOf = (
+  type: string,
+  e: Partial<Pick<StoredWorldBlocks, 'appearance' | 'description'>>,
+): string | null => e[briefBasisBlock(type)] ?? null;
+
+/**
+ * ТЗ устарело: написано не по текущей основе (`briefBasisOf`) или без отпечатка (решения
+ * `F08 | F08-11d-2`, `F08 | F08-12b` Q2).
+ */
 export function imageBriefStale(
-  e: Pick<StoredWorldBlocks, 'appearance' | 'imageBrief' | 'imageBriefFor'>,
+  type: string,
+  e: Pick<StoredWorldBlocks, 'appearance' | 'description' | 'imageBrief' | 'imageBriefFor'>,
 ): boolean {
   if (!e.imageBrief) return false;
-  return e.imageBriefFor === null || e.imageBriefFor !== appearancePrint(e.appearance);
+  return e.imageBriefFor === null || e.imageBriefFor !== appearancePrint(briefBasisOf(type, e));
 }
 
 /**
@@ -484,7 +508,8 @@ export function mergeEntity(
   const briefSame = stableJson(out.imageBrief) === stableJson(base.imageBrief);
   if (input.imageBrief !== undefined && !(briefSame && input.imageBriefFor === undefined)) {
     out.imageBriefFor = out.imageBrief
-      ? (input.imageBriefFor ?? appearancePrint(out.appearance as string | null))
+      ? (input.imageBriefFor ??
+        appearancePrint(briefBasisOf(input.type, out as unknown as StoredWorldBlocks)))
       : null;
   }
   return out as unknown as StoredWorldEntity;
@@ -716,7 +741,7 @@ export function entityEditorOf(row: WorldEditorRow, recountPending: boolean): Bo
     mentionsAt: row.mentionsAt,
     recountPending,
     imageBrief: blocks.imageBrief,
-    imageBriefStale: imageBriefStale(blocks),
+    imageBriefStale: imageBriefStale(row.type, blocks),
     geo: geoCheckOf(row),
   };
 }

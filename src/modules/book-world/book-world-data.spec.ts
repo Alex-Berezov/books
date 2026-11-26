@@ -571,10 +571,10 @@ describe('отпечаток «Внешности» у ТЗ (F08-11d-2)', () => 
       imageBrief: BRIEF,
       imageBriefFor: appearancePrint('Stout.'),
     });
-    expect(imageBriefStale(before)).toBe(false);
+    expect(imageBriefStale('character', before)).toBe(false);
     const after = mergeEntity(before, { key: 'oblomov', type: 'character', appearance: 'Thin.' });
     expect(after.imageBriefFor).toBe(appearancePrint('Stout.'));
-    expect(imageBriefStale(after)).toBe(true);
+    expect(imageBriefStale('character', after)).toBe(true);
   });
 
   it('повторный импорт того же ТЗ с новой «Внешностью»: отпечаток прежний — ТЗ остаётся устаревшим', () => {
@@ -590,14 +590,36 @@ describe('отпечаток «Внешности» у ТЗ (F08-11d-2)', () => 
       imageBrief: BRIEF,
     });
     expect(again.imageBriefFor).toBe(appearancePrint('Stout.'));
-    expect(imageBriefStale(again)).toBe(true);
+    expect(imageBriefStale('character', again)).toBe(true);
+  });
+
+  // F08-12b, решение `F08 | F08-12b` Q2: основа ТЗ места — «Описание», а не «Внешность».
+  it('место: отпечаток ТЗ — по «Описанию»; смена «Описания» делает ТЗ устаревшим, «Внешность» не в счёт', () => {
+    const place = mergeEntity(null, {
+      key: 'garret',
+      type: 'place',
+      name: 'The garret',
+      description: 'A tiny cupboard of a room under the roof.',
+      imageBrief: BRIEF,
+    });
+    expect(place.imageBriefFor).toBe(appearancePrint('A tiny cupboard of a room under the roof.'));
+    expect(imageBriefStale('place', place)).toBe(false);
+    const moved = mergeEntity(place, { key: 'garret', type: 'place', description: 'A wide hall.' });
+    expect(imageBriefStale('place', moved)).toBe(true);
+    // Герой с той же «Внешностью» считается по ней: тип решает основу.
+    expect(imageBriefStale('character', place)).toBe(true);
   });
 
   it('устаревание: нет ТЗ — нет; ТЗ без отпечатка — да; «Внешность» стёрта — да', () => {
-    expect(imageBriefStale(stored())).toBe(false);
-    expect(imageBriefStale(stored({ appearance: 'Stout.', imageBrief: BRIEF }))).toBe(true);
+    expect(imageBriefStale('character', stored())).toBe(false);
+    expect(imageBriefStale('character', stored({ appearance: 'Stout.', imageBrief: BRIEF }))).toBe(
+      true,
+    );
     expect(
-      imageBriefStale(stored({ imageBrief: BRIEF, imageBriefFor: appearancePrint('Stout.') })),
+      imageBriefStale(
+        'character',
+        stored({ imageBrief: BRIEF, imageBriefFor: appearancePrint('Stout.') }),
+      ),
     ).toBe(true);
   });
 });

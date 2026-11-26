@@ -1,6 +1,7 @@
 import { BadRequestException, ConflictException, Injectable } from '@nestjs/common';
 import { ContentDraft, Language, Prisma } from '@prisma/client';
 import { PrismaService } from '../../../prisma/prisma.service';
+import { isRecord } from '../../../shared/prisma/json-record.util';
 import {
   BOOK_WORLD_PUBLIC_SELECT,
   readStoredEntity,
@@ -12,6 +13,7 @@ import type { UpdateBookWorldEntityDto } from '../../book-world/dto/update-book-
 import { httpCode, llmTaskConflict } from '../../llm-worker/llm-worker.errors';
 import { sourceKey } from '../analysis-write/analysis-write.data';
 import { DRAFT_TX_OPTIONS } from '../content-draft/content-draft.constants';
+import { WorldGeoPass } from '../../book-world/world-geo.service';
 import { RunGone } from '../draft-quality/run-steps';
 import {
   WORLD_BLOCK_CHANGED,
@@ -166,6 +168,8 @@ export class WorldWriteFields {
   ): Promise<SettleOutcome> {
     const data = await this.read(row, gate);
     if (!data) return 'gone';
+    // Один проход по записям шага (`F08 | F08-12b` Q3): отказ Wikidata - без запросов до конца шага.
+    const geoPass = new WorldGeoPass();
     const waiting = data.items
       .map((item, index) => ({ item, index }))
       .filter(
@@ -182,6 +186,7 @@ export class WorldWriteFields {
         entityKindOf(data, key),
         own,
         only !== null,
+        geoPass,
       );
       if (settled === 'gone') return 'gone';
       if (settled === 'refused') outcome = 'refused';
@@ -196,6 +201,7 @@ export class WorldWriteFields {
     kind: WorldEntityKind,
     own: ReadonlyArray<{ item: WorldItem; index: number }>,
     regen: boolean,
+    geoPass: WorldGeoPass,
   ): Promise<SettleOutcome> {
     for (let attempt = 1; ; attempt++) {
       const state = await this.entityState(row.bookVersionId, key);
@@ -217,11 +223,20 @@ export class WorldWriteFields {
         return (await this.mutate(row, gate, apply)) ? 'settled' : 'gone';
       }
       try {
-        await this.write(row.bookVersionId, key, kind, row.language, state, writes, async (tx) => {
-          const current = await lockedData(tx, row, gate);
-          if (!current) throw new RunGone();
-          await saveData(tx, row, apply(current));
-        });
+        await this.write(
+          row.bookVersionId,
+          key,
+          kind,
+          row.language,
+          state,
+          writes,
+          async (tx) => {
+            const current = await lockedData(tx, row, gate);
+            if (!current) throw new RunGone();
+            await saveData(tx, row, apply(current));
+          },
+          geoPass,
+        );
         return 'settled';
       } catch (error) {
         if (error instanceof RunGone) return 'gone';
@@ -247,9 +262,10 @@ export class WorldWriteFields {
 
   /**
    * Запись пунктов одной сущности импортом мира; тип - по кандидатам хода (`entityKindOf`, `F08-8e`):
-   * пара или герой. Новый герой - с именем и ролью кандидата, взятой из анализа на шаге выбора
-   * (`F08-8b`); новая пара - с именем, без роли (условие заведения проверит импорт, `checkWorldPair`);
-   * без имени или герой не кандидат хода - отказ. `within` - итог хода в той же транзакции.
+   * пара, место (`F08-12b`) или герой. Новый герой - с именем и ролью кандидата, взятой из анализа на
+   * шаге выбора (`F08-8b`); новая пара и новое место - с именем, без роли (условие заведения пары
+   * проверит импорт, `checkWorldPair`); без имени или герой не кандидат хода - отказ. `within` - итог
+   * хода в той же транзакции; `geoPass` - проход хода для проверки точки места (Q3).
    */
   private async write(
     bookVersionId: string,
@@ -259,6 +275,7 @@ export class WorldWriteFields {
     state: EntityState | null,
     items: readonly WorldItem[],
     within: (tx: Prisma.TransactionClient) => Promise<void>,
+    geoPass: WorldGeoPass,
   ): Promise<void> {
     // Ключ успели занять сущностью другого типа (место заводится импортом с `F08-12a`, во время хода):
     // ход не пишет поверх неё — иначе место молча стало бы героем. Отказ — как у остальных отказов
@@ -282,6 +299,12 @@ export class WorldWriteFields {
     }
     let sources = state?.entity.sources ?? null;
     for (const item of items) {
+      // Пункт `kind` места несёт вид и номер Wikidata вместе (R3): в тело - двумя полями.
+      if (kind.type === 'place' && item.block === 'kind' && isRecord(item.value)) {
+        body.kind = item.value.kind ?? null;
+        body.wikidataId = item.value.wikidataId ?? null;
+        continue;
+      }
       body[item.block] = item.value;
       // Отпечаток «Внешности» едет вместе с ТЗ (решение `F08 | F08-11d-2`): из тела запроса его не взять.
       if (item.block === 'imageBrief' && item.basis) body.imageBriefFor = item.basis;
@@ -305,6 +328,7 @@ export class WorldWriteFields {
       false,
       state ? { expectedUpdatedAt: state.updatedAt.toISOString() } : { expectedAbsent: 'true' },
       within,
+      geoPass,
     );
   }
 
@@ -315,7 +339,12 @@ export class WorldWriteFields {
    * предложение и не перегенерируется, - иначе запись откатывается. Блок уже равен предложению
    * (обрыв между записью и ответом) - только отметка. Отказ импорта - `WORLD_WRITE_REFUSED` с ошибками.
    */
-  async accept(row: ContentDraft, index: number, expectedPrint?: string): Promise<void> {
+  async accept(
+    row: ContentDraft,
+    index: number,
+    expectedPrint?: string,
+    geoPass: WorldGeoPass = new WorldGeoPass(),
+  ): Promise<void> {
     const data = await this.read(row, worldReadyGate);
     if (!data) throw notReady();
     const item = data.items[index];
@@ -357,6 +386,7 @@ export class WorldWriteFields {
           state,
           [item],
           markAccepted,
+          geoPass,
         );
         return;
       } catch (error) {

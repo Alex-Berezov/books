@@ -1,0 +1,50 @@
+{
+  "language": "es",
+  "entities": [
+    {
+      "key": "raskolnikovs-garret",
+      "type": "place",
+      "name": "El cuartucho de Raskólnikov",
+      "short": "Un cuarto diminuto bajo el mismo tejado de una alta casa de cinco pisos en el callejón S., en San Petersburgo, que Raskólnikov alquila a su patrona y que no paga. Más parecido a un armario que a una vivienda, es el lugar donde pasa días enteros tumbado a solas con su idea y donde se prepara para el crimen.",
+      "kind": "fictional",
+      "location": "San Petersburgo, callejón S.: bajo el tejado de una alta casa de cinco pisos, un piso por encima de la vivienda de la patrona; setecientos treinta pasos separan el portón de la casa de la de la usurera.",
+      "significance": "El cuartucho puede leerse como la forma del aislamiento de Raskólnikov. Se ha encerrado en él lejos de todos, y la idea crece allí sin estorbo: no entra nadie salvo Nastasia, la criada de la patrona. Estrecho, bajo y polvoriento, el cuarto coincide con el estado de su inquilino: en el capítulo 3, tras la carta de la madre, se ahoga en ese cuartucho amarillo que parece un armario y sale a la calle.\n\nEl cuartucho ata además el plan a lo cotidiano: para llegar a la escalera tiene que pasar ante la cocina abierta de la patrona, se esconde de ella por la deuda y es precisamente de esa cocina de donde piensa sacar el hacha. El miedo a cruzarse con la patrona, junto a la magnitud de lo que planea, es el primer contraste de la novela.",
+      "description": "Dostoievski describe el cuarto dos veces. En el capítulo 1 es un cuartucho bajo el mismo tejado, más parecido a un armario que a una vivienda; la patrona que le alquila el cuarto con comida y servicio vive un piso más abajo, y la puerta de su cocina da siempre abierta a la escalera. En el capítulo 3 el narrador lo muestra por dentro: una celda diminuta de unos seis pasos de largo, con un papel amarillento y polvoriento despegado de las paredes, tan baja que un hombre alto se siente a disgusto y teme darse con la cabeza en el techo. Tres sillas viejas y cojas, una mesa pintada en un rincón con libros y cuadernos bajo una gruesa capa de polvo y un sofá grande y tosco, tapizado de una cretona hecha jirones, que ocupa casi toda una pared y le sirve de cama: duerme en él sin desvestirse, tapado con su viejo abrigo de estudiante.",
+      "scenes": [
+        {
+          "chapter": 1,
+          "title": "Ante la cocina de la patrona",
+          "text": "Raskólnikov sale del cuartucho y baja a hurtadillas la escalera ante la cocina abierta de la patrona para no encontrarse con ella: le debe dinero. Se avergüenza de ese miedo, porque va a ensayar algo mucho más terrible."
+        },
+        {
+          "chapter": 3,
+          "title": "La mañana en el cuartucho",
+          "text": "Nastasia le trae té, le cuenta que la patrona quiere quejarse a la policía y le entrega la carta de su madre. La lee en el cuartucho, y después el cuarto le parece tan sofocante que sale a vagar por las calles."
+        },
+        {
+          "chapter": 6,
+          "title": "Los preparativos",
+          "text": "En el cuartucho cose por dentro del abrigo un lazo para el hacha y toma la falsa prenda que tenía preparada. Piensa sacar el hacha de la cocina de la patrona, pero allí está Nastasia, y el plan casi se viene abajo por una nimiedad."
+        }
+      ],
+      "quotes": [
+        {
+          "text": "Su cuartucho se hallaba bajo el mismo tejado de una alta casa de cinco pisos y más parecía un armario que una vivienda.",
+          "chapter": 1,
+          "interpretation": "La primera palabra del narrador sobre dónde vive el héroe. Un cuarto que parece «un armario» es la medida de su pobreza y de su encierro: la idea que crece en él no tiene adónde ir."
+        }
+      ],
+      "faq": [
+        {
+          "question": "¿Dónde vive Raskólnikov?",
+          "answer": "En un cuartucho bajo el tejado de una alta casa de cinco pisos en el callejón S., en San Petersburgo (capítulo 1). Se lo alquila a una patrona que vive un piso más abajo y a la que debe el alquiler; en la escalera se esconde de ella."
+        },
+        {
+          "question": "¿Cómo es el cuartucho de Raskólnikov?",
+          "answer": "Lo describe el capítulo 3: unos seis pasos de largo, tan bajo que un hombre alto se siente incómodo, con el papel amarillo y polvoriento despegado, tres sillas viejas, una mesa polvorienta y un gran sofá raído que le sirve de cama."
+        }
+      ],
+      "imageBrief": "Wide 16:9 illustration, at least 1200 px wide, of Raskolnikov's garret from the novel Crime and Punishment by Fyodor Dostoevsky. A tiny room under the very roof, more like a cupboard than a room: about six paces long and so low that a tall man feels he may knock his head against the ceiling; dusty yellow wallpaper peeling off the walls; three rickety old chairs; a painted table in the corner with books and papers under thick dust; a large clumsy sofa in ragged chintz taking up almost a whole wall, an old student's overcoat thrown over it. Mid-nineteenth-century Petersburg, an exceptionally hot early July, poverty and neglect. No people with recognisable faces, no faces of real actors, no stills of film or stage adaptations, no style of a recognisable artist; no text, lettering or watermarks."
+    }
+  ]
+}

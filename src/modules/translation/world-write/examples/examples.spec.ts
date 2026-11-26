@@ -1,7 +1,17 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { plainToInstance } from 'class-transformer';
+import { validateSync } from 'class-validator';
+import { UpdateBookWorldDto } from '../../../book-world/dto/update-book-world.dto';
+import { checkWorldTypeFields } from '../../../book-world/world-refs';
 import { WORLD_WRITE_LANGUAGES } from '../world-write.constants';
-import { EXAMPLE_WORLD_PAIRS, EXAMPLE_WORLDS, hasWorldPairExample } from './index';
+import {
+  EXAMPLE_WORLD_PAIRS,
+  EXAMPLE_WORLD_PLACES,
+  EXAMPLE_WORLDS,
+  hasWorldPairExample,
+  hasWorldPlaceExample,
+} from './index';
 
 const fixture = (name: string): unknown =>
   JSON.parse(
@@ -23,6 +33,41 @@ describe('world examples', () => {
 
   it('pairs are written on every language of the run, not on a language without a pair example (F08-8e-1 Q6, F08-9)', () => {
     expect(['en', 'ru', 'es', 'fr', 'pt', 'de'].filter(hasWorldPairExample)).toEqual([
+      'en',
+      'ru',
+      'es',
+      'fr',
+      'pt',
+    ]);
+  });
+
+  it.each(['en', 'ru', 'es', 'fr', 'pt'] as const)(
+    'the %s place example equals its JSON fixture (F08-12b)',
+    (language) => {
+      expect(EXAMPLE_WORLD_PLACES[language]).toEqual(
+        fixture(`example-world-place.${language}.json`),
+      );
+    },
+  );
+
+  // /qa круг 1 F08-12b (project-manager, tech-lead): эталон места проходит правило импорта мира.
+  it.each(['en', 'ru', 'es', 'fr', 'pt'] as const)(
+    'the %s place example passes the world import rule: DTO and the fields of a place',
+    (language) => {
+      const example = EXAMPLE_WORLD_PLACES[language] as {
+        entities: Array<Record<string, unknown>>;
+      };
+      const dto = plainToInstance(UpdateBookWorldDto, example);
+      expect(validateSync(dto, { whitelist: true, forbidNonWhitelisted: true })).toEqual([]);
+      const none = { aliasExclusions: null, aliasChapterExclusions: null };
+      for (const entity of example.entities) {
+        expect(checkWorldTypeFields(entity as never, none)).toEqual([]);
+      }
+    },
+  );
+
+  it('places are written on every language of the run with a place example (F08-12b)', () => {
+    expect(['en', 'ru', 'es', 'fr', 'pt', 'de'].filter(hasWorldPlaceExample)).toEqual([
       'en',
       'ru',
       'es',

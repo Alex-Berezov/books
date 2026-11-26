@@ -6,6 +6,7 @@ import { withChapterText } from '../content-draft/content-draft.text';
 import { stageEstimatorFor } from '../llm-model-checks';
 import { SectionUpperSource } from '../run/section-upper-source';
 import { hasWorldPairExample } from './examples';
+import { placeStepsUpperBound } from './world-write.places';
 import {
   WORLD_EXTERNAL_WRITE_STAGE,
   WORLD_PAGE_WRITE_STAGE,
@@ -60,25 +61,31 @@ export async function worldUpperUsd(
   const analysis = upperWorldAnalysis();
   const heroes = analysis.characters?.length ?? 0;
   return new Map(
-    languages.map((language) => [
-      language,
-      worldPipelineUsd(
-        calls,
-        {
-          language,
-          dossier: null,
-          glossary: null,
-          bookTitle: source.title,
-          author: source.author,
-          originalLanguage,
-          chapters,
-          analysis,
-          entities: new Map(),
-          names: { titles: [source.title], authors: [source.author] },
-        },
-        source.extra,
-        pairStepsUpperBound(heroes, hasWorldPairExample(language)),
-      ),
-    ]),
+    languages.map((language) => {
+      const context = {
+        language,
+        dossier: null,
+        glossary: null,
+        bookTitle: source.title,
+        author: source.author,
+        originalLanguage,
+        chapters,
+        analysis,
+        entities: new Map(),
+        names: { titles: [source.title], authors: [source.author] },
+      };
+      return [
+        language,
+        worldPipelineUsd(
+          calls,
+          context,
+          source.extra,
+          pairStepsUpperBound(heroes, hasWorldPairExample(language)),
+          context,
+          // Места (`F08-12b`): досье до старта нет - потолок `WORLD_PLACES_MAX` на языке с эталоном места.
+          placeStepsUpperBound(null, language),
+        ),
+      ] as const;
+    }),
   );
 }

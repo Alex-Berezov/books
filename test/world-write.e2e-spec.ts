@@ -122,6 +122,8 @@ describe('World run «Write World» (e2e)', () => {
       // Не кандидат (не `main`) - отбрасывается.
       { key: 'clerk', name: 'The clerk', aliases: ['clerk'] },
     ],
+    // Форма ответа выбора с F08-12b несёт и места (`places`); в досье версии мест нет - список пуст.
+    places: [],
   };
   const quote = (text: string, chapter: number, speakerKey = '') => ({
     text,

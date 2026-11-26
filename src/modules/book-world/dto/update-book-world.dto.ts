@@ -263,14 +263,15 @@ export class BookWorldEntityInputDto {
     nullable: true,
     maxLength: BOOK_WORLD_LIMITS.imageBrief,
     description:
-      'Characters only: illustration brief for the editors (English, with the book title and author); ' +
-      'editor-only, never in the public entity (F08-11d-2)',
+      'Characters and places (F08-12b): illustration brief for the editors (English, with the book title ' +
+      'and author; a character by Appearance, a place 16:9 by Description); editor-only, never in the ' +
+      'public entity (F08-11d-2)',
   })
   @OptionalText(BOOK_WORLD_LIMITS.imageBrief)
   imageBrief?: string | null;
 
   /**
-   * Только для записи ходом «Write World»: отпечаток «Внешности», по которой модель написала ТЗ
+   * Только для записи ходом «Write World»: отпечаток основы ТЗ («Внешности» героя, «Описания» места), по которой модель написала ТЗ
    * (решение `F08 | F08-11d-2`). Без декораторов — в теле запроса это лишнее поле, 400 whitelist.
    */
   declare imageBriefFor?: string | null;

@@ -5,7 +5,7 @@ import { stageEstimatorFor } from '../llm-model-checks';
 import { hasWorldPairExample } from './examples';
 import { upperWorldAnalysis, worldUpperUsd } from './world-estimate';
 import { worldCharacters, worldPipelineUsd } from './world-write.steps';
-import { WORLD_PAIRS_MAX } from './world-write.constants';
+import { WORLD_PAIRS_MAX, WORLD_PLACES_MAX } from './world-write.constants';
 
 jest.mock('../llm-model-checks', () => ({ stageEstimatorFor: jest.fn() }));
 jest.mock('./examples', () => ({
@@ -78,6 +78,9 @@ describe('worldUpperUsd', () => {
       },
       4000,
       WORLD_PAIRS_MAX,
+      expect.objectContaining({ language: 'fr' }),
+      // F08-12b: места до старта - потолок (досье ещё нет).
+      WORLD_PLACES_MAX,
     );
   });
 

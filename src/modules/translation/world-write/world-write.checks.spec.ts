@@ -10,14 +10,20 @@ import {
   mentionRemarks,
   pairCoreRemarks,
   pairRemarks,
+  placeCoreRemarks,
+  placeDossierForms,
+  placeRemarks,
   readExternalAnswer,
   readPageAnswer,
   readPairAnswer,
+  readPlaceAnswer,
   readSelectAnswer,
   verifyWorldExternal,
   WorldPageCheck,
   WorldPairCheck,
+  WorldPlaceCheck,
 } from './world-write.checks';
+import { appearancePrint } from '../../book-world/book-world-data';
 import { WORLD_REVIEW_CODES } from './world-write.prompts';
 
 /**
@@ -561,5 +567,187 @@ describe('pair step answer (F08-8e)', () => {
       pairRemarks(draft, { ...pairCheck, core }, 'Anna and Boris').map((r) => r.code);
     expect(codes(true)).toContain('CORE_MISSING');
     expect(codes(false)).not.toContain('CORE_MISSING');
+  });
+});
+
+// F08-12b: шаг места - вид, номер Wikidata, ТЗ по «Описанию», говорящий - только герой, ядро места.
+describe('place step answer (F08-12b)', () => {
+  const placeCheck: WorldPlaceCheck = {
+    key: 'square',
+    language: 'en',
+    chapters,
+    mentionChapters: new Set([2]),
+    heroKeys: new Set(['anna', 'boris']),
+    glossary: [],
+    storedDescription: null,
+    briefRegen: false,
+    core: true,
+  };
+  const full = {
+    short: 'An old square with a bell where the town gathers.',
+    kind: 'real',
+    significance: 'The square is where the town hears its news.',
+    description: 'A wide square with an old bell tower.',
+    scenes: [
+      { chapter: 2, title: 'The bell', text: 'Boris rings the bell.' },
+      { chapter: 2, title: 'The crowd', text: 'People gather to listen.' },
+    ],
+  };
+
+  it('keeps a real place with a Wikidata item; a fictional place loses its item; a bad kind is dropped', () => {
+    expect(readPlaceAnswer({ ...full, wikidataId: 'Q42' }, placeCheck).blocks).toMatchObject({
+      kind: 'real',
+      wikidataId: 'Q42',
+    });
+    const fictional = readPlaceAnswer(
+      { ...full, kind: 'fictional', wikidataId: 'Q42' },
+      placeCheck,
+    );
+    expect(fictional.blocks.wikidataId).toBeUndefined();
+    expect(fictional.fixes.map((f) => [f.code, f.path])).toEqual([
+      ['IMPORT_INVALID', 'wikidataId'],
+    ]);
+    const odd = readPlaceAnswer({ ...full, kind: 'imaginary' }, placeCheck);
+    expect(odd.blocks.kind).toBeUndefined();
+    expect(odd.fixes.map((f) => f.path)).toEqual(['kind']);
+    expect(
+      readPlaceAnswer({ ...full, wikidataId: 'not-q' }, placeCheck).blocks.wikidataId,
+    ).toBeUndefined();
+  });
+
+  it('the brief is written by the description (Q2): no description - BRIEF_WITHOUT_DESCRIPTION', () => {
+    const brief = 'A wide 16:9 view of an old square.';
+    const ok = readPlaceAnswer({ ...full, imageBrief: brief }, placeCheck);
+    expect(ok.blocks.imageBrief).toBe(brief);
+    expect(ok.briefFor).toBe(appearancePrint(full.description));
+    const none = readPlaceAnswer({ ...full, description: '', imageBrief: brief }, placeCheck);
+    expect(none.blocks.imageBrief).toBeUndefined();
+    expect(none.fixes.map((f) => f.code)).toEqual(['BRIEF_WITHOUT_DESCRIPTION']);
+    // Перегенерация одного ТЗ - по сохранённому «Описанию», «Описание» ответа не в счёт.
+    const regen = readPlaceAnswer(
+      { imageBrief: brief, description: 'Another look.' },
+      { ...placeCheck, briefRegen: true, storedDescription: 'Stored look.' },
+    );
+    expect(regen.briefFor).toBe(appearancePrint('Stored look.'));
+  });
+
+  it('a quotation speaker must be a character; a chapter not of the version drops the scene', () => {
+    const draft = readPlaceAnswer(
+      {
+        ...full,
+        scenes: [...full.scenes, { chapter: 9, title: 'x', text: 'y' }],
+        quotes: [
+          { text: 'rang the old bell', chapter: 2, speakerKey: 'square', interpretation: 'i' },
+          { text: 'rang the old bell', chapter: 2, speakerKey: 'boris', interpretation: 'i' },
+        ],
+      },
+      placeCheck,
+    );
+    expect(draft.blocks.scenes).toHaveLength(2);
+    expect(draft.blocks.quotes?.map((q) => q.speakerKey)).toEqual([undefined, 'boris']);
+    expect(draft.fixes.map((f) => [f.code, f.path])).toEqual([
+      ['CHAPTER_UNKNOWN', 'scenes.2'],
+      ['KEY_UNKNOWN', 'quotes.0.speakerKey'],
+    ]);
+  });
+
+  it('placeRemarks: core of a place and scenes only where the place is; a full answer is clean', () => {
+    expect(placeCoreRemarks(readPlaceAnswer(full, placeCheck).blocks)).toEqual([]);
+    expect(
+      placeCoreRemarks(
+        readPlaceAnswer({ ...full, kind: '', scenes: [full.scenes[0]] }, placeCheck).blocks,
+      ).map((r) => r.where),
+    ).toEqual(['kind', 'scenes']);
+    const outside = readPlaceAnswer(
+      { ...full, scenes: [...full.scenes, { chapter: 1, title: 'River', text: 'Anna walks.' }] },
+      placeCheck,
+    );
+    const remarks = placeRemarks(outside, placeCheck, 'Square');
+    expect(remarks.filter((r) => r.code === 'SCENE_OUTSIDE_MENTIONS').map((r) => r.where)).toEqual([
+      'scenes.2',
+    ]);
+    expect(remarks.find((r) => r.code === 'SCENE_OUTSIDE_MENTIONS')?.note).toMatch(
+      /The place is not found/,
+    );
+    // Перегенерация одного блока: ядро не проверяется.
+    expect(
+      placeRemarks(
+        readPlaceAnswer({ faq: [] }, placeCheck),
+        { ...placeCheck, core: false },
+        'Square',
+      ).filter((r) => r.code === 'CORE_MISSING'),
+    ).toEqual([]);
+  });
+
+  it('importRemarks of a place: the place DTO, not the hero one', () => {
+    expect(importRemarks('square', 'Square', { kind: 'real', significance: 'x' }, 'place')).toEqual(
+      [],
+    );
+    expect(
+      importRemarks('square', 'Square', { kind: 'castle' }, 'place').map((r) => r.where),
+    ).toEqual(['kind']);
+  });
+
+  it('readSelectAnswer reads the name forms of the place candidates by the same rule (Q1)', () => {
+    const folded = foldedVersion(chapters);
+    const out = readSelectAnswer(
+      {
+        characters: [],
+        places: [
+          { key: 'square', name: 'The square', aliases: ['square', 'tower'] },
+          { key: 'castle', name: 'Castle', aliases: ['castle'] },
+        ],
+      },
+      [],
+      folded,
+      [{ key: 'square', name: 'Square' }],
+    );
+    expect(out.places).toEqual([{ key: 'square', name: 'The square', aliases: ['square'] }]);
+    expect(out.fixes.map((f) => [f.code, f.path])).toEqual([
+      ['ALIAS_NOT_IN_TEXT', 'places.0.aliases.1'],
+      ['KEY_UNKNOWN', 'places.1'],
+    ]);
+  });
+
+  it('placeDossierForms: the dossier place name and the glossary target of its key, only if in the text', () => {
+    const folded = foldedVersion(chapters);
+    const dossier = { entities: [{ key: 'square', name: 'square', kind: 'place' }] };
+    const glossary = {
+      entries: [{ key: 'square', source: 'Platz', target: 'bell', kind: 'place' }],
+    };
+    expect(placeDossierForms('square', dossier, glossary, folded).sort()).toEqual([
+      'bell',
+      'square',
+    ]);
+    expect(
+      placeDossierForms(
+        'square',
+        { entities: [{ key: 'square', name: 'Plaza', kind: 'place' }] },
+        null,
+        folded,
+      ),
+    ).toEqual([]);
+  });
+});
+
+// /qa круг 3 F08-12b (code-review): номер Wikidata длиннее предела импорта снимается сам, вид остаётся.
+describe('readPlaceAnswer: a Wikidata ID over the import limit (F08-12b, /qa round 3)', () => {
+  it('Q and 16 digits is removed with a fix; the kind stays; Q and 15 digits is kept', () => {
+    const check = {
+      key: 'square',
+      language: 'en' as const,
+      chapters,
+      mentionChapters: new Set([2]),
+      heroKeys: new Set<string>(),
+      glossary: [],
+      storedDescription: null,
+      briefRegen: false,
+      core: false,
+    };
+    const long = readPlaceAnswer({ kind: 'real', wikidataId: `Q${'1'.repeat(16)}` }, check);
+    expect(long.blocks).toEqual({ kind: 'real' });
+    expect(long.fixes.map((f) => [f.code, f.path])).toEqual([['IMPORT_INVALID', 'wikidataId']]);
+    const max = `Q${'1'.repeat(15)}`;
+    expect(readPlaceAnswer({ kind: 'real', wikidataId: max }, check).blocks.wikidataId).toBe(max);
   });
 });

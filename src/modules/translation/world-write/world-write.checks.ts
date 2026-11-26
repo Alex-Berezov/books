@@ -1,7 +1,13 @@
 import { Language } from '@prisma/client';
 import { plainToInstance } from 'class-transformer';
 import { ValidationError, validateSync } from 'class-validator';
-import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
+import {
+  BOOK_WORLD_LIMITS,
+  WIKIDATA_ID_MAX,
+  WIKIDATA_ID_REGEX,
+  WORLD_PLACE_KINDS,
+  type WorldPlaceKind,
+} from '../../book-world/dto/book-world-blocks.dto';
 import type {
   BookWorldAdaptationDto,
   BookWorldArcDto,
@@ -11,12 +17,18 @@ import type {
   BookWorldRelationDto,
   BookWorldSceneDto,
 } from '../../book-world/dto/book-world-blocks.dto';
-import { appearancePrint } from '../../book-world/book-world-data';
+import { appearancePrint, briefBasisOf } from '../../book-world/book-world-data';
 import { WORLD_IMAGE_ROLES } from '../../book-world/world-image-public';
 import { BookWorldEntityInputDto } from '../../book-world/dto/update-book-world.dto';
-import { computeWorldCore, WORLD_PAIR_CORE, type WorldCorePart } from '../../book-world/world-core';
+import {
+  computeWorldCore,
+  WORLD_PAIR_CORE,
+  WORLD_PLACE_CORE,
+  type WorldCorePart,
+} from '../../book-world/world-core';
 import { countInParagraph, foldMention, mentionForms } from '../../book-world/world-mentions';
 import { quoteStandsIn } from '../../book-world/world-quote-check';
+import { wikidataIdAllowed } from '../../book-world/world-refs';
 import type { BookAnalysisFaqDto } from '../../book-analysis/dto/book-analysis-blocks.dto';
 import { isRecord } from '../../../shared/prisma/json-record.util';
 import { BookAnalysisSourceDto } from '../../book-analysis/dto/book-analysis-blocks.dto';
@@ -78,10 +90,12 @@ function limited<T>(items: T[], max: number, path: string, fixes: WorldFix[]): T
 /** Ответ выбора героев после кода: имя и проверенные формы по ключу кандидата. */
 export interface WorldSelectDraft {
   characters: Array<{ key: string; name: string; aliases: string[] }>;
+  /** Формы названий кандидатов-мест (`F08-12b`, решение `F08 | F08-12b` Q1) - то же правило. */
+  places: Array<{ key: string; name: string; aliases: string[] }>;
   fixes: WorldFix[];
 }
 
-export const EMPTY_SELECT: WorldSelectDraft = { characters: [], fixes: [] };
+export const EMPTY_SELECT: WorldSelectDraft = { characters: [], places: [], fixes: [] };
 
 /**
  * Абзацы текста версии в виде сравнения форм (`foldMention`): форма имени стоит в тексте, если она
@@ -105,18 +119,35 @@ export function readSelectAnswer(
   value: unknown,
   candidates: ReadonlyArray<{ key: string; name: string }>,
   folded: readonly string[],
+  places: ReadonlyArray<{ key: string; name: string }> = [],
 ): WorldSelectDraft {
   const fixes: WorldFix[] = [];
+  const v = rec(value);
+  return {
+    characters: readForms(v.characters, candidates, 'characters', folded, fixes),
+    places: readForms(v.places, places, 'places', folded, fixes),
+    fixes,
+  };
+}
+
+/** Формы одного списка ответа выбора (героев или мест): только ключи кандидатов, формы - по тексту. */
+function readForms(
+  raws: unknown,
+  candidates: ReadonlyArray<{ key: string; name: string }>,
+  path: string,
+  folded: readonly string[],
+  fixes: WorldFix[],
+): WorldSelectDraft['characters'] {
   const known = new Map(candidates.map((c) => [c.key, c]));
-  const characters: WorldSelectDraft['characters'] = [];
-  list(rec(value).characters).forEach((raw, i) => {
+  const out: WorldSelectDraft['characters'] = [];
+  list(raws).forEach((raw, i) => {
     const c = rec(raw);
     const key = trimmed(c.key);
     const candidate = known.get(key);
-    if (!candidate || characters.some((x) => x.key === key)) {
+    if (!candidate || out.some((x) => x.key === key)) {
       fixes.push({
         code: 'KEY_UNKNOWN',
-        path: `characters.${i}`,
+        path: `${path}.${i}`,
         note: `"${key}" is not a candidate`,
       });
       return;
@@ -128,7 +159,7 @@ export function readSelectAnswer(
       if (text.length > BOOK_WORLD_LIMITS.name) {
         fixes.push({
           code: 'IMPORT_INVALID',
-          path: `characters.${i}.aliases.${j}`,
+          path: `${path}.${i}.aliases.${j}`,
           note: `longer than ${BOOK_WORLD_LIMITS.name} characters: removed`,
         });
         return;
@@ -136,20 +167,20 @@ export function readSelectAnswer(
       if (!formInText(text, folded)) {
         fixes.push({
           code: 'ALIAS_NOT_IN_TEXT',
-          path: `characters.${i}.aliases.${j}`,
+          path: `${path}.${i}.aliases.${j}`,
           note: `"${text}" is not in the text of this version as a whole word: removed`,
         });
         return;
       }
       aliases.push(text);
     });
-    characters.push({
+    out.push({
       key,
       name: nameOf(c.name) ?? candidate.name,
-      aliases: limited(aliases, BOOK_WORLD_LIMITS.aliases, `characters.${i}.aliases`, fixes),
+      aliases: limited(aliases, BOOK_WORLD_LIMITS.aliases, `${path}.${i}.aliases`, fixes),
     });
   });
-  return { characters, fixes };
+  return out;
 }
 
 /**
@@ -181,6 +212,31 @@ export function dossierForms(
     ...glossaryNames(glossary)
       // Ключ глоссария - ключ досье; у героя анализа он может быть другим (решение арбитра `F08 | F08-4a`).
       .filter((e) => e.key === candidate.key || (own !== undefined && e.key === trimmed(own.key)))
+      .map((e) => e.target.trim()),
+  ];
+  return [...new Set(raw)].filter(
+    (form) => form !== '' && form.length <= BOOK_WORLD_LIMITS.name && formInText(form, folded),
+  );
+}
+
+/**
+ * Формы названия места из досье и глоссария (`F08-12b`, решение `F08 | F08-12b` Q1): название места
+ * досье с тем же ключом и `target` записей глоссария с этим ключом; каждая - только если стоит
+ * в тексте версии целым словом и в пределе импорта. Падежные формы даёт модель выбора.
+ */
+export function placeDossierForms(
+  key: string,
+  dossier: unknown,
+  glossary: unknown,
+  folded: readonly string[],
+): string[] {
+  const own = list(rec(dossier).entities)
+    .map(rec)
+    .find((e) => trimmed(e.kind) === 'place' && trimmed(e.key) === key);
+  const raw = [
+    ...(own ? [trimmed(own.name)] : []),
+    ...glossaryNames(glossary)
+      .filter((e) => e.key === key)
       .map((e) => e.target.trim()),
   ];
   return [...new Set(raw)].filter(
@@ -273,6 +329,85 @@ function quoteChapterOrDrop(
 }
 
 /**
+ * Сцены ответа шага (страница героя и место, решение арбитра `F08 | F08-12b` R4): сцена с главой
+ * не версии - выброшена (`CHAPTER_UNKNOWN`), хвост сверх предела импорта - отрезан (Q7).
+ */
+function readScenes(
+  raws: unknown,
+  chapters: ChapterIndex,
+  fixes: WorldFix[],
+): BookWorldSceneDto[] | undefined {
+  const scenes = list(raws).flatMap((raw, i) => {
+    const sc = rec(raw);
+    const chapter = chapterOf(sc.chapter);
+    if (!chapterKnown(chapters, chapter)) {
+      fixes.push(chapterFix(`scenes.${i}`, chapter));
+      return [];
+    }
+    return [{ chapter, title: trimmed(sc.title), text: trimmed(sc.text) }];
+  });
+  return scenes.length > 0 ? limited(scenes, BOOK_WORLD_LIMITS.scenes, 'scenes', fixes) : undefined;
+}
+
+/**
+ * Цитаты ответа шага со `speakerKey` (страница героя и место, R4): глава не версии или не дословно -
+ * выброшена (`quoteChapterOrDrop`); говорящий не из `speakerOk` - без `speakerKey` (`KEY_UNKNOWN`
+ * с `speakerNote`); хвост сверх предела импорта - отрезан.
+ */
+function readSpeakerQuotes(
+  raws: unknown,
+  check: { key: string; chapters: ChapterIndex },
+  speakerOk: (key: string) => boolean,
+  speakerNote: string,
+  fixes: WorldFix[],
+  droppedQuotes: DroppedWorldQuote[],
+): BookWorldQuoteDto[] | undefined {
+  const quotes = list(raws).flatMap((raw, i) => {
+    const q = rec(raw);
+    const text = trimmed(q.text);
+    const chapter = quoteChapterOrDrop(
+      text,
+      chapterOf(q.chapter),
+      `quotes.${i}`,
+      check,
+      fixes,
+      droppedQuotes,
+    );
+    if (chapter === null) return [];
+    const speaker = trimmed(q.speakerKey);
+    let speakerKey: string | undefined;
+    if (speaker !== '') {
+      if (speakerOk(speaker)) speakerKey = speaker;
+      else {
+        fixes.push({
+          code: 'KEY_UNKNOWN',
+          path: `quotes.${i}.speakerKey`,
+          note: `"${speaker}" ${speakerNote}: the speaker is left out`,
+        });
+      }
+    }
+    return [
+      {
+        text,
+        chapter,
+        ...(speakerKey ? { speakerKey } : {}),
+        interpretation: trimmed(q.interpretation),
+      },
+    ];
+  });
+  return quotes.length > 0 ? limited(quotes, BOOK_WORLD_LIMITS.quotes, 'quotes', fixes) : undefined;
+}
+
+/** Частые вопросы ответа шага (герой, пара, место, R4): хвост сверх предела импорта - отрезан. */
+function readFaq(raws: unknown, fixes: WorldFix[]): BookAnalysisFaqDto[] | undefined {
+  const faq = list(raws).map((raw) => {
+    const f = rec(raw);
+    return { question: trimmed(f.question), answer: trimmed(f.answer) };
+  });
+  return faq.length > 0 ? limited(faq, BOOK_WORLD_LIMITS.faq, 'faq', fixes) : undefined;
+}
+
+/**
  * Ответ страницы после кода: цитата с главой не версии или не дословная - выброшена с причиной
  * (`droppedQuotes`), затем хвост сверх 12 отрезан (Q7); сцена и этап с главой не версии -
  * выброшены (`CHAPTER_UNKNOWN`); ссылка на неизвестный ключ или на себя - выброшена, говорящий
@@ -295,7 +430,9 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
   // `F08 | F08-11d-2`): решает код, а не ответ модели. Отпечаток — по той «Внешности», по которой написано.
   const imageBrief = textOrNull(v.imageBrief);
   // При перегенерации одного ТЗ облик — сохранённая «Внешность»: «Внешность» ответа отбрасывается.
-  const look = check.briefRegen ? check.storedAppearance : appearance;
+  const look = check.briefRegen
+    ? check.storedAppearance
+    : briefBasisOf('character', { appearance: appearance ?? null });
   let briefFor: string | null | undefined;
   if (imageBrief && !(WORLD_IMAGE_ROLES as readonly string[]).includes(check.role ?? '')) {
     fixes.push({
@@ -343,16 +480,8 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
     };
   }
 
-  const scenes = list(v.scenes).flatMap((raw, i) => {
-    const s = rec(raw);
-    const chapter = chapterOf(s.chapter);
-    if (!known(chapter)) {
-      fixes.push(chapterFix(`scenes.${i}`, chapter));
-      return [];
-    }
-    return [{ chapter, title: trimmed(s.title), text: trimmed(s.text) }];
-  });
-  if (scenes.length > 0) blocks.scenes = limited(scenes, BOOK_WORLD_LIMITS.scenes, 'scenes', fixes);
+  const scenes = readScenes(v.scenes, check.chapters, fixes);
+  if (scenes) blocks.scenes = scenes;
 
   const relations = list(v.relations).flatMap((raw, i) => {
     const r = rec(raw);
@@ -371,46 +500,18 @@ export function readPageAnswer(value: unknown, check: WorldPageCheck): WorldPage
     blocks.relations = limited(relations, BOOK_WORLD_LIMITS.relations, 'relations', fixes);
   }
 
-  const quotes = list(v.quotes).flatMap((raw, i) => {
-    const q = rec(raw);
-    const text = trimmed(q.text);
-    const chapter = quoteChapterOrDrop(
-      text,
-      chapterOf(q.chapter),
-      `quotes.${i}`,
-      check,
-      fixes,
-      droppedQuotes,
-    );
-    if (chapter === null) return [];
-    const speaker = trimmed(q.speakerKey);
-    let speakerKey: string | undefined;
-    if (speaker !== '') {
-      if (check.refKeys.has(speaker) || speaker === check.key) speakerKey = speaker;
-      else {
-        fixes.push({
-          code: 'KEY_UNKNOWN',
-          path: `quotes.${i}.speakerKey`,
-          note: `"${speaker}" is not a known key: the speaker is left out`,
-        });
-      }
-    }
-    return [
-      {
-        text,
-        chapter,
-        ...(speakerKey ? { speakerKey } : {}),
-        interpretation: trimmed(q.interpretation),
-      },
-    ];
-  });
-  if (quotes.length > 0) blocks.quotes = limited(quotes, BOOK_WORLD_LIMITS.quotes, 'quotes', fixes);
+  const quotes = readSpeakerQuotes(
+    v.quotes,
+    check,
+    (speaker) => check.refKeys.has(speaker) || speaker === check.key,
+    'is not a known key',
+    fixes,
+    droppedQuotes,
+  );
+  if (quotes) blocks.quotes = quotes;
 
-  const faq = list(v.faq).map((raw) => {
-    const f = rec(raw);
-    return { question: trimmed(f.question), answer: trimmed(f.answer) };
-  });
-  if (faq.length > 0) blocks.faq = limited(faq, BOOK_WORLD_LIMITS.faq, 'faq', fixes);
+  const faq = readFaq(v.faq, fixes);
+  if (faq) blocks.faq = faq;
 
   return {
     name: nameOf(v.name),
@@ -448,7 +549,7 @@ export function importRemarks(
   key: string,
   name: string,
   blocks: object,
-  type: 'character' | 'pair' = 'character',
+  type: 'character' | 'pair' | 'place' = 'character',
 ): DraftRemark[] {
   const own = new Set(Object.keys(blocks));
   const dto = plainToInstance(BookWorldEntityInputDto, {
@@ -538,12 +639,13 @@ function textRemarks(
 export function mentionRemarks(
   blocks: WorldPageBlocks,
   mentionChapters: ReadonlySet<number>,
+  subject: 'character' | 'place' = 'character',
 ): DraftRemark[] {
   const outside = (path: string, chapter: number) =>
     codeRemark(
       'SCENE_OUTSIDE_MENTIONS',
       path,
-      `The character is not found by the name forms in chapter ${chapter}: take a scene from a chapter where the character is, or leave it out.`,
+      `The ${subject} is not found by the name forms in chapter ${chapter}: take a scene from a chapter where the ${subject} is, or leave it out.`,
     );
   return [
     ...(blocks.scenes ?? []).flatMap((s, i) =>
@@ -679,11 +781,8 @@ export function readPairAnswer(value: unknown, check: WorldPairCheck): WorldPair
   });
   if (quotes.length > 0) blocks.quotes = limited(quotes, BOOK_WORLD_LIMITS.quotes, 'quotes', fixes);
 
-  const faq = list(v.faq).map((raw) => {
-    const f = rec(raw);
-    return { question: trimmed(f.question), answer: trimmed(f.answer) };
-  });
-  if (faq.length > 0) blocks.faq = limited(faq, BOOK_WORLD_LIMITS.faq, 'faq', fixes);
+  const faq = readFaq(v.faq, fixes);
+  if (faq) blocks.faq = faq;
 
   return { name: nameOf(v.name), blocks, fixes, droppedQuotes };
 }
@@ -774,6 +873,202 @@ export function pairRemarks(
     ...(check.core ? pairCoreRemarks(draft.blocks) : []),
     ...pairSideRemarks(draft.blocks, check),
     ...textRemarks(pairFields(draft.blocks), check.language, check.glossary),
+  ];
+}
+
+// ---------------------------------------------------------------- страница места
+
+/** Блоки страницы места (`F08-12b`; `PLACE_SHAPE`, без `aliases`: их пишет выбор). */
+export interface WorldPlaceBlocks {
+  short?: string;
+  kind?: WorldPlaceKind;
+  location?: string;
+  significance?: string;
+  description?: string;
+  wikidataId?: string;
+  scenes?: BookWorldSceneDto[];
+  quotes?: BookWorldQuoteDto[];
+  faq?: BookAnalysisFaqDto[];
+  imageBrief?: string;
+}
+
+export interface WorldPlaceDraft {
+  name: string | null;
+  blocks: WorldPlaceBlocks;
+  fixes: WorldFix[];
+  droppedQuotes: DroppedWorldQuote[];
+  /** Отпечаток «Описания», по которому написано ТЗ (`appearancePrint`); ТЗ нет — поля нет. */
+  briefFor?: string | null;
+}
+
+export const EMPTY_PLACE: WorldPlaceDraft = {
+  name: null,
+  blocks: {},
+  fixes: [],
+  droppedQuotes: [],
+};
+
+/** Что знает код о версии и месте страницы. */
+export interface WorldPlaceCheck {
+  key: string;
+  language: Language;
+  chapters: ChapterIndex;
+  /** Главы, где формы названия нашли место (посчитано на шаге выбора). */
+  mentionChapters: ReadonlySet<number>;
+  /** Ключи героев - говорящих цитаты места (`speakerKey` только на героя, `F08-12a`). */
+  heroKeys: ReadonlySet<string>;
+  glossary: readonly NameEntry[];
+  /** «Описание» сохранённого места - только при перегенерации одного блока `imageBrief` (Q2). */
+  storedDescription: string | null;
+  briefRegen: boolean;
+  /** Проверять ядро места: при перегенерации одного блока - нет. */
+  core: boolean;
+}
+
+/**
+ * Ответ шага места после кода (`F08-12b`): вид - только `real`/`fictional`, номер Wikidata - только
+ * у реального и по форме `Q…` (иначе снят с `IMPORT_INVALID`: точку проверяет сервер при записи);
+ * сцена с главой не версии - выброшена (`CHAPTER_UNKNOWN`); цитата - как у героя, говорящий не герой -
+ * без `speakerKey` (`KEY_UNKNOWN`); ТЗ - только с «Описанием» (`BRIEF_WITHOUT_DESCRIPTION`, Q2).
+ */
+export function readPlaceAnswer(value: unknown, check: WorldPlaceCheck): WorldPlaceDraft {
+  const v = rec(value);
+  const fixes: WorldFix[] = [];
+  const droppedQuotes: DroppedWorldQuote[] = [];
+  const blocks: WorldPlaceBlocks = {};
+  for (const field of ['short', 'location', 'significance', 'description'] as const) {
+    const text = textOrNull(v[field]);
+    if (text) blocks[field] = text;
+  }
+  const kind = textOrNull(v.kind);
+  if (kind && (WORLD_PLACE_KINDS as readonly string[]).includes(kind)) {
+    blocks.kind = kind as WorldPlaceKind;
+  } else if (kind) {
+    fixes.push({
+      code: 'IMPORT_INVALID',
+      path: 'kind',
+      note: `"${kind}" is not real or fictional: removed`,
+    });
+  }
+  const wikidataId = textOrNull(v.wikidataId);
+  // Номер не по форме импорта (`WIKIDATA_ID_REGEX`, `WIKIDATA_ID_MAX`) снимается сам, а не отбивает весь
+  // пункт `kind` импортом (/qa F08-12b круг 3).
+  const idOk = (id: string) => WIKIDATA_ID_REGEX.test(id) && id.length <= WIKIDATA_ID_MAX;
+  if (wikidataId && (!wikidataIdAllowed(blocks.kind) || !idOk(wikidataId))) {
+    fixes.push({
+      code: 'IMPORT_INVALID',
+      path: 'wikidataId',
+      note: `"${wikidataId}" is not a Wikidata item of a real place: removed`,
+    });
+  } else if (wikidataId) {
+    blocks.wikidataId = wikidataId;
+  }
+  // ТЗ места - по «Описанию» (решение `F08 | F08-12b` Q2); при перегенерации одного ТЗ - по сохранённому.
+  const imageBrief = textOrNull(v.imageBrief);
+  const look = check.briefRegen
+    ? check.storedDescription
+    : briefBasisOf('place', { description: blocks.description ?? null });
+  let briefFor: string | null | undefined;
+  if (imageBrief && !look) {
+    fixes.push({
+      code: 'BRIEF_WITHOUT_DESCRIPTION',
+      path: 'imageBrief',
+      note: 'no description: the brief is removed',
+    });
+  } else if (imageBrief) {
+    blocks.imageBrief = imageBrief;
+    briefFor = appearancePrint(look);
+  }
+
+  const scenes = readScenes(v.scenes, check.chapters, fixes);
+  if (scenes) blocks.scenes = scenes;
+
+  const quotes = readSpeakerQuotes(
+    v.quotes,
+    check,
+    (speaker) => check.heroKeys.has(speaker),
+    'is not a character key',
+    fixes,
+    droppedQuotes,
+  );
+  if (quotes) blocks.quotes = quotes;
+
+  const faq = readFaq(v.faq, fixes);
+  if (faq) blocks.faq = faq;
+
+  return {
+    name: nameOf(v.name),
+    blocks,
+    fixes,
+    droppedQuotes,
+    ...(briefFor !== undefined ? { briefFor } : {}),
+  };
+}
+
+function placeFields(blocks: WorldPlaceBlocks): TextField[] {
+  const fields: TextField[] = [];
+  const add = (path: string, text: string | null | undefined, long: boolean) => {
+    if (typeof text === 'string' && text.trim() !== '') fields.push({ path, text, long });
+  };
+  add('short', blocks.short, true);
+  add('location', blocks.location, false);
+  add('significance', blocks.significance, true);
+  add('description', blocks.description, true);
+  (blocks.scenes ?? []).forEach((sc, i) => add(`scenes.${i}.text`, sc.text, true));
+  (blocks.quotes ?? []).forEach((q, i) =>
+    add(`quotes.${i}.interpretation`, q.interpretation, true),
+  );
+  (blocks.faq ?? []).forEach((f, i) => {
+    add(`faq.${i}.question`, f.question, false);
+    add(`faq.${i}.answer`, f.answer, true);
+  });
+  return fields;
+}
+
+/** Что дописать, чтобы собрать ядро места: по части ядра `computeWorldCore`. */
+const PLACE_CORE_NOTES: Partial<Record<WorldCorePart, string>> = {
+  short: 'Write "short": it is the core of the page.',
+  kind: 'Write "kind" - "real" or "fictional": it is the core of the page.',
+  significance: 'Write "significance": it is the core of the page.',
+  scenes: `The core needs ${WORLD_PLACE_CORE.scenes} scenes in this place, each with its chapter.`,
+};
+
+/**
+ * Ядро места в ответе: правило одно - `computeWorldCore`; присутствие ответ не несёт (его пишет
+ * пересчёт), поэтому подставлено и в замечания не идёт. Нет части - замечание и одна переделка.
+ */
+export function placeCoreRemarks(blocks: WorldPlaceBlocks): DraftRemark[] {
+  const core = computeWorldCore({
+    type: 'place',
+    short: blocks.short ?? null,
+    kind: blocks.kind ?? null,
+    significance: blocks.significance ?? null,
+    scenes: blocks.scenes ?? null,
+    character: null,
+    arc: null,
+    quotes: null,
+    mentions: { chapters: [1] },
+  });
+  return core.missing.flatMap((m) => {
+    const note = PLACE_CORE_NOTES[m.part];
+    return note ? [codeRemark('CORE_MISSING', m.part, note)] : [];
+  });
+}
+
+/**
+ * Замечания кода к месту: импорт, ядро, сцена вне глав места (то же правило, что у героя), текст
+ * (язык, имена, мусор).
+ */
+export function placeRemarks(
+  draft: WorldPlaceDraft,
+  check: WorldPlaceCheck,
+  name: string,
+): DraftRemark[] {
+  return [
+    ...importRemarks(check.key, draft.name ?? name, draft.blocks, 'place'),
+    ...(check.core ? placeCoreRemarks(draft.blocks) : []),
+    ...mentionRemarks({ scenes: draft.blocks.scenes }, check.mentionChapters, 'place'),
+    ...textRemarks(placeFields(draft.blocks), check.language, check.glossary),
   ];
 }
 

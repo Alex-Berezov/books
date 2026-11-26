@@ -69,6 +69,12 @@ export function worldPairKey(a: string, b: string): string | null {
 }
 
 /**
+ * Номер Wikidata у места - только у реального (`F08-12a`, решение `F08 | F08-12` Q1): одно правило на
+ * запись мира (`checkWorldTypeFields`) и разбор ответа шага места (`readPlaceAnswer`, R4 `F08 | F08-12b`).
+ */
+export const wikidataIdAllowed = (kind: string | null | undefined): boolean => kind === 'real';
+
+/**
  * Ключ героя вида пары (`LEGACY-507`): `--` в ключе `character` занимает адрес пары. Отказ — только
  * новой строке героя или смене типа на `character` (решение арбитра `F08 | F08-8e-1` Q7, образец R1):
  * заведённого героя с `--` правят свободно, ключи не меняются (тема владельца №3).
@@ -242,7 +248,7 @@ export function checkWorldTypeFields(
   if (entity.type === 'place') {
     if (hasValue(entity.role)) notFor('role');
     if (hasValue(entity.sources)) notFor('sources');
-    if (hasValue(entity.wikidataId) && entity.kind !== 'real') {
+    if (hasValue(entity.wikidataId) && !wikidataIdAllowed(entity.kind)) {
       errors.push({
         path: 'wikidataId',
         message: 'wikidataId is only for a real place (kind: real)',

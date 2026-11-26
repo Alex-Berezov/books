@@ -85,7 +85,7 @@ import {
 } from './world-public';
 import { worldAlternates } from './world-alternates';
 import { worldPlaceCards } from './world-place-cards';
-import { WorldGeoService } from './world-geo.service';
+import { WorldGeoPass, WorldGeoService } from './world-geo.service';
 import { acceptedWorldImage } from './world-image-public';
 import {
   checkWorldPair,
@@ -327,6 +327,7 @@ export class BookWorldService {
     dryRun: boolean,
     expected: ExpectedRow = {},
     within?: (tx: Prisma.TransactionClient) => Promise<void>,
+    geoPass: WorldGeoPass | null = null,
   ): Promise<BookWorldEntitySaveResponseDto> {
     if (!BOOK_WORLD_KEY_REGEX.test(key)) throw notFoundEntity();
     if (dto.key !== undefined && dto.key !== key) {
@@ -379,7 +380,13 @@ export class BookWorldService {
     // В ответ берётся только колонка `geo` и только если строку после этой записи никто не правил
     // (`updatedAt` тот же: запись точки его не сдвигает) — иначе ответ показал бы чужую правку
     // с чужим `updatedAt`, и следующая запись вкладки прошла бы мимо сверки.
-    const geoWritten = await this.geo.refresh(bookVersionId, language, placeKeys([saved.planned]));
+    // Проход хода мира несёт `geoPass` (`F08 | F08-12b` Q3): после отказа Wikidata в нём - без запроса.
+    const geoWritten = await this.geo.refresh(
+      bookVersionId,
+      language,
+      placeKeys([saved.planned]),
+      geoPass,
+    );
     const fresh =
       geoWritten > 0
         ? await this.prisma.bookWorldEntity.findUnique({

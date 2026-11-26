@@ -37,6 +37,14 @@ export const isWorldWriteLanguage = (language: string): language is WorldWriteLa
 export const WORLD_PAIRS_MAX = 10;
 
 /**
+ * Места хода (`F08-12b`, решение арбитра `F08 | F08-12b` Q1): место досье остаётся кандидатом, если
+ * стоит не меньше чем в `WORLD_PLACE_MIN_CHAPTERS` главах (ядро места - две сцены; порог героев
+ * `WORLD_MIN_CHAPTERS` - своя константа), не больше `WORLD_PLACES_MAX` по убыванию глав, затем по ключу.
+ */
+export const WORLD_PLACE_MIN_CHAPTERS = 2;
+export const WORLD_PLACES_MAX = 10;
+
+/**
  * Шаг пары не платит за вызов (решение арбитра `F08 | F08-8e-1` Q1, Q4): героя пары нет в мире версии
  * (`WORLD_PAIR_MEMBER_MISSING`), ключ пары занят сущностью другого типа (`WORLD_PAIR_KEY_TAKEN`),
  * несвязанная в анализе пара без общих глав (новая и заведённая) или новая пара, не прошедшая условие
@@ -47,6 +55,10 @@ export const WORLD_PAIR_MEMBER_MISSING = 'WORLD_PAIR_MEMBER_MISSING';
 export const WORLD_PAIR_KEY_TAKEN = 'WORLD_PAIR_KEY_TAKEN';
 export const WORLD_PAIR_NOT_FOUNDED = 'WORLD_PAIR_NOT_FOUNDED';
 export const WORLD_MENTIONS_MOVED = 'WORLD_MENTIONS_MOVED';
+/** Шаг места не платит за вызов (`F08-12b`, Q1): ключ места заняли сущностью другого типа после выбора. */
+export const WORLD_PLACE_KEY_TAKEN = 'WORLD_PLACE_KEY_TAKEN';
+/** Шаг места: формы названия не нашли место ни в одной главе (`F08-12b`, у героя - `WORLD_CHARACTER_NOT_FOUND`). */
+export const WORLD_PLACE_NOT_FOUND = 'WORLD_PLACE_NOT_FOUND';
 
 /** Таймаут вызова страницы героя: 32 000 токенов ответа, как у шага толкований анализа. */
 const PAGE_CALL_TIMEOUT_MS = 840_000;

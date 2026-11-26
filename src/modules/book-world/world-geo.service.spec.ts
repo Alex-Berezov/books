@@ -2,7 +2,12 @@ import type { PrismaService } from '../../prisma/prisma.service';
 import type { WikidataClient } from './wikidata.client';
 import { geoFingerprint, WIKIDATA_EARTH } from './world-geo';
 import { Prisma } from '@prisma/client';
-import { WORLD_GEO_BUDGET_MS, WORLD_GEO_PARALLEL, WorldGeoService } from './world-geo.service';
+import {
+  WORLD_GEO_BUDGET_MS,
+  WORLD_GEO_PARALLEL,
+  WorldGeoPass,
+  WorldGeoService,
+} from './world-geo.service';
 
 /**
  * Запись точки места (`F08-12a`, решение арбитра `F08 | F08-12` Q2): после транзакции записи, под
@@ -186,6 +191,35 @@ describe('WorldGeoService.refresh (F08-12a, Q2)', () => {
       rows.map((r) => r.key),
     );
     expect(entity).toHaveBeenCalledTimes(WORLD_GEO_PARALLEL);
+  });
+
+  // F08-12b, решение арбитра `F08 | F08-12b` Q3: после отказа Wikidata в проходе хода - без запросов.
+  it('проход хода: Wikidata не ответила на первом месте — второе место прохода её не запрашивает', async () => {
+    const { service, entity, db, tx } = setup([row({ key: 'a' })]);
+    tx.bookWorldEntity.findUnique.mockImplementation(
+      ({ where }: { where: { bookVersionId_key: { key: string } } }) =>
+        Promise.resolve(row({ key: where.bookVersionId_key.key })),
+    );
+    entity.mockResolvedValue({ kind: 'unavailable' });
+    const pass = new WorldGeoPass();
+    await service.refresh('v-1', 'ru', ['a'], pass);
+    expect(pass.unavailable).toBe(true);
+    db.bookWorldEntity.findMany.mockResolvedValue([row({ key: 'b' })]);
+    await service.refresh('v-1', 'ru', ['b'], pass);
+    expect(entity).toHaveBeenCalledTimes(1);
+    // Без прохода (ручная запись вкладки) - запрос как прежде.
+    await service.refresh('v-1', 'ru', ['b']);
+    expect(entity).toHaveBeenCalledTimes(2);
+  });
+
+  it('проход хода: Wikidata ответила — проход не помечен, следующее место запрашивается', async () => {
+    const { service, entity, db } = setup([row({ key: 'a' })]);
+    const pass = new WorldGeoPass();
+    await service.refresh('v-1', 'ru', ['a'], pass);
+    db.bookWorldEntity.findMany.mockResolvedValue([row({ key: 'b' })]);
+    await service.refresh('v-1', 'ru', ['b'], pass);
+    expect(pass.unavailable).toBe(false);
+    expect(entity).toHaveBeenCalledTimes(2);
   });
 
   it('отказ записи под замком — не наружу: refresh не бросает', async () => {

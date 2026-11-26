@@ -23,14 +23,14 @@ import {
 
 describe('world run steps', () => {
   it('step 0 chooses the characters, then each candidate gets a page and its external blocks', () => {
-    expect([0, 1, 2, 3, 4].map((step) => stepAt(step, 2))).toEqual([
+    expect([0, 1, 2, 3, 4].map((step) => stepAt(step, 2, 0))).toEqual([
       { kind: 'select', candidate: null },
       { kind: 'page', candidate: 0 },
       { kind: 'external', candidate: 0 },
       { kind: 'page', candidate: 1 },
       { kind: 'external', candidate: 1 },
     ]);
-    expect(stepsTotalOf({ candidates: null, pairs: null })).toBeNull();
+    expect(stepsTotalOf({ candidates: null, pairs: null, places: null })).toBeNull();
     expect(
       stepsTotalOf({
         candidates: [
@@ -43,12 +43,13 @@ describe('world run steps', () => {
           },
         ],
         pairs: [],
+        places: [],
       }),
     ).toBe(3);
   });
 
   it('pair steps go after all hero steps, one per pair; hero steps keep their numbers (F08-8e)', () => {
-    expect([4, 5, 6].map((step) => stepAt(step, 2))).toEqual([
+    expect([4, 5, 6].map((step) => stepAt(step, 2, 2))).toEqual([
       { kind: 'external', candidate: 1 },
       { kind: 'pair', candidate: 0 },
       { kind: 'pair', candidate: 1 },
@@ -61,7 +62,105 @@ describe('world run steps', () => {
       mentions: { chapters: [1], perChapter: {} },
     });
     const pair = { key: 'anna--boris', a: 'anna', b: 'boris', linked: true, chapters: [1] };
-    expect(stepsTotalOf({ candidates: [hero('anna'), hero('boris')], pairs: [pair] })).toBe(6);
+    expect(
+      stepsTotalOf({ candidates: [hero('anna'), hero('boris')], pairs: [pair], places: [] }),
+    ).toBe(6);
+  });
+
+  // F08-12b: шаги мест - после шагов пар; у хода без мест номера и число шагов прежние.
+  it('place steps go after the pair steps; heroes and pairs keep their numbers (F08-12b)', () => {
+    expect([4, 5, 6, 7, 8].map((step) => stepAt(step, 2, 2))).toEqual([
+      { kind: 'external', candidate: 1 },
+      { kind: 'pair', candidate: 0 },
+      { kind: 'pair', candidate: 1 },
+      { kind: 'place', candidate: 0 },
+      { kind: 'place', candidate: 1 },
+    ]);
+    // Ход без пар: место сразу после героев.
+    expect(stepAt(5, 2, 0)).toEqual({ kind: 'place', candidate: 0 });
+    const hero = (key: string) => ({
+      key,
+      role: 'main' as const,
+      name: key,
+      aliases: [],
+      mentions: { chapters: [1], perChapter: {} },
+    });
+    const place = {
+      key: 'garret',
+      name: 'Garret',
+      aliases: [],
+      mentions: { chapters: [1, 2], perChapter: {} },
+    };
+    const pair = { key: 'anna--boris', a: 'anna', b: 'boris', linked: true, chapters: [1] };
+    const heroes = [hero('anna'), hero('boris')];
+    expect(stepsTotalOf({ candidates: heroes, pairs: [pair], places: [place] })).toBe(7);
+    expect(stepsTotalOf({ candidates: heroes, pairs: [pair], places: [] })).toBe(6);
+    expect(stepsTotalOf({ candidates: heroes, pairs: [pair], places: null })).toBe(6);
+  });
+});
+
+describe('world run places (F08-12b)', () => {
+  const hero = {
+    key: 'anna',
+    name: 'Anna',
+    aliases: [],
+    mentions: { chapters: [1] },
+    role: 'main',
+  };
+  const place = {
+    key: 'garret',
+    name: 'Garret',
+    aliases: ['garret'],
+    mentions: { chapters: [1, 2] },
+  };
+
+  it('a run started before F08-12b (no places field) reads with no places: it ends on the pairs', () => {
+    const data = readWorldData({ candidates: [hero], pairs: [] });
+    expect(data.places).toEqual([]);
+    expect(data.placesOff).toBeNull();
+    expect(data.stepsBroken).toBe(false);
+    expect(stepsTotalOf(data)).toBe(3);
+  });
+
+  it('a new run writes places: null and reads it back as not chosen; chosen places survive the round trip', () => {
+    expect(readWorldData(worldDataJson(emptyWorldData())).places).toBeNull();
+    const chosen = readWorldData({
+      ...(worldDataJson(emptyWorldData()) as object),
+      candidates: [hero],
+      pairs: [],
+      places: [place],
+      placesOff: null,
+    });
+    expect(chosen.places).toEqual([
+      {
+        key: 'garret',
+        name: 'Garret',
+        aliases: ['garret'],
+        mentions: { chapters: [1, 2], perChapter: {} },
+      },
+    ]);
+    expect(readWorldData(worldDataJson(chosen)).places).toEqual(chosen.places);
+    expect(
+      readWorldData({
+        candidates: [hero],
+        pairs: [],
+        places: [],
+        placesOff: 'WORLD_PLACE_LANGUAGE',
+      }).placesOff,
+    ).toBe('WORLD_PLACE_LANGUAGE');
+  });
+
+  it('a broken place entry breaks the steps: a place step takes its place by index', () => {
+    expect(
+      readWorldData({ candidates: [hero], pairs: [], places: [place, { key: 1 }] }).stepsBroken,
+    ).toBe(true);
+    expect(readWorldData({ candidates: [hero], pairs: [], places: 'x' }).stepsBroken).toBe(true);
+  });
+
+  it('a key of a run place is a place entity; a hero candidate stays a character', () => {
+    const data = readWorldData({ candidates: [hero], pairs: [], places: [place] });
+    expect(entityKindOf(data, 'garret')).toEqual({ type: 'place' });
+    expect(entityKindOf(data, 'anna')).toEqual({ type: 'character', role: 'main' });
   });
 });
 

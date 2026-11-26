@@ -1,3 +1,4 @@
+import { WorldGeoPass } from '../../book-world/world-geo.service';
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { ContentDraft } from '@prisma/client';
 import type { PrismaService } from '../../../prisma/prisma.service';
@@ -52,12 +53,13 @@ function setup(
   initial = 'building',
   role: 'main' | 'secondary' | null = 'main',
   pairs: WorldWriteData['pairs'] = [],
+  places: WorldWriteData['places'] = [],
 ) {
   // Кандидат хода с ролью из анализа на шаге выбора (`F08-8b`); `null` - ключа нет среди кандидатов.
   const candidates = role
     ? [{ key: 'anna', role, name: 'Anna', aliases: [], mentions: { chapters: [], perChapter: {} } }]
     : [];
-  let data: WorldWriteData = { ...emptyWorldData(), candidates, pairs, items };
+  let data: WorldWriteData = { ...emptyWorldData(), candidates, pairs, places, items };
   let status = initial;
   const row = (): ContentDraft =>
     ({
@@ -108,7 +110,15 @@ function setup(
   const world = {
     saveEntity: jest.fn(
       async (
-        ..._args: [string, string, unknown, boolean, unknown, ((t: typeof tx) => Promise<void>)?]
+        ..._args: [
+          string,
+          string,
+          unknown,
+          boolean,
+          unknown,
+          ((t: typeof tx) => Promise<void>)?,
+          WorldGeoPass?,
+        ]
       ) => {
         const within = _args[5];
         if (within) await within(tx);
@@ -127,6 +137,43 @@ function setup(
 }
 
 describe('WorldWriteFields.settleStep', () => {
+  // F08-12b, решения арбитра `F08 | F08-12b` R3 и R2: вид и номер места - один пункт `kind`, в тело -
+  // двумя полями; все сущности одного шага делят один проход проверки точки (`WorldGeoPass`).
+  const place = (key: string) => ({
+    key,
+    name: key.toUpperCase(),
+    aliases: [],
+    mentions: { chapters: [1, 2], perChapter: {} },
+  });
+  it('a place kind item writes kind and wikidataId as two fields; no role; one geo pass for all entities of the step', async () => {
+    const own = (key: string) => ({ key, name: key.toUpperCase() });
+    const { fields, world, row } = setup(
+      [
+        item('kind', { kind: 'real', wikidataId: 'Q656' }, own('square')),
+        item('kind', { kind: 'fictional', wikidataId: null }, own('garret')),
+      ],
+      null,
+      'building',
+      'main',
+      [],
+      [place('square'), place('garret')],
+    );
+    await expect(fields.settleStep(row(), worldRunGate('op1'), 1)).resolves.toBe('settled');
+    expect(world.saveEntity).toHaveBeenCalledTimes(2);
+    const [first, second] = world.saveEntity.mock.calls;
+    expect(first[2]).toEqual({
+      language: 'en',
+      type: 'place',
+      name: 'SQUARE',
+      kind: 'real',
+      wikidataId: 'Q656',
+    });
+    expect(second[2]).toMatchObject({ type: 'place', kind: 'fictional', wikidataId: null });
+    const passOf = (call: (typeof world.saveEntity.mock.calls)[number]) => call[6];
+    expect(passOf(first)).toBeInstanceOf(WorldGeoPass);
+    expect(passOf(second)).toBe(passOf(first));
+  });
+
   // F08-11d-2, решение `F08 | F08-11d-2` (отпечаток ТЗ): отпечаток «Внешности» едет в запись вместе с ТЗ.
   it('the brief item carries the print of its appearance into the write; without the brief - no print', async () => {
     const { fields, world, row } = setup(
@@ -168,6 +215,7 @@ describe('WorldWriteFields.settleStep', () => {
       false,
       { expectedAbsent: 'true' },
       expect.any(Function),
+      expect.any(WorldGeoPass),
     );
     expect(data().items.map((i) => i.outcome)).toEqual(['written', 'written']);
   });
@@ -207,6 +255,7 @@ describe('WorldWriteFields.settleStep', () => {
       false,
       { expectedAbsent: 'true' },
       expect.any(Function),
+      expect.any(WorldGeoPass),
     );
   });
 
@@ -319,6 +368,7 @@ describe('WorldWriteFields.accept', () => {
       false,
       { expectedUpdatedAt: '2026-11-17T10:00:00.000Z' },
       expect.any(Function),
+      expect.any(WorldGeoPass),
     );
     expect(data().items[0].outcome).toBe('accepted');
   });

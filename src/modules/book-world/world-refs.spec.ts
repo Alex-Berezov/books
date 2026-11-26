@@ -312,8 +312,9 @@ describe('пара героев (F08-8c, решения арбитра `F08 | F0
     expect(checkWorldTypeFields(pair('anna--tom'), none)).toEqual([]);
   });
 
-  // F08-11d-2, решение `F08 | F08-11d-2` (импорт): ТЗ — поле героя любой роли; у пары и места — отказ.
-  it('imageBrief: поле героя (любой роли, с «Внешностью» и без); у пары и места — не своё', () => {
+  // F08-11d-2, решение `F08 | F08-11d-2` (импорт): ТЗ — поле героя любой роли; у пары — отказ;
+  // у места — своё с `F08-12b` (решение `F08 | F08-12b` Q2: ТЗ места 16:9 по «Описанию»).
+  it('imageBrief: поле героя (любой роли, с «Внешностью» и без) и места; у пары — не своё', () => {
     const none = { aliasExclusions: null, aliasChapterExclusions: null };
     const brief = { imageBrief: 'Square 1:1 portrait.' };
     expect(checkWorldTypeFields(entity(brief), none)).toEqual([]);
@@ -322,16 +323,31 @@ describe('пара героев (F08-8c, решения арбитра `F08 | F0
       { path: 'imageBrief', message: 'imageBrief is not a field of a pair' },
     ]);
     expect(
-      checkWorldTypeFields(entity({ ...brief, type: 'place', role: null }), none).map(
-        (e) => e.path,
-      ),
-    ).toEqual(['imageBrief']);
+      checkWorldTypeFields(
+        entity({ ...brief, imageBriefFor: 'p', type: 'place', role: null }),
+        none,
+      ).map((e) => e.path),
+    ).toEqual([]);
     // Отпечаток идёт за ТЗ и в теле не задаётся: смена типа называет только ТЗ.
     expect(
       checkWorldTypeFields(pair('anna--tom', { ...brief, imageBriefFor: 'p' }), none).map(
         (e) => e.path,
       ),
     ).toEqual(['imageBrief']);
+  });
+
+  // /qa круг 2 F08-12b: номер Wikidata - только у реального места (`wikidataIdAllowed`, одно правило
+  // записи и хода): у вымышленного и у места без вида - отказ; у реального - нет.
+  it('wikidataId: only for a real place; fictional or without a kind - refused', () => {
+    const none = { aliasExclusions: null, aliasChapterExclusions: null };
+    const place = (kind: string | null) =>
+      entity({ type: 'place', role: null, kind: kind as never, wikidataId: 'Q656' });
+    expect(checkWorldTypeFields(place('real'), none)).toEqual([]);
+    for (const kind of ['fictional', null]) {
+      expect(checkWorldTypeFields(place(kind), none)).toEqual([
+        { path: 'wikidataId', message: 'wikidataId is only for a real place (kind: real)' },
+      ]);
+    }
   });
 
   it('worldEntityRefs: герои ключа пары — ссылки (героя из-под пары не удалить), aboutKey — тоже', () => {

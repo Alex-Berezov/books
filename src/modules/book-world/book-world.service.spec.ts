@@ -4,7 +4,7 @@ import { Prisma } from '@prisma/client';
 import type { ModeratorRolesService } from '../../common/roles/moderator-roles.service';
 import type { PrismaService } from '../../prisma/prisma.service';
 import { BookWorldService, WORLD_QUOTE_CHAPTERS_BATCH } from './book-world.service';
-import type { WorldGeoService } from './world-geo.service';
+import { WorldGeoPass, type WorldGeoService } from './world-geo.service';
 import { geoFingerprint } from './world-geo';
 import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
 import type { UpdateBookWorldDto, UpdateBookWorldEntityDto } from './dto/update-book-world.dto';
@@ -328,10 +328,19 @@ describe('BookWorldService: запись сущности и присутств�
       return { res, ctx };
     };
 
+    // F08-12b (Q3/R2): проход хода мира доходит до проверки точки тем же объектом.
+    it('проход хода мира (WorldGeoPass) передаётся в проверку точки как есть', async () => {
+      const ctx = setup({ chapters: { 1: '<p>Town.</p>' } });
+      const pass = new WorldGeoPass();
+      await ctx.service.saveEntity('v1', 'town', placeBody, false, {}, undefined, pass);
+      expect(ctx.geo.refresh).toHaveBeenCalledTimes(1);
+      expect(ctx.geo.refresh.mock.calls[0][3]).toBe(pass);
+    });
+
     it('строку после записи никто не правил — в ответ берётся записанная точка', async () => {
       const { res, ctx } = await run(true);
       expect(ctx.geo.refresh).toHaveBeenCalledTimes(1);
-      expect(ctx.geo.refresh).toHaveBeenCalledWith('v1', 'en', ['town']);
+      expect(ctx.geo.refresh).toHaveBeenCalledWith('v1', 'en', ['town'], null);
       // Перечитывается только колонка точки этой строки этой версии — один раз.
       const geoReads = (
         ctx.prisma.bookWorldEntity.findUnique.mock.calls as [{ select: Record<string, boolean> }][]

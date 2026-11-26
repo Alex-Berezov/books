@@ -1,11 +1,11 @@
 import { Language, Prisma } from '@prisma/client';
 import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
-import type { StoredWorldEntity } from '../../book-world/book-world-data';
+import { briefBasisOf, type StoredWorldEntity } from '../../book-world/book-world-data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { characterKeyRefused, worldPairKey } from '../../book-world/world-refs';
 import { ANSWER_CHARS_PER_TOKEN, estimateInputTokens } from '../../llm/openrouter.client';
 import type { LlmService, StageCallEstimator } from '../../llm/llm.service';
-import { chaptersText } from '../content-draft/content-draft.text';
+import { chaptersText, htmlToParagraphs } from '../content-draft/content-draft.text';
 import { ShapedRequest } from '../dossier/dossier.prompts';
 import {
   dossierOf,
@@ -14,40 +14,48 @@ import {
   PartContext,
 } from '../draft-quality/draft-context';
 import { QualityLoopSpec } from '../draft-quality/quality-loop';
-import { ChapterIndex } from '../draft-quality/quote-check';
+import { ChapterIndex, indexChapters } from '../draft-quality/quote-check';
 import { DraftRemark } from '../draft-quality/text-checks';
 import { StageModels } from '../run/run-models';
 import {
   EMPTY_EXTERNAL,
   EMPTY_PAGE,
   EMPTY_PAIR,
+  EMPTY_PLACE,
   EMPTY_SELECT,
   externalRemarks,
   foldedVersion,
   pageRemarks,
   pairRemarks,
+  placeRemarks,
   readExternalAnswer,
   readPageAnswer,
   readPairAnswer,
+  readPlaceAnswer,
   readSelectAnswer,
   WorldExternalDraft,
   WorldPageDraft,
   WorldPairDraft,
+  WorldPlaceDraft,
   WorldSelectDraft,
 } from './world-write.checks';
 import { isWorldWriteLanguage, WORLD_PAIRS_MAX, WORLD_REVIEW_STAGE } from './world-write.constants';
+import { dossierPlaces } from './world-write.places';
 import {
+  CandidateMentions,
   WorldCandidate,
   WorldCandidateRole,
   WorldPairCandidate,
+  WorldPlaceCandidate,
   WorldStepKind,
   WorldStepSource,
 } from './world-write.data';
-import { EXAMPLE_WORLD_PAIRS, EXAMPLE_WORLDS } from './examples';
+import { EXAMPLE_WORLD_PAIRS, EXAMPLE_WORLD_PLACES, EXAMPLE_WORLDS } from './examples';
 import {
   externalWriteRequest,
   pageWriteRequest,
   pairWriteRequest,
+  placeWriteRequest,
   selectWriteRequest,
   WORLD_REVIEW_CODES,
   WORLD_STEP_SHAPES,
@@ -202,19 +210,26 @@ function analysisText(analysis: StoredBookAnalysis): string {
   });
 }
 
-/** Ключи для ссылок страницы: герои анализа и сущности мира версии. */
+/**
+ * Ключи для ссылок страницы (отношения, говорящий цитаты): герои анализа и сохранённые герои мира -
+ * то же правило, что у записи (`checkWorldRefs`: ссылка - только на героя). Ключ пары или места
+ * в ссылке отбил бы запись всей страницы 400 после платного шага (/qa F08-12b: места заводит ход).
+ */
 export function refKeys(context: WorldContext): Set<string> {
   return new Set([
     ...(context.analysis.characters ?? []).map((c) => c.key),
-    ...context.entities.keys(),
+    ...storedCharacterKeys(context.entities),
   ]);
 }
 
+/** Ключи для промпта - те же, что `refKeys`: герои анализа, затем сохранённые герои мира не из анализа. */
 function keysText(context: WorldContext): string {
+  const inAnalysis = new Set((context.analysis.characters ?? []).map((c) => c.key));
+  const stored = storedCharacterKeys(context.entities);
   const lines = [
     ...(context.analysis.characters ?? []).map((c) => `${c.key} - ${c.name}`),
     ...[...context.entities.values()]
-      .filter((e) => !(context.analysis.characters ?? []).some((c) => c.key === e.key))
+      .filter((e) => stored.has(e.key) && !inAnalysis.has(e.key))
       .map((e) => `${e.key} - ${e.name ?? ''}`),
   ];
   return lines.length > 0 ? lines.join('\n') : NONE;
@@ -245,6 +260,12 @@ const pairExampleOf = (language: Language): string => {
   return example ? JSON.stringify(example) : NONE;
 };
 
+/** Эталон места языка версии; языка без эталона места у этапа мест нет (`F08-12b`), эталона - тоже. */
+const placeExampleOf = (language: Language): string => {
+  const example = isWorldWriteLanguage(language) ? EXAMPLE_WORLD_PLACES[language] : undefined;
+  return example ? JSON.stringify(example) : NONE;
+};
+
 /** Книга шага: текст глав и признак «не всё». */
 export interface WorldBook {
   text: string;
@@ -256,6 +277,7 @@ export function selectInput(
   candidates: ReadonlyArray<{ key: string; name: string }>,
   quotes: ChapterIndex,
   book: WorldBook,
+  places: ReadonlyArray<{ key: string; name: string }> = [],
 ): WorldStepInput<WorldSelectDraft> {
   const folded = foldedVersion(quotes);
   const analysis = analysisText(context.analysis);
@@ -268,6 +290,7 @@ export function selectInput(
         bookTitle: context.bookTitle,
         author: context.author,
         candidates: candidates.map((c) => `${c.key} - ${c.name}`).join('\n'),
+        places: places.map((p) => `${p.key} - ${p.name}`).join('\n') || NONE,
         dossierNames: dossierNames(context.dossier),
         glossary: glossaryText(context),
         book: book.text,
@@ -279,17 +302,20 @@ export function selectInput(
         language: context.language,
         book: book.text,
         analysis,
-        answer: draft.characters,
+        answer:
+          places.length > 0
+            ? { characters: draft.characters, places: draft.places }
+            : draft.characters,
         regenBlock: null,
       }),
-    read: (value) => readSelectAnswer(value, candidates, folded),
+    read: (value) => readSelectAnswer(value, candidates, folded, places),
     codeCheck: () => [],
     empty: EMPTY_SELECT,
   };
 }
 
-/** Главы, где есть герой, по убыванию числа вхождений (при равенстве - по номеру). */
-function chaptersByMentions(candidate: WorldCandidate): number[] {
+/** Главы, где есть герой или место, по убыванию числа вхождений (при равенстве - по номеру). */
+function chaptersByMentions(candidate: { mentions: CandidateMentions }): number[] {
   const count = (n: number) => candidate.mentions.perChapter[String(n)] ?? 0;
   return [...candidate.mentions.chapters].sort((a, b) => count(b) - count(a) || a - b);
 }
@@ -300,7 +326,7 @@ function chaptersByMentions(candidate: WorldCandidate): number[] {
  */
 export function pageBook(
   context: WorldContext,
-  candidate: WorldCandidate,
+  candidate: { mentions: CandidateMentions },
   top: number | null,
 ): WorldBook {
   if (top === null) {
@@ -337,9 +363,10 @@ export function pageInput(
     mentionChapters: new Set(candidate.mentions.chapters),
     refKeys: refKeys(context),
     glossary: glossaryNames(context.glossary),
+    // Основа ТЗ сохранённого героя - одним правилом `briefBasisOf` (R4).
     storedAppearance:
       regen?.block === 'imageBrief'
-        ? (context.entities.get(candidate.key)?.appearance ?? null)
+        ? briefBasisOf('character', context.entities.get(candidate.key) ?? {})
         : null,
     briefRegen: regen?.block === 'imageBrief',
     role: context.entities.get(candidate.key)?.role ?? candidate.role,
@@ -438,6 +465,86 @@ export function externalInput(
     codeCheck: (draft) =>
       externalRemarks(draft, candidate.key, candidate.name, context.language, glossary),
     empty: EMPTY_EXTERNAL,
+  };
+}
+
+/**
+ * Шаг места (`F08-12b`): текст глав, где есть место (не влез - главы с наибольшим числом упоминаний
+ * и краткое содержание глав досье, `pageBook`), эталон места, проверки кода `placeRemarks`.
+ */
+export function placeInput(
+  context: WorldContext,
+  place: WorldPlaceCandidate,
+  quotes: ChapterIndex,
+  book: WorldBook,
+  regen: WorldRegenSpec | null = null,
+): WorldStepInput<WorldPlaceDraft> {
+  const analysis = analysisText(context.analysis);
+  const briefRegen = regen?.block === 'imageBrief';
+  const check = {
+    key: place.key,
+    language: context.language,
+    chapters: quotes,
+    mentionChapters: new Set(place.mentions.chapters),
+    // Говорящий цитаты места - только герой (`checkWorldRefs`), то же правило, что у страницы героя.
+    heroKeys: refKeys(context),
+    glossary: glossaryNames(context.glossary),
+    storedDescription: briefRegen
+      ? briefBasisOf('place', context.entities.get(place.key) ?? {})
+      : null,
+    briefRegen,
+    core: regen === null,
+  };
+  // Перегенерация пункта `kind` - вид и номер Wikidata вместе (R3): номер остаётся в ответе.
+  const ofRegen = (block: string): boolean =>
+    regen !== null && (block === regen.block || (regen.block === 'kind' && block === 'wikidataId'));
+  const onlyBlock = (draft: WorldPlaceDraft): WorldPlaceDraft =>
+    regen
+      ? {
+          ...draft,
+          blocks: Object.fromEntries(
+            Object.entries(draft.blocks).filter(([block]) => ofRegen(block)),
+          ),
+        }
+      : draft;
+  return {
+    kind: 'place',
+    source: book.partial ? 'top' : 'text',
+    author: (redo) =>
+      placeWriteRequest({
+        language: context.language,
+        bookTitle: context.bookTitle,
+        author: context.author,
+        key: place.key,
+        name: place.name,
+        aliases: place.aliases.join('\n') || NONE,
+        chapterList: chapterList(context),
+        mentionChapters:
+          place.mentions.chapters
+            .map((n) => `${n} - ${place.mentions.perChapter[String(n)] ?? 0}`)
+            .join('\n') || NONE,
+        keys: keysText(context),
+        analysis,
+        glossary: glossaryText(context),
+        example: placeExampleOf(context.language),
+        book: book.text,
+        bookIsPartial: book.partial,
+        regen,
+        redo,
+        storedDescription: check.storedDescription,
+      }),
+    review: (draft) =>
+      worldReviewRequest({
+        kind: 'place',
+        language: context.language,
+        book: book.text,
+        analysis,
+        answer: { name: draft.name, ...draft.blocks },
+        regenBlock: regen?.block ?? null,
+      }),
+    read: (value) => onlyBlock(readPlaceAnswer(value, check)),
+    codeCheck: (draft) => placeRemarks(draft, check, place.name),
+    empty: EMPTY_PLACE,
   };
 }
 
@@ -613,7 +720,7 @@ export async function worldInputFits<T>(
  * Наибольшее `count` из `0..max`, при котором `make(count)` влезает (вход растёт с `count`), поиском
  * делением пополам; не влезает и `make(0)` - `null`.
  */
-export async function largestFitting<T>(
+async function largestFitting<T>(
   max: number,
   make: (count: number) => WorldStepInput<T>,
   fits: (input: WorldStepInput<T>) => Promise<boolean>,
@@ -632,6 +739,23 @@ export async function largestFitting<T>(
   }
   return best;
 }
+
+/**
+ * Вход шага по объёму - одно правило страницы героя, пары и места (R4 `F08 | F08-12b`): весь текст
+ * (`make(null)`) влез - он; иначе наибольший влезающий `make(n)` из `0..max`; не влез и он - `null`.
+ */
+export async function fittingInput<T>(
+  max: number,
+  make: (count: number | null) => WorldStepInput<T>,
+  fits: (input: WorldStepInput<T>) => Promise<boolean>,
+): Promise<WorldStepInput<T> | null> {
+  const whole = make(null);
+  return (await fits(whole)) ? whole : largestFitting(max, (n) => make(n), fits);
+}
+
+/** Абзацы глав версии для сверки цитат - одна сборка на выбор, страницу, пару и место. */
+export const chapterIndexOf = (context: Pick<WorldContext, 'chapters'>): ChapterIndex =>
+  indexChapters(new Map(context.chapters.map((c) => [c.number, htmlToParagraphs(c.content)])));
 
 /** Оценщики этапов хода мира. */
 export interface WorldEstimators {
@@ -678,16 +802,30 @@ export function worldPipelineUsd(
   extraInputTokens: number,
   pairs = 0,
   run: WorldRunSource = context,
+  places = 0,
 ): Prisma.Decimal {
   // Кандидаты — тем же правилом, что у выбора шага и старта (`runCharacters`); `run` — анализ и
   // сущности на ключах его героев, когда в контексте оценки сохранённого мира нет (старт хода).
   const candidates = runCharacters(run);
   const whole: WorldBook = { text: chaptersText(context.chapters) || NONE, partial: false };
   const quotes: ChapterIndex = new Map();
+  // Выбор несёт и места-кандидаты (`F08-12b`): все места досье, как сам шаг выбора (`placesToChoose`;
+  // потолок `WORLD_PLACES_MAX` - только после подсчёта присутствия); досье ещё нет - заглушки по числу
+  // `places` (оценка сверху, /qa F08-12b круги 3-4).
+  const fromDossier = dossierPlaces(context.dossier);
+  const selectPlaces =
+    places === 0
+      ? []
+      : fromDossier.length > 0
+        ? fromDossier
+        : Array.from({ length: places }, (_, i) => ({
+            key: `place-${i + 1}`,
+            name: `Place ${i + 1}`,
+          }));
   let usd = worldStepUsd(
     calls.select,
     calls.review,
-    selectInput(context, candidates, quotes, whole),
+    selectInput(context, candidates, quotes, whole, selectPlaces),
     extraInputTokens,
   );
   for (const c of candidates) {
@@ -735,6 +873,22 @@ export function worldPipelineUsd(
       extraInputTokens,
     );
     usd = usd.add(step.mul(pairs));
+  }
+  // Места (`F08-12b`): шаг места этапом страницы по всему тексту версии (сверху: ход берёт главы с местом).
+  if (places > 0) {
+    const place: WorldPlaceCandidate = {
+      key: 'place',
+      name: 'place',
+      aliases: [],
+      mentions: { chapters: [], perChapter: {} },
+    };
+    const step = worldStepUsd(
+      calls.page,
+      calls.review,
+      placeInput(context, place, quotes, whole),
+      extraInputTokens,
+    );
+    usd = usd.add(step.mul(places));
   }
   return usd;
 }

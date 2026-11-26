@@ -2,6 +2,7 @@ import { appearancePrint } from '../../book-world/book-world-data';
 import { Prisma } from '@prisma/client';
 import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
 import {
+  fittingInput,
   mainCharacters,
   pairBook,
   pairChapters,
@@ -10,7 +11,9 @@ import {
   pageInput,
   pairInput,
   pairStepsUpperBound,
+  placeInput,
   keysOfOtherTypes,
+  refKeys,
   runCharacters,
   runMainCharacters,
   storedCharacterKeys,
@@ -107,6 +110,8 @@ describe('world run estimate: pair steps (F08-8e-1 Q6, Q8)', () => {
     } as unknown as WorldContext;
     expect(withoutBoris.toString()).toBe(worldPipelineUsd(calls, onlyAnna, 0, 0).toString());
     expect(withoutBoris.lessThan(none)).toBe(true);
+    // F08-12b: шаг места - этапом страницы (автор 1 + проверяющая 0) × 2 прохода: 2 на место.
+    expect(worldPipelineUsd(calls, context, 0, 0, context, 4).sub(none).toNumber()).toBe(8);
   });
 });
 
@@ -389,5 +394,121 @@ describe('page step: the illustration brief (F08-11d-2)', () => {
     const draft = input.read({ appearance: 'Высокая, в старом платке.', imageBrief: BRIEF });
     const paths = input.codeCheck(draft).map((r) => r.where.split(':')[0]);
     expect(paths).not.toContain('imageBrief');
+  });
+});
+
+// /qa круги 2-3 F08-12b: ссылки и ключи промпта - только герои (`checkWorldRefs`), вход по объёму.
+describe('refKeys and the KEYS of a prompt: characters only (F08-12b)', () => {
+  const ctx = {
+    language: 'en',
+    dossier: null,
+    glossary: null,
+    bookTitle: 'B',
+    author: 'A',
+    originalLanguage: '',
+    chapters: [{ number: 1, title: 'C1', content: '<p>Anna sat in the garret.</p>' }],
+    analysis: { characters: [{ key: 'anna', name: 'Anna', role: 'main' }] },
+    entities: new Map<string, { key: string; type: string; name: string }>([
+      ['garret', { key: 'garret', type: 'place', name: 'The garret' }],
+      ['anna--boris', { key: 'anna--boris', type: 'pair', name: 'Anna and Boris' }],
+      ['boris', { key: 'boris', type: 'character', name: 'Boris' }],
+    ]),
+    names: { titles: ['B'], authors: ['A'] },
+  } as unknown as WorldContext;
+
+  it('refKeys: analysis heroes and stored characters, no place or pair key', () => {
+    expect([...refKeys(ctx)].sort()).toEqual(['anna', 'boris']);
+  });
+
+  it('the KEYS block of the place prompt lists only characters', () => {
+    const place = {
+      key: 'garret',
+      name: 'The garret',
+      aliases: [],
+      mentions: { chapters: [1], perChapter: {} },
+    };
+    const request = placeInput(ctx, place, new Map(), { text: 'x', partial: false }).author(null);
+    const text = JSON.stringify(request);
+    // Стоит только в блоке KEYS: сохранённый герой не из анализа; ключ пары - нигде; место - только
+    // своим блоком PLACE, не вторым разом в KEYS.
+    expect(text).toContain('boris - Boris');
+    expect(text).not.toContain('anna--boris');
+    expect(text.split('garret - The garret').length - 1).toBe(1);
+  });
+});
+
+describe('fittingInput: the whole text, else the largest fitting part (F08-12b R4)', () => {
+  const input = (n: number | null) => ({ n }) as never;
+  const fitsUpTo = (max: number) => (i: { n: number | null }) =>
+    Promise.resolve(i.n === null ? false : i.n <= max);
+  it('the whole fits - it; else the largest count that fits; nothing fits - null', async () => {
+    expect(await fittingInput(5, input, () => Promise.resolve(true))).toEqual({ n: null });
+    expect(await fittingInput(5, input, fitsUpTo(3) as never)).toEqual({ n: 3 });
+    expect(await fittingInput(5, input, () => Promise.resolve(false))).toBeNull();
+  });
+  it('the bounds: only make(0) fits - it; max 0 - make(0) or null', async () => {
+    expect(await fittingInput(5, input, fitsUpTo(0) as never)).toEqual({ n: 0 });
+    expect(await fittingInput(0, input, fitsUpTo(0) as never)).toEqual({ n: 0 });
+    expect(await fittingInput(0, input, fitsUpTo(-1) as never)).toBeNull();
+    // Влезает ровно max (но не весь текст) - max, а не на главу меньше (/qa круг 4).
+    expect(await fittingInput(5, input, fitsUpTo(5) as never)).toEqual({ n: 5 });
+  });
+});
+
+// /qa круг 3 F08-12b (code-review): оценка шага выбора несёт места-кандидаты (досье или заглушки).
+describe('worldPipelineUsd: the choice step carries the place candidates (F08-12b, /qa round 3)', () => {
+  it('the select request of the estimate lists the dossier places; no dossier - as many stubs as places', () => {
+    const seen: string[] = [];
+    const call = (usd: number, keep = false) => ({
+      maxTokens: 0,
+      enabled: true,
+      contextLength: null,
+      estimate: (request: unknown) => {
+        if (keep) seen.push(JSON.stringify(request));
+        return new Prisma.Decimal(usd);
+      },
+    });
+    const calls = {
+      select: call(1, true),
+      page: call(0),
+      external: call(0),
+      pair: call(0),
+      review: call(0),
+    };
+    const base = {
+      language: 'en',
+      glossary: null,
+      bookTitle: 'B',
+      author: 'A',
+      originalLanguage: '',
+      chapters: [{ number: 1, title: 'C1', content: 'Anna.' }],
+      analysis: { characters: [{ key: 'anna', name: 'Anna', role: 'main' }] },
+      entities: new Map(),
+      names: { titles: ['B'], authors: ['A'] },
+    };
+    const withDossier = {
+      ...base,
+      dossier: { entities: [{ key: 'garret', name: 'The garret', kind: 'place' }] },
+    } as unknown as WorldContext;
+    worldPipelineUsd(calls, withDossier, 0, 0, withDossier, 1);
+    expect(seen.at(-1)).toContain('garret - The garret');
+    const noDossier = { ...base, dossier: null } as unknown as WorldContext;
+    worldPipelineUsd(calls, noDossier, 0, 0, noDossier, 2);
+    expect(seen.at(-1)).toContain('place-2 - Place 2');
+    worldPipelineUsd(calls, withDossier, 0, 0, withDossier, 0);
+    expect(seen.at(-1)).not.toContain('garret - The garret');
+    // Все места досье, как сам шаг выбора: потолок 10 - только после подсчёта присутствия (/qa круг 4).
+    const eleven = {
+      ...base,
+      dossier: {
+        entities: Array.from({ length: 11 }, (_, i) => ({
+          key: `p${i + 1}`,
+          name: `Spot ${i + 1}`,
+          kind: 'place',
+        })),
+      },
+    } as unknown as WorldContext;
+    worldPipelineUsd(calls, eleven, 0, 0, eleven, 10);
+    expect(seen.at(-1)).toContain('p11 - Spot 11');
   });
 });

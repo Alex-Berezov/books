@@ -129,6 +129,14 @@ describe('WorldImageService (F08-11a, F08-11d-1: without generation, F08-11d-3: 
       expect(storage.save).not.toHaveBeenCalled();
     });
 
+    // F08-12b (решение `F08 | F08-12b` R1): у места картинки нет - 409 до чтения файла, ничего не сохранено.
+    it('a place - 409 WORLD_IMAGE_NOT_ALLOWED, nothing stored', async () => {
+      db.bookWorldEntity.findUnique.mockResolvedValue({ ...ENTITY, type: 'place', role: null });
+      expect(codeOf(await upload().catch((e: unknown) => e))).toBe('WORLD_IMAGE_NOT_ALLOWED');
+      expect(storage.save).not.toHaveBeenCalled();
+      expect(tx.bookWorldImage.update).not.toHaveBeenCalled();
+    });
+
     it('no entity - 404 before the file is read', async () => {
       db.bookWorldEntity.findUnique.mockResolvedValue(null);
       await expect(upload(Buffer.from('not an image'))).rejects.toBeInstanceOf(NotFoundException);

@@ -42,6 +42,7 @@ import {
   WorldWriteDto,
   WorldWriteEstimateDto,
   WorldWriteStateDto,
+  WorldWritePlaceKindDto,
   WorldWriteValueDto,
 } from '../dto/world-write-response.dto';
 import { contextUpperChars } from '../translate/translate-estimate';
@@ -72,6 +73,7 @@ import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { hasWorldPairExample } from './examples';
 import { worldEstimators } from './world-estimate';
 import { worldReadyGate, WorldWriteFields } from './world-write.fields';
+import { WorldGeoPass } from '../../book-world/world-geo.service';
 import { WorldWriteHandler, worldWriteTaskInput } from './world-write.handler';
 import {
   externalInput,
@@ -81,11 +83,13 @@ import {
   pairChapters,
   pairInput,
   pairStepsUpperBound,
+  placeInput,
   runCharacters,
   runMainCharacters,
   worldPipelineUsd,
   worldStepUsd,
 } from './world-write.steps';
+import { placeStepsUpperBound } from './world-write.places';
 
 const KIND = 'world_write' as const;
 
@@ -336,6 +340,8 @@ export class WorldWriteService {
     }
     const skipped = new Set<number>();
     const reasons: WorldAcceptAllSkippedDto[] = [];
+    // Один проход (`F08 | F08-12b` Q3): Wikidata не ответила на одном месте - без запросов до конца.
+    const geoPass = new WorldGeoPass();
     await acceptInTurn(
       async (accepted) => {
         const items = readWorldData((await this.row(id)).data).items;
@@ -350,7 +356,7 @@ export class WorldWriteService {
       },
       async (index) => {
         try {
-          await this.fields.accept(row, index);
+          await this.fields.accept(row, index, undefined, geoPass);
           return true;
         } catch (error) {
           if (!(error instanceof ConflictException)) throw error;
@@ -430,6 +436,16 @@ export class WorldWriteService {
         0,
       );
     }
+    const place = data.places?.find((p) => p.key === item.key);
+    if (place) {
+      const context = await this.handler.contextOf(row, dossier.data);
+      return worldStepUsd(
+        calls.page,
+        calls.review,
+        placeInput(context, place, new Map(), pageBook(context, place, null), spec),
+        0,
+      );
+    }
     const candidate = data.candidates?.find((c) => c.key === item.key);
     if (!candidate) throw llmTaskConflict(WORLD_WRITE_NOT_READY, 'The world run is not ready');
     const context = await this.handler.contextOf(row, dossier.data);
@@ -504,6 +520,8 @@ export class WorldWriteService {
     const extra = upperBound ? await contextUpperChars(this.llm) : 0;
     const heroes = runCharacters({ analysis, entities: onKeys }).length;
     const pairs = pairStepsUpperBound(heroes, hasWorldPairExample(version.language));
+    // Места (`F08-12b`): по местам досье сверху, до порога глав; досье нет - потолок.
+    const places = placeStepsUpperBound(context.dossier?.data ?? null, version.language);
     const usd = worldPipelineUsd(
       calls,
       {
@@ -521,6 +539,7 @@ export class WorldWriteService {
       extra,
       pairs,
       { analysis, entities: onKeys },
+      places,
     );
     const lines = contextLimits(context, usd);
     return {
@@ -533,6 +552,7 @@ export class WorldWriteService {
         glossary: lines.glossary,
         candidates: heroes,
         pairs,
+        places,
         stageUsd: moneyUsd(usd),
         upperBound,
         suggestedLimitUsd: moneyUsd(lines.suggestedLimitUsd),
@@ -566,6 +586,14 @@ export class WorldWriteService {
       pairs: data.pairs,
       leftOut: data.leftOut,
       pairsOff: data.pairsOff,
+      places:
+        data.places?.map((p) => ({
+          key: p.key,
+          name: p.name,
+          aliases: p.aliases,
+          chapters: p.mentions.chapters,
+        })) ?? null,
+      placesOff: data.placesOff,
       steps: data.steps.map((s) => ({
         ...s,
         remarks: remarksDto(s.remarks),
@@ -608,11 +636,15 @@ function valueDto(item: WorldItem): WorldWriteValueDto {
     faq: null,
     adaptations: null,
     compare: null,
+    place: null,
     sources: item.sources && item.sources.length > 0 ? item.sources : null,
     print: proposalPrint(item),
   };
   if (WORLD_TEXT_BLOCKS.has(item.block))
     return { ...out, text: typeof item.value === 'string' ? item.value : null };
+  // Пункт `kind` места - вид и номер Wikidata одним полем (R3).
+  if (item.block === 'kind')
+    return { ...out, place: (item.value as WorldWritePlaceKindDto) ?? null };
   return { ...out, [item.block]: item.value ?? null };
 }
 
