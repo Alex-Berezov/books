@@ -7953,7 +7953,7 @@ export interface components {
       /** @description Chapter numbers of the version, ascending; chapter links are rendered only for these (empty without text) */
       chapterNumbers: number[];
       entity: components['schemas']['BookWorldEntityDto'];
-      /** @description Accepted illustration of the entity (one per book and key, all languages; F08-11a); null when there is none or it is not accepted yet - a generated image waiting for acceptance is never here, editors included */
+      /** @description Accepted illustration of the entity (one per book, key and entity type, all languages; F08-11a, F08-12c-2): a character main/secondary or a place; null when there is none, the row belongs to another entity type or it is not accepted yet - a generated image waiting for acceptance is never here, editors included */
       image: components['schemas']['BookWorldImageDto'] | null;
       /**
        * @description Language of the version
@@ -16833,13 +16833,15 @@ export interface components {
       accepted: components['schemas']['WorldImageFileDto'] | null;
       /** Format: date-time */
       acceptedAt: string | null;
-      /** @description The entity may have an illustration: a main or secondary character (the appearance text is not a condition) */
+      /** @description The entity may have an illustration: a main or secondary character or a place (the appearance text is not a condition) */
       allowed: boolean;
       /** @description Entity key: one illustration per book and key */
       key: string;
+      /** @description The image row of this key belongs to an entity of another type that still has the right to it and a live file (F08-12c-2): upload and Accept answer 409 WORLD_IMAGE_KEY_CONFLICT; accepted and pending are then null */
+      keyConflict: boolean;
       /** @description Waiting for acceptance: never shown on the site */
       pending: components['schemas']['WorldImageFileDto'] | null;
-      /** @description The entity type and role allow an illustration (main or secondary character); equals allowed since F08-11d-1: false — Accept answers 409 WORLD_IMAGE_NOT_ALLOWED (F08-12a, tail of F08-11b) */
+      /** @description The entity type and role allow an illustration (main or secondary character, or a place since F08-12c-2); equals allowed since F08-11d-1: false — Accept answers 409 WORLD_IMAGE_NOT_ALLOWED (F08-12a, tail of F08-11b) */
       roleAllowed: boolean;
     };
     WorldSitemapEntityDto: {
@@ -23490,7 +23492,7 @@ export interface operations {
           'application/json': components['schemas']['WorldImageStateDto'];
         };
       };
-      /** @description No file, a broken form, or a refused file: WORLD_IMAGE_NOT_IMAGE (not PNG, JPEG or WEBP by signature), WORLD_IMAGE_TOO_LARGE (over 40 Mpx), WORLD_IMAGE_TOO_SMALL (a side under 1200 px) */
+      /** @description No file, a broken form, or a refused file: WORLD_IMAGE_NOT_IMAGE (not PNG, JPEG or WEBP by signature), WORLD_IMAGE_TOO_LARGE (over 40 Mpx), WORLD_IMAGE_TOO_SMALL (a character: a side under 1200 px; a place: width under 1200 or height under 675 px) */
       400: {
         headers: {
           [name: string]: unknown;
@@ -23504,7 +23506,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character */
+      /** @description WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character and not a place; WORLD_IMAGE_KEY_CONFLICT - the image row of this key belongs to an entity of another type that still has the right to it and a live file; WORLD_IMAGE_ENTITY_CHANGED - the entity type changed meanwhile (checked under the row lock, after the file check) */
       409: {
         headers: {
           [name: string]: unknown;
@@ -23551,7 +23553,7 @@ export interface operations {
         };
         content?: never;
       };
-      /** @description WORLD_IMAGE_NONE - nothing to accept (or its file was deleted); WORLD_IMAGE_CHANGED - the pending image is not the one sent; WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character */
+      /** @description Checked in this order: WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character and not a place; then under the row lock WORLD_IMAGE_ENTITY_CHANGED - the entity type changed meanwhile, WORLD_IMAGE_NOT_ALLOWED - the right was lost meanwhile, WORLD_IMAGE_KEY_CONFLICT - the image row of this key belongs to an entity of another type that still has the right to it and a live file; then WORLD_IMAGE_NONE - nothing to accept (or its file was deleted); WORLD_IMAGE_CHANGED - the pending image is not the one sent */
       409: {
         headers: {
           [name: string]: unknown;

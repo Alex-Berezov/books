@@ -51,7 +51,7 @@ describe('World image e2e (F08-11a, F08-11d-1, F08-11d-3: file upload)', () => {
   const version = async (
     bookId: string,
     language: Language,
-    hero: { role?: string; appearance?: string | null } = {},
+    hero: { role?: string; appearance?: string | null; type?: 'character' | 'place' } = {},
   ) => {
     const v = await db.bookVersion.create({
       data: {
@@ -70,13 +70,16 @@ describe('World image e2e (F08-11a, F08-11d-1, F08-11d-3: file upload)', () => {
       data: {
         bookVersionId: v.id,
         key: 'oblomov',
-        type: 'character',
+        type: hero.type ?? 'character',
         name: 'Ilya Oblomov',
-        role: hero.role ?? 'main',
+        // Место (`F08-12c-2`): тот же ключ - другая сущность другой версии книги.
+        role: hero.type === 'place' ? null : (hero.role ?? 'main'),
         blocks:
-          hero.appearance === null
-            ? {}
-            : { appearance: hero.appearance ?? 'A plump man of about thirty-two.' },
+          hero.type === 'place'
+            ? { kind: 'fictional', description: 'Grey boards and tarred rope.' }
+            : hero.appearance === null
+              ? {}
+              : { appearance: hero.appearance ?? 'A plump man of about thirty-two.' },
         hasCore: true,
         isListed: true,
         readAt: new Date(),
@@ -248,6 +251,123 @@ describe('World image e2e (F08-11a, F08-11d-1, F08-11d-3: file upload)', () => {
     expect(minor.body.code).toBe('WORLD_IMAGE_NOT_ALLOWED');
   });
 
+  // Решение арбитра `F08 | F08-12c-2`: ключ один на книгу, тип у версий разный - картинка не подменяется.
+  it('a place image (F08-12c-2): 16:9 from 1200x675, its own type on the shared key, no swap with a hero of another version', async () => {
+    const bookId = await book();
+    const placeVersion = await version(bookId, Language.en, { type: 'place' });
+    const heroVersion = await version(bookId, Language.ru);
+
+    const small = await send(placeVersion, pngBytes(1200, 674)).expect(400);
+    expect(small.body.code).toBe('WORLD_IMAGE_TOO_SMALL');
+    const uploaded = (await send(placeVersion, pngBytes(1200, 675)).expect(200)).body as {
+      allowed: boolean;
+      pending: { mediaId: string } | null;
+    };
+    expect(uploaded.allowed).toBe(true);
+    expect(uploaded.pending).not.toBeNull();
+    const pendingId = uploaded.pending?.mediaId ?? '';
+    await auth(http().post(`${path(placeVersion)}/accept`))
+      .send({ pendingMediaId: pendingId })
+      .expect(200);
+    expect(
+      await db.bookWorldImage.findUnique({ where: { bookId_key: { bookId, key: 'oblomov' } } }),
+    ).toMatchObject({ entityType: 'place', imageMediaId: pendingId });
+
+    // Картинка места - на странице места; герою другой версии на том же ключе её нет.
+    expect((await publicEntity(placeVersion)).body.image).toMatchObject({
+      width: 1200,
+      height: 675,
+    });
+    expect((await publicEntity(heroVersion)).body.image).toBeNull();
+    expect((await auth(http().get(path(heroVersion))).expect(200)).body).toMatchObject({
+      allowed: true,
+      accepted: null,
+      pending: null,
+      keyConflict: true,
+    });
+    // Загрузка героя поверх строки места - 409 до записи, строка места цела.
+    const assetsBefore = await db.mediaAsset.count();
+    const conflict = await send(heroVersion, pngBytes(1536, 1536)).expect(409);
+    expect(conflict.body.code).toBe('WORLD_IMAGE_KEY_CONFLICT');
+    expect(await db.mediaAsset.count()).toBe(assetsBefore);
+    expect(
+      await db.bookWorldImage.findUnique({ where: { bookId_key: { bookId, key: 'oblomov' } } }),
+    ).toMatchObject({ entityType: 'place', imageMediaId: pendingId, pendingMediaId: null });
+  });
+
+  it('a hero portrait is not shown on a place of another version; an empty row moves to the new type (F08-12c-2)', async () => {
+    const bookId = await book();
+    const heroVersion = await version(bookId, Language.en);
+    const placeVersion = await version(bookId, Language.ru, { type: 'place' });
+    const portrait = await asset();
+    await imageRow(bookId, { imageMediaId: portrait.id, imageReadAt: new Date() });
+    expect((await publicEntity(heroVersion)).body.image).toMatchObject({ url: portrait.url });
+    expect((await publicEntity(placeVersion)).body.image).toBeNull();
+    // Панель места заранее знает, что ключ занят живым портретом героя с правом (круг 1 Q2).
+    expect((await auth(http().get(path(placeVersion))).expect(200)).body).toMatchObject({
+      allowed: true,
+      accepted: null,
+      pending: null,
+      keyConflict: true,
+    });
+    const conflict = await send(placeVersion, pngBytes(1600, 900)).expect(409);
+    expect(conflict.body.code).toBe('WORLD_IMAGE_KEY_CONFLICT');
+
+    // Пустая строка героя (ни принятой, ни ожидающей) переходит месту под замком.
+    const other = await book();
+    await version(other, Language.en);
+    const otherPlace = await version(other, Language.ru, { type: 'place' });
+    await imageRow(other, {});
+    await send(otherPlace, pngBytes(1600, 900)).expect(200);
+    expect(
+      await db.bookWorldImage.findUnique({
+        where: { bookId_key: { bookId: other, key: 'oblomov' } },
+      }),
+    ).toMatchObject({ entityType: 'place' });
+  });
+
+  // Решение `F08 | F08-12c-2` круг 1 Q1: ключ не запирается навсегда - смена типа в единственной версии
+  // и мёртвый файл чужого типа освобождают строку, её ячейки очищаются.
+  it('the key is freed (F08-12c-2 circle 1 Q1): a type change in the only version and a deleted file of another type', async () => {
+    const single = await book();
+    const singleVersion = await version(single, Language.en, { type: 'place' });
+    const portrait = await asset();
+    await imageRow(single, { imageMediaId: portrait.id, imageReadAt: new Date() });
+    expect((await auth(http().get(path(singleVersion))).expect(200)).body).toMatchObject({
+      keyConflict: false,
+      accepted: null,
+    });
+    const uploaded = (await send(singleVersion, pngBytes(1600, 900)).expect(200)).body as {
+      accepted: unknown;
+      pending: { mediaId: string } | null;
+    };
+    expect(uploaded.accepted).toBeNull();
+    expect(
+      await db.bookWorldImage.findUnique({
+        where: { bookId_key: { bookId: single, key: 'oblomov' } },
+      }),
+    ).toMatchObject({
+      entityType: 'place',
+      imageMediaId: null,
+      imageReadAt: null,
+      pendingMediaId: uploaded.pending?.mediaId,
+    });
+    expect((await publicEntity(singleVersion)).body.image).toBeNull();
+
+    const deletedBook = await book();
+    await version(deletedBook, Language.en);
+    const deletedPlace = await version(deletedBook, Language.ru, { type: 'place' });
+    const deleted = await asset();
+    await db.mediaAsset.update({ where: { id: deleted.id }, data: { isDeleted: true } });
+    await imageRow(deletedBook, { imageMediaId: deleted.id, imageReadAt: new Date() });
+    await send(deletedPlace, pngBytes(1600, 900)).expect(200);
+    expect(
+      await db.bookWorldImage.findUnique({
+        where: { bookId_key: { bookId: deletedBook, key: 'oblomov' } },
+      }),
+    ).toMatchObject({ entityType: 'place', imageMediaId: null });
+  });
+
   it('upload over an accepted image: the accepted one stays on the site until Accept, the new file replaces the pending one', async () => {
     const bookId = await book();
     const versionId = await version(bookId, Language.en);
@@ -288,6 +408,7 @@ describe('World image e2e (F08-11a, F08-11d-1, F08-11d-3: file upload)', () => {
       accepted: null,
       acceptedAt: null,
       pending: { mediaId: pending.id, url: pending.url, width: 1536, height: 1536 },
+      keyConflict: false,
     });
 
     // Непринятая: ни читателю, ни редактору на странице сущности.

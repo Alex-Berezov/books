@@ -1,18 +1,23 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, WorldEntityType } from '@prisma/client';
 import type { BookAnalysisRole } from '../book-analysis/dto/book-analysis-blocks.dto';
 import { BookWorldImageDto } from './dto/book-world-response.dto';
 
 /**
- * Роли героя с иллюстрацией (решение арбитра `F08 | F08-11` Р5): у пары, эпизодических героев и
- * мест в `F08-11` её нет. Одно правило на вкладку World, «Accept» и публичную выдачу (`F08 | F08-11a` Q1).
+ * Роли героя с иллюстрацией (решение арбитра `F08 | F08-11` Р5): у пары и эпизодических героев
+ * её нет; у места есть с `F08-12c-2` (любого вида, решение `F08 | F08-12c-2`).
+ * Одно правило на вкладку World, «Accept» и публичную выдачу (`F08 | F08-11a` Q1).
  */
 export const WORLD_IMAGE_ROLES = [
   'main',
   'secondary',
 ] as const satisfies readonly BookAnalysisRole[];
 
-/** Сущность этой версии вправе иметь иллюстрацию: герой `main`/`secondary` (Р5, Q1). */
+/**
+ * Сущность этой версии вправе иметь иллюстрацию: герой `main`/`secondary` (Р5, Q1) или место
+ * (`F08-12c-2`).
+ */
 export function worldImageAllowed(entity: { type: string; role: string | null }): boolean {
+  if (entity.type === 'place') return true;
   return (
     entity.type === 'character' &&
     (WORLD_IMAGE_ROLES as readonly string[]).includes(entity.role ?? '')
@@ -61,8 +66,14 @@ export async function acceptedWorldImage(
   entity: { type: string; role: string | null },
 ): Promise<BookWorldImageDto | null> {
   if (!worldImageAllowed(entity)) return null;
+  // Тип строки - тип сущности этой версии (`F08 | F08-12c-2`): портрет героя одной версии не виден
+  // месту на том же ключе другой версии и наоборот; чужая по типу строка не трогается.
   const row = await client.bookWorldImage.findFirst({
-    where: { key, book: { versions: { some: { id: bookVersionId } } } },
+    where: {
+      key,
+      entityType: entity.type as WorldEntityType,
+      book: { versions: { some: { id: bookVersionId } } },
+    },
     select: {
       imageReadAt: true,
       image: { select: WORLD_IMAGE_FILE_SELECT },

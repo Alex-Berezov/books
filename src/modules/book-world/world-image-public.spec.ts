@@ -12,10 +12,10 @@ describe('world image public (F08-11a, решения F08 | F08-11 Р3, F08 | F0
       [{ type: 'character', role: 'minor' }, false],
       [{ type: 'character', role: null }, false],
       [{ type: 'pair', role: null }, false],
-      [{ type: 'place', role: 'main' }, false],
-      // F08-12b (решение `F08 | F08-12b` R1): у места в 12b только ТЗ - картинка на общем ключе
-      // BookWorldImage(bookId,key) подменила бы портрет героя другой версии.
-      [{ type: 'place', role: null }, false],
+      // F08-12c-2 (решение `F08 | F08-12c-2`): у места картинка есть, любого вида; подмену на общем
+      // ключе закрывает тип строки (`entityType`), а не право.
+      [{ type: 'place', role: 'main' }, true],
+      [{ type: 'place', role: null }, true],
     ])('%j -> %s', (entity, allowed) => {
       expect(worldImageAllowed(entity)).toBe(allowed);
     });
@@ -56,7 +56,11 @@ describe('world image public (F08-11a, решения F08 | F08-11 Р3, F08 | F0
         where: unknown;
         select: Record<string, unknown>;
       };
-      expect(args.where).toEqual({ key: 'oblomov', book: { versions: { some: { id: 'v-1' } } } });
+      expect(args.where).toEqual({
+        key: 'oblomov',
+        entityType: 'character',
+        book: { versions: { some: { id: 'v-1' } } },
+      });
       expect(Object.keys(args.select).sort()).toEqual(['image', 'imageReadAt']);
     });
 
@@ -66,6 +70,17 @@ describe('world image public (F08-11a, решения F08 | F08-11 Р3, F08 | F0
       ['no row', null],
     ])('%s - null', async (_, row) => {
       await expect(acceptedWorldImage(client(row).tx, 'v-1', 'k', MAIN)).resolves.toBeNull();
+    });
+
+    // F08-12c-2: тип строки - тип сущности этой версии; строка героя месту на том же ключе не видна.
+    it('a place reads only a row of the place type', async () => {
+      const db = client(null);
+      await expect(
+        acceptedWorldImage(db.tx, 'v-1', 'quay', { type: 'place', role: null }),
+      ).resolves.toBeNull();
+      expect(db.findFirst).toHaveBeenCalledTimes(1);
+      const args = db.findFirst.mock.calls[0][0] as { where: Record<string, unknown> };
+      expect(args.where.entityType).toBe('place');
     });
 
     it.each([

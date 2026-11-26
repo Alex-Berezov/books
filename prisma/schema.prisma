@@ -728,6 +728,9 @@ model BookWorldImage {
   bookId         String
   /// Ключ сущности (`BookWorldEntity.key`), один на все версии книги.
   key            String
+  /// Тип сущности строки (`F08-12c-2`, решение арбитра `F08 | F08-12c-2`): ключ один на книгу, а тип
+  /// у версий может разойтись - картинка видна и пишется только при совпадении с типом сущности версии.
+  entityType     WorldEntityType @default(character)
   imageMediaId   String?
   /// Принятие администратором; публично только при нём.
   imageReadAt    DateTime?

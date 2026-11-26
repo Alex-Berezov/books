@@ -97,11 +97,12 @@ export class WorldImageController {
   @ApiNotFoundResponse({ description: 'No such entity in the version' })
   @ApiBadRequestResponse({
     description:
-      'No file, a broken form, or a refused file: WORLD_IMAGE_NOT_IMAGE (not PNG, JPEG or WEBP by signature), WORLD_IMAGE_TOO_LARGE (over 40 Mpx), WORLD_IMAGE_TOO_SMALL (a side under 1200 px)',
+      'No file, a broken form, or a refused file: WORLD_IMAGE_NOT_IMAGE (not PNG, JPEG or WEBP by signature), WORLD_IMAGE_TOO_LARGE (over 40 Mpx), WORLD_IMAGE_TOO_SMALL (a character: a side under 1200 px; a place: width under 1200 or height under 675 px)',
   })
   @ApiPayloadTooLargeResponse({ description: 'WORLD_IMAGE_TOO_LARGE - the file is over 12 MB' })
   @ApiConflictResponse({
-    description: 'WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character',
+    description:
+      'WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character and not a place; WORLD_IMAGE_KEY_CONFLICT - the image row of this key belongs to an entity of another type that still has the right to it and a live file; WORLD_IMAGE_ENTITY_CHANGED - the entity type changed meanwhile (checked under the row lock, after the file check)',
   })
   @UseInterceptors(
     FormFileInterceptor(WORLD_IMAGE_UPLOAD_FIELD, WORLD_IMAGE_LIMITS.maxBytes, UPLOAD_FORM_FIELDS, {
@@ -129,7 +130,7 @@ export class WorldImageController {
   @ApiNotFoundResponse({ description: 'No such entity in the version' })
   @ApiConflictResponse({
     description:
-      'WORLD_IMAGE_NONE - nothing to accept (or its file was deleted); WORLD_IMAGE_CHANGED - the pending image is not the one sent; WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character',
+      'Checked in this order: WORLD_IMAGE_NOT_ALLOWED - the entity is not a main or secondary character and not a place; then under the row lock WORLD_IMAGE_ENTITY_CHANGED - the entity type changed meanwhile, WORLD_IMAGE_NOT_ALLOWED - the right was lost meanwhile, WORLD_IMAGE_KEY_CONFLICT - the image row of this key belongs to an entity of another type that still has the right to it and a live file; then WORLD_IMAGE_NONE - nothing to accept (or its file was deleted); WORLD_IMAGE_CHANGED - the pending image is not the one sent',
   })
   accept(
     @Param('id', new ParseUUIDPipe()) id: string,

@@ -18,14 +18,22 @@ export class WorldImageStateDto {
   @ApiProperty({
     type: Boolean,
     description:
-      'The entity may have an illustration: a main or secondary character (the appearance text is not a condition)',
+      'The entity may have an illustration: a main or secondary character or a place (the appearance text is not a condition)',
   })
   allowed!: boolean;
 
   @ApiProperty({
     type: Boolean,
     description:
-      'The entity type and role allow an illustration (main or secondary character); equals allowed since F08-11d-1: ' +
+      'The image row of this key belongs to an entity of another type that still has the right to it and a live file ' +
+      '(F08-12c-2): upload and Accept answer 409 WORLD_IMAGE_KEY_CONFLICT; accepted and pending are then null',
+  })
+  keyConflict!: boolean;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'The entity type and role allow an illustration (main or secondary character, or a place since F08-12c-2); equals allowed since F08-11d-1: ' +
       'false — Accept answers 409 WORLD_IMAGE_NOT_ALLOWED (F08-12a, tail of F08-11b)',
   })
   roleAllowed!: boolean;

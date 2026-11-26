@@ -484,7 +484,8 @@ export class BookWorldEntityResponseDto {
     type: BookWorldImageDto,
     nullable: true,
     description:
-      'Accepted illustration of the entity (one per book and key, all languages; F08-11a); null when there is none ' +
+      'Accepted illustration of the entity (one per book, key and entity type, all languages; F08-11a, F08-12c-2): ' +
+      'a character main/secondary or a place; null when there is none, the row belongs to another entity type ' +
       'or it is not accepted yet - a generated image waiting for acceptance is never here, editors included',
   })
   image!: BookWorldImageDto | null;
