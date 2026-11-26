@@ -171,17 +171,22 @@ describe('публичность места (F08-12a, Q0: рубильник WOR
     autoTextAt: null,
     mentions: counted,
   };
+  // С `F08-12c` рубильник включён по умолчанию; выключенное положение проверяется отдельным
+  // тестом и возвращается.
   afterEach(() => {
-    WORLD_PLACES.public = false;
+    WORLD_PLACES.public = true;
+  });
+
+  it('рубильник включён по умолчанию', () => {
+    expect(WORLD_PLACES.public).toBe(true);
   });
 
   it('выключенный рубильник — место не на сайте никогда', () => {
-    expect(WORLD_PLACES.public).toBe(false);
+    WORLD_PLACES.public = false;
     expect(computeWorldListed(listed)).toBe(false);
   });
 
   it('включённый — страница по ядру без порога ролей; без ядра, «показывать» или «прочитано» — нет', () => {
-    WORLD_PLACES.public = true;
     expect(computeWorldListed(listed)).toBe(true);
     expect(computeWorldListed({ ...listed, hasCore: false })).toBe(false);
     expect(computeWorldListed({ ...listed, isVisible: false })).toBe(false);
@@ -192,6 +197,7 @@ describe('публичность места (F08-12a, Q0: рубильник WOR
 
   it('карточка общей страницы — без ядра, но только «показывать» и «прочитано» при включённом рубильнике', () => {
     const card = { type: 'place', isVisible: true, readAt: null, autoTextAt: null };
+    WORLD_PLACES.public = false;
     expect(worldPlaceShown(card)).toBe(false);
     WORLD_PLACES.public = true;
     expect(worldPlaceShown(card)).toBe(true);

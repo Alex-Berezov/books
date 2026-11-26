@@ -19,6 +19,7 @@ import {
   type WorldRecountOutcome,
 } from '../src/modules/book-world/world-mentions.service';
 import { WorldMentionsSchedulerService } from '../src/modules/book-world/world-mentions-scheduler.service';
+import { WorldPlacesRelistService } from '../src/modules/book-world/world-places-relist.service';
 import { BOOK_WORLD_LIMITS } from '../src/modules/book-world/dto/book-world-blocks.dto';
 import { WikidataClient } from '../src/modules/book-world/wikidata.client';
 import { WIKIDATA_EARTH } from '../src/modules/book-world/world-geo';
@@ -2306,8 +2307,9 @@ describe('BookWorld e2e', () => {
   });
 
   describe('F08-12a: место (решения арбитра `F08 | F08-12` Q0-Q2, Q4)', () => {
+    // С `F08-12c` рубильник включён по умолчанию; выключенное положение ставит свой тест.
     afterEach(() => {
-      WORLD_PLACES.public = false;
+      WORLD_PLACES.public = true;
     });
     /** Место с полным ядром кроме присутствия; сцены — в главах `TEXT`. */
     const place = (key = 'petersburg', over: Body = {}): Body => ({
@@ -2455,6 +2457,7 @@ describe('BookWorld e2e', () => {
     });
 
     it('рубильник выключен: место с ядром и «прочитано» не на сайте, places пуст', async () => {
+      WORLD_PLACES.public = false;
       const { versionId } = await createVersion();
       await put(versionId, { language: 'en', entities: [place()] }).expect(200);
       await setMentions(versionId, 'petersburg', [1, 3]);
@@ -2534,6 +2537,39 @@ describe('BookWorld e2e', () => {
       expect(page.body.entity.point).toMatchObject({ lat: 59.9375 });
       expect(page.body.entity.geo).toBeUndefined();
       expect(page.body.entity.editor).toBeUndefined();
+      await expectListedConsistent(versionId);
+    });
+
+    it('F08-12c: место, записанное при выключенном рубильнике, выводит на сайт пересчёт; повтор ничего не пишет', async () => {
+      WORLD_PLACES.public = false;
+      const { versionId } = await createVersion();
+      await put(versionId, { language: 'en', entities: [place()] }).expect(200);
+      await setMentions(versionId, 'petersburg', [1, 3]);
+      await put(versionId, {
+        language: 'en',
+        entities: [{ key: 'petersburg', type: 'place' }],
+      }).expect(200);
+      await readLatest(versionId, 'petersburg');
+      const before = await row(versionId, 'petersburg');
+      expect(before.isListed).toBe(false);
+      expect(before.firstPublishedAt).toBeNull();
+
+      WORLD_PLACES.public = true;
+      // Без пересчёта место с выключенного рубильника остаётся вне сайта: isListed — столбец.
+      await request(http()).get(`/versions/${versionId}/world/petersburg`).expect(404);
+      const relist = app.get(WorldPlacesRelistService);
+      expect((await relist.relistAll()).written).toBeGreaterThanOrEqual(1);
+      const after = await row(versionId, 'petersburg');
+      expect(after.isListed).toBe(true);
+      expect(after.firstPublishedAt).not.toBeNull();
+      expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+      await request(http()).get(`/versions/${versionId}/world/petersburg`).expect(200);
+      const list = await anon(versionId).expect(200);
+      expect(list.body.places).toEqual([
+        expect.objectContaining({ key: 'petersburg', hasPage: true }),
+      ]);
+      // Повтор: изменённых строк нет.
+      expect(await relist.relistAll()).toEqual({ written: 0, failed: 0 });
       await expectListedConsistent(versionId);
     });
   });

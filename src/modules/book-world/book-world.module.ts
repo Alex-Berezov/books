@@ -10,6 +10,7 @@ import { WorldStatsService } from './world-stats.service';
 import { WorldStatsController } from './world-stats.controller';
 import { WikidataClient } from './wikidata.client';
 import { WorldGeoService } from './world-geo.service';
+import { WorldPlacesRelistService } from './world-places-relist.service';
 
 /**
  * Мир книги (F08). `BookWorldService` экспортируется для хода «Write World» (`F08-4`);
@@ -19,6 +20,7 @@ import { WorldGeoService } from './world-geo.service';
  * `F08 | F08-8e-1` Q1: условие заведения пары читает сохранённое присутствие).
  * Чтение для читателя — только ручкой. `WorldSitemapService` — карта сайта мира (`F08-3`), её ручку
  * держит публичный контроллер `:lang`; счётчики страниц и отчёт — `WorldStatsController`.
+ * `WorldPlacesRelistService` — разовый пересчёт публичности мест при старте (`F08-12c`, убрать в `F08-12d`).
  */
 @Module({
   // Реестр глобальный; импорт — для изолированной сборки модуля в тестах, как у остальных таймеров.
@@ -32,6 +34,7 @@ import { WorldGeoService } from './world-geo.service';
     WorldStatsService,
     WikidataClient,
     WorldGeoService,
+    WorldPlacesRelistService,
   ],
   exports: [BookWorldService, WorldMentionsService, WorldSitemapService],
 })

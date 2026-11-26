@@ -1308,6 +1308,8 @@ describe('Seeded dataset (e2e)', () => {
           expect(rows.filter((r) => r.type === 'pair').map((r) => r.key)).toEqual([
             'anna-lark--tom-reed',
           ]);
+          // Место сида (F08-12c): страница места и карточка `/wiki` - проверки места не молчат.
+          expect(rows.filter((r) => r.type === 'place').map((r) => r.key)).toEqual(['salt-quay']);
         }
         // Пара (F08-8c): оба героя ключа на сайте — по тем же строкам сида.
         const listedHeroes = new Set(
@@ -1357,7 +1359,7 @@ describe('Seeded dataset (e2e)', () => {
           key: e.key,
           type: e.type ?? 'character',
           name: e.name,
-          ...(e.type === 'pair' ? {} : { role: 'main' }),
+          ...(e.type === 'pair' || e.type === 'place' ? {} : { role: 'main' }),
           short: e.short,
           ...e.blocks,
           ...(e.sources ? { sources: e.sources } : {}),
@@ -1376,7 +1378,7 @@ describe('Seeded dataset (e2e)', () => {
       },
     );
 
-    it('читатель видит ровно публичные сущности: en — четыре с парой, ru — одна', async () => {
+    it('читатель видит ровно публичные сущности: en — пять с парой и местом, ru — одна', async () => {
       const keysOf = async (language: Language) => {
         const { id } = await versionOf(WORLD_ACCEPTANCE.book, language);
         const res = await get(`/versions/${id}/world`).expect(200);
@@ -1387,6 +1389,7 @@ describe('Seeded dataset (e2e)', () => {
         'anna-lark',
         'anna-lark--tom-reed',
         'mira-vale',
+        'salt-quay',
         'tom-reed',
       ]);
       // Страница пары сида открыта читателю (F08-8c-2): тот же маршрут, что берёт фронт `/wiki/{a}--{b}`.
@@ -1398,6 +1401,18 @@ describe('Seeded dataset (e2e)', () => {
       expect(pairEntity).toMatchObject({ key: 'anna-lark--tom-reed', type: 'pair' });
       // В сиде у пары ровно четыре строки сравнения (`prisma/seed-world.ts`).
       expect(pairEntity.compare).toHaveLength(4);
+      // Место сида открыто читателю (F08-12c) и стоит карточкой со страницей в списке `/wiki`.
+      const placePage = await get(`/versions/${en.id}/world/salt-quay`).expect(200);
+      expect((placePage.body as { entity: Record<string, unknown> }).entity).toMatchObject({
+        key: 'salt-quay',
+        type: 'place',
+        kind: 'fictional',
+        point: null,
+      });
+      const enList = await get(`/versions/${en.id}/world`).expect(200);
+      expect((enList.body as { places: { key: string; hasPage: boolean }[] }).places).toEqual([
+        expect.objectContaining({ key: 'salt-quay', hasPage: true }),
+      ]);
       // У пары нет полей героя и внешних блоков (`checkWorldTypeFields`), читателю нет служебных.
       expect({
         role: pairEntity.role,
@@ -1454,12 +1469,14 @@ describe('Seeded dataset (e2e)', () => {
       expect(book?.entities.map((e) => e.key)).toEqual([
         'anna-lark',
         'anna-lark--tom-reed',
+        'salt-quay',
         'tom-reed',
       ]);
       expect(book?.entities[0].alternates.map((a) => a.language)).toEqual(['en', 'ru']);
-      // Пара и Том — только en: в ru-версии сида их нет.
+      // Пара, место и Том — только en: в ru-версии сида их нет.
       expect(book?.entities[1].alternates.map((a) => a.language)).toEqual(['en']);
       expect(book?.entities[2].alternates.map((a) => a.language)).toEqual(['en']);
+      expect(book?.entities[3].alternates.map((a) => a.language)).toEqual(['en']);
       expect(items.find((i) => i.slug === WORLD_ACCEPTANCE.noindex)).toBeUndefined();
       expect(items.find((i) => i.slug === WORLD_ACCEPTANCE.hidden)).toBeUndefined();
     });

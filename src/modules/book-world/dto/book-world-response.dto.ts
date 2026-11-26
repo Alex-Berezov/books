@@ -305,8 +305,8 @@ export class BookWorldListResponseDto {
   @ApiProperty({
     type: [BookWorldPlaceCardDto],
     description:
-      'Places shown on the world page (F08-12a): visible, read after the model text, places switched on ' +
-      '(empty until the place pages ship, F08-12c); with or without their own page. Same set for editors',
+      'Places shown on the world page (F08-12a, public since F08-12c): visible, read after the model ' +
+      'text; with or without their own page. Same set for editors',
   })
   places!: BookWorldPlaceCardDto[];
 }

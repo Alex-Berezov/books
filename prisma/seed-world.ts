@@ -22,6 +22,8 @@ import {
  *   - `lou-grey` — без ядра (нет цитат и сцен) — 404;
  *   - `anna-lark--tom-reed` — пара героев (`F08-8c`) с ядром, только `en`: оба героя на сайте,
  *     пара в списке (`isListed`, рубильник пар включён в `F08-8c-2`);
+ *   - `salt-quay` — место (`F08-12c`, решение `F08 | F08-12c` R2) с ядром, только `en`: страница
+ *     места и карточка в списке `/wiki` (рубильник мест включён в `F08-12c`); точки нет — вымышленное;
  * - `world-acceptance-noindex` — `en` с редакторским `noindex`: мир есть, но закрыт от индекса.
  * - `world-acceptance-hidden` — `en`, сущность мира есть, но скрыта (`isVisible=false`): `/wiki` — 404.
  *
@@ -58,6 +60,7 @@ const CHAPTERS_EN: Record<number, string[]> = {
     'Tom Reed watched from the door.',
     'Anna Lark said the river would rise.',
     'Lou Grey sang in the yard.',
+    'The boats waited at Salt Quay.',
   ],
   2: [
     'The river rose before noon.',
@@ -70,6 +73,7 @@ const CHAPTERS_EN: Record<number, string[]> = {
     'Anna Lark closed the map for the last time.',
     'Ned Fox kept the keys.',
     '"He never let the lamp go out," she said.',
+    'Salt Quay stood empty by night.',
   ],
 };
 
@@ -187,8 +191,8 @@ const SCENES_EN: [number, string][] = [
 
 type EntitySeed = {
   key: string;
-  /** Тип сущности; нет — герой `main`. Пара (`F08-8c`) — без роли. */
-  type?: 'character' | 'pair';
+  /** Тип сущности; нет — герой `main`. Пара (`F08-8c`) и место (`F08-12c`) — без роли. */
+  type?: 'character' | 'pair' | 'place';
   name: string;
   short: string | null;
   blocks: Record<string, unknown>;
@@ -404,6 +408,44 @@ const ENTITIES_EN: EntitySeed[] = [
     coreMissing: [],
     isListed: true,
   },
+  {
+    // Место (`F08-12c`): ядро — «Коротко», вид, значение, 2 сцены с главой, присутствие. Название
+    // стоит в последнем абзаце глав 1 и 3.
+    key: 'salt-quay',
+    type: 'place',
+    name: 'Salt Quay',
+    short: 'The harbour where the boats wait for the river.',
+    blocks: {
+      kind: 'fictional',
+      location: 'Below the bridge, on the near bank',
+      significance: 'Service text: the crossing starts and ends here.',
+      description: 'Service text: grey boards and tarred rope.',
+      scenes: [
+        { chapter: 1, title: 'The boats', text: 'The boats wait at the quay.' },
+        { chapter: 3, title: 'The empty quay', text: 'Nobody is left by night.' },
+      ],
+      quotes: [
+        {
+          text: 'Salt Quay stood empty by night.',
+          chapter: 3,
+          interpretation: 'What it shows.',
+        },
+      ],
+      faq: [{ question: 'Is Salt Quay a real place?', answer: 'No, it is invented for the book.' }],
+    },
+    mentions: {
+      chapters: [1, 3],
+      first: 1,
+      perChapter: { '1': 1, '3': 1 },
+      paragraphs: { '1': [4], '3': [4] },
+      // Совместное присутствие считается только у героев (`countWorldMentions`).
+      coPresence: {},
+      stale: [],
+    },
+    hasCore: true,
+    coreMissing: [],
+    isListed: true,
+  },
 ];
 
 const ENTITIES_RU: EntitySeed[] = [
@@ -515,7 +557,7 @@ function entityData(e: EntitySeed) {
   return {
     type: e.type ?? 'character',
     name: e.name,
-    role: e.type === 'pair' ? null : 'main',
+    role: e.type === 'pair' || e.type === 'place' ? null : 'main',
     short: e.short,
     aliases: Prisma.DbNull,
     aliasExclusions: Prisma.DbNull,

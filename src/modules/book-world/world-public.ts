@@ -24,11 +24,12 @@ export const WORLD_PAIRS = { public: true };
 
 /**
  * Рубильник публичности мест (решение арбитра `F08 | F08-12` Q0, по образцу `WORLD_PAIRS`):
- * выключенный, он держит место вне сайта — списка, карточки `/wiki`, карты сайта и hreflang, —
- * пока страницы места нет на фронте. Включается пачкой `F08-12c` тегом бэкенда, фронт пушится после.
- * Объект, а не константа: e2e проверяют оба положения в одном процессе.
+ * выключенный, он держит место вне сайта — списка, карточки `/wiki`, карты сайта и hreflang.
+ * Включён пачкой `F08-12c` вместе со страницей места на фронте; места, записанные при выключенном,
+ * выводит на сайт разовый пересчёт при старте (`relistWorldPlaces`, решение `F08 | F08-12a` R4,
+ * убрать в `F08-12d`). Объект, а не константа: e2e проверяют оба положения в одном процессе.
  */
-export const WORLD_PLACES = { public: false };
+export const WORLD_PLACES = { public: true };
 
 export interface WorldListedInput {
   /** Тип сущности; нет — герой. */
@@ -226,6 +227,24 @@ export function worldMembersReader(
 }
 
 /**
+ * Поля пересчёта `isListed` (`relistWorldPairs`, `relistWorldPlaces`): вход `worldListedWrite`
+ * и прежний `updatedAt`. Одна копия: новое поле `WorldListedInput` добавляется сюда для обоих.
+ */
+const WORLD_RELIST_SELECT = {
+  key: true,
+  type: true,
+  role: true,
+  hasCore: true,
+  isVisible: true,
+  readAt: true,
+  autoTextAt: true,
+  mentions: true,
+  isListed: true,
+  firstPublishedAt: true,
+  updatedAt: true,
+} as const satisfies Prisma.BookWorldEntitySelect;
+
+/**
  * Пары версии после героев (решение арбитра `F08 | F08-8c` Q3): в той же транзакции, где у героя
  * мог смениться `isListed` (запись, «прочитано», флаги, пересчёт присутствия), `isListed` пар
  * пересчитывается тем же `worldListedWrite`. Пишутся только пары, у которых он изменился, с прежним
@@ -239,19 +258,7 @@ export async function relistWorldPairs(
 ): Promise<number> {
   const pairs = await tx.bookWorldEntity.findMany({
     where: { bookVersionId, type: 'pair' },
-    select: {
-      key: true,
-      type: true,
-      role: true,
-      hasCore: true,
-      isVisible: true,
-      readAt: true,
-      autoTextAt: true,
-      mentions: true,
-      isListed: true,
-      firstPublishedAt: true,
-      updatedAt: true,
-    },
+    select: WORLD_RELIST_SELECT,
     orderBy: { key: 'asc' },
     take: BOOK_WORLD_LIMITS.entities,
   });
@@ -265,6 +272,38 @@ export async function relistWorldPairs(
     await tx.bookWorldEntity.update({
       where: { bookVersionId_key: { bookVersionId, key: pair.key } },
       data: { ...listed, updatedAt: pair.updatedAt },
+    });
+    written++;
+  }
+  return written;
+}
+
+/**
+ * Места версии (решение арбитра `F08 | F08-12a` R4, по образцу `relistWorldPairs`): `isListed`
+ * мест, записанных при выключенном рубильнике, пересчитывается тем же `worldListedWrite`. Пишутся
+ * только места, у которых он изменился, с прежним `updatedAt`. Зовётся в транзакции мира версии
+ * (`runInWorldTx`) разовым пересчётом при старте (`WorldPlacesRelistService`); убрать в `F08-12d`.
+ * Число записанных мест.
+ */
+export async function relistWorldPlaces(
+  tx: Pick<Prisma.TransactionClient, 'bookWorldEntity'>,
+  bookVersionId: string,
+  version: { status: PublicationStatus },
+  now: Date,
+): Promise<number> {
+  const places = await tx.bookWorldEntity.findMany({
+    where: { bookVersionId, type: 'place' },
+    select: WORLD_RELIST_SELECT,
+    orderBy: { key: 'asc' },
+    take: BOOK_WORLD_LIMITS.entities,
+  });
+  let written = 0;
+  for (const place of places) {
+    const listed = worldListedWrite(place, version, now);
+    if (place.isListed === listed.isListed && listed.firstPublishedAt === undefined) continue;
+    await tx.bookWorldEntity.update({
+      where: { bookVersionId_key: { bookVersionId, key: place.key } },
+      data: { ...listed, updatedAt: place.updatedAt },
     });
     written++;
   }
