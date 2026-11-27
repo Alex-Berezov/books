@@ -60,6 +60,31 @@ export const WORLD_PLACE_KEY_TAKEN = 'WORLD_PLACE_KEY_TAKEN';
 /** Шаг места: формы названия не нашли место ни в одной главе (`F08-12b`, у героя - `WORLD_CHARACTER_NOT_FOUND`). */
 export const WORLD_PLACE_NOT_FOUND = 'WORLD_PLACE_NOT_FOUND';
 
+/**
+ * Предметы и понятия хода (`F08-13b`, решение арбитра `F08 | F08-13b` Q1): сущность досье остаётся
+ * кандидатом, если формы названия нашли её хотя бы в одной главе (ядро без сцен), не больше 10 на тип
+ * по убыванию глав, затем по ключу.
+ */
+export const WORLD_OBJECT_MIN_CHAPTERS = 1;
+export const WORLD_OBJECTS_MAX = 10;
+export const WORLD_TERM_MIN_CHAPTERS = 1;
+export const WORLD_TERMS_MAX = 10;
+/**
+ * Шаг предмета (понятия) не платит за вызов (`F08-13b`, Q1): ключ заняли сущностью другого типа после
+ * выбора (`*_KEY_TAKEN`) или формы названия не нашли сущность ни в одной главе (`*_NOT_FOUND`).
+ */
+export const WORLD_OBJECT_KEY_TAKEN = 'WORLD_OBJECT_KEY_TAKEN';
+export const WORLD_OBJECT_NOT_FOUND = 'WORLD_OBJECT_NOT_FOUND';
+export const WORLD_TERM_KEY_TAKEN = 'WORLD_TERM_KEY_TAKEN';
+export const WORLD_TERM_NOT_FOUND = 'WORLD_TERM_NOT_FOUND';
+
+/**
+ * Номер шага вне всех списков хода (`F08-13b`): данные хода не те - шага с таким номером нет
+ * (`stepAt` - `null`); отказ записывается видом последнего в порядке шагов (`event`), но своим кодом,
+ * а не как шаг события.
+ */
+export const WORLD_STEP_OUT_OF_RUN = 'WORLD_STEP_OUT_OF_RUN';
+
 /** Таймаут вызова страницы героя: 32 000 токенов ответа, как у шага толкований анализа. */
 const PAGE_CALL_TIMEOUT_MS = 840_000;
 

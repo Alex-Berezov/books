@@ -4,7 +4,7 @@ import { worldHero, worldPairContext } from './world-write.spec-fixtures';
 import { WorldGeoPass } from '../../book-world/world-geo.service';
 import { emptyWorldData, worldDataJson } from './world-write.data';
 import { WorldWriteService } from './world-write.service';
-import { pageBook, placeInput, worldStepUsd } from './world-write.steps';
+import { objectInput, pageBook, placeInput, worldStepUsd } from './world-write.steps';
 
 describe('WorldWriteService: the regeneration estimate of a pair (F08-8e-4 Q1-bis)', () => {
   const context = worldPairContext();
@@ -88,6 +88,67 @@ describe('WorldWriteService: the regeneration estimate of a pair (F08-8e-4 Q1-bi
     expect(estimate).toHaveBeenCalledTimes(4);
     const sent = JSON.stringify(estimate.mock.calls.slice(0, 2) as unknown[]);
     expect(sent).toContain('Boris rings the bell.');
+    expect(sent).not.toContain('Anna maps the road.');
+  });
+
+  // /qa круг 1 F08-13b (books-tests): перегенерация пункта предмета - шаг предмета своей формой.
+  it('an object item: the estimate is the object step on the chapters of the object', async () => {
+    const estimate = jest.fn(
+      (request: unknown) => new Prisma.Decimal(JSON.stringify(request).length),
+    );
+    const est = { enabled: true, maxTokens: 0, contextLength: null, estimate };
+    const service = new WorldWriteService(
+      { bookDossier: { findUnique: jest.fn().mockResolvedValue({ data: {} }) } } as never,
+      { stageCallEstimator: jest.fn().mockResolvedValue(est) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { contextOf: jest.fn().mockResolvedValue(context) } as never,
+    );
+    const bell = {
+      key: 'bell',
+      name: 'The bell',
+      aliases: [],
+      mentions: { chapters: [2], perChapter: {} },
+    };
+    const data = {
+      ...emptyWorldData(),
+      candidates: [worldHero('anna', [1])],
+      pairs: [],
+      places: [],
+      objects: [bell],
+      terms: [],
+    };
+    const usd = await (
+      service as unknown as { regenUsd: (...a: unknown[]) => Promise<Prisma.Decimal> }
+    ).regenUsd(
+      { id: 'd1', dossierId: 'dos1' },
+      data,
+      { key: 'bell', block: 'characterKeys', value: null, step: 3 },
+      null,
+    );
+    const expected = worldStepUsd(
+      est,
+      est,
+      objectInput(
+        context as never,
+        'object',
+        bell,
+        new Map(),
+        pageBook(context as never, bell, null),
+        {
+          block: 'characterKeys',
+          current: null,
+          remark: null,
+        },
+      ),
+      0,
+    );
+    expect(usd.toString()).toBe(expected.toString());
+    const sent = JSON.stringify(estimate.mock.calls.slice(0, 2) as unknown[]);
+    expect(sent).toContain('Boris rings the bell.');
+    expect(sent).toContain('WORLD_CHARACTERS');
     expect(sent).not.toContain('Anna maps the road.');
   });
 });
@@ -207,6 +268,27 @@ describe('WorldWriteService: a hero on a key taken by a place (F08-12a, review r
       entities: [place('garret'), place('square'), { ...place('axe'), kind: 'object' }],
     });
     expect((await service.estimate('v1')).places).toBe(2);
+  });
+
+  // F08-13b (Q9): предметы и понятия досье - сверху, стоимость их шагов растёт вместе с числом.
+  it('the estimate counts the objects and the terms of the dossier and their steps raise stageUsd (F08-13b)', async () => {
+    const entity = (key: string, kind: string) => ({
+      key,
+      name: key,
+      kind,
+      whatIs: '',
+      firstChapter: 1,
+    });
+    const { service: bare } = setup([{ key: 'anna', name: 'Anna', role: 'main' }], {
+      entities: [],
+    });
+    const { service } = setup([{ key: 'anna', name: 'Anna', role: 'main' }], {
+      entities: [entity('axe', 'object'), entity('pledge', 'term'), entity('fee', 'term')],
+    });
+    const dto = await service.estimate('v1');
+    expect([dto.objects, dto.terms]).toEqual([1, 2]);
+    // Шаг - (автор 1 + проверяющая 1) × 2 прохода = 4; три шага - на 12 больше хода без них.
+    expect(Number(dto.stageUsd) - Number((await bare.estimate('v1')).stageUsd)).toBe(12);
   });
 });
 

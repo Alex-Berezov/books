@@ -16824,8 +16824,15 @@ export interface components {
       items: components['schemas']['WorldWriteItemDto'][];
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
-      /** @description Characters and pairs the choice step left out, with the reason */
+      /** @description Characters, pairs, places, objects, terms and organizations the choice step left out, with the reason */
       leftOut: components['schemas']['WorldWriteSkipDto'][];
+      /** @description Objects of the run (F08-13b), their steps go after the steps of the places; null - not chosen yet; [] for a run started before F08-13b */
+      objects: components['schemas']['WorldWritePlaceDto'][] | null;
+      /**
+       * @description The run writes no objects: WORLD_OBJECT_LANGUAGE - no object sample for the language
+       * @enum {string|null}
+       */
+      objectsOff: 'WORLD_OBJECT_LANGUAGE' | null;
       operation: components['schemas']['LlmOperationDto'];
       /** @description Pairs of the run (F08-8e), their steps go after the steps of the characters; null - the characters are not chosen yet; [] for a run started before F08-8e */
       pairs: components['schemas']['WorldWritePairDto'][] | null;
@@ -16846,8 +16853,15 @@ export interface components {
       /** @enum {string} */
       status: 'building' | 'ready' | 'failed' | 'discarded';
       steps: components['schemas']['WorldWriteStepDto'][];
-      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place; null - the characters are not chosen yet */
+      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place + 1 per object + 1 per term; null - the characters are not chosen yet */
       stepsTotal: number | null;
+      /** @description Terms of the run (F08-13b), their steps go after the steps of the objects; null - not chosen yet; [] for a run started before F08-13b */
+      terms: components['schemas']['WorldWritePlaceDto'][] | null;
+      /**
+       * @description The run writes no terms: WORLD_TERM_LANGUAGE - no term sample for the language
+       * @enum {string|null}
+       */
+      termsOff: 'WORLD_TERM_LANGUAGE' | null;
       /** Format: date-time */
       updatedAt: string;
       /** @enum {string|null} */
@@ -17001,8 +17015,15 @@ export interface components {
       items: components['schemas']['WorldWriteItemDto'][];
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
-      /** @description Characters and pairs the choice step left out, with the reason */
+      /** @description Characters, pairs, places, objects, terms and organizations the choice step left out, with the reason */
       leftOut: components['schemas']['WorldWriteSkipDto'][];
+      /** @description Objects of the run (F08-13b), their steps go after the steps of the places; null - not chosen yet; [] for a run started before F08-13b */
+      objects: components['schemas']['WorldWritePlaceDto'][] | null;
+      /**
+       * @description The run writes no objects: WORLD_OBJECT_LANGUAGE - no object sample for the language
+       * @enum {string|null}
+       */
+      objectsOff: 'WORLD_OBJECT_LANGUAGE' | null;
       operation: components['schemas']['LlmOperationDto'];
       /** @description Pairs of the run (F08-8e), their steps go after the steps of the characters; null - the characters are not chosen yet; [] for a run started before F08-8e */
       pairs: components['schemas']['WorldWritePairDto'][] | null;
@@ -17021,8 +17042,15 @@ export interface components {
       /** @enum {string} */
       status: 'building' | 'ready' | 'failed' | 'discarded';
       steps: components['schemas']['WorldWriteStepDto'][];
-      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place; null - the characters are not chosen yet */
+      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place + 1 per object + 1 per term; null - the characters are not chosen yet */
       stepsTotal: number | null;
+      /** @description Terms of the run (F08-13b), their steps go after the steps of the objects; null - not chosen yet; [] for a run started before F08-13b */
+      terms: components['schemas']['WorldWritePlaceDto'][] | null;
+      /**
+       * @description The run writes no terms: WORLD_TERM_LANGUAGE - no term sample for the language
+       * @enum {string|null}
+       */
+      termsOff: 'WORLD_TERM_LANGUAGE' | null;
       /** Format: date-time */
       updatedAt: string;
       /** @enum {string|null} */
@@ -17035,13 +17063,15 @@ export interface components {
       dossier: components['schemas']['DossierContextLineDto'] | null;
       /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
       glossary: components['schemas']['CompareContextLineDto'] | null;
+      /** @description Up to N object pages (F08-13b): min(10, objects of the dossier) before the chapter count (10 when the dossier is not ready), 0 on a language without an object sample; one page each, included in stageUsd */
+      objects: number;
       /** @description Up to N pair pages (F08-8e): min(10, candidates·(candidates−1)/2) before the chapter count, 0 on a language without a pair sample; one page each, included in stageUsd */
       pairs: number;
       /** @description Up to N place pages (F08-12b): min(10, places of the dossier) before the chapter count (10 when the dossier is not ready), 0 on a language without a place sample; one page each, included in stageUsd */
       places: number;
       /**
        * Format: decimal
-       * @description Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages and up to places place pages on the whole version text, plus the reviewer of each step, each step × 2 passes
+       * @description Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages, up to places place pages, up to objects object pages and up to terms term pages on the whole version text, plus the reviewer of each step, each step × 2 passes
        * @example 100.00000000
        */
       stageUsd: string;
@@ -17051,6 +17081,8 @@ export interface components {
        * @example 100.00000000
        */
       suggestedLimitUsd: string;
+      /** @description Up to N term pages (F08-13b): min(10, terms of the dossier) before the chapter count (10 when the dossier is not ready), 0 on a language without a term sample; one page each, included in stageUsd */
+      terms: number;
       /** @description The dossier or the glossary is not ready: their size is taken from their stages */
       upperBound: boolean;
     };
@@ -17100,7 +17132,9 @@ export interface components {
         | 'kind'
         | 'location'
         | 'significance'
-        | 'description';
+        | 'description'
+        | 'characterKeys'
+        | 'themeKeys';
       /** @description Why the block is not written: IMPORT_INVALID, EXTERNAL_UNVERIFIED (no checked source), WORLD_WRITE_REFUSED (the world import refused) */
       failedReason: string | null;
       index: number;
@@ -17139,9 +17173,9 @@ export interface components {
     WorldWritePlaceDto: {
       /** @description Name forms found in the text of the version */
       aliases: string[];
-      /** @description Chapters where the name forms found the place (counted at the choice step) */
+      /** @description Chapters where the name forms found the place, the object or the term (counted at the choice step) */
       chapters: number[];
-      /** @description Key of the place (the dossier key) */
+      /** @description Key of the place, the object or the term (the dossier key) */
       key: string;
       name: string;
     };
@@ -17191,14 +17225,14 @@ export interface components {
       model: string | null;
     };
     WorldWriteSkipDto: {
-      /** @description Chapters of the character or common chapters of the pair */
+      /** @description Chapters of the character, the place, the object or the term, or common chapters of the pair; null for a taken key and an organization */
       chapters: number | null;
-      /** @description Key of the character, the pair or the place */
+      /** @description Key of the character, the pair, the place, the object, the term or the organization */
       key: string;
-      /** @description Names to caption the entry: one for a character or a place, two for a pair in key order; empty for a run saved before this field */
+      /** @description Names to caption the entry: one for a character, a place, an object, a term or an organization, two for a pair in key order; empty for a run saved before this field */
       names: string[];
       /**
-       * @description BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b)
+       * @description BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b); OBJECT_BELOW_MIN_CHAPTERS, TERM_BELOW_MIN_CHAPTERS - an object or a term of the dossier found in no chapter; OBJECT_KEY_TAKEN, TERM_KEY_TAKEN - the key belongs to an entity or a candidate of another type (a character of the analysis, a pair of the run, a place of the dossier, for a term also an object of the dossier); OBJECTS_MAX, TERMS_MAX - over 10 objects or terms per run, by chapters then by key; ORGANIZATION_SKIPPED - an organization of the dossier, the run writes no page for it (F08-13b)
        * @enum {string}
        */
       reason:
@@ -17209,7 +17243,14 @@ export interface components {
         | 'PAIRS_MAX'
         | 'PLACE_BELOW_MIN_CHAPTERS'
         | 'PLACE_KEY_TAKEN'
-        | 'PLACES_MAX';
+        | 'PLACES_MAX'
+        | 'OBJECT_BELOW_MIN_CHAPTERS'
+        | 'OBJECT_KEY_TAKEN'
+        | 'OBJECTS_MAX'
+        | 'TERM_BELOW_MIN_CHAPTERS'
+        | 'TERM_KEY_TAKEN'
+        | 'TERMS_MAX'
+        | 'ORGANIZATION_SKIPPED';
     };
     WorldWriteStateDto: {
       draft: components['schemas']['WorldWriteDto'] | null;
@@ -17219,12 +17260,12 @@ export interface components {
       attempt: number;
       authorModel: string | null;
       dropped: components['schemas']['WorldWriteFixDto'][];
-      /** @description Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (a pair not linked in the analysis has no shared chapters - new or stored; or a new pair is not founded by the saved presence), WORLD_MENTIONS_MOVED (the text moved during the presence recount); a place step (F08-12b): WORLD_PLACE_NOT_FOUND (the name forms found the place in no chapter), without a call - WORLD_PLACE_KEY_TAKEN (the place key belongs to an entity of another type) */
+      /** @description Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (a pair not linked in the analysis has no shared chapters - new or stored; or a new pair is not founded by the saved presence), WORLD_MENTIONS_MOVED (the text moved during the presence recount); a place step (F08-12b): WORLD_PLACE_NOT_FOUND (the name forms found the place in no chapter), without a call - WORLD_PLACE_KEY_TAKEN (the place key belongs to an entity of another type); an object or a term step (F08-13b), both without a call: WORLD_OBJECT_NOT_FOUND, WORLD_TERM_NOT_FOUND (the name forms found it in no chapter), WORLD_OBJECT_KEY_TAKEN, WORLD_TERM_KEY_TAKEN (the key got an entity of another type after the choice); WORLD_STEP_OUT_OF_RUN - the step number is past every list of the run (the run data does not match its count) */
       failedReason: string | null;
-      /** @description Key of the character or of the pair; null - the choice step */
+      /** @description Key of the character, the pair, the place, the object or the term; null - the choice step */
       key: string | null;
       /** @enum {string} */
-      kind: 'select' | 'page' | 'external' | 'pair' | 'place';
+      kind: 'select' | 'page' | 'external' | 'pair' | 'place' | 'object' | 'term' | 'event';
       /** @enum {string} */
       outcome: 'done' | 'failed';
       remarks: components['schemas']['WorldWriteRemarkDto'][];
@@ -17234,7 +17275,7 @@ export interface components {
        * @enum {string|null}
        */
       source: 'text' | 'top' | 'none' | null;
-      /** @description 0 - the choice of name forms, then page and external blocks per character, then one step per pair */
+      /** @description 0 - the choice of name forms, then page and external blocks per character, then one step per pair, per place, per object and per term (F08-13b), then per event (none before F08-13b-2) */
       step: number;
       /** @enum {string} */
       verdict: 'ok' | 'flags' | 'failed';
@@ -17243,6 +17284,8 @@ export interface components {
       adaptations: components['schemas']['BookWorldAdaptationDto'][] | null;
       aliases: string[] | null;
       arc: components['schemas']['BookWorldArcDto'] | null;
+      /** @description The characterKeys item of an object (F08-13b): keys of the characters of the world of this version */
+      characterKeys: string[] | null;
       /** @description Pair comparison table */
       compare: components['schemas']['BookWorldCompareDto'][] | null;
       faq: components['schemas']['BookAnalysisFaqDto'][] | null;
@@ -17256,8 +17299,10 @@ export interface components {
       scenes: components['schemas']['BookWorldSceneDto'][] | null;
       /** @description Checked sources of an external block: «Accept» adds them to the sources of the entity */
       sources: components['schemas']['BookAnalysisSourceDto'][] | null;
-      /** @description short, appearance, character, critique, prototypes, bonds, differences, conclusion, imageBrief; places (F08-12b) - location, significance, description */
+      /** @description short, appearance, character, critique, prototypes, bonds, differences, conclusion, imageBrief; places (F08-12b) - location, significance, description; objects and terms (F08-13b) - significance, description */
       text: string | null;
+      /** @description The themeKeys item of an object (F08-13b): keys of the themes of the analysis of this version */
+      themeKeys: string[] | null;
     };
   };
   responses: never;

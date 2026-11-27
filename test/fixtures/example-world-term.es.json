@@ -1,0 +1,19 @@
+{
+  "language": "es",
+  "entities": [
+    {
+      "key": "pledge",
+      "type": "term",
+      "name": "Prenda",
+      "short": "Objeto que se deja a un prestamista como garantía del dinero recibido: si la deuda no se devuelve a tiempo, el objeto se queda con quien prestó. En la novela Raskólnikov empeña sus cosas con la vieja usurera Aliona Ivánovna.",
+      "significance": "La prenda es el modo en que Raskólnikov entra en el piso de la usurera. En el capítulo 1 le lleva un reloj de plata y observa las habitaciones y cómo ella abre la puerta; en el capítulo 6 prepara una prenda falsa, una tablilla envuelta tan apretada que tardará en desatarla.",
+      "quotes": [
+        {
+          "text": "La prenda, en realidad, no era ninguna prenda, sino una simple tablilla de madera bien cepillada, del tamaño y el grosor que podría tener una pitillera de plata.",
+          "chapter": 6,
+          "interpretation": "La prenda falsa está hecha con un solo fin: tener a la usurera ocupada con el nudo durante el instante que Raskólnikov necesita."
+        }
+      ]
+    }
+  ]
+}

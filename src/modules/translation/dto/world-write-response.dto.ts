@@ -20,21 +20,25 @@ import {
   WORLD_BLOCKS,
   WORLD_FIX_CODES,
   WORLD_ITEM_OUTCOMES,
+  WORLD_OBJECTS_OFF_REASONS,
   WORLD_PAIRS_OFF_REASONS,
   WORLD_PLACES_OFF_REASONS,
   WORLD_REVIEW_KINDS,
   WORLD_SKIP_REASONS,
   WORLD_STEP_KINDS,
   WORLD_STEP_SOURCES,
+  WORLD_TERMS_OFF_REASONS,
   WORLD_VERDICTS,
   WorldBlock,
   WorldFixCode,
   WorldItemOutcome,
+  WorldObjectsOffReason,
   WorldPairsOffReason,
   WorldPlacesOffReason,
   WorldSkipReason,
   WorldStepKind,
   WorldStepSource,
+  WorldTermsOffReason,
   WorldVerdict,
 } from '../world-write/world-write.data';
 import {
@@ -88,9 +92,23 @@ export class WorldWriteEstimateDto {
   places!: number;
 
   @ApiProperty({
+    type: Number,
+    description:
+      'Up to N object pages (F08-13b): min(10, objects of the dossier) before the chapter count (10 when the dossier is not ready), 0 on a language without an object sample; one page each, included in stageUsd',
+  })
+  objects!: number;
+
+  @ApiProperty({
+    type: Number,
+    description:
+      'Up to N term pages (F08-13b): min(10, terms of the dossier) before the chapter count (10 when the dossier is not ready), 0 on a language without a term sample; one page each, included in stageUsd',
+  })
+  terms!: number;
+
+  @ApiProperty({
     ...LLM_MONEY_PROPERTY,
     description:
-      'Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages and up to places place pages on the whole version text, plus the reviewer of each step, each step × 2 passes',
+      'Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages, up to places place pages, up to objects object pages and up to terms term pages on the whole version text, plus the reviewer of each step, each step × 2 passes',
   })
   stageUsd!: string;
 
@@ -221,9 +239,15 @@ export class WorldWritePairDto {
   chapters!: number[];
 }
 
-/** Место хода (`F08-12b`): место досье, прошедшее порог глав; шаг места - после шагов пар. */
+/**
+ * Место хода (`F08-12b`): место досье, прошедшее порог глав; шаг места - после шагов пар. Та же форма -
+ * у предмета и понятия хода (`F08-13b`, `objects`, `terms`): поля одни, свой класс был бы копией.
+ */
 export class WorldWritePlaceDto {
-  @ApiProperty({ type: String, description: 'Key of the place (the dossier key)' })
+  @ApiProperty({
+    type: String,
+    description: 'Key of the place, the object or the term (the dossier key)',
+  })
   key!: string;
 
   @ApiProperty({ type: String })
@@ -234,34 +258,43 @@ export class WorldWritePlaceDto {
 
   @ApiProperty({
     type: [Number],
-    description: 'Chapters where the name forms found the place (counted at the choice step)',
+    description:
+      'Chapters where the name forms found the place, the object or the term (counted at the choice step)',
   })
   chapters!: number[];
 }
 
-/** Отсеянный шагом выбора герой, пара или место (`F08-8e`, `F08-12b`): в ход не вошёл, вызова не было. */
+/**
+ * Отсеянный шагом выбора герой, пара, место, предмет, понятие или организация досье (`F08-8e`,
+ * `F08-12b`, `F08-13b`): в ход не вошёл, вызова не было.
+ */
 export class WorldWriteSkipDto {
-  @ApiProperty({ type: String, description: 'Key of the character, the pair or the place' })
+  @ApiProperty({
+    type: String,
+    description:
+      'Key of the character, the pair, the place, the object, the term or the organization',
+  })
   key!: string;
 
   @ApiProperty({
     enum: WORLD_SKIP_REASONS,
     description:
-      'BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b)',
+      'BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b); OBJECT_BELOW_MIN_CHAPTERS, TERM_BELOW_MIN_CHAPTERS - an object or a term of the dossier found in no chapter; OBJECT_KEY_TAKEN, TERM_KEY_TAKEN - the key belongs to an entity or a candidate of another type (a character of the analysis, a pair of the run, a place of the dossier, for a term also an object of the dossier); OBJECTS_MAX, TERMS_MAX - over 10 objects or terms per run, by chapters then by key; ORGANIZATION_SKIPPED - an organization of the dossier, the run writes no page for it (F08-13b)',
   })
   reason!: WorldSkipReason;
 
   @ApiProperty({
     type: [String],
     description:
-      'Names to caption the entry: one for a character or a place, two for a pair in key order; empty for a run saved before this field',
+      'Names to caption the entry: one for a character, a place, an object, a term or an organization, two for a pair in key order; empty for a run saved before this field',
   })
   names!: string[];
 
   @ApiProperty({
     type: Number,
     nullable: true,
-    description: 'Chapters of the character or common chapters of the pair',
+    description:
+      'Chapters of the character, the place, the object or the term, or common chapters of the pair; null for a taken key and an organization',
   })
   chapters!: number | null;
 }
@@ -270,7 +303,7 @@ export class WorldWriteStepDto {
   @ApiProperty({
     type: Number,
     description:
-      '0 - the choice of name forms, then page and external blocks per character, then one step per pair',
+      '0 - the choice of name forms, then page and external blocks per character, then one step per pair, per place, per object and per term (F08-13b), then per event (none before F08-13b-2)',
   })
   step!: number;
 
@@ -280,7 +313,8 @@ export class WorldWriteStepDto {
   @ApiProperty({
     type: String,
     nullable: true,
-    description: 'Key of the character or of the pair; null - the choice step',
+    description:
+      'Key of the character, the pair, the place, the object or the term; null - the choice step',
   })
   key!: string | null;
 
@@ -303,7 +337,7 @@ export class WorldWriteStepDto {
     type: String,
     nullable: true,
     description:
-      'Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (a pair not linked in the analysis has no shared chapters - new or stored; or a new pair is not founded by the saved presence), WORLD_MENTIONS_MOVED (the text moved during the presence recount); a place step (F08-12b): WORLD_PLACE_NOT_FOUND (the name forms found the place in no chapter), without a call - WORLD_PLACE_KEY_TAKEN (the place key belongs to an entity of another type)',
+      'Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (a pair not linked in the analysis has no shared chapters - new or stored; or a new pair is not founded by the saved presence), WORLD_MENTIONS_MOVED (the text moved during the presence recount); a place step (F08-12b): WORLD_PLACE_NOT_FOUND (the name forms found the place in no chapter), without a call - WORLD_PLACE_KEY_TAKEN (the place key belongs to an entity of another type); an object or a term step (F08-13b), both without a call: WORLD_OBJECT_NOT_FOUND, WORLD_TERM_NOT_FOUND (the name forms found it in no chapter), WORLD_OBJECT_KEY_TAKEN, WORLD_TERM_KEY_TAKEN (the key got an entity of another type after the choice); WORLD_STEP_OUT_OF_RUN - the step number is past every list of the run (the run data does not match its count)',
   })
   failedReason!: string | null;
 
@@ -340,7 +374,7 @@ export class WorldWriteValueDto {
     type: String,
     nullable: true,
     description:
-      'short, appearance, character, critique, prototypes, bonds, differences, conclusion, imageBrief; places (F08-12b) - location, significance, description',
+      'short, appearance, character, critique, prototypes, bonds, differences, conclusion, imageBrief; places (F08-12b) - location, significance, description; objects and terms (F08-13b) - significance, description',
   })
   text!: string | null;
 
@@ -382,6 +416,22 @@ export class WorldWriteValueDto {
       'The kind item of a place (F08-12b, R3): real or fictional with its Wikidata item, one proposal',
   })
   place!: WorldWritePlaceKindDto | null;
+
+  @ApiProperty({
+    type: [String],
+    nullable: true,
+    description:
+      'The characterKeys item of an object (F08-13b): keys of the characters of the world of this version',
+  })
+  characterKeys!: string[] | null;
+
+  @ApiProperty({
+    type: [String],
+    nullable: true,
+    description:
+      'The themeKeys item of an object (F08-13b): keys of the themes of the analysis of this version',
+  })
+  themeKeys!: string[] | null;
 
   @ApiProperty({
     type: [BookAnalysisSourceDto],
@@ -482,7 +532,7 @@ export class WorldWriteDto {
     type: Number,
     nullable: true,
     description:
-      'Steps of the run: 1 + 2 per character + 1 per pair + 1 per place; null - the characters are not chosen yet',
+      'Steps of the run: 1 + 2 per character + 1 per pair + 1 per place + 1 per object + 1 per term; null - the characters are not chosen yet',
   })
   stepsTotal!: number | null;
 
@@ -499,7 +549,8 @@ export class WorldWriteDto {
 
   @ApiProperty({
     type: [WorldWriteSkipDto],
-    description: 'Characters and pairs the choice step left out, with the reason',
+    description:
+      'Characters, pairs, places, objects, terms and organizations the choice step left out, with the reason',
   })
   leftOut!: WorldWriteSkipDto[];
 
@@ -525,6 +576,37 @@ export class WorldWriteDto {
       'The run writes no places: WORLD_PLACE_LANGUAGE - no place sample for the language',
   })
   placesOff!: WorldPlacesOffReason | null;
+
+  @ApiProperty({
+    type: [WorldWritePlaceDto],
+    nullable: true,
+    description:
+      'Objects of the run (F08-13b), their steps go after the steps of the places; null - not chosen yet; [] for a run started before F08-13b',
+  })
+  objects!: WorldWritePlaceDto[] | null;
+
+  @ApiProperty({
+    type: [WorldWritePlaceDto],
+    nullable: true,
+    description:
+      'Terms of the run (F08-13b), their steps go after the steps of the objects; null - not chosen yet; [] for a run started before F08-13b',
+  })
+  terms!: WorldWritePlaceDto[] | null;
+
+  @ApiProperty({
+    enum: WORLD_OBJECTS_OFF_REASONS,
+    nullable: true,
+    description:
+      'The run writes no objects: WORLD_OBJECT_LANGUAGE - no object sample for the language',
+  })
+  objectsOff!: WorldObjectsOffReason | null;
+
+  @ApiProperty({
+    enum: WORLD_TERMS_OFF_REASONS,
+    nullable: true,
+    description: 'The run writes no terms: WORLD_TERM_LANGUAGE - no term sample for the language',
+  })
+  termsOff!: WorldTermsOffReason | null;
 
   @ApiProperty({ type: [WorldWriteStepDto] })
   steps!: WorldWriteStepDto[];

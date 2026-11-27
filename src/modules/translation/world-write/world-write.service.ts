@@ -66,7 +66,10 @@ import {
   withItem,
   WORLD_TEXT_BLOCKS,
   WorldItem,
+  WorldDossierCandidate,
   WorldWriteData,
+  WORLD_DOSSIER_TYPES,
+  dossierListOf,
   worldDataJson,
 } from './world-write.data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
@@ -77,6 +80,7 @@ import { WorldGeoPass } from '../../book-world/world-geo.service';
 import { WorldWriteHandler, worldWriteTaskInput } from './world-write.handler';
 import {
   externalInput,
+  objectInput,
   pageBook,
   pageInput,
   pairBook,
@@ -90,6 +94,7 @@ import {
   worldStepUsd,
 } from './world-write.steps';
 import { placeStepsUpperBound } from './world-write.places';
+import { dossierStepsUpperBound } from './world-write.dossier-entities';
 
 const KIND = 'world_write' as const;
 
@@ -436,20 +441,30 @@ export class WorldWriteService {
         0,
       );
     }
-    const place = data.places?.find((p) => p.key === item.key);
-    if (place) {
+    // Место, предмет и понятие (`F08-12b`, `F08-13b`): шаг страницы досье этапом страницы своей формой.
+    for (const type of WORLD_DOSSIER_TYPES) {
+      const entry = dossierListOf(data, type)?.find((e) => e.key === item.key);
+      if (!entry) continue;
       const context = await this.handler.contextOf(row, dossier.data);
-      return worldStepUsd(
-        calls.page,
-        calls.review,
-        placeInput(context, place, new Map(), pageBook(context, place, null), spec),
-        0,
-      );
+      const book = pageBook(context, entry, null);
+      return type === 'place'
+        ? worldStepUsd(
+            calls.page,
+            calls.review,
+            placeInput(context, entry, new Map(), book, spec),
+            0,
+          )
+        : worldStepUsd(
+            calls.page,
+            calls.review,
+            objectInput(context, type, entry, new Map(), book, spec),
+            0,
+          );
     }
     const candidate = data.candidates?.find((c) => c.key === item.key);
     if (!candidate) throw llmTaskConflict(WORLD_WRITE_NOT_READY, 'The world run is not ready');
     const context = await this.handler.contextOf(row, dossier.data);
-    if (stepOfData(data, item.step).kind === 'external') {
+    if (stepOfData(data, item.step)?.kind === 'external') {
       return worldStepUsd(
         calls.external,
         calls.review,
@@ -522,6 +537,13 @@ export class WorldWriteService {
     const pairs = pairStepsUpperBound(heroes, hasWorldPairExample(version.language));
     // Места (`F08-12b`): по местам досье сверху, до порога глав; досье нет - потолок.
     const places = placeStepsUpperBound(context.dossier?.data ?? null, version.language);
+    // Предметы и понятия (`F08-13b`, Q9): по досье сверху, до порога глав; досье нет - потолок типа.
+    const objects = dossierStepsUpperBound(
+      context.dossier?.data ?? null,
+      version.language,
+      'object',
+    );
+    const terms = dossierStepsUpperBound(context.dossier?.data ?? null, version.language, 'term');
     const usd = worldPipelineUsd(
       calls,
       {
@@ -537,9 +559,8 @@ export class WorldWriteService {
         names: { titles: [version.title], authors: [version.author] },
       },
       extra,
-      pairs,
+      { pairs, places, objects, terms },
       { analysis, entities: onKeys },
-      places,
     );
     const lines = contextLimits(context, usd);
     return {
@@ -553,6 +574,8 @@ export class WorldWriteService {
         candidates: heroes,
         pairs,
         places,
+        objects,
+        terms,
         stageUsd: moneyUsd(usd),
         upperBound,
         suggestedLimitUsd: moneyUsd(lines.suggestedLimitUsd),
@@ -586,14 +609,12 @@ export class WorldWriteService {
       pairs: data.pairs,
       leftOut: data.leftOut,
       pairsOff: data.pairsOff,
-      places:
-        data.places?.map((p) => ({
-          key: p.key,
-          name: p.name,
-          aliases: p.aliases,
-          chapters: p.mentions.chapters,
-        })) ?? null,
+      places: data.places?.map(namedDto) ?? null,
       placesOff: data.placesOff,
+      objects: data.objects?.map(namedDto) ?? null,
+      terms: data.terms?.map(namedDto) ?? null,
+      objectsOff: data.objectsOff,
+      termsOff: data.termsOff,
       steps: data.steps.map((s) => ({
         ...s,
         remarks: remarksDto(s.remarks),
@@ -617,6 +638,14 @@ function remarksDto(remarks: readonly DraftRemark[]) {
   );
 }
 
+/** Место, предмет или понятие хода в ответ (`WorldWritePlaceDto`): главы - посчитанные на выборе. */
+const namedDto = (p: WorldDossierCandidate) => ({
+  key: p.key,
+  name: p.name,
+  aliases: p.aliases,
+  chapters: p.mentions.chapters,
+});
+
 function reviewDto(review: WorldItem['review']) {
   return review
     ? { kind: review.kind, model: review.kind === 'answered' ? review.model : null }
@@ -637,6 +666,8 @@ function valueDto(item: WorldItem): WorldWriteValueDto {
     adaptations: null,
     compare: null,
     place: null,
+    characterKeys: null,
+    themeKeys: null,
     sources: item.sources && item.sources.length > 0 ? item.sources : null,
     print: proposalPrint(item),
   };

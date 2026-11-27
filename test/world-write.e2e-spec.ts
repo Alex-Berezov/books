@@ -124,6 +124,9 @@ describe('World run «Write World» (e2e)', () => {
     ],
     // Форма ответа выбора с F08-12b несёт и места (`places`); в досье версии мест нет - список пуст.
     places: [],
+    // С F08-13b - и предметы с понятиями; в досье по умолчанию их нет.
+    objects: [],
+    terms: [],
   };
   const quote = (text: string, chapter: number, speakerKey = '') => ({
     text,
@@ -576,6 +579,92 @@ describe('World run «Write World» (e2e)', () => {
     // Проверяющая - другого семейства; шаг без замечаний - без переделки.
     expect(callsOf('world_page_write')).toHaveLength(2);
     expect(new Set(callsOf('world_review').map((c) => c.body.model))).toEqual(new Set([REVIEWER]));
+  });
+
+  // F08-13b-1 (решения арбитра `F08 | F08-13b` Q1, Q5, Q6): предмет и понятие досье - свои шаги после пар.
+  it('F08-13b: a dossier object and term get their page steps after the pairs; an organization is left out; foreign characterKeys are removed before the write', async () => {
+    const entity = (key: string, name: string, kind: string, firstChapter: number) => ({
+      key,
+      name,
+      kind,
+      whatIs: `the ${name} of the town`,
+      firstChapter,
+    });
+    const OBJECT = {
+      name: 'The bell',
+      short: 'The old bell over the town square that Boris rings day after day.',
+      significance:
+        'The bell can be read as the sign of staying: Boris keeps ringing it when Anna leaves.',
+      description: '',
+      quotes: [quote(LINES.bell, 2, 'boris')],
+      faq: [],
+      // «ghost» - не герой мира, «pride» - не тема анализа: код снимает их до записи (Q5).
+      characterKeys: ['boris', 'ghost'],
+      themeKeys: ['pride'],
+    };
+    const TERM = {
+      name: 'Dawn',
+      short: 'Dawn is the first light of the morning, the hour when Anna walks along the river.',
+      significance: '',
+      quotes: [],
+    };
+    answer = (name, body) => {
+      if (name === 'dossier') {
+        return {
+          ...DOSSIER,
+          entities: [
+            entity('bell', 'bell', 'object', 2),
+            entity('dawn', 'dawn', 'term', 1),
+            entity('council', 'council', 'organization', 1),
+          ],
+        };
+      }
+      if (name === 'world_select') {
+        return {
+          ...SELECT,
+          objects: [{ key: 'bell', name: 'The bell', aliases: ['bell'] }],
+          terms: [{ key: 'dawn', name: 'Dawn', aliases: ['dawn'] }],
+        };
+      }
+      if (name === 'world_page_write' && /<<<OBJECT\w*\n/.test(textOf(body))) return OBJECT;
+      if (name === 'world_page_write' && /<<<TERM\w*\n/.test(textOf(body))) return TERM;
+      return defaultAnswer(name, body);
+    };
+    const versionId = await version();
+    const estimate = await auth(http().get(`${base(versionId)}/estimate`)).expect(200);
+    expect(estimate.body).toMatchObject({ objects: 1, terms: 1 });
+    await start(versionId).expect(202);
+    await drain();
+
+    const run = (await runOf(versionId)) as Run & {
+      objects: Array<{ key: string; chapters: number[] }>;
+      terms: Array<{ key: string; chapters: number[] }>;
+      objectsOff: string | null;
+      termsOff: string | null;
+    };
+    expect(run.status).toBe('ready');
+    expect(run.objects.map((o) => [o.key, o.chapters])).toEqual([['bell', [2, 3]]]);
+    expect(run.terms.map((t) => [t.key, t.chapters])).toEqual([['dawn', [1]]]);
+    expect([run.objectsOff, run.termsOff]).toEqual([null, null]);
+    expect(run.leftOut).toContainEqual(
+      expect.objectContaining({ key: 'council', reason: 'ORGANIZATION_SKIPPED' }),
+    );
+    // Номера шагов героев и пары прежние; предмет - седьмой, понятие - восьмой.
+    expect(run.stepsTotal).toBe(8);
+    expect(run.steps.slice(5).map((s) => [s.step, s.kind, s.key, s.outcome])).toEqual([
+      [5, 'pair', 'anna--boris', 'done'],
+      [6, 'object', 'bell', 'done'],
+      [7, 'term', 'dawn', 'done'],
+    ]);
+    expect(run.steps[6].dropped.map((d) => [d.code, d.path])).toEqual([
+      ['KEY_UNKNOWN', 'characterKeys.1'],
+      ['KEY_UNKNOWN', 'themeKeys.0'],
+    ]);
+    const bell = await entityOf(versionId, 'bell');
+    expect(bell).toMatchObject({ type: 'object', role: null, name: 'The bell' });
+    expect((bell?.blocks as { characterKeys?: string[] }).characterKeys).toEqual(['boris']);
+    expect(await entityOf(versionId, 'dawn')).toMatchObject({ type: 'term', name: 'Dawn' });
+    expect(await entityOf(versionId, 'council')).toBeNull();
   });
 
   it('external blocks: a statement whose only source did not open is dropped, the kept one is written with its checked source and flagged EXTERNAL_CHECK; the external step gets no book text', async () => {

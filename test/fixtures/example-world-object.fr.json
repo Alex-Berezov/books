@@ -1,0 +1,38 @@
+{
+  "language": "fr",
+  "entities": [
+    {
+      "key": "axe",
+      "type": "object",
+      "name": "La hache",
+      "short": "La hache que Raskolnikov prend pour l’acte qu’il prépare depuis un mois. Il compte la prendre dans la cuisine de sa logeuse et, quand cela échoue, il la trouve par hasard dans la loge du concierge.",
+      "significance": "La hache peut se lire comme le point où l’idée devient un acte. Pendant tout un mois, Raskolnikov rumine son projet dans sa mansarde, mais au chapitre 6 tout se ramène à un outil de ménage : où le prendre, comment le porter, comment le cacher sous son manteau. L’ampleur de la théorie et la petitesse de la hache se tiennent côte à côte, et c’est la petitesse qui décide.\n\nLa hache montre aussi combien le projet dépend du hasard. La cuisine sur laquelle il comptait n’est pas vide, le projet semble s’effondrer, et la hache apparaît sous le banc de la loge du concierge. Raskolnikov y voit un signe : ce que sa raison n’a pas su arranger, le hasard l’a arrangé pour lui.",
+      "description": "Une hache de ménage ordinaire. Raskolnikov ne la porte pas à la main : au chapitre 6, il arrache une bande d’une vieille chemise sale et la coud à l’intérieur de son pardessus d’été en boucle sous l’aisselle gauche, pour que la hache y pende et que le manteau la cache. Il la trouve dans la loge du concierge, sous le banc, entre deux bûches.",
+      "quotes": [
+        {
+          "text": "« Si ce n'est pas la raison, c'est le démon ! » pensa-t-il avec un sourire étrange.",
+          "chapter": 6,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskolnikov trouve la hache par hasard, après l’échec du plan de la cuisine. Il attribue sa chance non à sa raison mais au diable, et le sourire trahit qu’il y sent lui-même quelque chose de trouble."
+        },
+        {
+          "text": "Il sortit tout à fait la hache, la leva à deux mains, se sentant à peine lui-même, et presque sans effort, presque machinalement, l’abattit sur sa tête, du dos de la hache.",
+          "chapter": 7,
+          "interpretation": "L’acte s’accomplit « presque machinalement » : les longs raisonnements des chapitres précédents aboutissent à un geste où Raskolnikov se sent à peine lui-même."
+        }
+      ],
+      "faq": [
+        {
+          "question": "Où Raskolnikov a-t-il pris la hache ?",
+          "answer": "Dans la loge du concierge (chapitre 6). Il voulait la prendre dans la cuisine de la logeuse, mais Nastassia s’y trouvait ; en sortant, il a vu la hache sous le banc de la loge et l’a emportée."
+        },
+        {
+          "question": "Comment Raskolnikov a-t-il caché la hache ?",
+          "answer": "Dans une boucle qu’il a cousue à l’intérieur de son pardessus, sous l’aisselle gauche, avec une bande d’une vieille chemise (chapitre 6) : la hache y pendait, et le manteau la couvrait."
+        }
+      ],
+      "characterKeys": ["raskolnikov"],
+      "themeKeys": ["guilt"]
+    }
+  ]
+}

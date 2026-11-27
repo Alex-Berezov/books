@@ -81,6 +81,8 @@ describe('WorldWriteHandler: places at the choice step (F08-12b, Q1)', () => {
     expect(record?.leftOut?.map((s) => [s.key, s.reason])).toEqual([
       ['anna', 'PLACE_KEY_TAKEN'],
       ['square', 'PLACE_BELOW_MIN_CHAPTERS'],
+      // F08-13b: предмет досье «axe» не стоит ни в одной главе - отсеян своим порогом.
+      ['axe', 'OBJECT_BELOW_MIN_CHAPTERS'],
     ]);
   });
 

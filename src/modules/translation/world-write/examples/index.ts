@@ -1,7 +1,18 @@
 import type { WorldWriteLanguage } from '../world-write.constants';
+import type { WorldRunObjectType } from '../world-write.data';
 import { EXAMPLE_WORLD_EN } from './en';
 import { EXAMPLE_WORLD_ES } from './es';
 import { EXAMPLE_WORLD_FR } from './fr';
+import { EXAMPLE_WORLD_OBJECT_EN } from './object-en';
+import { EXAMPLE_WORLD_OBJECT_ES } from './object-es';
+import { EXAMPLE_WORLD_OBJECT_FR } from './object-fr';
+import { EXAMPLE_WORLD_OBJECT_PT } from './object-pt';
+import { EXAMPLE_WORLD_OBJECT_RU } from './object-ru';
+import { EXAMPLE_WORLD_TERM_EN } from './term-en';
+import { EXAMPLE_WORLD_TERM_ES } from './term-es';
+import { EXAMPLE_WORLD_TERM_FR } from './term-fr';
+import { EXAMPLE_WORLD_TERM_PT } from './term-pt';
+import { EXAMPLE_WORLD_TERM_RU } from './term-ru';
 import { EXAMPLE_WORLD_PAIR_EN } from './pair-en';
 import { EXAMPLE_WORLD_PAIR_ES } from './pair-es';
 import { EXAMPLE_WORLD_PAIR_FR } from './pair-fr';
@@ -59,3 +70,34 @@ export const EXAMPLE_WORLD_PLACES: Partial<Record<WorldWriteLanguage, Record<str
 /** Пишет ли ход места на этом языке: только при эталоне места (`F08-12b`). */
 export const hasWorldPlaceExample = (language: string): boolean =>
   Object.keys(EXAMPLE_WORLD_PLACES).includes(language);
+
+/**
+ * Эталоны страницы предмета и понятия (`F08-13b`, решение арбитра `F08 | F08-13b` Q7; канон
+ * `features/F08-book-wiki/prompts/example-world-{object,term}.<lang>.json`): как у мест, язык хода без
+ * эталона типа сущностей этого типа не получает (`objectsOff`, `termsOff`).
+ */
+export const EXAMPLE_WORLD_OBJECTS: Partial<Record<WorldWriteLanguage, Record<string, unknown>>> = {
+  en: EXAMPLE_WORLD_OBJECT_EN,
+  es: EXAMPLE_WORLD_OBJECT_ES,
+  fr: EXAMPLE_WORLD_OBJECT_FR,
+  pt: EXAMPLE_WORLD_OBJECT_PT,
+  ru: EXAMPLE_WORLD_OBJECT_RU,
+};
+export const EXAMPLE_WORLD_TERMS: Partial<Record<WorldWriteLanguage, Record<string, unknown>>> = {
+  en: EXAMPLE_WORLD_TERM_EN,
+  es: EXAMPLE_WORLD_TERM_ES,
+  fr: EXAMPLE_WORLD_TERM_FR,
+  pt: EXAMPLE_WORLD_TERM_PT,
+  ru: EXAMPLE_WORLD_TERM_RU,
+};
+
+/** Эталон предмета или понятия языка; языка без эталона типа нет - `undefined`. */
+export const worldObjectExample = (
+  language: string,
+  type: WorldRunObjectType,
+): Record<string, unknown> | undefined =>
+  (type === 'object' ? EXAMPLE_WORLD_OBJECTS : EXAMPLE_WORLD_TERMS)[language as WorldWriteLanguage];
+
+/** Пишет ли ход сущности типа на этом языке: только при эталоне типа (`F08-13b`). */
+export const hasWorldObjectExample = (language: string, type: WorldRunObjectType): boolean =>
+  worldObjectExample(language, type) !== undefined;

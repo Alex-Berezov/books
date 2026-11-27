@@ -6,9 +6,12 @@ import { UpdateBookWorldDto } from '../../../book-world/dto/update-book-world.dt
 import { checkWorldTypeFields } from '../../../book-world/world-refs';
 import { WORLD_WRITE_LANGUAGES } from '../world-write.constants';
 import {
+  EXAMPLE_WORLD_OBJECTS,
   EXAMPLE_WORLD_PAIRS,
   EXAMPLE_WORLD_PLACES,
+  EXAMPLE_WORLD_TERMS,
   EXAMPLE_WORLDS,
+  hasWorldObjectExample,
   hasWorldPairExample,
   hasWorldPlaceExample,
 } from './index';
@@ -74,6 +77,35 @@ describe('world examples', () => {
       'fr',
       'pt',
     ]);
+  });
+
+  // F08-13b (решение арбитра `F08 | F08-13b` Q7): эталоны предмета и понятия на пять языков.
+  it.each(
+    (['object', 'term'] as const).flatMap((type) =>
+      (['en', 'ru', 'es', 'fr', 'pt'] as const).map((language) => [type, language] as const),
+    ),
+  )(
+    'the %s example of %s equals its JSON fixture and passes the world import rule (F08-13b)',
+    (type, language) => {
+      const example = (type === 'object' ? EXAMPLE_WORLD_OBJECTS : EXAMPLE_WORLD_TERMS)[language];
+      expect(example).toEqual(fixture(`example-world-${type}.${language}.json`));
+      const dto = plainToInstance(UpdateBookWorldDto, example);
+      expect(validateSync(dto, { whitelist: true, forbidNonWhitelisted: true })).toEqual([]);
+      const none = { aliasExclusions: null, aliasChapterExclusions: null };
+      const entities = (example as { entities: Array<Record<string, unknown>> }).entities;
+      expect(entities.map((e) => e.type)).toEqual([type]);
+      for (const entity of entities) {
+        expect(checkWorldTypeFields(entity as never, none)).toEqual([]);
+      }
+    },
+  );
+
+  it('objects and terms are written on every language of the run with their example (F08-13b)', () => {
+    for (const type of ['object', 'term'] as const) {
+      expect(
+        ['en', 'ru', 'es', 'fr', 'pt', 'de'].filter((l) => hasWorldObjectExample(l, type)),
+      ).toEqual(['en', 'ru', 'es', 'fr', 'pt']);
+    }
   });
 
   it('every language of the run has its page example (F08-9)', () => {

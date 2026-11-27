@@ -5,7 +5,12 @@ import { stageEstimatorFor } from '../llm-model-checks';
 import { hasWorldPairExample } from './examples';
 import { upperWorldAnalysis, worldUpperUsd } from './world-estimate';
 import { worldCharacters, worldPipelineUsd } from './world-write.steps';
-import { WORLD_PAIRS_MAX, WORLD_PLACES_MAX } from './world-write.constants';
+import {
+  WORLD_OBJECTS_MAX,
+  WORLD_PAIRS_MAX,
+  WORLD_PLACES_MAX,
+  WORLD_TERMS_MAX,
+} from './world-write.constants';
 
 jest.mock('../llm-model-checks', () => ({ stageEstimatorFor: jest.fn() }));
 jest.mock('./examples', () => ({
@@ -77,10 +82,14 @@ describe('worldUpperUsd', () => {
         names: { titles: ['Book'], authors: ['Author'] },
       },
       4000,
-      WORLD_PAIRS_MAX,
+      // F08-12b: места до старта - потолок (досье ещё нет); F08-13b (Q9): предметы и понятия - так же.
+      {
+        pairs: WORLD_PAIRS_MAX,
+        places: WORLD_PLACES_MAX,
+        objects: WORLD_OBJECTS_MAX,
+        terms: WORLD_TERMS_MAX,
+      },
       expect.objectContaining({ language: 'fr' }),
-      // F08-12b: места до старта - потолок (досье ещё нет).
-      WORLD_PLACES_MAX,
     );
   });
 
@@ -90,7 +99,7 @@ describe('worldUpperUsd', () => {
     await worldUpperUsd(llm, source([]), ['fr', 'es'], 'en');
 
     expect(hasWorldPairExample).toHaveBeenCalledTimes(2);
-    const pairs = jest.mocked(worldPipelineUsd).mock.calls.map((c) => [c[1].language, c[3]]);
+    const pairs = jest.mocked(worldPipelineUsd).mock.calls.map((c) => [c[1].language, c[3]?.pairs]);
     expect(pairs).toEqual([
       ['fr', WORLD_PAIRS_MAX],
       ['es', 0],

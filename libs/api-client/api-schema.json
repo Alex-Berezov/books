@@ -33798,11 +33798,27 @@
             "type": "string"
           },
           "leftOut": {
-            "description": "Characters and pairs the choice step left out, with the reason",
+            "description": "Characters, pairs, places, objects, terms and organizations the choice step left out, with the reason",
             "items": {
               "$ref": "#/components/schemas/WorldWriteSkipDto"
             },
             "type": "array"
+          },
+          "objects": {
+            "description": "Objects of the run (F08-13b), their steps go after the steps of the places; null - not chosen yet; [] for a run started before F08-13b",
+            "items": {
+              "$ref": "#/components/schemas/WorldWritePlaceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "objectsOff": {
+            "description": "The run writes no objects: WORLD_OBJECT_LANGUAGE - no object sample for the language",
+            "enum": [
+              "WORLD_OBJECT_LANGUAGE"
+            ],
+            "nullable": true,
+            "type": "string"
           },
           "operation": {
             "$ref": "#/components/schemas/LlmOperationDto"
@@ -33862,9 +33878,25 @@
             "type": "array"
           },
           "stepsTotal": {
-            "description": "Steps of the run: 1 + 2 per character + 1 per pair + 1 per place; null - the characters are not chosen yet",
+            "description": "Steps of the run: 1 + 2 per character + 1 per pair + 1 per place + 1 per object + 1 per term; null - the characters are not chosen yet",
             "nullable": true,
             "type": "number"
+          },
+          "terms": {
+            "description": "Terms of the run (F08-13b), their steps go after the steps of the objects; null - not chosen yet; [] for a run started before F08-13b",
+            "items": {
+              "$ref": "#/components/schemas/WorldWritePlaceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "termsOff": {
+            "description": "The run writes no terms: WORLD_TERM_LANGUAGE - no term sample for the language",
+            "enum": [
+              "WORLD_TERM_LANGUAGE"
+            ],
+            "nullable": true,
+            "type": "string"
           },
           "updatedAt": {
             "format": "date-time",
@@ -33894,6 +33926,10 @@
           "pairsOff",
           "places",
           "placesOff",
+          "objects",
+          "terms",
+          "objectsOff",
+          "termsOff",
           "steps",
           "items",
           "droppedQuotes",
@@ -34358,11 +34394,27 @@
             "type": "string"
           },
           "leftOut": {
-            "description": "Characters and pairs the choice step left out, with the reason",
+            "description": "Characters, pairs, places, objects, terms and organizations the choice step left out, with the reason",
             "items": {
               "$ref": "#/components/schemas/WorldWriteSkipDto"
             },
             "type": "array"
+          },
+          "objects": {
+            "description": "Objects of the run (F08-13b), their steps go after the steps of the places; null - not chosen yet; [] for a run started before F08-13b",
+            "items": {
+              "$ref": "#/components/schemas/WorldWritePlaceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "objectsOff": {
+            "description": "The run writes no objects: WORLD_OBJECT_LANGUAGE - no object sample for the language",
+            "enum": [
+              "WORLD_OBJECT_LANGUAGE"
+            ],
+            "nullable": true,
+            "type": "string"
           },
           "operation": {
             "$ref": "#/components/schemas/LlmOperationDto"
@@ -34415,9 +34467,25 @@
             "type": "array"
           },
           "stepsTotal": {
-            "description": "Steps of the run: 1 + 2 per character + 1 per pair + 1 per place; null - the characters are not chosen yet",
+            "description": "Steps of the run: 1 + 2 per character + 1 per pair + 1 per place + 1 per object + 1 per term; null - the characters are not chosen yet",
             "nullable": true,
             "type": "number"
+          },
+          "terms": {
+            "description": "Terms of the run (F08-13b), their steps go after the steps of the objects; null - not chosen yet; [] for a run started before F08-13b",
+            "items": {
+              "$ref": "#/components/schemas/WorldWritePlaceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "termsOff": {
+            "description": "The run writes no terms: WORLD_TERM_LANGUAGE - no term sample for the language",
+            "enum": [
+              "WORLD_TERM_LANGUAGE"
+            ],
+            "nullable": true,
+            "type": "string"
           },
           "updatedAt": {
             "format": "date-time",
@@ -34447,6 +34515,10 @@
           "pairsOff",
           "places",
           "placesOff",
+          "objects",
+          "terms",
+          "objectsOff",
+          "termsOff",
           "steps",
           "items",
           "droppedQuotes",
@@ -34482,6 +34554,10 @@
             "nullable": true,
             "type": "object"
           },
+          "objects": {
+            "description": "Up to N object pages (F08-13b): min(10, objects of the dossier) before the chapter count (10 when the dossier is not ready), 0 on a language without an object sample; one page each, included in stageUsd",
+            "type": "number"
+          },
           "pairs": {
             "description": "Up to N pair pages (F08-8e): min(10, candidates·(candidates−1)/2) before the chapter count, 0 on a language without a pair sample; one page each, included in stageUsd",
             "type": "number"
@@ -34491,7 +34567,7 @@
             "type": "number"
           },
           "stageUsd": {
-            "description": "Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages and up to places place pages on the whole version text, plus the reviewer of each step, each step × 2 passes",
+            "description": "Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages, up to places place pages, up to objects object pages and up to terms term pages on the whole version text, plus the reviewer of each step, each step × 2 passes",
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
@@ -34501,6 +34577,10 @@
             "example": "100.00000000",
             "format": "decimal",
             "type": "string"
+          },
+          "terms": {
+            "description": "Up to N term pages (F08-13b): min(10, terms of the dossier) before the chapter count (10 when the dossier is not ready), 0 on a language without a term sample; one page each, included in stageUsd",
+            "type": "number"
           },
           "upperBound": {
             "description": "The dossier or the glossary is not ready: their size is taken from their stages",
@@ -34513,6 +34593,8 @@
           "candidates",
           "pairs",
           "places",
+          "objects",
+          "terms",
           "stageUsd",
           "upperBound",
           "suggestedLimitUsd"
@@ -34579,7 +34661,9 @@
               "kind",
               "location",
               "significance",
-              "description"
+              "description",
+              "characterKeys",
+              "themeKeys"
             ],
             "type": "string"
           },
@@ -34726,14 +34810,14 @@
             "type": "array"
           },
           "chapters": {
-            "description": "Chapters where the name forms found the place (counted at the choice step)",
+            "description": "Chapters where the name forms found the place, the object or the term (counted at the choice step)",
             "items": {
               "type": "number"
             },
             "type": "array"
           },
           "key": {
-            "description": "Key of the place (the dossier key)",
+            "description": "Key of the place, the object or the term (the dossier key)",
             "type": "string"
           },
           "name": {
@@ -34850,23 +34934,23 @@
       "WorldWriteSkipDto": {
         "properties": {
           "chapters": {
-            "description": "Chapters of the character or common chapters of the pair",
+            "description": "Chapters of the character, the place, the object or the term, or common chapters of the pair; null for a taken key and an organization",
             "nullable": true,
             "type": "number"
           },
           "key": {
-            "description": "Key of the character, the pair or the place",
+            "description": "Key of the character, the pair, the place, the object, the term or the organization",
             "type": "string"
           },
           "names": {
-            "description": "Names to caption the entry: one for a character or a place, two for a pair in key order; empty for a run saved before this field",
+            "description": "Names to caption the entry: one for a character, a place, an object, a term or an organization, two for a pair in key order; empty for a run saved before this field",
             "items": {
               "type": "string"
             },
             "type": "array"
           },
           "reason": {
-            "description": "BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds \"--\"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or \"-\" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b)",
+            "description": "BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds \"--\"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or \"-\" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b); OBJECT_BELOW_MIN_CHAPTERS, TERM_BELOW_MIN_CHAPTERS - an object or a term of the dossier found in no chapter; OBJECT_KEY_TAKEN, TERM_KEY_TAKEN - the key belongs to an entity or a candidate of another type (a character of the analysis, a pair of the run, a place of the dossier, for a term also an object of the dossier); OBJECTS_MAX, TERMS_MAX - over 10 objects or terms per run, by chapters then by key; ORGANIZATION_SKIPPED - an organization of the dossier, the run writes no page for it (F08-13b)",
             "enum": [
               "BELOW_MIN_CHAPTERS",
               "KEY_PAIR_FORM",
@@ -34875,7 +34959,14 @@
               "PAIRS_MAX",
               "PLACE_BELOW_MIN_CHAPTERS",
               "PLACE_KEY_TAKEN",
-              "PLACES_MAX"
+              "PLACES_MAX",
+              "OBJECT_BELOW_MIN_CHAPTERS",
+              "OBJECT_KEY_TAKEN",
+              "OBJECTS_MAX",
+              "TERM_BELOW_MIN_CHAPTERS",
+              "TERM_KEY_TAKEN",
+              "TERMS_MAX",
+              "ORGANIZATION_SKIPPED"
             ],
             "type": "string"
           }
@@ -34922,12 +35013,12 @@
             "type": "array"
           },
           "failedReason": {
-            "description": "Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (a pair not linked in the analysis has no shared chapters - new or stored; or a new pair is not founded by the saved presence), WORLD_MENTIONS_MOVED (the text moved during the presence recount); a place step (F08-12b): WORLD_PLACE_NOT_FOUND (the name forms found the place in no chapter), without a call - WORLD_PLACE_KEY_TAKEN (the place key belongs to an entity of another type)",
+            "description": "Why the step failed: DRAFT_TOO_LONG, DRAFT_INVALID_RESPONSE, WORLD_CHARACTER_NOT_FOUND (the name forms found the character in no chapter); a pair step without a call: WORLD_PAIR_MEMBER_MISSING (a character of the pair is not in the world), WORLD_PAIR_KEY_TAKEN, WORLD_PAIR_NOT_FOUNDED (a pair not linked in the analysis has no shared chapters - new or stored; or a new pair is not founded by the saved presence), WORLD_MENTIONS_MOVED (the text moved during the presence recount); a place step (F08-12b): WORLD_PLACE_NOT_FOUND (the name forms found the place in no chapter), without a call - WORLD_PLACE_KEY_TAKEN (the place key belongs to an entity of another type); an object or a term step (F08-13b), both without a call: WORLD_OBJECT_NOT_FOUND, WORLD_TERM_NOT_FOUND (the name forms found it in no chapter), WORLD_OBJECT_KEY_TAKEN, WORLD_TERM_KEY_TAKEN (the key got an entity of another type after the choice); WORLD_STEP_OUT_OF_RUN - the step number is past every list of the run (the run data does not match its count)",
             "nullable": true,
             "type": "string"
           },
           "key": {
-            "description": "Key of the character or of the pair; null - the choice step",
+            "description": "Key of the character, the pair, the place, the object or the term; null - the choice step",
             "nullable": true,
             "type": "string"
           },
@@ -34937,7 +35028,10 @@
               "page",
               "external",
               "pair",
-              "place"
+              "place",
+              "object",
+              "term",
+              "event"
             ],
             "type": "string"
           },
@@ -34974,7 +35068,7 @@
             "type": "string"
           },
           "step": {
-            "description": "0 - the choice of name forms, then page and external blocks per character, then one step per pair",
+            "description": "0 - the choice of name forms, then page and external blocks per character, then one step per pair, per place, per object and per term (F08-13b), then per event (none before F08-13b-2)",
             "type": "number"
           },
           "verdict": {
@@ -35026,6 +35120,14 @@
             ],
             "nullable": true,
             "type": "object"
+          },
+          "characterKeys": {
+            "description": "The characterKeys item of an object (F08-13b): keys of the characters of the world of this version",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "compare": {
             "description": "Pair comparison table",
@@ -35095,9 +35197,17 @@
             "type": "array"
           },
           "text": {
-            "description": "short, appearance, character, critique, prototypes, bonds, differences, conclusion, imageBrief; places (F08-12b) - location, significance, description",
+            "description": "short, appearance, character, critique, prototypes, bonds, differences, conclusion, imageBrief; places (F08-12b) - location, significance, description; objects and terms (F08-13b) - significance, description",
             "nullable": true,
             "type": "string"
+          },
+          "themeKeys": {
+            "description": "The themeKeys item of an object (F08-13b): keys of the themes of the analysis of this version",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
           }
         },
         "required": [
@@ -35112,6 +35222,8 @@
           "adaptations",
           "compare",
           "place",
+          "characterKeys",
+          "themeKeys",
           "sources",
           "print"
         ],

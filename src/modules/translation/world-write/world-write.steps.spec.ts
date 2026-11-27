@@ -94,24 +94,34 @@ describe('world run estimate: pair steps (F08-8e-1 Q6, Q8)', () => {
       entities: new Map(),
       names: { titles: ['B'], authors: ['A'] },
     } as unknown as WorldContext;
-    const none = worldPipelineUsd(calls, context, 0, 0);
+    const none = worldPipelineUsd(calls, context, 0, { pairs: 0 });
     // Шаг - (автор + проверяющая) × 2 прохода: 200 на пару.
-    expect(worldPipelineUsd(calls, context, 0, 3).sub(none).toNumber()).toBe(600);
+    expect(worldPipelineUsd(calls, context, 0, { pairs: 3 }).sub(none).toNumber()).toBe(600);
     // F08-12a (ревью кругов 4-5): герой на ключе места в оценку не входит — оценка ровно та же,
     // что у анализа без этого героя.
     const boris = new Map([['boris', { type: 'place' as const }]]);
-    const withoutBoris = worldPipelineUsd(calls, context, 0, 0, {
-      analysis: context.analysis,
-      entities: boris,
-    });
+    const withoutBoris = worldPipelineUsd(
+      calls,
+      context,
+      0,
+      { pairs: 0 },
+      {
+        analysis: context.analysis,
+        entities: boris,
+      },
+    );
     const onlyAnna = {
       ...context,
       analysis: { characters: [{ key: 'anna', name: 'Anna', role: 'main' }] },
     } as unknown as WorldContext;
-    expect(withoutBoris.toString()).toBe(worldPipelineUsd(calls, onlyAnna, 0, 0).toString());
+    expect(withoutBoris.toString()).toBe(
+      worldPipelineUsd(calls, onlyAnna, 0, { pairs: 0 }).toString(),
+    );
     expect(withoutBoris.lessThan(none)).toBe(true);
     // F08-12b: шаг места - этапом страницы (автор 1 + проверяющая 0) × 2 прохода: 2 на место.
-    expect(worldPipelineUsd(calls, context, 0, 0, context, 4).sub(none).toNumber()).toBe(8);
+    expect(worldPipelineUsd(calls, context, 0, { places: 4 }, context).sub(none).toNumber()).toBe(
+      8,
+    );
   });
 });
 
@@ -490,12 +500,12 @@ describe('worldPipelineUsd: the choice step carries the place candidates (F08-12
       ...base,
       dossier: { entities: [{ key: 'garret', name: 'The garret', kind: 'place' }] },
     } as unknown as WorldContext;
-    worldPipelineUsd(calls, withDossier, 0, 0, withDossier, 1);
+    worldPipelineUsd(calls, withDossier, 0, { places: 1 }, withDossier);
     expect(seen.at(-1)).toContain('garret - The garret');
     const noDossier = { ...base, dossier: null } as unknown as WorldContext;
-    worldPipelineUsd(calls, noDossier, 0, 0, noDossier, 2);
+    worldPipelineUsd(calls, noDossier, 0, { places: 2 }, noDossier);
     expect(seen.at(-1)).toContain('place-2 - Place 2');
-    worldPipelineUsd(calls, withDossier, 0, 0, withDossier, 0);
+    worldPipelineUsd(calls, withDossier, 0, { places: 0 }, withDossier);
     expect(seen.at(-1)).not.toContain('garret - The garret');
     // Все места досье, как сам шаг выбора: потолок 10 - только после подсчёта присутствия (/qa круг 4).
     const eleven = {
@@ -508,7 +518,7 @@ describe('worldPipelineUsd: the choice step carries the place candidates (F08-12
         })),
       },
     } as unknown as WorldContext;
-    worldPipelineUsd(calls, eleven, 0, 0, eleven, 10);
+    worldPipelineUsd(calls, eleven, 0, { places: 10 }, eleven);
     expect(seen.at(-1)).toContain('p11 - Spot 11');
   });
 });

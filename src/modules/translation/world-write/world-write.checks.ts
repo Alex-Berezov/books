@@ -17,7 +17,7 @@ import type {
   BookWorldRelationDto,
   BookWorldSceneDto,
 } from '../../book-world/dto/book-world-blocks.dto';
-import { appearancePrint, briefBasisOf } from '../../book-world/book-world-data';
+import { appearancePrint, briefBasisOf, worldTypeHasBlock } from '../../book-world/book-world-data';
 import { WORLD_IMAGE_ROLES } from '../../book-world/world-image-public';
 import { BookWorldEntityInputDto } from '../../book-world/dto/update-book-world.dto';
 import {
@@ -47,8 +47,10 @@ import { hostOf, PageCheck, pageIsAbout } from '../analysis-write/analysis-write
 import {
   DroppedWorldQuote,
   DroppedWorldSource,
+  WorldDossierType,
   WorldExternalBlock,
   WorldFix,
+  WorldRunObjectType,
   WorldSource,
 } from './world-write.data';
 
@@ -92,10 +94,35 @@ export interface WorldSelectDraft {
   characters: Array<{ key: string; name: string; aliases: string[] }>;
   /** Формы названий кандидатов-мест (`F08-12b`, решение `F08 | F08-12b` Q1) - то же правило. */
   places: Array<{ key: string; name: string; aliases: string[] }>;
+  /**
+   * Формы названий кандидатов-предметов и кандидатов-понятий (`F08-13b`) - то же правило. Оплаченный
+   * черновик выбора старой формы (сохранён до `F08-13b`, продолжается после обрыва) их не несёт:
+   * читается как пустые (`selectForms`).
+   */
+  objects?: Array<{ key: string; name: string; aliases: string[] }>;
+  terms?: Array<{ key: string; name: string; aliases: string[] }>;
   fixes: WorldFix[];
 }
 
-export const EMPTY_SELECT: WorldSelectDraft = { characters: [], places: [], fixes: [] };
+export const EMPTY_SELECT: WorldSelectDraft = {
+  characters: [],
+  places: [],
+  objects: [],
+  terms: [],
+  fixes: [],
+};
+
+/**
+ * Формы одного списка ответа выбора - и у черновика старой формы (до `F08-12b` нет `places`, до
+ * `F08-13b` - `objects` и `terms`): поля нет - форм нет, а не сбой шага.
+ */
+export function selectForms(
+  answer: WorldSelectDraft | null,
+  list: 'characters' | 'places' | 'objects' | 'terms',
+): WorldSelectDraft['characters'] {
+  const forms: unknown = answer?.[list];
+  return Array.isArray(forms) ? (forms as WorldSelectDraft['characters']) : [];
+}
 
 /**
  * Абзацы текста версии в виде сравнения форм (`foldMention`): форма имени стоит в тексте, если она
@@ -120,12 +147,16 @@ export function readSelectAnswer(
   candidates: ReadonlyArray<{ key: string; name: string }>,
   folded: readonly string[],
   places: ReadonlyArray<{ key: string; name: string }> = [],
+  objects: ReadonlyArray<{ key: string; name: string }> = [],
+  terms: ReadonlyArray<{ key: string; name: string }> = [],
 ): WorldSelectDraft {
   const fixes: WorldFix[] = [];
   const v = rec(value);
   return {
     characters: readForms(v.characters, candidates, 'characters', folded, fixes),
     places: readForms(v.places, places, 'places', folded, fixes),
+    objects: readForms(v.objects, objects, 'objects', folded, fixes),
+    terms: readForms(v.terms, terms, 'terms', folded, fixes),
     fixes,
   };
 }
@@ -230,9 +261,23 @@ export function placeDossierForms(
   glossary: unknown,
   folded: readonly string[],
 ): string[] {
+  return dossierEntityForms(key, 'place', dossier, glossary, folded);
+}
+
+/**
+ * Формы названия сущности досье вида `kind` (место, предмет, понятие - `F08-13b`): одно правило
+ * `placeDossierForms` - название досье с тем же ключом и `target` глоссария, только стоящие в тексте.
+ */
+export function dossierEntityForms(
+  key: string,
+  kind: WorldDossierType,
+  dossier: unknown,
+  glossary: unknown,
+  folded: readonly string[],
+): string[] {
   const own = list(rec(dossier).entities)
     .map(rec)
-    .find((e) => trimmed(e.kind) === 'place' && trimmed(e.key) === key);
+    .find((e) => trimmed(e.kind) === kind && trimmed(e.key) === key);
   const raw = [
     ...(own ? [trimmed(own.name)] : []),
     ...glossaryNames(glossary)
@@ -549,7 +594,7 @@ export function importRemarks(
   key: string,
   name: string,
   blocks: object,
-  type: 'character' | 'pair' | 'place' = 'character',
+  type: 'character' | 'pair' | 'place' | 'object' | 'term' = 'character',
 ): DraftRemark[] {
   const own = new Set(Object.keys(blocks));
   const dto = plainToInstance(BookWorldEntityInputDto, {
@@ -1069,6 +1114,198 @@ export function placeRemarks(
     ...(check.core ? placeCoreRemarks(draft.blocks) : []),
     ...mentionRemarks({ scenes: draft.blocks.scenes }, check.mentionChapters, 'place'),
     ...textRemarks(placeFields(draft.blocks), check.language, check.glossary),
+  ];
+}
+
+// ---------------------------------------------------------------- страница предмета и понятия
+
+/**
+ * Блоки страницы предмета и понятия (`F08-13b`; поля по типу - решение арбитра `F08 | F08-13` Q1):
+ * у понятия только `short`, `significance`, `quotes`; ТЗ на иллюстрацию нет ни у одного (Q4).
+ */
+export interface WorldObjectBlocks {
+  short?: string;
+  significance?: string;
+  description?: string;
+  quotes?: BookWorldQuoteDto[];
+  faq?: BookAnalysisFaqDto[];
+  characterKeys?: string[];
+  themeKeys?: string[];
+}
+
+export interface WorldObjectDraft {
+  name: string | null;
+  blocks: WorldObjectBlocks;
+  fixes: WorldFix[];
+  droppedQuotes: DroppedWorldQuote[];
+}
+
+export const EMPTY_OBJECT: WorldObjectDraft = {
+  name: null,
+  blocks: {},
+  fixes: [],
+  droppedQuotes: [],
+};
+
+/** Что знает код о версии и предмете (понятии) страницы. */
+export interface WorldObjectCheck {
+  key: string;
+  type: WorldRunObjectType;
+  language: Language;
+  chapters: ChapterIndex;
+  /** Ключи героев - говорящих цитаты (`speakerKey` только на героя, как у места). */
+  heroKeys: ReadonlySet<string>;
+  /**
+   * Ключи героев мира версии на момент шага - `characterKeys` (правило записи `checkWorldRefs`: связь
+   * только с героем мира, решение `F08 | F08-13b` Q5).
+   */
+  worldHeroKeys: ReadonlySet<string>;
+  /** Ключи тем анализа версии на момент шага - `themeKeys` (`checkThemeKeys`, Q5). */
+  themeKeys: ReadonlySet<string>;
+  glossary: readonly NameEntry[];
+  /** Проверять ядро: при перегенерации одного блока - нет. */
+  core: boolean;
+}
+
+/**
+ * Список ключей связи ответа (`characterKeys`, `themeKeys`): ключ не из `known` или повтор - снят
+ * (`KEY_UNKNOWN`), хвост сверх предела импорта - отрезан. Так запись не отбивается 400 на платном шаге
+ * (`checkWorldRefs`, `checkThemeKeys`; решение арбитра `F08 | F08-13b` Q5).
+ */
+function readKeyList(
+  raws: unknown,
+  path: 'characterKeys' | 'themeKeys',
+  known: ReadonlySet<string>,
+  note: string,
+  fixes: WorldFix[],
+): string[] | undefined {
+  const keys: string[] = [];
+  list(raws).forEach((raw, i) => {
+    const key = trimmed(raw);
+    if (key === '' || keys.includes(key)) return;
+    if (!known.has(key)) {
+      fixes.push({ code: 'KEY_UNKNOWN', path: `${path}.${i}`, note: `"${key}" ${note}: removed` });
+      return;
+    }
+    keys.push(key);
+  });
+  return keys.length > 0 ? limited(keys, BOOK_WORLD_LIMITS[path], path, fixes) : undefined;
+}
+
+/**
+ * Ответ шага предмета или понятия после кода (`F08-13b`): только поля своего типа - перечень один,
+ * `WORLD_BLOCKS_OF_TYPE` (`worldTypeHasBlock`, решение арбитра `F08 | F08-13b` R1; понятие - `short`,
+ * `significance`, `quotes`), `short` - колонка у всех типов; цитата - как у места, говорящий не
+ * герой - без `speakerKey`; герои и темы предмета - только сохранённые герои мира и темы анализа
+ * версии, чужие ключи сняты (`KEY_UNKNOWN`).
+ */
+export function readObjectAnswer(value: unknown, check: WorldObjectCheck): WorldObjectDraft {
+  const v = rec(value);
+  const fixes: WorldFix[] = [];
+  const droppedQuotes: DroppedWorldQuote[] = [];
+  const blocks: WorldObjectBlocks = {};
+  const own = (block: keyof WorldObjectBlocks): boolean =>
+    block === 'short' || worldTypeHasBlock(check.type, block);
+  for (const field of ['short', 'significance', 'description'] as const) {
+    const text = own(field) ? textOrNull(v[field]) : null;
+    if (text) blocks[field] = text;
+  }
+  const quotes = own('quotes')
+    ? readSpeakerQuotes(
+        v.quotes,
+        check,
+        (speaker) => check.heroKeys.has(speaker),
+        'is not a character key',
+        fixes,
+        droppedQuotes,
+      )
+    : undefined;
+  if (quotes) blocks.quotes = quotes;
+  const faq = own('faq') ? readFaq(v.faq, fixes) : undefined;
+  if (faq) blocks.faq = faq;
+  const characterKeys = own('characterKeys')
+    ? readKeyList(
+        v.characterKeys,
+        'characterKeys',
+        check.worldHeroKeys,
+        'is not a character of this world',
+        fixes,
+      )
+    : undefined;
+  if (characterKeys) blocks.characterKeys = characterKeys;
+  const themeKeys = own('themeKeys')
+    ? readKeyList(
+        v.themeKeys,
+        'themeKeys',
+        check.themeKeys,
+        'is not a theme of the analysis of this version',
+        fixes,
+      )
+    : undefined;
+  if (themeKeys) blocks.themeKeys = themeKeys;
+  return { name: nameOf(v.name), blocks, fixes, droppedQuotes };
+}
+
+function objectFields(blocks: WorldObjectBlocks): TextField[] {
+  const fields: TextField[] = [];
+  const add = (path: string, text: string | null | undefined, long: boolean) => {
+    if (typeof text === 'string' && text.trim() !== '') fields.push({ path, text, long });
+  };
+  add('short', blocks.short, true);
+  add('significance', blocks.significance, true);
+  add('description', blocks.description, true);
+  (blocks.quotes ?? []).forEach((q, i) =>
+    add(`quotes.${i}.interpretation`, q.interpretation, true),
+  );
+  (blocks.faq ?? []).forEach((f, i) => {
+    add(`faq.${i}.question`, f.question, false);
+    add(`faq.${i}.answer`, f.answer, true);
+  });
+  return fields;
+}
+
+/** Что дописать, чтобы собрать ядро предмета (понятия): по части ядра `computeWorldCore`. */
+const OBJECT_CORE_NOTES: Record<WorldRunObjectType, Partial<Record<WorldCorePart, string>>> = {
+  object: {
+    short: 'Write "short": it is the core of the page.',
+    significance: 'Write "significance": it is the core of the page.',
+  },
+  term: {
+    short: 'Write "short" - the glossary definition of the term: it is the core of the page.',
+  },
+};
+
+/**
+ * Ядро предмета (понятия) в ответе: правило одно - `computeWorldCore`; присутствие ответ не несёт (его
+ * пишет пересчёт), поэтому подставлено и в замечания не идёт. Нет части - замечание и одна переделка.
+ */
+function objectCoreRemarks(type: WorldRunObjectType, blocks: WorldObjectBlocks): DraftRemark[] {
+  const core = computeWorldCore({
+    type,
+    short: blocks.short ?? null,
+    significance: blocks.significance ?? null,
+    character: null,
+    arc: null,
+    quotes: null,
+    scenes: null,
+    mentions: { chapters: [1] },
+  });
+  return core.missing.flatMap((m) => {
+    const note = OBJECT_CORE_NOTES[type][m.part];
+    return note ? [codeRemark('CORE_MISSING', m.part, note)] : [];
+  });
+}
+
+/** Замечания кода к предмету (понятию): импорт по своему типу, ядро, текст (язык, имена, мусор). */
+export function objectRemarks(
+  draft: WorldObjectDraft,
+  check: WorldObjectCheck,
+  name: string,
+): DraftRemark[] {
+  return [
+    ...importRemarks(check.key, draft.name ?? name, draft.blocks, check.type),
+    ...(check.core ? objectCoreRemarks(check.type, draft.blocks) : []),
+    ...textRemarks(objectFields(draft.blocks), check.language, check.glossary),
   ];
 }
 

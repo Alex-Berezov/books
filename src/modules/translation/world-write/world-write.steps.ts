@@ -1,6 +1,10 @@
 import { Language, Prisma } from '@prisma/client';
 import type { StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
-import { briefBasisOf, type StoredWorldEntity } from '../../book-world/book-world-data';
+import {
+  briefBasisOf,
+  readStoredBlocks,
+  type StoredWorldEntity,
+} from '../../book-world/book-world-data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { characterKeyRefused, worldPairKey } from '../../book-world/world-refs';
 import { ANSWER_CHARS_PER_TOKEN, estimateInputTokens } from '../../llm/openrouter.client';
@@ -19,40 +23,54 @@ import { DraftRemark } from '../draft-quality/text-checks';
 import { StageModels } from '../run/run-models';
 import {
   EMPTY_EXTERNAL,
+  EMPTY_OBJECT,
   EMPTY_PAGE,
   EMPTY_PAIR,
   EMPTY_PLACE,
   EMPTY_SELECT,
   externalRemarks,
   foldedVersion,
+  objectRemarks,
   pageRemarks,
   pairRemarks,
   placeRemarks,
   readExternalAnswer,
+  readObjectAnswer,
   readPageAnswer,
   readPairAnswer,
   readPlaceAnswer,
   readSelectAnswer,
   WorldExternalDraft,
+  WorldObjectDraft,
   WorldPageDraft,
   WorldPairDraft,
   WorldPlaceDraft,
   WorldSelectDraft,
 } from './world-write.checks';
 import { isWorldWriteLanguage, WORLD_PAIRS_MAX, WORLD_REVIEW_STAGE } from './world-write.constants';
-import { dossierPlaces } from './world-write.places';
+import { dossierEntitiesOf } from './world-write.dossier-entities';
 import {
   CandidateMentions,
   WorldCandidate,
   WorldCandidateRole,
+  WorldObjectCandidate,
   WorldPairCandidate,
   WorldPlaceCandidate,
-  WorldStepKind,
+  WorldDossierType,
+  WorldRunObjectType,
   WorldStepSource,
+  WorldWrittenStepKind,
+  WORLD_DOSSIER_LISTS,
 } from './world-write.data';
-import { EXAMPLE_WORLD_PAIRS, EXAMPLE_WORLD_PLACES, EXAMPLE_WORLDS } from './examples';
+import {
+  EXAMPLE_WORLD_PAIRS,
+  EXAMPLE_WORLD_PLACES,
+  EXAMPLE_WORLDS,
+  worldObjectExample,
+} from './examples';
 import {
   externalWriteRequest,
+  objectWriteRequest,
   pageWriteRequest,
   pairWriteRequest,
   placeWriteRequest,
@@ -185,7 +203,7 @@ export const runMainCharacters = (context: WorldRunSource): WorldBaseCharacter[]
 
 /** Вход шага: запрос автора, запрос проверяющей, разбор ответа и проверки кода. */
 export interface WorldStepInput<T> {
-  kind: WorldStepKind;
+  kind: WorldWrittenStepKind;
   source: WorldStepSource;
   author: (redo: WorldRedo | null) => ShapedRequest;
   review: (draft: T) => ShapedRequest;
@@ -266,21 +284,65 @@ const placeExampleOf = (language: Language): string => {
   return example ? JSON.stringify(example) : NONE;
 };
 
+/**
+ * Ответ перегенерации одного блока - одно правило героя, внешних блоков, пары, места, предмета и
+ * понятия: остаются только блок перегенерации и его спутники (`companions`: у места `kind` едет
+ * с `wikidataId`, R3 `F08 | F08-12b`), прочие блоки ответа отброшены; без перегенерации - как есть.
+ */
+export function onlyRegenBlock<D extends { blocks: object }>(
+  draft: D,
+  regen: WorldRegenSpec | null,
+  companions: Readonly<Partial<Record<string, readonly string[]>>> = {},
+): D {
+  if (!regen) return draft;
+  const keep = new Set<string>([regen.block, ...(companions[regen.block] ?? [])]);
+  return {
+    ...draft,
+    blocks: Object.fromEntries(Object.entries(draft.blocks).filter(([block]) => keep.has(block))),
+  };
+}
+
+/** Спутники блока перегенерации места: пункт `kind` - вид и номер Wikidata вместе (R3), номер остаётся. */
+const PLACE_REGEN_COMPANIONS = { kind: ['wikidataId'] } as const;
+
 /** Книга шага: текст глав и признак «не всё». */
 export interface WorldBook {
   text: string;
   partial: boolean;
 }
 
+/** Сущности досье шага выбора, кроме героев: места (`F08-12b`), предметы и понятия (`F08-13b`). */
+export interface WorldSelectNamed {
+  places?: ReadonlyArray<{ key: string; name: string }>;
+  objects?: ReadonlyArray<{ key: string; name: string }>;
+  terms?: ReadonlyArray<{ key: string; name: string }>;
+}
+
+const namedLines = (named: ReadonlyArray<{ key: string; name: string }>): string =>
+  named.map((n) => `${n.key} - ${n.name}`).join('\n') || NONE;
+
 export function selectInput(
   context: WorldContext,
   candidates: ReadonlyArray<{ key: string; name: string }>,
   quotes: ChapterIndex,
   book: WorldBook,
-  places: ReadonlyArray<{ key: string; name: string }> = [],
+  named: WorldSelectNamed = {},
 ): WorldStepInput<WorldSelectDraft> {
   const folded = foldedVersion(quotes);
   const analysis = analysisText(context.analysis);
+  const places = named.places ?? [];
+  const objects = named.objects ?? [];
+  const terms = named.terms ?? [];
+  // Проверяющей - герои списком, как до `F08-12b`, если других сущностей в выборе нет.
+  const reviewed = (draft: WorldSelectDraft): unknown =>
+    places.length + objects.length + terms.length === 0
+      ? draft.characters
+      : {
+          characters: draft.characters,
+          ...(places.length > 0 ? { places: draft.places } : {}),
+          ...(objects.length > 0 ? { objects: draft.objects ?? [] } : {}),
+          ...(terms.length > 0 ? { terms: draft.terms ?? [] } : {}),
+        };
   return {
     kind: 'select',
     source: book.partial ? 'top' : 'text',
@@ -290,7 +352,9 @@ export function selectInput(
         bookTitle: context.bookTitle,
         author: context.author,
         candidates: candidates.map((c) => `${c.key} - ${c.name}`).join('\n'),
-        places: places.map((p) => `${p.key} - ${p.name}`).join('\n') || NONE,
+        places: namedLines(places),
+        objects: namedLines(objects),
+        terms: namedLines(terms),
         dossierNames: dossierNames(context.dossier),
         glossary: glossaryText(context),
         book: book.text,
@@ -302,13 +366,10 @@ export function selectInput(
         language: context.language,
         book: book.text,
         analysis,
-        answer:
-          places.length > 0
-            ? { characters: draft.characters, places: draft.places }
-            : draft.characters,
+        answer: reviewed(draft),
         regenBlock: null,
       }),
-    read: (value) => readSelectAnswer(value, candidates, folded, places),
+    read: (value) => readSelectAnswer(value, candidates, folded, places, objects, terms),
     codeCheck: () => [],
     empty: EMPTY_SELECT,
   };
@@ -371,15 +432,6 @@ export function pageInput(
     briefRegen: regen?.block === 'imageBrief',
     role: context.entities.get(candidate.key)?.role ?? candidate.role,
   };
-  const onlyBlock = (draft: WorldPageDraft): WorldPageDraft =>
-    regen
-      ? {
-          ...draft,
-          blocks: Object.fromEntries(
-            Object.entries(draft.blocks).filter(([block]) => block === regen.block),
-          ),
-        }
-      : draft;
   return {
     kind: 'page',
     source: book.partial ? 'top' : 'text',
@@ -415,7 +467,7 @@ export function pageInput(
         answer: { name: draft.name, ...draft.blocks },
         regenBlock: regen?.block ?? null,
       }),
-    read: (value) => onlyBlock(readPageAnswer(value, check)),
+    read: (value) => onlyRegenBlock(readPageAnswer(value, check), regen),
     codeCheck: (draft) => pageRemarks(draft, check, candidate.name),
     empty: EMPTY_PAGE,
   };
@@ -429,15 +481,6 @@ export function externalInput(
 ): WorldStepInput<WorldExternalDraft> {
   const analysis = analysisText(context.analysis);
   const glossary = glossaryNames(context.glossary);
-  const onlyBlock = (draft: WorldExternalDraft): WorldExternalDraft =>
-    regen
-      ? {
-          ...draft,
-          blocks: Object.fromEntries(
-            Object.entries(draft.blocks).filter(([block]) => block === regen.block),
-          ),
-        }
-      : draft;
   return {
     kind: 'external',
     source: 'none',
@@ -461,7 +504,7 @@ export function externalInput(
         answer: { ...draft.blocks, sources: draft.sources },
         regenBlock: regen?.block ?? null,
       }),
-    read: (value) => onlyBlock(readExternalAnswer(value)),
+    read: (value) => onlyRegenBlock(readExternalAnswer(value), regen),
     codeCheck: (draft) =>
       externalRemarks(draft, candidate.key, candidate.name, context.language, glossary),
     empty: EMPTY_EXTERNAL,
@@ -495,18 +538,6 @@ export function placeInput(
     briefRegen,
     core: regen === null,
   };
-  // Перегенерация пункта `kind` - вид и номер Wikidata вместе (R3): номер остаётся в ответе.
-  const ofRegen = (block: string): boolean =>
-    regen !== null && (block === regen.block || (regen.block === 'kind' && block === 'wikidataId'));
-  const onlyBlock = (draft: WorldPlaceDraft): WorldPlaceDraft =>
-    regen
-      ? {
-          ...draft,
-          blocks: Object.fromEntries(
-            Object.entries(draft.blocks).filter(([block]) => ofRegen(block)),
-          ),
-        }
-      : draft;
   return {
     kind: 'place',
     source: book.partial ? 'top' : 'text',
@@ -542,9 +573,105 @@ export function placeInput(
         answer: { name: draft.name, ...draft.blocks },
         regenBlock: regen?.block ?? null,
       }),
-    read: (value) => onlyBlock(readPlaceAnswer(value, check)),
+    read: (value) => onlyRegenBlock(readPlaceAnswer(value, check), regen, PLACE_REGEN_COMPANIONS),
     codeCheck: (draft) => placeRemarks(draft, check, place.name),
     empty: EMPTY_PLACE,
+  };
+}
+
+/**
+ * Герои мира версии на момент шага (`F08-13b`, решение `F08 | F08-13b` Q5): сохранённые сущности
+ * `character` - ключи `characterKeys` предмета (правило записи `checkWorldRefs`: только герой мира).
+ */
+export const worldHeroKeys = (context: Pick<WorldContext, 'entities'>): Set<string> =>
+  storedCharacterKeys(context.entities);
+
+/** Темы анализа версии с ключами на момент шага - ключи `themeKeys` предмета (`checkThemeKeys`, Q5). */
+export const analysisThemeKeys = (context: Pick<WorldContext, 'analysis'>): Set<string> =>
+  new Set((context.analysis.themes ?? []).map((t) => t.key));
+
+function worldHeroesText(context: WorldContext): string {
+  const keys = worldHeroKeys(context);
+  const lines = [...context.entities.values()]
+    .filter((e) => keys.has(e.key))
+    .map((e) => `${e.key} - ${e.name ?? ''}`);
+  return lines.length > 0 ? lines.join('\n') : NONE;
+}
+
+const themesText = (context: WorldContext): string =>
+  (context.analysis.themes ?? []).map((t) => `${t.key} - ${t.title}`).join('\n') || NONE;
+
+/** Эталон предмета или понятия языка версии; языка без эталона типа у этапа типа нет (`F08-13b`). */
+const objectExampleOf = (language: Language, type: WorldRunObjectType): string => {
+  const example = worldObjectExample(language, type);
+  return example ? JSON.stringify(example) : NONE;
+};
+
+/**
+ * Шаг предмета или понятия (`F08-13b`): текст глав, где есть сущность (не влез - главы с наибольшим
+ * числом упоминаний и краткое содержание глав досье, `pageBook`), эталон типа, проверки `objectRemarks`;
+ * предмету - герои мира и темы анализа с ключами, чужие ключи снимает код (Q5).
+ */
+export function objectInput(
+  context: WorldContext,
+  type: WorldRunObjectType,
+  entry: WorldObjectCandidate,
+  quotes: ChapterIndex,
+  book: WorldBook,
+  regen: WorldRegenSpec | null = null,
+): WorldStepInput<WorldObjectDraft> {
+  const analysis = analysisText(context.analysis);
+  const check = {
+    key: entry.key,
+    type,
+    language: context.language,
+    chapters: quotes,
+    heroKeys: refKeys(context),
+    worldHeroKeys: worldHeroKeys(context),
+    themeKeys: analysisThemeKeys(context),
+    glossary: glossaryNames(context.glossary),
+    core: regen === null,
+  };
+  return {
+    kind: type,
+    source: book.partial ? 'top' : 'text',
+    author: (redo) =>
+      objectWriteRequest({
+        language: context.language,
+        type,
+        bookTitle: context.bookTitle,
+        author: context.author,
+        key: entry.key,
+        name: entry.name,
+        aliases: entry.aliases.join('\n') || NONE,
+        chapterList: chapterList(context),
+        mentionChapters:
+          entry.mentions.chapters
+            .map((n) => `${n} - ${entry.mentions.perChapter[String(n)] ?? 0}`)
+            .join('\n') || NONE,
+        keys: keysText(context),
+        worldCharacters: worldHeroesText(context),
+        themes: themesText(context),
+        analysis,
+        glossary: glossaryText(context),
+        example: objectExampleOf(context.language, type),
+        book: book.text,
+        bookIsPartial: book.partial,
+        regen,
+        redo,
+      }),
+    review: (draft) =>
+      worldReviewRequest({
+        kind: type,
+        language: context.language,
+        book: book.text,
+        analysis,
+        answer: { name: draft.name, ...draft.blocks },
+        regenBlock: regen?.block ?? null,
+      }),
+    read: (value) => onlyRegenBlock(readObjectAnswer(value, check), regen),
+    codeCheck: (draft) => objectRemarks(draft, check, entry.name),
+    empty: EMPTY_OBJECT,
   };
 }
 
@@ -630,15 +757,6 @@ export function pairInput(
     core: regen === null,
   };
   const name = pairFallbackName(context.language, members);
-  const onlyBlock = (draft: WorldPairDraft): WorldPairDraft =>
-    regen
-      ? {
-          ...draft,
-          blocks: Object.fromEntries(
-            Object.entries(draft.blocks).filter(([block]) => block === regen.block),
-          ),
-        }
-      : draft;
   return {
     kind: 'pair',
     source: book.partial ? 'top' : 'text',
@@ -670,7 +788,7 @@ export function pairInput(
         answer: { name: draft.name, ...draft.blocks },
         regenBlock: regen?.block ?? null,
       }),
-    read: (value) => onlyBlock(readPairAnswer(value, check)),
+    read: (value) => onlyRegenBlock(readPairAnswer(value, check), regen),
     codeCheck: (draft) => pairRemarks(draft, check, name),
     empty: EMPTY_PAIR,
   };
@@ -790,42 +908,92 @@ export function worldStepUsd<T>(
 }
 
 /**
+ * Шагов сверху по видам после героев (`F08-8e-1` Q8, `F08-12b`, `F08-13b` Q9): пары, места, предметы
+ * и понятия; нет поля - 0.
+ */
+export interface WorldStepBounds {
+  pairs?: number;
+  places?: number;
+  objects?: number;
+  terms?: number;
+}
+
+/**
+ * Сущности досье вида на входе шага выбора при оценке: все сущности вида досье, как сам шаг выбора
+ * (потолок - только после подсчёта присутствия); досье ещё нет - заглушки по числу `bound` (оценка
+ * сверху, /qa F08-12b круги 3-4); `bound` 0 - вида в ходе нет.
+ */
+function selectNamedOf(
+  dossier: unknown,
+  kind: WorldDossierType,
+  bound: number,
+): Array<{ key: string; name: string }> {
+  if (bound === 0) return [];
+  const fromDossier = dossierEntitiesOf(dossier, kind);
+  return fromDossier.length > 0
+    ? fromDossier
+    : Array.from({ length: bound }, (_, i) => ({
+        key: `${kind}-${i + 1}`,
+        name: `${kind.charAt(0).toUpperCase()}${kind.slice(1)} ${i + 1}`,
+      }));
+}
+
+/**
  * Оценка хода сверху (`tech.md` §5): выбор героев по всему тексту версии, затем на каждого героя
  * `main` и `secondary` (до порога глав, решение арбитра `F08 | F08-8b` Q1) страница по всему
  * тексту версии (сверху: ход берёт только главы с героем) и внешние блоки, затем `pairs` шагов пар
  * по всему тексту версии (`F08-8e-1` Q8), каждый шаг с проверяющей × 2 прохода. Итог страницы во
- * входе внешнего шага - сверху выходом этапа.
+ * входе внешнего шага - сверху выходом этапа. Места, предметы и понятия (`F08-12b`, `F08-13b` Q9) -
+ * по шагу этапа страницы на сущность (`bounds`), их сущности досье - и во входе выбора.
  */
+/**
+ * Сущности мира на входе оценки шага предмета (`F08-13b`, Q9): к сохранённым - заглушки героев хода,
+ * которых ещё нет героями мира (их запишут шаги страниц до предмета), - вход `WORLD_CHARACTERS` сверху.
+ */
+function withRunHeroes(
+  entities: ReadonlyMap<string, StoredWorldEntity>,
+  heroes: readonly WorldBaseCharacter[],
+): Map<string, StoredWorldEntity> {
+  const out = new Map(entities);
+  for (const hero of heroes) {
+    if (out.get(hero.key)?.type === 'character') continue;
+    out.set(hero.key, {
+      ...readStoredBlocks(null),
+      key: hero.key,
+      type: 'character',
+      name: hero.name,
+      role: hero.role,
+      aliases: null,
+      short: null,
+      sources: null,
+    });
+  }
+  return out;
+}
+
 export function worldPipelineUsd(
   calls: WorldEstimators,
   context: WorldContext,
   extraInputTokens: number,
-  pairs = 0,
+  bounds: WorldStepBounds = {},
   run: WorldRunSource = context,
-  places = 0,
 ): Prisma.Decimal {
+  const pairs = bounds.pairs ?? 0;
+  const places = bounds.places ?? 0;
   // Кандидаты — тем же правилом, что у выбора шага и старта (`runCharacters`); `run` — анализ и
   // сущности на ключах его героев, когда в контексте оценки сохранённого мира нет (старт хода).
   const candidates = runCharacters(run);
   const whole: WorldBook = { text: chaptersText(context.chapters) || NONE, partial: false };
   const quotes: ChapterIndex = new Map();
-  // Выбор несёт и места-кандидаты (`F08-12b`): все места досье, как сам шаг выбора (`placesToChoose`;
-  // потолок `WORLD_PLACES_MAX` - только после подсчёта присутствия); досье ещё нет - заглушки по числу
-  // `places` (оценка сверху, /qa F08-12b круги 3-4).
-  const fromDossier = dossierPlaces(context.dossier);
-  const selectPlaces =
-    places === 0
-      ? []
-      : fromDossier.length > 0
-        ? fromDossier
-        : Array.from({ length: places }, (_, i) => ({
-            key: `place-${i + 1}`,
-            name: `Place ${i + 1}`,
-          }));
+  // Выбор несёт и места, предметы и понятия досье (`F08-12b`, `F08-13b`): вход выбора растёт с ними.
   let usd = worldStepUsd(
     calls.select,
     calls.review,
-    selectInput(context, candidates, quotes, whole, selectPlaces),
+    selectInput(context, candidates, quotes, whole, {
+      places: selectNamedOf(context.dossier, 'place', places),
+      objects: selectNamedOf(context.dossier, 'object', bounds.objects ?? 0),
+      terms: selectNamedOf(context.dossier, 'term', bounds.terms ?? 0),
+    }),
     extraInputTokens,
   );
   for (const c of candidates) {
@@ -889,6 +1057,29 @@ export function worldPipelineUsd(
       extraInputTokens,
     );
     usd = usd.add(step.mul(places));
+  }
+  // Предметы и понятия (`F08-13b`, Q9): шаг этапом страницы по всему тексту версии, своей формой;
+  // герои мира на входе предмета (Q5) - сохранённые и герои хода, которых запишут его шаги страниц.
+  const objectContext: WorldContext = {
+    ...context,
+    entities: withRunHeroes(context.entities, candidates),
+  };
+  for (const type of ['object', 'term'] as const) {
+    const count = bounds[WORLD_DOSSIER_LISTS[type]] ?? 0;
+    if (count === 0) continue;
+    const entry: WorldObjectCandidate = {
+      key: type,
+      name: type,
+      aliases: [],
+      mentions: { chapters: [], perChapter: {} },
+    };
+    const step = worldStepUsd(
+      calls.page,
+      calls.review,
+      objectInput(objectContext, type, entry, quotes, whole),
+      extraInputTokens,
+    );
+    usd = usd.add(step.mul(count));
   }
   return usd;
 }

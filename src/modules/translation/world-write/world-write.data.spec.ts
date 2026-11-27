@@ -13,6 +13,7 @@ import {
 import {
   blockIsEmpty,
   emptyWorldData,
+  type WorldStepCounts,
   entityKindOf,
   readWorldData,
   stepAt,
@@ -21,9 +22,20 @@ import {
   worldDataJson,
 } from './world-write.data';
 
+/** Число сущностей хода для `stepAt`: не названные виды - 0. */
+const counts = (c: Partial<WorldStepCounts>): WorldStepCounts => ({
+  heroes: 0,
+  pairs: 0,
+  places: 0,
+  objects: 0,
+  terms: 0,
+  events: 0,
+  ...c,
+});
+
 describe('world run steps', () => {
   it('step 0 chooses the characters, then each candidate gets a page and its external blocks', () => {
-    expect([0, 1, 2, 3, 4].map((step) => stepAt(step, 2, 0))).toEqual([
+    expect([0, 1, 2, 3, 4].map((step) => stepAt(step, counts({ heroes: 2 })))).toEqual([
       { kind: 'select', candidate: null },
       { kind: 'page', candidate: 0 },
       { kind: 'external', candidate: 0 },
@@ -49,7 +61,7 @@ describe('world run steps', () => {
   });
 
   it('pair steps go after all hero steps, one per pair; hero steps keep their numbers (F08-8e)', () => {
-    expect([4, 5, 6].map((step) => stepAt(step, 2, 2))).toEqual([
+    expect([4, 5, 6].map((step) => stepAt(step, counts({ heroes: 2, pairs: 2 })))).toEqual([
       { kind: 'external', candidate: 1 },
       { kind: 'pair', candidate: 0 },
       { kind: 'pair', candidate: 1 },
@@ -69,7 +81,9 @@ describe('world run steps', () => {
 
   // F08-12b: шаги мест - после шагов пар; у хода без мест номера и число шагов прежние.
   it('place steps go after the pair steps; heroes and pairs keep their numbers (F08-12b)', () => {
-    expect([4, 5, 6, 7, 8].map((step) => stepAt(step, 2, 2))).toEqual([
+    expect(
+      [4, 5, 6, 7, 8].map((step) => stepAt(step, counts({ heroes: 2, pairs: 2, places: 2 }))),
+    ).toEqual([
       { kind: 'external', candidate: 1 },
       { kind: 'pair', candidate: 0 },
       { kind: 'pair', candidate: 1 },
@@ -77,7 +91,7 @@ describe('world run steps', () => {
       { kind: 'place', candidate: 1 },
     ]);
     // Ход без пар: место сразу после героев.
-    expect(stepAt(5, 2, 0)).toEqual({ kind: 'place', candidate: 0 });
+    expect(stepAt(5, counts({ heroes: 2, places: 1 }))).toEqual({ kind: 'place', candidate: 0 });
     const hero = (key: string) => ({
       key,
       role: 'main' as const,

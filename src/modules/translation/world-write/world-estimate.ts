@@ -6,6 +6,7 @@ import { withChapterText } from '../content-draft/content-draft.text';
 import { stageEstimatorFor } from '../llm-model-checks';
 import { SectionUpperSource } from '../run/section-upper-source';
 import { hasWorldPairExample } from './examples';
+import { dossierStepsUpperBound } from './world-write.dossier-entities';
 import { placeStepsUpperBound } from './world-write.places';
 import {
   WORLD_EXTERNAL_WRITE_STAGE,
@@ -80,10 +81,15 @@ export async function worldUpperUsd(
           calls,
           context,
           source.extra,
-          pairStepsUpperBound(heroes, hasWorldPairExample(language)),
+          {
+            pairs: pairStepsUpperBound(heroes, hasWorldPairExample(language)),
+            // Места (`F08-12b`): досье до старта нет - потолок `WORLD_PLACES_MAX` на языке с эталоном места.
+            places: placeStepsUpperBound(null, language),
+            // Предметы и понятия (`F08-13b`, Q9): так же - потолок своего типа на языке с его эталоном.
+            objects: dossierStepsUpperBound(null, language, 'object'),
+            terms: dossierStepsUpperBound(null, language, 'term'),
+          },
           context,
-          // Места (`F08-12b`): досье до старта нет - потолок `WORLD_PLACES_MAX` на языке с эталоном места.
-          placeStepsUpperBound(null, language),
         ),
       ] as const;
     }),

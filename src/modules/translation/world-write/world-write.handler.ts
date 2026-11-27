@@ -66,6 +66,7 @@ import { pauseOnFailure } from '../pause-by-failure';
 import { runStageModels } from '../run/run-models';
 import {
   blockOfPath,
+  dossierEntityForms,
   dossierForms,
   externalChecks,
   foldedVersion,
@@ -73,7 +74,8 @@ import {
   verifyWorldExternal,
   WorldExternalDraft,
   WorldExternalVerdict,
-  placeDossierForms,
+  selectForms,
+  WorldObjectDraft,
   WorldPageDraft,
   WorldPairDraft,
   WorldPlaceDraft,
@@ -82,12 +84,17 @@ import {
 import {
   WORLD_ANALYSIS_MISSING,
   WORLD_MENTIONS_MOVED,
+  WORLD_OBJECT_KEY_TAKEN,
+  WORLD_OBJECT_NOT_FOUND,
   WORLD_PAIR_KEY_TAKEN,
   WORLD_PAIR_MEMBER_MISSING,
   WORLD_PAIR_NOT_FOUNDED,
   WORLD_PLACE_KEY_TAKEN,
   WORLD_PLACE_NOT_FOUND,
   WORLD_REVIEW_STAGE,
+  WORLD_STEP_OUT_OF_RUN,
+  WORLD_TERM_KEY_TAKEN,
+  WORLD_TERM_NOT_FOUND,
   WORLD_WRITE_REFUSED,
   WORLD_WRITE_TASK_KIND,
 } from './world-write.constants';
@@ -102,8 +109,14 @@ import {
   WORLD_BLOCKS,
   WorldBlock,
   WorldCandidate,
+  WorldDossierCandidate,
   WorldFix,
+  WorldRunObjectType,
+  WORLD_DOSSIER_LISTS,
+  dossierListOf,
   WorldItem,
+  WorldObjectCandidate,
+  WorldObjectsOffReason,
   WorldPairCandidate,
   WorldPairsOffReason,
   WorldPlaceCandidate,
@@ -114,6 +127,7 @@ import {
   WorldStep,
   WorldStepKind,
   WorldStepSource,
+  WorldTermsOffReason,
   WorldWriteData,
   blockIsEmpty,
   entityBlock,
@@ -134,6 +148,7 @@ import {
   chapterIndexOf,
   externalInput,
   fittingInput,
+  objectInput,
   pageBook,
   runCharacters,
   runMainCharacters,
@@ -153,13 +168,15 @@ import {
   WorldStepInput,
 } from './world-write.steps';
 import { ChosenCandidates, choosePairs } from './world-write.pairs';
+import { placesToChoose } from './world-write.places';
+import { objectsToChoose, organizationsSkipped } from './world-write.objects';
 import {
-  choosePlaces,
-  placeKeyTaken,
-  placesAfterPairs,
-  placesToChoose,
-  type WorldBasePlace,
-} from './world-write.places';
+  chooseDossierEntities,
+  dossierKeyTaken,
+  entriesAfterPairs,
+  type WorldDossierChosen,
+  type WorldDossierType,
+} from './world-write.dossier-entities';
 
 /** Задача хода мира: одна задача - один шаг; `index` - перегенерация пункта `index` своей операцией. */
 export const worldWriteTaskInput = (
@@ -325,6 +342,11 @@ interface StepRecord {
   /** Итог выбора мест (`F08-12b`): места хода и причина хода без мест. */
   places?: WorldPlaceCandidate[];
   placesOff?: WorldPlacesOffReason | null;
+  /** Итог выбора предметов и понятий (`F08-13b`): списки хода и причины хода без них. */
+  objects?: WorldObjectCandidate[];
+  terms?: WorldObjectCandidate[];
+  objectsOff?: WorldObjectsOffReason | null;
+  termsOff?: WorldTermsOffReason | null;
   droppedQuotes: DroppedWorldQuote[];
   droppedSources: DroppedWorldSource[];
 }
@@ -423,12 +445,51 @@ function withStep(data: WorldWriteData, record: StepRecord): WorldWriteData {
     pairsOff: record.pairsOff === undefined ? data.pairsOff : record.pairsOff,
     places: record.places ?? data.places,
     placesOff: record.placesOff === undefined ? data.placesOff : record.placesOff,
+    objects: record.objects ?? data.objects,
+    terms: record.terms ?? data.terms,
+    objectsOff: record.objectsOff === undefined ? data.objectsOff : record.objectsOff,
+    termsOff: record.termsOff === undefined ? data.termsOff : record.termsOff,
     steps: [...data.steps, record.step],
     items: [...data.items, ...record.items],
     droppedQuotes: [...data.droppedQuotes, ...record.droppedQuotes],
     droppedSources: [...data.droppedSources, ...record.droppedSources],
     pending: null,
   };
+}
+
+/** Отказы шага страницы досье без платного вызова - свои коды у типа (`dossierPageStep`). */
+const DOSSIER_REFUSALS: Record<WorldDossierType, { taken: string; notFound: string }> = {
+  place: { taken: WORLD_PLACE_KEY_TAKEN, notFound: WORLD_PLACE_NOT_FOUND },
+  object: { taken: WORLD_OBJECT_KEY_TAKEN, notFound: WORLD_OBJECT_NOT_FOUND },
+  term: { taken: WORLD_TERM_KEY_TAKEN, notFound: WORLD_TERM_NOT_FOUND },
+};
+
+/** Контекст шага хода - общий у шагов, которым нужен цикл качества. */
+interface WorldStepRun {
+  row: ContentDraft;
+  gate: WorldGate;
+  step: number;
+  context: WorldContext;
+  pending: PendingWorldStep | null;
+  ctx: LlmTaskContext;
+  regen: { spec: WorldRegenSpec; index: number } | null;
+}
+
+/** Своё у типа в шаге страницы досье (`dossierPageStep`): сущность, коды отказа, вход и итог. */
+interface DossierPageStepSpec<T> {
+  kind: WorldDossierType;
+  entry: WorldDossierCandidate | undefined;
+  refusals: { taken: string; notFound: string };
+  input: (
+    entry: WorldDossierCandidate,
+    index: ChapterIndex,
+    top: number | null,
+  ) => WorldStepInput<T>;
+  record: (
+    entry: WorldDossierCandidate,
+    result: Extract<QualityLoopResult<T>, { ok: true }>,
+    source: WorldStepSource,
+  ) => StepRecord;
 }
 
 /**
@@ -579,11 +640,29 @@ export class WorldWriteHandler {
     ctx: LlmTaskContext,
     regen: { spec: WorldRegenSpec; index: number } | null = null,
   ): Promise<StepRecord | null> {
-    const { kind, candidate: at } = stepOfData(data, step);
+    const position = stepOfData(data, step);
+    const empty = { droppedQuotes: [], droppedSources: [] };
+    // Номер шага вне всех списков хода: шага нет - свой код (`WORLD_STEP_OUT_OF_RUN`), не шаг события.
+    // Ход его не достигает (`stepsTotalOf` кончает ход раньше), перегенерация - по шагу записанного пункта.
+    if (position === null) {
+      return {
+        step: failedStep(step, 'event', null, WORLD_STEP_OUT_OF_RUN, null),
+        items: [],
+        ...empty,
+      };
+    }
+    // Шаг события (`F08-13b-2`): до неё событий в ходе ноль - данные хода не те, как у шага без кандидата.
+    if (position.kind === 'event') {
+      return {
+        step: failedStep(step, 'event', null, DRAFT_DATA_INVALID, null),
+        items: [],
+        ...empty,
+      };
+    }
+    const { kind, candidate: at } = position;
     // Индекс глав - только выбору и странице: внешний шаг текста книги не читает.
     const quotes = () => chapterIndexOf(context);
     const fits = <T>(input: WorldStepInput<T>) => worldInputFits(this.llm, input);
-    const empty = { droppedQuotes: [], droppedSources: [] };
 
     if (kind === 'select') {
       const base = runCharacters(context);
@@ -591,6 +670,15 @@ export class WorldWriteHandler {
       const placeBase = placesToChoose(
         context.language,
         data.places,
+        context.dossier,
+        context.entities,
+        new Set((context.analysis.characters ?? []).map((c) => c.key)),
+      );
+      // Предметы и понятия (`F08-13b`, Q1): ключ, занятый героем, местом, сущностью другого типа
+      // (у понятия - и предметом досье), - отсеян до платного шага; ключи пар - после выбора пар.
+      const objectBase = objectsToChoose(
+        context.language,
+        { objects: data.objects, terms: data.terms },
         context.dossier,
         context.entities,
         new Set((context.analysis.characters ?? []).map((c) => c.key)),
@@ -605,7 +693,11 @@ export class WorldWriteHandler {
             text: chaptersText(context.chapters.slice(0, count)) || 'none',
             partial: count < context.chapters.length,
           },
-          placeBase.places,
+          {
+            places: placeBase.places,
+            objects: objectBase.objects.free,
+            terms: objectBase.terms.free,
+          },
         );
       // Весь текст сначала; не влез - наибольший префикс глав, как у страницы.
       const input = await fittingInput(
@@ -618,13 +710,29 @@ export class WorldWriteHandler {
       const answer = result?.ok ? result.draft : null;
       const chosen = await this.candidatesOf(row.bookVersionId, context, base, answer, index);
       const choice = choosePairs(context, chosen, data.pairs);
-      const afterPairs = placesAfterPairs(placeBase, new Set(choice.pairs.map((p) => p.key)));
-      const placeChoice = choosePlaces(
-        context.language,
-        await this.placesOf(row.bookVersionId, context, afterPairs.free, answer, index),
-        afterPairs.taken,
+      const pairKeys = new Set(choice.pairs.map((p) => p.key));
+      // Места, предметы и понятия - одним отбором сущностей досье (`F08 | F08-13b` R1).
+      const choose = <K extends WorldDossierType>(
+        type: K,
+        chosenOfType: WorldDossierChosen,
+        previous: WorldDossierCandidate[] | null,
+      ) =>
+        this.dossierChoice(
+          row.bookVersionId,
+          context,
+          type,
+          entriesAfterPairs(chosenOfType, pairKeys),
+          answer,
+          index,
+          previous,
+        );
+      const placeChoice = await choose(
+        'place',
+        { free: placeBase.places, taken: placeBase.taken },
         data.places,
       );
+      const objectChoice = await choose('object', objectBase.objects, data.objects);
+      const termChoice = await choose('term', objectBase.terms, data.terms);
       const stepRecord =
         input === null
           ? failedStep(step, kind, null, DRAFT_TOO_LONG, null)
@@ -636,9 +744,19 @@ export class WorldWriteHandler {
         items: [],
         candidates: chosen.candidates,
         ...choice,
-        places: placeChoice.places,
-        placesOff: placeChoice.placesOff,
-        leftOut: [...choice.leftOut, ...placeChoice.leftOut],
+        places: placeChoice.list,
+        placesOff: placeChoice.off,
+        objects: objectChoice.list,
+        objectsOff: objectChoice.off,
+        terms: termChoice.list,
+        termsOff: termChoice.off,
+        leftOut: [
+          ...choice.leftOut,
+          ...placeChoice.leftOut,
+          ...objectChoice.leftOut,
+          ...termChoice.leftOut,
+          ...organizationsSkipped(objectBase.organizations),
+        ],
         ...empty,
       };
     }
@@ -647,8 +765,36 @@ export class WorldWriteHandler {
       return this.pairStep(row, gate, step, at ?? -1, context, data, pending, ctx, regen);
     }
 
+    // Места, предметы и понятия - один шаг страницы досье со своим входом и итогом (R1).
+    const run = { row, gate, step, context, pending, ctx, regen };
     if (kind === 'place') {
-      return this.placeStep(row, gate, step, at ?? -1, context, data, pending, ctx, regen);
+      return this.dossierPageStep(run, {
+        kind,
+        entry: dossierListOf(data, kind)?.[at ?? -1],
+        refusals: DOSSIER_REFUSALS[kind],
+        input: (entry, index, top) =>
+          placeInput(context, entry, index, pageBook(context, entry, top), regen?.spec ?? null),
+        record: (entry, result, source) => placeRecord(step, entry, result, source, regen !== null),
+      });
+    }
+
+    if (kind === 'object' || kind === 'term') {
+      return this.dossierPageStep(run, {
+        kind,
+        entry: dossierListOf(data, kind)?.[at ?? -1],
+        refusals: DOSSIER_REFUSALS[kind],
+        input: (entry, index, top) =>
+          objectInput(
+            context,
+            kind,
+            entry,
+            index,
+            pageBook(context, entry, top),
+            regen?.spec ?? null,
+          ),
+        record: (entry, result, source) =>
+          objectRecord(step, kind, entry, result, source, regen !== null),
+      });
     }
 
     const candidate = data.candidates?.[at ?? -1];
@@ -899,42 +1045,41 @@ export class WorldWriteHandler {
   }
 
   /**
-   * Шаг места (`F08-12b`): страница места этапом страницы по главам, где формы названия нашли место
-   * (не влезло - главы с наибольшим числом упоминаний и краткое содержание глав досье). Место не нашлось
-   * ни в одной главе - `WORLD_PLACE_NOT_FOUND`; ключ занят сущностью другого типа
-   * (её завели после выбора) - `WORLD_PLACE_KEY_TAKEN` без платного вызова (Q1).
+   * Шаг страницы сущности досье - места (`F08-12b`), предмета или понятия (`F08-13b`), одно правило
+   * (решение арбитра `F08 | F08-13b` R1): страница этапом страницы по главам, где формы названия нашли
+   * сущность (не влезло - главы с наибольшим числом упоминаний и краткое содержание глав досье). Без
+   * платного вызова: ключ заняли сущностью другого типа после выбора (`refusals.taken`), формы не нашли
+   * сущность ни в одной главе (`refusals.notFound`). Вход и итог - свои у типа (`spec`).
    */
-  private async placeStep(
-    row: ContentDraft,
-    gate: WorldGate,
-    step: number,
-    at: number,
-    context: WorldContext,
-    data: WorldWriteData,
-    pending: PendingWorldStep | null,
-    ctx: LlmTaskContext,
-    regen: { spec: WorldRegenSpec; index: number } | null,
+  private async dossierPageStep<T>(
+    run: WorldStepRun,
+    spec: DossierPageStepSpec<T>,
   ): Promise<StepRecord | null> {
-    const place = data.places?.[at];
+    const { row, gate, step, context, pending, ctx, regen } = run;
+    const entry = spec.entry;
     const fail = (reason: string, source: WorldStepSource | null = null): StepRecord => ({
-      step: failedStep(step, 'place', place?.key ?? null, reason, source),
+      step: failedStep(step, spec.kind, entry?.key ?? null, reason, source),
       items: [],
       droppedQuotes: [],
       droppedSources: [],
     });
-    if (!place) return fail(DRAFT_DATA_INVALID);
-    if (placeKeyTaken(context.entities.get(place.key)?.type)) return fail(WORLD_PLACE_KEY_TAKEN);
-    if (place.mentions.chapters.length === 0) return fail(WORLD_PLACE_NOT_FOUND);
+    if (!entry) return fail(DRAFT_DATA_INVALID);
+    if (dossierKeyTaken(spec.kind, context.entities.get(entry.key)?.type)) {
+      return fail(spec.refusals.taken);
+    }
+    if (entry.mentions.chapters.length === 0) return fail(spec.refusals.notFound);
     const index = chapterIndexOf(context);
-    const make = (top: number | null) =>
-      placeInput(context, place, index, pageBook(context, place, top), regen?.spec ?? null);
-    const fits = <T>(input: WorldStepInput<T>) => worldInputFits(this.llm, input);
-    const input = await fittingInput(place.mentions.chapters.length, make, fits);
+    const fits = <I>(input: WorldStepInput<I>) => worldInputFits(this.llm, input);
+    const input = await fittingInput(
+      entry.mentions.chapters.length,
+      (top) => spec.input(entry, index, top),
+      fits,
+    );
     if (input === null) return fail(DRAFT_TOO_LONG);
     const result = await this.loop(row, gate, input, step, pending, ctx, regen);
     if (result === null) return null;
     if (!result.ok) return fail(DRAFT_INVALID_RESPONSE, input.source);
-    return placeRecord(step, place, result, input.source, regen !== null);
+    return spec.record(entry, result, input.source);
   }
 
   /**
@@ -994,30 +1139,36 @@ export class WorldWriteHandler {
   }
 
   /**
-   * Места после выбора (`F08-12b`, Q1): формы - ответа выбора, сохранённые, название досье и глоссарий
-   * того же ключа (`placeDossierForms`); присутствие - `countedOf`. Порог и потолок - `choosePlaces`.
+   * Места, предметы или понятия после выбора (`F08-12b`, `F08-13b`, R1): формы - ответа выбора,
+   * сохранённые, название досье и глоссарий того же ключа (`dossierEntityForms`); присутствие -
+   * `countedOf`; занятые ключи, порог и потолок - `chooseDossierEntities`. У старого хода и на языке
+   * без эталона типа `chosen.free` пуст (`placesToChoose`, `objectsToChoose`): подсчёта нет.
    */
-  private async placesOf(
+  private async dossierChoice<K extends WorldDossierType>(
     bookVersionId: string,
     context: WorldContext,
-    base: readonly WorldBasePlace[],
+    type: K,
+    chosen: WorldDossierChosen,
     answer: WorldSelectDraft | null,
     index: ChapterIndex,
-  ): Promise<WorldPlaceCandidate[]> {
+    previous: WorldDossierCandidate[] | null,
+  ): Promise<ReturnType<typeof chooseDossierEntities<K>>> {
     const folded = foldedVersion(index);
+    const forms = selectForms(answer, WORLD_DOSSIER_LISTS[type]);
     const { entries } = await this.countedOf(
       bookVersionId,
       context,
-      base,
-      (key) => answer?.places.find((a) => a.key === key),
-      (p) => placeDossierForms(p.key, context.dossier, context.glossary, folded),
+      chosen.free,
+      (key) => forms.find((a) => a.key === key),
+      (e) => dossierEntityForms(e.key, type, context.dossier, context.glossary, folded),
     );
-    return entries.map((p) => ({
-      key: p.key,
-      name: p.name,
-      aliases: p.aliases,
-      mentions: p.mentions,
+    const counted = entries.map((e) => ({
+      key: e.key,
+      name: e.name,
+      aliases: e.aliases,
+      mentions: e.mentions,
     }));
+    return chooseDossierEntities(type, context.language, counted, chosen.taken, previous);
   }
 
   /**
@@ -1086,7 +1237,7 @@ export class WorldWriteHandler {
       bookVersionId,
       context,
       base,
-      (key) => answer?.characters.find((a) => a.key === key),
+      (key) => selectForms(answer, 'characters').find((a) => a.key === key),
       (c) => dossierForms({ key: c.key, name: c.name }, context.dossier, context.glossary, folded),
     );
     // Второстепенный ниже порога глав на сайт не выйдет (`F08-8b`): страницу ему не пишут.
@@ -1350,6 +1501,21 @@ interface BriefPageSubject {
 }
 
 /**
+ * Пункт форм имени записанного шага страницы - общий у героя, места, предмета и понятия: формы из
+ * выбора первыми; у перегенерации и без форм - пусто (формы не перегенерируются).
+ */
+function nameFormsItems(
+  step: number,
+  subject: BriefPageSubject,
+  name: string,
+  regen: boolean,
+): WorldItem[] {
+  return !regen && subject.aliases.length > 0
+    ? [{ ...emptyItem(subject.key, 'aliases', step), value: subject.aliases, name }]
+    : [];
+}
+
+/**
  * Пункты шага страницы с ТЗ - общие у героя и места (решение арбитра `F08 | F08-12b` R4): формы имени
  * из выбора первыми (не у перегенерации), пункт на блок, неверные по импорту - не пишутся; ТЗ - с
  * отпечатком основы (`briefBasisBlock`: «Внешность» героя, «Описание» места), а основа, отбитая
@@ -1364,10 +1530,7 @@ function briefPageRecord<D extends BriefPageDraft>(
   regen: boolean,
 ): StepRecord {
   const name = result.draft.name ?? subject.name;
-  const items: WorldItem[] = [];
-  if (!regen && subject.aliases.length > 0) {
-    items.push({ ...emptyItem(subject.key, 'aliases', step), value: subject.aliases, name });
-  }
+  const items: WorldItem[] = nameFormsItems(step, subject, name, regen);
   const basis = briefBasisBlock(kind === 'place' ? 'place' : 'character');
   const blocks = blockItems(step, subject.key, name, result);
   const lookRejected = blocks.some((i) => i.block === basis && i.outcome === 'none');
@@ -1443,4 +1606,29 @@ export function pageRecord(
   regen: boolean,
 ): StepRecord {
   return briefPageRecord(step, 'page', candidate, result, source, regen);
+}
+
+/**
+ * Итог шага предмета или понятия (`F08-13b`): формы названия из выбора первыми (не у перегенерации),
+ * пункт на блок ответа, неверные по импорту - не пишутся; ТЗ нет (решение `F08 | F08-13` Q4).
+ */
+export function objectRecord(
+  step: number,
+  type: WorldRunObjectType,
+  entry: WorldObjectCandidate,
+  result: Extract<QualityLoopResult<WorldObjectDraft>, { ok: true }>,
+  source: WorldStepSource,
+  regen: boolean,
+): StepRecord {
+  const name = result.draft.name ?? entry.name;
+  const items = [
+    ...nameFormsItems(step, entry, name, regen),
+    ...blockItems(step, entry.key, name, result),
+  ];
+  return {
+    step: doneStep(step, type, entry.key, result, result.remarks, source, result.draft.fixes),
+    items,
+    droppedQuotes: result.draft.droppedQuotes,
+    droppedSources: [],
+  };
 }
