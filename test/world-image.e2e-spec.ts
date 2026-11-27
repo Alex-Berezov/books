@@ -455,9 +455,11 @@ describe('World image e2e (F08-11a, F08-11d-1, F08-11d-3: file upload)', () => {
     });
     const page = (await publicEntity(versionId)).body as Record<string, unknown>;
     expect(page.image).toEqual({ url: old.url, width: 1536, height: 1536 });
+    // `map` - малая карта места (F08-12d); у героя её нет.
     expect(Object.keys(page).sort()).toEqual(
-      ['alternates', 'chapterNumbers', 'entity', 'image', 'language'].sort(),
+      ['alternates', 'chapterNumbers', 'entity', 'image', 'language', 'map'].sort(),
     );
+    expect(page.map).toBeNull();
     expect((await auth(http().get(path(versionId))).expect(200)).body).toMatchObject({
       accepted: { mediaId: old.id },
       pending: { mediaId: waiting.id },

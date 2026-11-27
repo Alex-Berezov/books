@@ -7960,6 +7960,8 @@ export interface components {
        * @enum {string}
        */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Small map of a real place with a checked point (F08-12d, 2x2 tiles at zoom 12): readers only; null for editors, other entities, places without a point and when a tile could not be fetched */
+      map: components['schemas']['BookWorldMapDto'] | null;
     };
     BookWorldEntitySaveResponseDto: {
       /** @description Saved entity; null on dryRun (nothing is written) */
@@ -8045,8 +8047,35 @@ export interface components {
        * @enum {string}
        */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
+      /** @description Literary map of the places with points (F08-12d): readers with ?map=1 only; null without the parameter, for editors, in the save response, when no place has a point or a tile could not be fetched */
+      map: components['schemas']['BookWorldMapDto'] | null;
       /** @description Places shown on the world page (F08-12a, public since F08-12c): visible, read after the model text; with or without their own page. Same set for editors */
       places: components['schemas']['BookWorldPlaceCardDto'][];
+    };
+    BookWorldMapDto: {
+      cols: number;
+      points: components['schemas']['BookWorldMapPointDto'][];
+      rows: number;
+      /** @description cols x rows tiles, row by row */
+      tiles: components['schemas']['BookWorldMapTileDto'][];
+      /** @description Web Mercator zoom of every tile */
+      zoom: number;
+    };
+    BookWorldMapPointDto: {
+      /** @description Place key (same as in places / entity) */
+      key: string;
+      /** @description Percent of the width */
+      left: number;
+      /** @description Percent of the height */
+      top: number;
+    };
+    BookWorldMapTileDto: {
+      /** @description Column in the mosaic, from the left */
+      col: number;
+      /** @description Row in the mosaic, from the top */
+      row: number;
+      /** @description Absolute URL of the cached OpenStreetMap tile in the site storage (256x256 PNG) */
+      url: string;
     };
     BookWorldMentionsDto: {
       /** @description Chapters the entity is found in, ascending; for a pair (F08-8c) — chapters where both characters are found */
@@ -26589,7 +26618,10 @@ export interface operations {
   };
   BookWorldController_list: {
     parameters: {
-      query?: never;
+      query?: {
+        /** @description Build the literary map (readers only); any other value - 400 */
+        map?: '1' | 'true';
+      };
       header?: never;
       path: {
         bookVersionId: string;

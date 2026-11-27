@@ -57,6 +57,8 @@ const SCAN_ROOTS = ['src', 'prisma'];
 const READ_BUT_NOT_IN_EXAMPLE = {
   SKIP_DB_CONNECT:
     'Test-only escape hatch that skips the database connection; offering it in the example would invite it into a real environment.',
+  WORLD_MAP_TILE_STUB:
+    'CI-only stub of the OpenStreetMap tile transport for the books-front e2e container (F08-12d); offering it in the example would invite fake map tiles into a real environment.',
   APPLY:
     'Argument of a one-off maintenance script in prisma/scripts, passed on the command line of that run, not part of the service environment.',
   DRY_RUN:

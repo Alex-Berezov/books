@@ -26,8 +26,8 @@ export const WORLD_PAIRS = { public: true };
  * Рубильник публичности мест (решение арбитра `F08 | F08-12` Q0, по образцу `WORLD_PAIRS`):
  * выключенный, он держит место вне сайта — списка, карточки `/wiki`, карты сайта и hreflang.
  * Включён пачкой `F08-12c` вместе со страницей места на фронте; места, записанные при выключенном,
- * выводит на сайт разовый пересчёт при старте (`relistWorldPlaces`, решение `F08 | F08-12a` R4,
- * убрать в `F08-12d`). Объект, а не константа: e2e проверяют оба положения в одном процессе.
+ * вывел на сайт разовый пересчёт при старте (решение `F08 | F08-12a` R4, снят в `F08-12d`).
+ * Объект, а не константа: e2e проверяют оба положения в одном процессе.
  */
 export const WORLD_PLACES = { public: true };
 
@@ -227,8 +227,8 @@ export function worldMembersReader(
 }
 
 /**
- * Поля пересчёта `isListed` (`relistWorldPairs`, `relistWorldPlaces`): вход `worldListedWrite`
- * и прежний `updatedAt`. Одна копия: новое поле `WorldListedInput` добавляется сюда для обоих.
+ * Поля пересчёта `isListed` пар (`relistWorldPairs`): вход `worldListedWrite` и прежний `updatedAt`.
+ * Одна копия: новое поле `WorldListedInput` добавляется сюда.
  */
 const WORLD_RELIST_SELECT = {
   key: true,
@@ -272,38 +272,6 @@ export async function relistWorldPairs(
     await tx.bookWorldEntity.update({
       where: { bookVersionId_key: { bookVersionId, key: pair.key } },
       data: { ...listed, updatedAt: pair.updatedAt },
-    });
-    written++;
-  }
-  return written;
-}
-
-/**
- * Места версии (решение арбитра `F08 | F08-12a` R4, по образцу `relistWorldPairs`): `isListed`
- * мест, записанных при выключенном рубильнике, пересчитывается тем же `worldListedWrite`. Пишутся
- * только места, у которых он изменился, с прежним `updatedAt`. Зовётся в транзакции мира версии
- * (`runInWorldTx`) разовым пересчётом при старте (`WorldPlacesRelistService`); убрать в `F08-12d`.
- * Число записанных мест.
- */
-export async function relistWorldPlaces(
-  tx: Pick<Prisma.TransactionClient, 'bookWorldEntity'>,
-  bookVersionId: string,
-  version: { status: PublicationStatus },
-  now: Date,
-): Promise<number> {
-  const places = await tx.bookWorldEntity.findMany({
-    where: { bookVersionId, type: 'place' },
-    select: WORLD_RELIST_SELECT,
-    orderBy: { key: 'asc' },
-    take: BOOK_WORLD_LIMITS.entities,
-  });
-  let written = 0;
-  for (const place of places) {
-    const listed = worldListedWrite(place, version, now);
-    if (place.isListed === listed.isListed && listed.firstPublishedAt === undefined) continue;
-    await tx.bookWorldEntity.update({
-      where: { bookVersionId_key: { bookVersionId, key: place.key } },
-      data: { ...listed, updatedAt: place.updatedAt },
     });
     written++;
   }

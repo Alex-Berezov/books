@@ -1,6 +1,7 @@
 import { Inject, Injectable, Logger, Optional } from '@nestjs/common';
 import { WIKIDATA_HOST, wikidataEntityUrl } from './world-geo';
 import { WIKIDATA_ID_REGEX } from './dto/book-world-blocks.dto';
+import { readLimitedBytes } from '../../shared/http/read-limited';
 
 /** Предел ответа: сущность крупного города в Wikidata — несколько мегабайт JSON. */
 export const WIKIDATA_MAX_BYTES = 10 * 1024 * 1024;
@@ -70,9 +71,9 @@ export class WikidataClient {
           await res.body?.cancel();
           return { kind: 'unavailable' };
         }
-        const text = await readLimited(res, WIKIDATA_MAX_BYTES);
-        if (text === null) return { kind: 'unavailable' };
-        return { kind: 'ok', body: JSON.parse(text) as unknown };
+        const bytes = await readLimitedBytes(res, WIKIDATA_MAX_BYTES);
+        if (bytes === null) return { kind: 'unavailable' };
+        return { kind: 'ok', body: JSON.parse(bytes.toString('utf8')) as unknown };
       }
       return { kind: 'unavailable' };
     } catch (error) {
@@ -91,28 +92,4 @@ export function sameHostLocation(location: string | null, base: string): string 
   } catch {
     return null;
   }
-}
-
-/** Тело ответа не больше `max` байт; больше — `null` (чтение обрывается, а не дочитывается). */
-async function readLimited(res: Response, max: number): Promise<string | null> {
-  const declared = Number(res.headers.get('content-length'));
-  if (Number.isFinite(declared) && declared > max) {
-    await res.body?.cancel();
-    return null;
-  }
-  if (!res.body) return '';
-  const reader = res.body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > max) {
-      await reader.cancel();
-      return null;
-    }
-    chunks.push(value);
-  }
-  return Buffer.concat(chunks).toString('utf8');
 }

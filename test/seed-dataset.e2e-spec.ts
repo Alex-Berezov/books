@@ -39,6 +39,7 @@ import {
 } from '../src/modules/book-world/world-public';
 import { WorldMentionsService } from '../src/modules/book-world/world-mentions.service';
 import { httpServerOf } from './http-server';
+import { OsmTileClient, solidPng } from '../src/modules/book-world/osm-tile.client';
 import { grantStaffRoles } from './helpers/staff-roles';
 
 /**
@@ -82,6 +83,9 @@ describe('Seeded dataset (e2e)', () => {
 
   const get = (path: string) => request(httpServerOf(app)).get(path);
 
+  const tileCalls: string[] = [];
+  const TILE_PNG = solidPng(256, 256, [200, 200, 200]);
+
   /** Версия книги приёмки по слагу и языку: блоки анализа (F03-4) и пересказа (F04-4). */
   const versionOf = (slug: string, language: Language) =>
     prisma.bookVersion.findFirstOrThrow({
@@ -93,9 +97,19 @@ describe('Seeded dataset (e2e)', () => {
     });
 
   beforeAll(async () => {
+    // Тайлы карты (F08-12d, решение `F08 | F08-12d` Р5): страница реального места сида строит
+    // малую карту - в живой tile.openstreetmap.org прогон не ходит, транспорт подставной.
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(OsmTileClient)
+      .useValue(
+        new OsmTileClient((url) => {
+          tileCalls.push(url);
+          return Promise.resolve(new Response(new Uint8Array(TILE_PNG), { status: 200 }));
+        }),
+      )
+      .compile();
 
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(
@@ -1308,8 +1322,11 @@ describe('Seeded dataset (e2e)', () => {
           expect(rows.filter((r) => r.type === 'pair').map((r) => r.key)).toEqual([
             'anna-lark--tom-reed',
           ]);
-          // Место сида (F08-12c): страница места и карточка `/wiki` - проверки места не молчат.
-          expect(rows.filter((r) => r.type === 'place').map((r) => r.key)).toEqual(['salt-quay']);
+          // Места сида (F08-12c, F08-12d): вымышленное и реальное с точкой - проверки мест не молчат.
+          expect(rows.filter((r) => r.type === 'place').map((r) => r.key)).toEqual([
+            'london',
+            'salt-quay',
+          ]);
         }
         // Пара (F08-8c): оба героя ключа на сайте — по тем же строкам сида.
         const listedHeroes = new Set(
@@ -1378,7 +1395,7 @@ describe('Seeded dataset (e2e)', () => {
       },
     );
 
-    it('читатель видит ровно публичные сущности: en — пять с парой и местом, ru — одна', async () => {
+    it('читатель видит ровно публичные сущности: en — шесть с парой и местами, ru — одна', async () => {
       const keysOf = async (language: Language) => {
         const { id } = await versionOf(WORLD_ACCEPTANCE.book, language);
         const res = await get(`/versions/${id}/world`).expect(200);
@@ -1388,6 +1405,7 @@ describe('Seeded dataset (e2e)', () => {
       expect(await keysOf(Language.en)).toEqual([
         'anna-lark',
         'anna-lark--tom-reed',
+        'london',
         'mira-vale',
         'salt-quay',
         'tom-reed',
@@ -1411,8 +1429,21 @@ describe('Seeded dataset (e2e)', () => {
       });
       const enList = await get(`/versions/${en.id}/world`).expect(200);
       expect((enList.body as { places: { key: string; hasPage: boolean }[] }).places).toEqual([
+        expect.objectContaining({ key: 'london', hasPage: true }),
         expect.objectContaining({ key: 'salt-quay', hasPage: true }),
       ]);
+      // Реальное место сида (F08-12d): литерал `geo` совпадает с отпечатком текущих названий -
+      // точка читателю есть (иначе `publicPoint` её прячет, и карта CI фронта пуста).
+      const london = await get(`/versions/${en.id}/world/london`).expect(200);
+      // Малая карта реального места сида - из подставного транспорта (4 тайла z=12).
+      expect((london.body as { map: { tiles: unknown[] } | null }).map?.tiles).toHaveLength(4);
+      expect(tileCalls.length).toBeGreaterThan(0);
+      expect(tileCalls.every((u) => u.startsWith('https://tile.openstreetmap.org/12/'))).toBe(true);
+      expect((london.body as { entity: Record<string, unknown> }).entity).toMatchObject({
+        key: 'london',
+        kind: 'real',
+        point: { lat: 51.507222222, lng: -0.1275, sourceUrl: 'https://www.wikidata.org/wiki/Q84' },
+      });
       // У пары нет полей героя и внешних блоков (`checkWorldTypeFields`), читателю нет служебных.
       expect({
         role: pairEntity.role,
@@ -1469,14 +1500,18 @@ describe('Seeded dataset (e2e)', () => {
       expect(book?.entities.map((e) => e.key)).toEqual([
         'anna-lark',
         'anna-lark--tom-reed',
+        'london',
         'salt-quay',
         'tom-reed',
       ]);
       expect(book?.entities[0].alternates.map((a) => a.language)).toEqual(['en', 'ru']);
-      // Пара, место и Том — только en: в ru-версии сида их нет.
-      expect(book?.entities[1].alternates.map((a) => a.language)).toEqual(['en']);
-      expect(book?.entities[2].alternates.map((a) => a.language)).toEqual(['en']);
-      expect(book?.entities[3].alternates.map((a) => a.language)).toEqual(['en']);
+      // Пара, места и Том — только en: в ru-версии сида их нет.
+      for (const entity of book?.entities.slice(1) ?? []) {
+        expect({ key: entity.key, languages: entity.alternates.map((a) => a.language) }).toEqual({
+          key: entity.key,
+          languages: ['en'],
+        });
+      }
       expect(items.find((i) => i.slug === WORLD_ACCEPTANCE.noindex)).toBeUndefined();
       expect(items.find((i) => i.slug === WORLD_ACCEPTANCE.hidden)).toBeUndefined();
     });

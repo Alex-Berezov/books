@@ -5,6 +5,7 @@ import type { ModeratorRolesService } from '../../common/roles/moderator-roles.s
 import type { PrismaService } from '../../prisma/prisma.service';
 import { BookWorldService, WORLD_QUOTE_CHAPTERS_BATCH } from './book-world.service';
 import { WorldGeoPass, type WorldGeoService } from './world-geo.service';
+import type { WorldMapService } from './world-map.service';
 import { geoFingerprint } from './world-geo';
 import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
 import type { UpdateBookWorldDto, UpdateBookWorldEntityDto } from './dto/update-book-world.dto';
@@ -123,10 +124,13 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
     }),
   };
   const geo = { refresh: jest.fn().mockResolvedValue(0) };
+  const worldMap = { buildBookMap: jest.fn(), buildPlaceMap: jest.fn() };
   const service = new BookWorldService(
     prisma as unknown as PrismaService,
     { isModerator: jest.fn() } as unknown as ModeratorRolesService,
     geo as unknown as WorldGeoService,
+    // Запись тайлы OSM не берёт (`F08-12d`): карта в ответе записи всегда null.
+    worldMap as unknown as WorldMapService,
   );
   const save = (entities: Row[], dryRun = true) =>
     service.saveVersion(
@@ -146,7 +150,18 @@ function setup(opts: { saved?: Row[]; chapters?: Record<number, string> } = {}) 
   const onTransaction = (fn: () => void) => {
     between = fn;
   };
-  return { prisma, chapters, textCalls, countCalls, save, messages, onTransaction, geo, service };
+  return {
+    prisma,
+    chapters,
+    textCalls,
+    countCalls,
+    save,
+    messages,
+    onTransaction,
+    geo,
+    worldMap,
+    service,
+  };
 }
 
 const hero = (key: string, over: Row = {}): Row => ({
@@ -285,13 +300,17 @@ describe('BookWorldService: запись сущности и присутств�
   });
 
   it('точки мест проверяются после записи и только у мест тела (F08-12a, Q2); dryRun — без проверки', async () => {
-    const { save, geo } = setup({ chapters: { 1: '<p>Hero came.</p>' } });
+    const { save, geo, worldMap } = setup({ chapters: { 1: '<p>Hero came.</p>' } });
     const place = { key: 'town', type: 'place', name: 'Town', kind: 'real', wikidataId: 'Q1' };
     await save([hero('a'), place]);
     expect(geo.refresh).not.toHaveBeenCalled();
-    await save([hero('a'), place], false);
+    const saved = await save([hero('a'), place], false);
     expect(geo.refresh).toHaveBeenCalledTimes(1);
     expect(geo.refresh).toHaveBeenCalledWith('v1', 'en', ['town']);
+    // Запись тайлы OSM не берёт (F08-12d, Р3): карта ответа записи - null без вызова карты.
+    expect(saved.world?.map).toBeNull();
+    expect(worldMap.buildBookMap).not.toHaveBeenCalled();
+    expect(worldMap.buildPlaceMap).not.toHaveBeenCalled();
   });
 
   describe('ответ записи места после проверки точки (F08-12a, ревью круга 2-3)', () => {

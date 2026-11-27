@@ -32,6 +32,10 @@ const NOT_MEDIA_REFERENCES: Record<string, string> = {
     'ключ сущности мира книги, ^[a-z0-9-]{1,60}$ (BOOK_WORLD_KEY_REGEX в DTO и сервисе), не адрес (F08-1)',
   'BookWorldImage.key':
     'ключ сущности мира книги (тот же BOOK_WORLD_KEY_REGEX), не адрес; файлы картинки - внешними ключами imageMediaId и pendingMediaId (F08-11a)',
+  'WorldMapTile.storageKey':
+    'ключ копии тайла OpenStreetMap в публичном хранилище; пишет только WorldMapService, не MediaAsset (F08-12d)',
+  'WorldMapTile.prevStorageKey':
+    'ключ прежней копии тайла OSM (для гонки записи); пишет только WorldMapService, не MediaAsset (F08-12d)',
   'WorldDailyStat.key':
     'ключ сущности мира книги в счётчике или пустая строка общей страницы (F08-3a), не адрес',
   'LlmTask.pairKey':

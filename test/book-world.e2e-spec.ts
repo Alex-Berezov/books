@@ -19,10 +19,12 @@ import {
   type WorldRecountOutcome,
 } from '../src/modules/book-world/world-mentions.service';
 import { WorldMentionsSchedulerService } from '../src/modules/book-world/world-mentions-scheduler.service';
-import { WorldPlacesRelistService } from '../src/modules/book-world/world-places-relist.service';
 import { BOOK_WORLD_LIMITS } from '../src/modules/book-world/dto/book-world-blocks.dto';
 import { WikidataClient } from '../src/modules/book-world/wikidata.client';
 import { WIKIDATA_EARTH } from '../src/modules/book-world/world-geo';
+import { OsmTileClient, solidPng } from '../src/modules/book-world/osm-tile.client';
+import { WorldMapService } from '../src/modules/book-world/world-map.service';
+import { STORAGE_SERVICE, type StorageService } from '../src/shared/storage/storage.interface';
 import { createBookFixture } from './helpers/book-fixture';
 import { createBookWithRights } from './helpers/book-with-rights';
 import { markBookRightsFreshForTests } from './helpers/rights-fresh';
@@ -46,6 +48,12 @@ describe('BookWorld e2e', () => {
   let adminAccess: string;
   let managerAccess: string;
   let wikidataCalls: string[] = [];
+  // Тайлы OSM в e2e не ходят в сеть (F08-12d): `up` - серый PNG, `down` - 503.
+  let tileCalls: string[] = [];
+  let tileMode: 'up' | 'down' = 'up';
+  const TILE_PNG = solidPng(256, 256, [200, 200, 200]);
+  // Сдвиг часов `WorldMapService` (прерыватель, срок тайла) без fake timers у `fetch`.
+  let clockOffsetMs = 0;
   const PETERSBURG_ENTITY = {
     entities: {
       Q656: {
@@ -250,6 +258,23 @@ describe('BookWorld e2e', () => {
           );
         }),
       )
+      .overrideProvider(OsmTileClient)
+      .useValue(
+        new OsmTileClient((url) => {
+          tileCalls.push(url);
+          return Promise.resolve(
+            tileMode === 'up'
+              ? new Response(new Uint8Array(TILE_PNG), { status: 200, headers: { etag: '"t"' } })
+              : new Response('', { status: 503 }),
+          );
+        }),
+      )
+      .overrideProvider(WorldMapService)
+      .useFactory({
+        factory: (db: PrismaService, storage: StorageService, tiles: OsmTileClient) =>
+          new WorldMapService(db, storage, tiles, () => Date.now() + clockOffsetMs),
+        inject: [PrismaService, STORAGE_SERVICE, OsmTileClient],
+      })
       .compile();
     prisma = moduleRef.get(PrismaService);
     rightsContentHash = moduleRef.get(RightsContentHashService);
@@ -591,7 +616,13 @@ describe('BookWorld e2e', () => {
       .expect(404);
     const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
     // F08-3a: без публичных сущностей и кластер hreflang пуст.
-    expect(list.body).toEqual({ language: 'en', entities: [], alternates: [], places: [] });
+    expect(list.body).toEqual({
+      language: 'en',
+      entities: [],
+      alternates: [],
+      places: [],
+      map: null,
+    });
     const editor = await request(http())
       .get(`/versions/${versionId}/world/oblomov`)
       .set('Authorization', `Bearer ${adminAccess}`)
@@ -2540,37 +2571,122 @@ describe('BookWorld e2e', () => {
       await expectListedConsistent(versionId);
     });
 
-    it('F08-12c: место, записанное при выключенном рубильнике, выводит на сайт пересчёт; повтор ничего не пишет', async () => {
-      WORLD_PLACES.public = false;
-      const { versionId } = await createVersion();
-      await put(versionId, { language: 'en', entities: [place()] }).expect(200);
-      await setMentions(versionId, 'petersburg', [1, 3]);
-      await put(versionId, {
-        language: 'en',
-        entities: [{ key: 'petersburg', type: 'place' }],
-      }).expect(200);
-      await readLatest(versionId, 'petersburg');
-      const before = await row(versionId, 'petersburg');
-      expect(before.isListed).toBe(false);
-      expect(before.firstPublishedAt).toBeNull();
+    describe('F08-12d: литературная карта (решения арбитра `F08 | F08-12d`)', () => {
+      /** Версия с публичным реальным Петербургом (точка Q656) и вымышленной деревней со страницей. */
+      const mapVersion = async () => {
+        const { versionId } = await createVersion();
+        const village = place('village', { name: 'Village', kind: 'fictional', wikidataId: null });
+        await put(versionId, { language: 'en', entities: [place(), village] }).expect(200);
+        await setMentions(versionId, 'petersburg', [1, 3]);
+        await setMentions(versionId, 'village', [1, 3]);
+        await readLatest(versionId, 'petersburg');
+        await readLatest(versionId, 'village');
+        return versionId;
+      };
+      const reader = (path: string) => request(http()).get(path);
+      beforeEach(async () => {
+        tileMode = 'up';
+        await prisma.worldMapTile.deleteMany({});
+        tileCalls = [];
+      });
 
-      WORLD_PLACES.public = true;
-      // Без пересчёта место с выключенного рубильника остаётся вне сайта: isListed — столбец.
-      await request(http()).get(`/versions/${versionId}/world/petersburg`).expect(404);
-      const relist = app.get(WorldPlacesRelistService);
-      expect((await relist.relistAll()).written).toBeGreaterThanOrEqual(1);
-      const after = await row(versionId, 'petersburg');
-      expect(after.isListed).toBe(true);
-      expect(after.firstPublishedAt).not.toBeNull();
-      expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
-      await request(http()).get(`/versions/${versionId}/world/petersburg`).expect(200);
-      const list = await anon(versionId).expect(200);
-      expect(list.body.places).toEqual([
-        expect.objectContaining({ key: 'petersburg', hasPage: true }),
-      ]);
-      // Повтор: изменённых строк нет.
-      expect(await relist.relistAll()).toEqual({ written: 0, failed: 0 });
-      await expectListedConsistent(versionId);
+      it('без ?map списка карты нет и тайлы не берутся; ?map=1 - мозаика из хранилища сайта', async () => {
+        const versionId = await mapVersion();
+        const plain = await anon(versionId).expect(200);
+        expect(plain.body.map).toBeNull();
+        expect(tileCalls).toEqual([]);
+
+        const res = await reader(`/versions/${versionId}/world?map=1`).expect(200);
+        const map = res.body.map as {
+          zoom: number;
+          cols: number;
+          rows: number;
+          tiles: { col: number; row: number; url: string }[];
+          points: { key: string; left: number; top: number }[];
+        };
+        expect(map.tiles).toHaveLength(map.cols * map.rows);
+        expect(map.tiles.length).toBeLessThanOrEqual(12);
+        expect(tileCalls).toHaveLength(map.tiles.length);
+        for (const url of tileCalls) {
+          expect(url.startsWith(`https://tile.openstreetmap.org/${map.zoom}/`)).toBe(true);
+        }
+        // Адресов OSM в ответе нет: картинку посетитель берёт из хранилища сайта.
+        expect(JSON.stringify(res.body)).not.toContain('openstreetmap');
+        expect(map.tiles[0].url).toMatch(/\/world-map\/osm\/\d+\/\d+\/\d+\/[0-9a-f]{16}\.png$/);
+        // На карте - только реальное место с точкой; вымышленное остаётся в списке.
+        expect(map.points.map((p) => p.key)).toEqual(['petersburg']);
+        expect(res.body.places.map((p: Body) => p.key)).toEqual(['petersburg', 'village']);
+
+        // Повтор: тайлы свежие - к OSM не ходим.
+        tileCalls = [];
+        const again = await reader(`/versions/${versionId}/world?map=true`).expect(200);
+        expect(again.body.map.tiles).toEqual(map.tiles);
+        expect(tileCalls).toEqual([]);
+      });
+
+      it('?map с другим значением - 400; редактор и ответ записи - без карты и без тайлов', async () => {
+        const versionId = await mapVersion();
+        for (const bad of ['map=2', 'map=', 'map=1&map=1', 'map=yes']) {
+          await reader(`/versions/${versionId}/world?${bad}`).expect(400);
+        }
+        const editor = await reader(`/versions/${versionId}/world?map=1`)
+          .set('Authorization', `Bearer ${adminAccess}`)
+          .expect(200);
+        expect(editor.body.map).toBeNull();
+        const saved = await put(versionId, {
+          language: 'en',
+          entities: [{ key: 'village', type: 'place' }],
+        }).expect(200);
+        expect(saved.body.world.map).toBeNull();
+        expect(tileCalls).toEqual([]);
+      });
+
+      it('малая карта: реальному месту читателю - 2×2 на z=12; вымышленному и редактору - нет', async () => {
+        const versionId = await mapVersion();
+        const page = await reader(`/versions/${versionId}/world/petersburg`).expect(200);
+        expect(page.body.map).toMatchObject({ zoom: 12, cols: 2, rows: 2 });
+        expect(page.body.map.tiles).toHaveLength(4);
+        expect(page.body.map.points).toHaveLength(1);
+        const [pt] = page.body.map.points as { key: string; left: number; top: number }[];
+        // Точка малой карты - во внутреннем квадрате окна 2×2 (не NaN, не за краем).
+        expect(pt.key).toBe('petersburg');
+        expect(pt.left).toBeGreaterThanOrEqual(25);
+        expect(pt.left).toBeLessThanOrEqual(75);
+        expect(pt.top).toBeGreaterThanOrEqual(25);
+        expect(pt.top).toBeLessThanOrEqual(75);
+        expect(tileCalls).toHaveLength(4);
+        tileCalls = [];
+        const village = await reader(`/versions/${versionId}/world/village`).expect(200);
+        expect(village.body.map).toBeNull();
+        const editor = await reader(`/versions/${versionId}/world/petersburg`)
+          .set('Authorization', `Bearer ${adminAccess}`)
+          .expect(200);
+        expect(editor.body.map).toBeNull();
+        expect(tileCalls).toEqual([]);
+      });
+
+      // Отказ открывает прерыватель (Р6); в конце часы сервиса уходят за его срок.
+      it('OSM не отвечает - страница 200 без карты, список мест на месте; прерыватель держит запросы', async () => {
+        const versionId = await mapVersion();
+        tileMode = 'down';
+        const list = await reader(`/versions/${versionId}/world?map=1`).expect(200);
+        expect(list.body.map).toBeNull();
+        expect(list.body.places.map((p: Body) => p.key)).toEqual(['petersburg', 'village']);
+        const page = await reader(`/versions/${versionId}/world/petersburg`).expect(200);
+        expect(page.body.map).toBeNull();
+        expect(page.body.entity.key).toBe('petersburg');
+        // Прерыватель открыт: следующий запрос в OSM не идёт, даже когда тот снова жив.
+        tileMode = 'up';
+        tileCalls = [];
+        await reader(`/versions/${versionId}/world?map=1`).expect(200);
+        expect(tileCalls).toEqual([]);
+        // Часы сервиса вперёд за прерыватель (и остаются там: следующие тесты не наследуют
+        // открытый прерыватель, а 6 минут не старят тайлы со сроком 7 дней): запросы снова идут.
+        clockOffsetMs += 6 * 60 * 1000;
+        const back = await reader(`/versions/${versionId}/world?map=1`).expect(200);
+        expect(back.body.map).not.toBeNull();
+        expect(tileCalls.length).toBeGreaterThan(0);
+      });
     });
   });
 });

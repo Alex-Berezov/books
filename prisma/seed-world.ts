@@ -24,6 +24,10 @@ import {
  *     пара в списке (`isListed`, рубильник пар включён в `F08-8c-2`);
  *   - `salt-quay` — место (`F08-12c`, решение `F08 | F08-12c` R2) с ядром, только `en`: страница
  *     места и карточка в списке `/wiki` (рубильник мест включён в `F08-12c`); точки нет — вымышленное;
+ *   - `london` — реальное место (`F08-12d`, решение `F08 | F08-12d` Р5) с ядром и проверенной точкой
+ *     Wikidata Q84, только `en`: литературная карта `/wiki` и малая карта страницы места. Колонка `geo`
+ *     записана литералом (её пишет только сервер после Wikidata, а сид в сеть не ходит); тайлы сид
+ *     не качает и не кладёт — их берёт страница (в CI фронта - подставной транспорт `WORLD_MAP_TILE_STUB`);
  * - `world-acceptance-noindex` — `en` с редакторским `noindex`: мир есть, но закрыт от индекса.
  * - `world-acceptance-hidden` — `en`, сущность мира есть, но скрыта (`isVisible=false`): `/wiki` — 404.
  *
@@ -67,6 +71,8 @@ const CHAPTERS_EN: Record<number, string[]> = {
     'Anna Lark and Tom Reed crossed the bridge together.',
     'Mira Vale waited on the far bank.',
     'Sam Holt counted the boats.',
+    // Реальное место `london` (F08-12d) - последними абзацами: индексы прежних абзацев не сдвигаются.
+    'The flood reached London by night.',
   ],
   3: [
     'Tom Reed lit the lamp in the tower.',
@@ -74,6 +80,7 @@ const CHAPTERS_EN: Record<number, string[]> = {
     'Ned Fox kept the keys.',
     '"He never let the lamp go out," she said.',
     'Salt Quay stood empty by night.',
+    'London kept its lamps lit.',
   ],
 };
 
@@ -206,6 +213,8 @@ type EntitySeed = {
   read?: boolean;
   /** Источники внешних блоков: без них импорт отбивает `critique`, `prototypes`, `adaptations`. */
   sources?: { title: string; url: string }[];
+  /** Итог проверки точки реального места (`F08-12d`): литерал колонки `geo`, её пишет только сервер. */
+  geo?: Record<string, unknown>;
 };
 
 /** Время текста модели и отметки «прочитано» — постоянное: повторный прогон сида ничего не сдвигает. */
@@ -410,7 +419,7 @@ const ENTITIES_EN: EntitySeed[] = [
   },
   {
     // Место (`F08-12c`): ядро — «Коротко», вид, значение, 2 сцены с главой, присутствие. Название
-    // стоит в последнем абзаце глав 1 и 3.
+    // стоит в абзаце 4 глав 1 и 3.
     key: 'salt-quay',
     type: 'place',
     name: 'Salt Quay',
@@ -445,6 +454,53 @@ const ENTITIES_EN: EntitySeed[] = [
     hasCore: true,
     coreMissing: [],
     isListed: true,
+  },
+  {
+    // Реальное место (`F08-12d`): ядро как у `salt-quay`, номер Wikidata и проверенная точка.
+    // Название стоит в последних абзацах глав 2 и 3.
+    key: 'london',
+    type: 'place',
+    name: 'London',
+    short: 'The city the river runs to.',
+    blocks: {
+      kind: 'real',
+      location: 'Downriver, on the Thames',
+      significance: 'Service text: the flood reaches the city.',
+      description: 'Service text: bridges and towers.',
+      wikidataId: 'Q84',
+      scenes: [
+        { chapter: 2, title: 'The flood', text: 'The river rises in the city.' },
+        { chapter: 3, title: 'The keys', text: 'The keys of the city are kept.' },
+      ],
+      quotes: [
+        {
+          text: 'The flood reached London by night.',
+          chapter: 2,
+          interpretation: 'What it shows.',
+        },
+      ],
+    },
+    mentions: {
+      chapters: [2, 3],
+      first: 2,
+      perChapter: { '2': 1, '3': 1 },
+      paragraphs: { '2': [4], '3': [5] },
+      coPresence: {},
+      stale: [],
+    },
+    hasCore: true,
+    coreMissing: [],
+    isListed: true,
+    // Отпечаток `geoFingerprint` входа {Q84, en, [London]}; тот же отпечаток выдача считает
+    // по текущим названиям - иначе точки нет (`publicPoint`). Сверяет `test/seed-dataset.e2e-spec.ts`.
+    geo: {
+      wikidataId: 'Q84',
+      checkedFor: '{"language":"en","names":["london"],"wikidataId":"Q84"}',
+      language: 'en',
+      checkedAt: '2026-11-01T10:00:00.000Z',
+      point: { lat: 51.507222222, lng: -0.1275 },
+      reason: null,
+    },
   },
 ];
 
@@ -564,6 +620,7 @@ function entityData(e: EntitySeed) {
     blocks: json(e.blocks),
     sources: json(e.sources ?? null),
     mentions: json(e.mentions),
+    geo: json(e.geo ?? null),
     mentionsAt: AUTO_TEXT_AT,
     mentionChapters: e.mentions.chapters.length,
     mentionFirst: e.mentions.first,

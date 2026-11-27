@@ -35,6 +35,7 @@ import {
   BookWorldListResponseDto,
   BookWorldSaveResponseDto,
 } from './dto/book-world-response.dto';
+import { ListBookWorldQueryDto } from './dto/list-book-world-query.dto';
 import {
   SaveBookWorldQueryDto,
   SaveBookWorldVersionQueryDto,
@@ -62,8 +63,12 @@ export class BookWorldController {
   @ApiOkResponse({ type: BookWorldListResponseDto })
   @ApiParam({ name: 'bookVersionId' })
   @UseGuards(OptionalJwtAuthGuard)
-  list(@Param('bookVersionId') bookVersionId: string, @Req() req?: ActorRequest) {
-    return this.service.getList(bookVersionId, req?.user);
+  list(
+    @Param('bookVersionId') bookVersionId: string,
+    @Query() query: ListBookWorldQueryDto,
+    @Req() req?: ActorRequest,
+  ) {
+    return this.service.getList(bookVersionId, req?.user, { map: query.map !== undefined });
   }
 
   @Get('versions/:bookVersionId/world/:key')

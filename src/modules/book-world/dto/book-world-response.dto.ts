@@ -283,6 +283,55 @@ export class BookWorldPlaceCardDto {
   scenes!: BookWorldPlaceSceneDto[];
 }
 
+/** Тайл мозаики литературной карты (`F08-12d`): место в сетке и адрес копии в хранилище сайта. */
+export class BookWorldMapTileDto {
+  @ApiProperty({ type: Number, minimum: 0, description: 'Column in the mosaic, from the left' })
+  col!: number;
+
+  @ApiProperty({ type: Number, minimum: 0, description: 'Row in the mosaic, from the top' })
+  row!: number;
+
+  @ApiProperty({
+    type: String,
+    description: 'Absolute URL of the cached OpenStreetMap tile in the site storage (256x256 PNG)',
+  })
+  url!: string;
+}
+
+/** Точка на мозаике: ключ места и положение в процентах ширины и высоты мозаики. */
+export class BookWorldMapPointDto {
+  @ApiProperty({ type: String, description: 'Place key (same as in places / entity)' })
+  key!: string;
+
+  @ApiProperty({ type: Number, minimum: 0, maximum: 100, description: 'Percent of the width' })
+  left!: number;
+
+  @ApiProperty({ type: Number, minimum: 0, maximum: 100, description: 'Percent of the height' })
+  top!: number;
+}
+
+/**
+ * Литературная карта (`F08-12d`, решения арбитра `F08 | F08-12` Q3, Q7, `F08 | F08-12d`): мозаика
+ * тайлов OpenStreetMap одного масштаба и точки реальных мест с проверенными координатами.
+ * Подпись «© OpenStreetMap contributors» ставит страница.
+ */
+export class BookWorldMapDto {
+  @ApiProperty({ type: Number, minimum: 1, description: 'Web Mercator zoom of every tile' })
+  zoom!: number;
+
+  @ApiProperty({ type: Number, minimum: 1, maximum: 4 })
+  cols!: number;
+
+  @ApiProperty({ type: Number, minimum: 1, maximum: 3 })
+  rows!: number;
+
+  @ApiProperty({ type: [BookWorldMapTileDto], description: 'cols x rows tiles, row by row' })
+  tiles!: BookWorldMapTileDto[];
+
+  @ApiProperty({ type: [BookWorldMapPointDto] })
+  points!: BookWorldMapPointDto[];
+}
+
 export class BookWorldListResponseDto {
   @ApiProperty({ enum: Language, description: 'Language of the version' })
   language!: Language;
@@ -309,6 +358,15 @@ export class BookWorldListResponseDto {
       'text; with or without their own page. Same set for editors',
   })
   places!: BookWorldPlaceCardDto[];
+
+  @ApiProperty({
+    type: BookWorldMapDto,
+    nullable: true,
+    description:
+      'Literary map of the places with points (F08-12d): readers with ?map=1 only; null without the ' +
+      'parameter, for editors, in the save response, when no place has a point or a tile could not be fetched',
+  })
+  map!: BookWorldMapDto | null;
 }
 
 export class BookWorldChapterCountDto {
@@ -489,6 +547,15 @@ export class BookWorldEntityResponseDto {
       'or it is not accepted yet - a generated image waiting for acceptance is never here, editors included',
   })
   image!: BookWorldImageDto | null;
+
+  @ApiProperty({
+    type: BookWorldMapDto,
+    nullable: true,
+    description:
+      'Small map of a real place with a checked point (F08-12d, 2x2 tiles at zoom 12): readers only; ' +
+      'null for editors, other entities, places without a point and when a tile could not be fetched',
+  })
+  map!: BookWorldMapDto | null;
 }
 
 export const BOOK_WORLD_WARNING_CODES = ['core_incomplete'] as const;

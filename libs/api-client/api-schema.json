@@ -8517,6 +8517,16 @@
               "ru"
             ],
             "type": "string"
+          },
+          "map": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldMapDto"
+              }
+            ],
+            "description": "Small map of a real place with a checked point (F08-12d, 2x2 tiles at zoom 12): readers only; null for editors, other entities, places without a point and when a tile could not be fetched",
+            "nullable": true,
+            "type": "object"
           }
         },
         "required": [
@@ -8524,7 +8534,8 @@
           "chapterNumbers",
           "entity",
           "alternates",
-          "image"
+          "image",
+          "map"
         ],
         "type": "object"
       },
@@ -8786,6 +8797,16 @@
             ],
             "type": "string"
           },
+          "map": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/BookWorldMapDto"
+              }
+            ],
+            "description": "Literary map of the places with points (F08-12d): readers with ?map=1 only; null without the parameter, for editors, in the save response, when no place has a point or a tile could not be fetched",
+            "nullable": true,
+            "type": "object"
+          },
           "places": {
             "description": "Places shown on the world page (F08-12a, public since F08-12c): visible, read after the model text; with or without their own page. Same set for editors",
             "items": {
@@ -8798,7 +8819,98 @@
           "language",
           "alternates",
           "entities",
-          "places"
+          "places",
+          "map"
+        ],
+        "type": "object"
+      },
+      "BookWorldMapDto": {
+        "properties": {
+          "cols": {
+            "maximum": 4,
+            "minimum": 1,
+            "type": "number"
+          },
+          "points": {
+            "items": {
+              "$ref": "#/components/schemas/BookWorldMapPointDto"
+            },
+            "type": "array"
+          },
+          "rows": {
+            "maximum": 3,
+            "minimum": 1,
+            "type": "number"
+          },
+          "tiles": {
+            "description": "cols x rows tiles, row by row",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldMapTileDto"
+            },
+            "type": "array"
+          },
+          "zoom": {
+            "description": "Web Mercator zoom of every tile",
+            "minimum": 1,
+            "type": "number"
+          }
+        },
+        "required": [
+          "zoom",
+          "cols",
+          "rows",
+          "tiles",
+          "points"
+        ],
+        "type": "object"
+      },
+      "BookWorldMapPointDto": {
+        "properties": {
+          "key": {
+            "description": "Place key (same as in places / entity)",
+            "type": "string"
+          },
+          "left": {
+            "description": "Percent of the width",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "number"
+          },
+          "top": {
+            "description": "Percent of the height",
+            "maximum": 100,
+            "minimum": 0,
+            "type": "number"
+          }
+        },
+        "required": [
+          "key",
+          "left",
+          "top"
+        ],
+        "type": "object"
+      },
+      "BookWorldMapTileDto": {
+        "properties": {
+          "col": {
+            "description": "Column in the mosaic, from the left",
+            "minimum": 0,
+            "type": "number"
+          },
+          "row": {
+            "description": "Row in the mosaic, from the top",
+            "minimum": 0,
+            "type": "number"
+          },
+          "url": {
+            "description": "Absolute URL of the cached OpenStreetMap tile in the site storage (256x256 PNG)",
+            "type": "string"
+          }
+        },
+        "required": [
+          "col",
+          "row",
+          "url"
         ],
         "type": "object"
       },
@@ -52349,6 +52461,19 @@
             "name": "bookVersionId",
             "required": true,
             "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Build the literary map (readers only); any other value - 400",
+            "in": "query",
+            "name": "map",
+            "required": false,
+            "schema": {
+              "enum": [
+                "1",
+                "true"
+              ],
               "type": "string"
             }
           }

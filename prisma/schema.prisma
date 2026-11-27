@@ -750,6 +750,24 @@ model BookWorldImage {
   @@index([operationId])
 }
 
+/// Кэш тайла подложки литературной карты (`F08-12d`, решения арбитра `F08 | F08-12d`): тайл
+/// tile.openstreetmap.org качается только при запросе страницы с картой, лежит объектом хранилища
+/// по версионному ключу `storageKey` и живёт до `expiresAt` (срок сервера, не меньше 7 дней); после
+/// срока - ревалидация по `etag`. Строки пишет только `WorldMapService`. Прежние объекты не
+/// удаляются (на них ссылаются страницы в кэше фронта); `prevStorageKey` - прежний ключ для гонки.
+model WorldMapTile {
+  z              Int
+  x              Int
+  y              Int
+  storageKey     String
+  prevStorageKey String?
+  etag           String?
+  expiresAt      DateTime
+  fetchedAt      DateTime
+
+  @@id([z, x, y])
+}
+
 model MediaAsset {
   id           String   @id @default(uuid())
   key          String   @unique

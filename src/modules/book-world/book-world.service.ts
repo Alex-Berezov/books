@@ -87,6 +87,8 @@ import { worldAlternates } from './world-alternates';
 import { worldPlaceCards } from './world-place-cards';
 import { WorldGeoPass, WorldGeoService } from './world-geo.service';
 import { acceptedWorldImage } from './world-image-public';
+import { WorldMapService } from './world-map.service';
+import { bookMapPoints, placeMapPoint } from './world-map';
 import {
   checkWorldPair,
   checkCharacterKey,
@@ -166,10 +168,19 @@ export class BookWorldService {
     private readonly prisma: PrismaService,
     private readonly moderatorRoles: ModeratorRolesService,
     private readonly geo: WorldGeoService,
+    private readonly worldMap: WorldMapService,
   ) {}
 
-  /** Список: читателю — только публичные сущности, редактору — все с отметками; без `blocks`. */
-  async getList(bookVersionId: string, actor: Actor): Promise<BookWorldListResponseDto> {
+  /**
+   * Список: читателю — только публичные сущности, редактору — все с отметками; без `blocks`.
+   * Литературная карта (`F08-12d`) — только читателю и только по `map` (страница `/wiki`): тайлы
+   * OSM берутся там, где карту видят (решение арбитра `F08 | F08-12d` Р3).
+   */
+  async getList(
+    bookVersionId: string,
+    actor: Actor,
+    options: { map?: boolean } = {},
+  ): Promise<BookWorldListResponseDto> {
     const { language, editor } = await readableVersion(
       this.prisma,
       this.moderatorRoles,
@@ -198,7 +209,9 @@ export class BookWorldService {
       worldAlternates(this.prisma, bookVersionId),
       worldPlaceCards(this.prisma, bookVersionId),
     ]);
-    return { language, entities, alternates, places };
+    const map =
+      options.map && !editor ? await this.worldMap.buildBookMap(bookMapPoints(places)) : null;
+    return { language, entities, alternates, places, map };
   }
 
   /** Страница сущности: непубличная не редактору — 404, как и черновик версии. */
@@ -230,7 +243,10 @@ export class BookWorldService {
     if (!entity) throw notFoundEntity();
     // Право на картинку - у сущности этой версии (решение `F08 | F08-11a` Q1): после неё, не рядом.
     const image = await acceptedWorldImage(this.prisma, bookVersionId, key, entity);
-    return { language, chapterNumbers, entity, alternates, image };
+    // Малая карта (`F08-12d`, Q7) — читателю, только реальному месту с проверенной точкой.
+    const point = editor ? null : placeMapPoint(entity);
+    const map = point ? await this.worldMap.buildPlaceMap(point) : null;
+    return { language, chapterNumbers, entity, alternates, image, map };
   }
 
   /**
@@ -302,7 +318,7 @@ export class BookWorldService {
       },
     );
     // Точки мест — после транзакции (решение арбитра `F08 | F08-12` Q2): запрос к Wikidata не держит
-    // замок мира, отказ Wikidata запись не валит; список ответа точек не несёт.
+    // замок мира, отказ Wikidata запись не валит.
     await this.geo.refresh(bookVersionId, language, placeKeys(planned));
     return {
       world: {
@@ -310,6 +326,8 @@ export class BookWorldService {
         entities: rows.map(withEditor),
         alternates: await worldAlternates(this.prisma, bookVersionId),
         places: await worldPlaceCards(this.prisma, bookVersionId),
+        // Карта — только читателю страницы (`F08-12d`): запись тайлы OSM не берёт.
+        map: null,
       },
       entities: planned.map(savedSummary),
     };
