@@ -6,8 +6,6 @@ import {
   IsInt,
   IsNotEmpty,
   IsOptional,
-  IsString,
-  Matches,
   Max,
   Min,
   ValidateIf,
@@ -18,6 +16,7 @@ import { IsAbsoluteHttpsUrl } from '../../../shared/validators/absolute-http-url
 import {
   BLOCK_KEY_REGEX,
   Key,
+  KeyList,
   Nested,
   NestedList,
   OptionalText,
@@ -94,17 +93,7 @@ const ChapterList = () =>
     Max(BOOK_ANALYSIS_LIMITS.chapter, { each: true }),
   );
 
-const KeyList = () =>
-  applyDecorators(
-    IsOptional(),
-    IsArray(),
-    ArrayMaxSize(BOOK_ANALYSIS_LIMITS.themeKeys),
-    IsString({ each: true }),
-    Matches(BOOK_ANALYSIS_KEY_REGEX, {
-      each: true,
-      message: '$property must contain keys matching ^[a-z0-9-]{1,60}$',
-    }),
-  );
+const AnalysisKeyList = () => KeyList(BOOK_ANALYSIS_LIMITS.themeKeys);
 
 export class BookAnalysisFactsDto {
   @ApiPropertyOptional({ type: String, nullable: true })
@@ -228,7 +217,7 @@ export class BookAnalysisCharacterDto {
   quote?: BookAnalysisQuoteDto | null;
 
   @ApiPropertyOptional({ type: [String] })
-  @KeyList()
+  @AnalysisKeyList()
   themeKeys?: string[] | null;
 
   @ApiPropertyOptional({ type: [BookAnalysisRelationDto] })
@@ -270,7 +259,7 @@ export class BookAnalysisKeyQuoteDto {
   speakerKey?: string | null;
 
   @ApiPropertyOptional({ type: [String] })
-  @KeyList()
+  @AnalysisKeyList()
   themeKeys?: string[] | null;
 
   @ApiPropertyOptional({

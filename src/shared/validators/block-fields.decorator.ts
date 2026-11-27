@@ -22,6 +22,22 @@ import { Trim } from './trim.decorator';
 /** Ключ темы, героя или сущности мира: на него ссылаются `themeKeys`, `speakerKey`, `relations[].to`, адрес `/wiki/{key}`. */
 export const BLOCK_KEY_REGEX = /^[a-z0-9-]{1,60}$/;
 
+/**
+ * Список ключей (`themeKeys` анализа, `characterKeys`/`themeKeys` мира): не больше `max`, каждый —
+ * по `BLOCK_KEY_REGEX`. Есть ли такие темы и герои — проверка на слитой записи.
+ */
+export const KeyList = (max: number) =>
+  applyDecorators(
+    IsOptional(),
+    IsArray(),
+    ArrayMaxSize(max),
+    IsString({ each: true }),
+    Matches(BLOCK_KEY_REGEX, {
+      each: true,
+      message: '$property must contain keys matching ^[a-z0-9-]{1,60}$',
+    }),
+  );
+
 /** «Нет значения» необязательного поля: `undefined`, `null` и `''`. */
 export const isAbsent = (value: unknown) => value === undefined || value === null || value === '';
 

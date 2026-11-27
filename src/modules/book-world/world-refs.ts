@@ -11,6 +11,7 @@ import type { Prisma } from '@prisma/client';
 import {
   BOOK_WORLD_KEY_REGEX,
   BOOK_WORLD_LIMITS,
+  isWorldObjectType,
   type BookWorldImportType,
 } from './dto/book-world-blocks.dto';
 import { mentionChapters } from './world-core';
@@ -148,12 +149,39 @@ export interface WorldRefContext {
 }
 
 /**
+ * Темы предмета (`F08-13a`, решение арбитра `F08 | F08-13a` R1): 400 — только ключам, пришедшим
+ * в теле записи (`themeKeys` входа), которых нет ни среди тем анализа версии (`themeKeys`), ни среди
+ * уже сохранённых у сущности (`stored`). Сохранённые ключи заново не сверяются: пересоздание анализа
+ * без темы не запирает предмет от правки, и форма, вернувшая ключи из GET, сохраняется (анализ мир
+ * не проверяет); читателю устаревший ключ не уходит (`toEntityDto`). Нет поля в теле — `[]`.
+ */
+export function checkThemeKeys(
+  incoming: readonly string[] | null | undefined,
+  stored: readonly string[] | null | undefined,
+  themeKeys: ReadonlySet<string>,
+): WorldRefError[] {
+  const kept = new Set(stored ?? []);
+  return (incoming ?? []).flatMap((key, j) =>
+    themeKeys.has(key) || kept.has(key)
+      ? []
+      : [
+          {
+            path: `themeKeys.${j}`,
+            message: `"${key}" is not a theme of the analysis of this version`,
+          },
+        ],
+  );
+}
+
+/**
  * Ссылки на **слитой** сущности героя (как `checkAnalysisRefs`): `relations[].to` и
  * `quotes[].speakerKey` — ключ героя мира или героя анализа (ключ мира не обязан совпадать с
  * анализом, решение арбитра `F08 | F08-1` R7), не пары; связь с собой — отказ. Внешние блоки
  * (`critique`, `prototypes`, `adaptations`) — только при `sources` (`tech.md` §3). У пары проверок
  * нет вовсе: ключ, цитаты и состав — `checkWorldPair`, чужие поля (в том числе внешние блоки и
- * `sources`) — `checkWorldTypeFields`, по одной ошибке на поле.
+ * `sources`) — `checkWorldTypeFields`, по одной ошибке на поле. Связи предмета и события
+ * (`F08-13a`, решение арбитра `F08 | F08-13` Q1): `characterKeys` — только герои мира (ключ героя
+ * анализа без героя мира не годится: связь ведёт на страницу героя). `themeKeys` — `checkThemeKeys`.
  */
 export function checkWorldRefs(entity: StoredWorldEntity, ctx: WorldRefContext): WorldRefError[] {
   if (entity.type === 'pair') return [];
@@ -163,7 +191,14 @@ export function checkWorldRefs(entity: StoredWorldEntity, ctx: WorldRefContext):
   const known = (key: string) => ctx.characterKeys.has(key) || ctx.analysisKeys.has(key);
 
   for (const ref of worldEntityRefs(entity)) {
-    if (ref.kind === 'relation' && ref.key === entity.key) {
+    if (ref.kind === 'character') {
+      if (!ctx.characterKeys.has(ref.key)) {
+        errors.push({
+          path: ref.path,
+          message: `"${ref.key}" is not a character of this world`,
+        });
+      }
+    } else if (ref.kind === 'relation' && ref.key === entity.key) {
       errors.push({ path: ref.path, message: 'an entity cannot relate to itself' });
     } else if (!known(ref.key)) {
       errors.push({ path: ref.path, message: `unknown entity or character key "${ref.key}"` });
@@ -184,20 +219,27 @@ export function checkWorldRefs(entity: StoredWorldEntity, ctx: WorldRefContext):
   return errors;
 }
 
-type WorldRefKind = 'relation' | 'speaker' | 'about' | 'member';
+type WorldRefKind = 'relation' | 'speaker' | 'about' | 'member' | 'character';
 
 /**
  * Поля-ссылки сущности на ключи — один перечень на проверку ссылок и на отказ удаления
- * (`WORLD_ENTITY_REFERENCED`): `relations[].to`, `quotes[].speakerKey`, `quotes[].aboutKey` и
- * герои ключа пары (`member`, `F08-8c`: героя из-под пары не удалить).
+ * (`WORLD_ENTITY_REFERENCED`): `relations[].to`, `quotes[].speakerKey`, `quotes[].aboutKey`,
+ * герои ключа пары (`member`, `F08-8c`: героя из-под пары не удалить) и герои предмета и события
+ * (`characterKeys[]`, `F08-13a`). Темы анализа (`themeKeys`) — не ключи мира, их здесь нет.
  */
 export function worldEntityRefs(
   entity: Pick<StoredWorldEntity, 'relations' | 'quotes'> &
-    Partial<Pick<StoredWorldEntity, 'key' | 'type'>>,
+    Partial<Pick<StoredWorldEntity, 'key' | 'type' | 'characterKeys'>>,
 ): { kind: WorldRefKind; path: string; key: string }[] {
   const refs: { kind: WorldRefKind; path: string; key: string }[] = [];
   const members = entity.type === 'pair' && entity.key ? pairMembers(entity.key) : null;
   for (const key of members ?? []) refs.push({ kind: 'member', path: 'key', key });
+  // Колонка читается как есть (`readStoredBlocks`): не массив или не строка — не ссылка.
+  (Array.isArray(entity.characterKeys) ? entity.characterKeys : []).forEach((key, j) => {
+    if (typeof key === 'string' && key !== '') {
+      refs.push({ kind: 'character', path: `characterKeys.${j}`, key });
+    }
+  });
   (entity.relations ?? []).forEach((r, j) => {
     if (typeof r.to === 'string')
       refs.push({ kind: 'relation', path: `relations.${j}.to`, key: r.to });
@@ -220,7 +262,8 @@ const hasValue = (v: unknown) => v !== null && v !== undefined;
  * `book-world-data.ts`), остальные — 400 с путём поля, по одной ошибке на поле. У пары (`F08-8c`)
  * нет роли, форм имени (решение арбитра Q6: её имя не ищется в тексте) и источников (внешних блоков
  * у пары нет, `product.md` §6, Q2). У места (`F08-12a`, решение арбитра `F08 | F08-12` Q1) нет роли
- * и источников; `wikidataId` — только у реального места. `quotes[].aboutKey` — только у пары.
+ * и источников; `wikidataId` — только у реального места. У предмета, понятия и события (`F08-13a`,
+ * решение арбитра `F08 | F08-13` Q1) нет роли и источников. `quotes[].aboutKey` — только у пары.
  * `exclusions` — исключения форм после слияния (не содержание, лежат вне `StoredWorldEntity`).
  */
 export function checkWorldTypeFields(
@@ -228,8 +271,9 @@ export function checkWorldTypeFields(
   exclusions: { aliasExclusions: unknown; aliasChapterExclusions: unknown },
 ): WorldRefError[] {
   const errors: WorldRefError[] = [];
+  const article = /^[aeiou]/.test(entity.type) ? 'an' : 'a';
   const notFor = (path: string) =>
-    errors.push({ path, message: `${path} is not a field of a ${entity.type}` });
+    errors.push({ path, message: `${path} is not a field of ${article} ${entity.type}` });
   const own: ReadonlySet<string> | undefined =
     WORLD_BLOCKS_OF_TYPE[entity.type as BookWorldImportType];
   for (const key of BOOK_WORLD_BLOCK_KEYS) {
@@ -245,9 +289,11 @@ export function checkWorldTypeFields(
     if (hasValue(exclusions.aliasChapterExclusions)) notFor('aliasChapterExclusions');
     return errors;
   }
-  if (entity.type === 'place') {
+  if (entity.type === 'place' || isWorldObjectType(entity.type)) {
     if (hasValue(entity.role)) notFor('role');
     if (hasValue(entity.sources)) notFor('sources');
+  }
+  if (entity.type === 'place') {
     if (hasValue(entity.wikidataId) && !wikidataIdAllowed(entity.kind)) {
       errors.push({
         path: 'wikidataId',
@@ -263,8 +309,9 @@ export function checkWorldTypeFields(
 
 /**
  * Сохранённые сущности, которые ссылаются на героя `key` (`relations[].to`, `quotes[].speakerKey`,
- * `quotes[].aboutKey`; без героев ключа пары — их держит `pairsHolding`). Ключ, который есть и у
- * героя анализа, ссылкой держится (`checkWorldRefs` принимает ключи анализа) — ссылающихся нет.
+ * `quotes[].aboutKey`, `characterKeys[]`; без героев ключа пары — их держит `pairsHolding`). Ключ,
+ * который есть и у героя анализа, ссылкой отношения и реплики держится (`checkWorldRefs` принимает
+ * ключи анализа), а связью предмета и события — нет: она ведёт только на героя мира (`F08-13a`).
  * Одно правило на отказ удаления (`WORLD_ENTITY_REFERENCED`) и на отказ смены типа героя.
  */
 export function entitiesReferring(
@@ -272,11 +319,14 @@ export function entitiesReferring(
   others: readonly { key: string; blocks: unknown }[],
   analysisKeys: ReadonlySet<string>,
 ): string[] {
-  if (analysisKeys.has(key)) return [];
+  const heldByAnalysis = analysisKeys.has(key);
   return others
     .filter(
       (o) =>
-        o.key !== key && worldEntityRefs(readStoredBlocks(o.blocks)).some((r) => r.key === key),
+        o.key !== key &&
+        worldEntityRefs(readStoredBlocks(o.blocks)).some(
+          (r) => r.key === key && (r.kind === 'character' || !heldByAnalysis),
+        ),
     )
     .map((o) => o.key);
 }

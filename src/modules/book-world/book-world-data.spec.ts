@@ -52,6 +52,8 @@ const stored = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
   imageBrief: null,
   imageBriefFor: null,
   faq: null,
+  characterKeys: null,
+  themeKeys: null,
   ...over,
 });
 

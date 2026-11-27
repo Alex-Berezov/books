@@ -50,12 +50,15 @@ const entity = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
   imageBrief: null,
   imageBriefFor: null,
   faq: null,
+  characterKeys: null,
+  themeKeys: null,
   ...over,
 });
 const ctx = (entityKeys: string[], analysisKeys: string[] = []) => ({
   entityKeys: new Set(entityKeys),
   analysisKeys: new Set(analysisKeys),
   characterKeys: new Set(entityKeys),
+  themeKeys: new Set<string>(),
 });
 const quote = (speakerKey?: string) => ({
   text: 'Q',

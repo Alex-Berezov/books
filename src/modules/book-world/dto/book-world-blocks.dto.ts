@@ -2,6 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   ArrayMaxSize,
   ArrayMinSize,
+  ArrayUnique,
   IsArray,
   IsInt,
   IsOptional,
@@ -16,6 +17,7 @@ import { BOOK_ANALYSIS_LIMITS } from '../../book-analysis/dto/book-analysis-bloc
 import {
   BLOCK_KEY_REGEX,
   Key,
+  KeyList,
   NestedList,
   OptionalText,
   RequiredText,
@@ -26,7 +28,7 @@ import {
 const WORLD_ALIASES = 30;
 
 /**
- * Блоки сущности мира книги (F08-1), пока только героя (`character`). Форма —
+ * Блоки сущности мира книги (F08-1): героя, пары, места, предмета, понятия и события. Форма —
  * `books-app-docs/features/F08-book-wiki/tech.md` §3, та же форма — JSON импорта и промпт
  * `prompts/world-character.md`. Пределы (D5) — те же числа, что у анализа (`BOOK_ANALYSIS_LIMITS`):
  * страница сущности не длиннее страницы анализа. Зеркало на фронте — `books-front/lib/admin/book-world-blocks.ts`.
@@ -74,17 +76,37 @@ export const BOOK_WORLD_LIMITS = {
   description: BOOK_ANALYSIS_LIMITS.mediumText,
   // ТЗ на иллюстрацию героя (`F08-11d-2`, решение `F08 | F08-11d` Q3).
   imageBrief: BOOK_ANALYSIS_LIMITS.mediumText,
+  // Связи предмета и события с героями и темами анализа (`F08-13a`, решение `F08 | F08-13` Q1):
+  // героев — не больше, чем отношений у героя; тем — не больше, чем тем у героя анализа.
+  characterKeys: 10,
+  themeKeys: BOOK_ANALYSIS_LIMITS.themeKeys,
 } as const;
 
 /** Ключ сущности — тот же, что у героя анализа: часть адреса `/wiki/{key}`. */
 export const BOOK_WORLD_KEY_REGEX = BLOCK_KEY_REGEX;
 
 /**
- * Типы, которые импорт принимает сейчас; остальные `WorldEntityType` — пачками своего типа
- * (`batches.md` F08-1 п.2). Пара героев — с `F08-8c`, место — с `F08-12a`.
+ * Типы, которые импорт принимает: все `WorldEntityType` (`batches.md` F08-1 п.2). Пара героев —
+ * с `F08-8c`, место — с `F08-12a`, предмет, понятие и событие — с `F08-13a`.
  */
-export const BOOK_WORLD_IMPORT_TYPES = ['character', 'pair', 'place'] as const;
+export const BOOK_WORLD_IMPORT_TYPES = [
+  'character',
+  'pair',
+  'place',
+  'object',
+  'term',
+  'event',
+] as const;
 export type BookWorldImportType = (typeof BOOK_WORLD_IMPORT_TYPES)[number];
+
+/**
+ * Предмет, понятие и событие (`F08-13a`): один перечень на рубильник `WORLD_OBJECTS`, ядро
+ * и поля чужого типа (решение арбитра `F08 | F08-13` Q6: одна копия вместо трёх веток).
+ */
+export const WORLD_OBJECT_TYPES = ['object', 'term', 'event'] as const;
+export type WorldObjectType = (typeof WORLD_OBJECT_TYPES)[number];
+export const isWorldObjectType = (type: string | undefined): type is WorldObjectType =>
+  (WORLD_OBJECT_TYPES as readonly string[]).includes(type ?? '');
 
 /** Место реальное или вымышленное (`product.md` §7); точка на карте — только у реального. */
 export const WORLD_PLACE_KINDS = ['real', 'fictional'] as const;
@@ -96,6 +118,12 @@ export type WorldPlaceKind = (typeof WORLD_PLACE_KINDS)[number];
  */
 export const WIKIDATA_ID_REGEX = /^Q[1-9]\d*$/;
 export const WIKIDATA_ID_MAX = 16;
+
+/**
+ * Список ключей связи (`characterKeys`, `themeKeys` — `F08-13a`): ключи по правилу ключа, не больше
+ * `max`; есть ли такие герои и темы — проверка на слитой записи (`world-refs.ts`).
+ */
+export const WorldKeyList = (max: number) => applyDecorators(KeyList(max), ArrayUnique());
 
 /** Номер главы версии — обязателен: цитата сверяется по своей главе, сцена и этап ведут в читалку. */
 const RequiredChapter = () => applyDecorators(IsInt(), Min(1), Max(BOOK_WORLD_LIMITS.chapter));

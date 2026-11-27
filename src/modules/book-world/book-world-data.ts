@@ -32,13 +32,15 @@ import type {
   BookWorldListEntityDto,
   BookWorldMentionsDto,
   BookWorldPlaceCardDto,
+  BookWorldTermCardDto,
 } from './dto/book-world-response.dto';
 
 /**
  * Поля страницы сущности в колонке `blocks` (плоский JSON импорта, решение арбитра `F08 | F08-1` R7):
- * героя, пары (`compare`, `bonds`, `differences`, `conclusion` — `F08-8c`) и места (`kind`,
- * `location`, `significance`, `description`, `wikidataId` — `F08-12a`). Чужие типу поля
- * отбивает `checkWorldTypeFields` (`world-refs.ts`).
+ * героя, пары (`compare`, `bonds`, `differences`, `conclusion` — `F08-8c`), места (`kind`,
+ * `location`, `significance`, `description`, `wikidataId` — `F08-12a`), предмета, понятия и события
+ * (`characterKeys`, `themeKeys` — `F08-13a`). Чужие типу поля отбивает `checkWorldTypeFields`
+ * (`world-refs.ts`).
  */
 export interface StoredWorldBlocks {
   profile: BookWorldProfileDto | null;
@@ -72,6 +74,13 @@ export interface StoredWorldBlocks {
    */
   imageBriefFor: string | null;
   faq: BookAnalysisFaqDto[] | null;
+  /** Герои мира, с которыми связан предмет или событие (`F08-13a`, решение `F08 | F08-13` Q1). */
+  characterKeys: string[] | null;
+  /**
+   * Темы анализа версии, с которыми связан предмет (`F08-13a`): на записи сверяются только новые
+   * ключи из тела (`checkThemeKeys`, R1); читателю уходят только темы текущего публичного анализа.
+   */
+  themeKeys: string[] | null;
 }
 
 /** Сущность в том виде, в каком она пишется (после `compactBlock`). `null` — поля нет. */
@@ -112,6 +121,8 @@ const JSON_BLOCK_KEYS = [
   'adaptations',
   'compare',
   'faq',
+  'characterKeys',
+  'themeKeys',
 ] as const;
 export const BOOK_WORLD_BLOCK_KEYS = [...TEXT_BLOCK_KEYS, ...JSON_BLOCK_KEYS] as const;
 
@@ -125,18 +136,46 @@ export const WORLD_PLACE_BLOCK_KEYS = [
   'description',
   'wikidataId',
 ] as const;
-/** Блоки любой сущности: цитаты и частые вопросы. */
+/** Блоки героя, пары и места: цитаты и частые вопросы. */
 const WORLD_SHARED_BLOCK_KEYS: readonly string[] = ['quotes', 'faq'];
 /**
- * Блоки страницы героя — у пары и места их нет: всё, что не блок пары, не блок места и не общее.
- * Новое поле героя попадает сюда само, без второго перечня; новое поле другого типа — в свой перечень.
+ * Блоки страницы героя — у других типов их нет. Перечень явный (решение арбитра `F08 | F08-13` Q1):
+ * при «всё прочее» новое поле любого типа молча становилось полем героя. Новое поле героя
+ * добавляется сюда руками.
  */
-export const WORLD_CHARACTER_BLOCK_KEYS = BOOK_WORLD_BLOCK_KEYS.filter(
-  (k) =>
-    !(WORLD_PAIR_BLOCK_KEYS as readonly string[]).includes(k) &&
-    !(WORLD_PLACE_BLOCK_KEYS as readonly string[]).includes(k) &&
-    !WORLD_SHARED_BLOCK_KEYS.includes(k),
-);
+export const WORLD_CHARACTER_BLOCK_KEYS = [
+  'profile',
+  'appearance',
+  'character',
+  'arc',
+  'scenes',
+  'relations',
+  'critique',
+  'prototypes',
+  'adaptations',
+  'imageBrief',
+  'imageBriefFor',
+] as const satisfies readonly (typeof BOOK_WORLD_BLOCK_KEYS)[number][];
+
+/**
+ * Блоки предмета, понятия и события (`F08-13a`, решение арбитра `F08 | F08-13` Q1): «Коротко» —
+ * колонкой, как у всех; ТЗ на иллюстрацию у них нет (Q4) — `imageBrief` поле чужого типа.
+ */
+export const WORLD_OBJECT_BLOCK_KEYS = [
+  'significance',
+  'description',
+  'quotes',
+  'faq',
+  'characterKeys',
+  'themeKeys',
+] as const;
+export const WORLD_TERM_BLOCK_KEYS = ['significance', 'quotes'] as const;
+export const WORLD_EVENT_BLOCK_KEYS = [
+  'significance',
+  'scenes',
+  'quotes',
+  'characterKeys',
+] as const;
 
 /** Блоки, которые сущность типа может нести (`checkWorldTypeFields`): свои и общие. */
 export const WORLD_BLOCKS_OF_TYPE: Readonly<Record<BookWorldImportType, ReadonlySet<string>>> = {
@@ -151,7 +190,14 @@ export const WORLD_BLOCKS_OF_TYPE: Readonly<Record<BookWorldImportType, Readonly
     'imageBriefFor',
     ...WORLD_SHARED_BLOCK_KEYS,
   ]),
+  object: new Set(WORLD_OBJECT_BLOCK_KEYS),
+  term: new Set(WORLD_TERM_BLOCK_KEYS),
+  event: new Set(WORLD_EVENT_BLOCK_KEYS),
 };
+/** Тип несёт блок (`WORLD_BLOCKS_OF_TYPE`): одно правило «у какого типа какое поле» для сервиса. */
+export const worldTypeHasBlock = (type: string, block: string): boolean =>
+  WORLD_BLOCKS_OF_TYPE[type as BookWorldImportType]?.has(block) === true;
+
 /**
  * Поля сущности, которые сливает и пишет импорт (`mergeEntity`, `toEntityWrite`). Ключ, тип и отметки
  * (`isVisible`, `isIndexable`, `readAt`) сюда не входят. «Текст изменился» (решение арбитра R9)
@@ -272,7 +318,7 @@ export const BOOK_WORLD_PUBLIC_SELECT = {
 
 /**
  * Карточка места общей страницы `/wiki` (решение арбитра `F08 | F08-12` Q4): что нужно условию
- * показа (`worldPlaceShown`), тексту списка мест со сценами и точке карты. Наружу — только
+ * показа (`worldCardShown`), тексту списка мест со сценами и точке карты. Наружу — только
  * `toPlaceCard`, белым списком.
  */
 export const WORLD_PLACE_CARD_SELECT = {
@@ -293,6 +339,36 @@ export const WORLD_PLACE_CARD_SELECT = {
 export type WorldPlaceCardRow = Prisma.BookWorldEntityGetPayload<{
   select: typeof WORLD_PLACE_CARD_SELECT;
 }>;
+
+/**
+ * Что нужно строке глоссария (`F08-13a`, решения арбитра `F08 | F08-13` Q6, Q7): условию показа
+ * (`worldCardShown`) и строке «термин — определение — глава». Наружу — только `toTermCard`.
+ */
+export const WORLD_TERM_CARD_SELECT = {
+  key: true,
+  type: true,
+  name: true,
+  short: true,
+  mentionFirst: true,
+  isListed: true,
+  isVisible: true,
+  readAt: true,
+  autoTextAt: true,
+} as const satisfies Prisma.BookWorldEntitySelect;
+export type WorldTermCardRow = Prisma.BookWorldEntityGetPayload<{
+  select: typeof WORLD_TERM_CARD_SELECT;
+}>;
+
+/** Строка глоссария белым списком: термин, определение («Коротко»), первая глава, своя страница. */
+export function toTermCard(row: WorldTermCardRow): BookWorldTermCardDto {
+  return {
+    key: row.key,
+    name: row.name,
+    short: row.short,
+    chapter: row.mentionFirst,
+    hasPage: row.isListed,
+  };
+}
 
 /**
  * Страница сущности для редактора и выборка записи: читательская плюс отметки, исключения форм
@@ -604,7 +680,7 @@ export function toReaderSummary(row: WorldReaderSummaryRow): BookWorldListEntity
  */
 export function toEntityDto(
   row: WorldPublicRow,
-  reader?: { visibleKeys: ReadonlySet<string> },
+  reader?: { visibleKeys: ReadonlySet<string>; themeKeys?: ReadonlySet<string> },
 ): BookWorldEntityDto {
   const s = readStoredEntity(row);
   if (reader) {
@@ -617,6 +693,14 @@ export function toEntityDto(
     s.scenes = freshScenes(s.scenes, row.mentions);
     if (s.arc?.stages) s.arc = { ...s.arc, stages: s.arc.stages.filter(fresh('arc.stages')) };
     s.compare = s.compare ? s.compare.filter((c) => !stale.has(worldCompareKey(c))) : null;
+    // Герои предмета и события — только публичные (`visibleKeys`, как соседи `coPresence`).
+    if (Array.isArray(s.characterKeys)) {
+      s.characterKeys = s.characterKeys.filter((k) => reader.visibleKeys.has(k));
+    }
+    // Темы предмета — только темы текущего анализа (решение `F08 | F08-13a` R1); редактор видит все.
+    const themes = reader.themeKeys;
+    if (themes && Array.isArray(s.themeKeys))
+      s.themeKeys = s.themeKeys.filter((k) => themes.has(k));
   }
   s.scenes = withSceneParagraph(s.scenes, row.mentions);
   return {
@@ -642,6 +726,8 @@ export function toEntityDto(
     description: s.description,
     wikidataId: s.wikidataId,
     faq: s.faq,
+    characterKeys: s.characterKeys,
+    themeKeys: s.themeKeys,
     sources: s.sources,
     mentions: readMentions(row.mentions, reader?.visibleKeys),
     point: publicPoint(readGeo(row.geo), geoSubjectOf(row)),

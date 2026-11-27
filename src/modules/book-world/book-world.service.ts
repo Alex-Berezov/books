@@ -29,7 +29,10 @@ import {
   readAliasChapterExclusions,
   readAliasExclusions,
   worldMentionSourceOf,
+  readStoredBlocks,
   readStoredEntity,
+  readStringList,
+  worldTypeHasBlock,
   toEntityDto,
   toEntityWrite,
   toReaderSummary,
@@ -85,6 +88,8 @@ import {
 } from './world-public';
 import { worldAlternates } from './world-alternates';
 import { worldPlaceCards } from './world-place-cards';
+import { worldTermCards } from './world-term-cards';
+import { eventSceneChapters } from './world-mentions-count';
 import { WorldGeoPass, WorldGeoService } from './world-geo.service';
 import { acceptedWorldImage } from './world-image-public';
 import { WorldMapService } from './world-map.service';
@@ -92,6 +97,7 @@ import { bookMapPoints, placeMapPoint } from './world-map';
 import {
   checkWorldPair,
   checkCharacterKey,
+  checkThemeKeys,
   checkWorldRefs,
   checkWorldTypeFields,
   duplicateWorldKeys,
@@ -188,7 +194,7 @@ export class BookWorldService {
       actor,
     );
     // hreflang общей страницы — правилом карты сайта (решение арбитра `F08 | F08-3a`), одно для всех.
-    const [entities, alternates, places] = await Promise.all([
+    const [entities, alternates, places, terms] = await Promise.all([
       editor
         ? this.prisma.bookWorldEntity
             .findMany({
@@ -208,10 +214,11 @@ export class BookWorldService {
             .then((rows) => rows.map(toReaderSummary)),
       worldAlternates(this.prisma, bookVersionId),
       worldPlaceCards(this.prisma, bookVersionId),
+      worldTermCards(this.prisma, bookVersionId),
     ]);
     const map =
       options.map && !editor ? await this.worldMap.buildBookMap(bookMapPoints(places)) : null;
-    return { language, entities, alternates, places, map };
+    return { language, entities, alternates, places, terms, map };
   }
 
   /** Страница сущности: непубличная не редактору — 404, как и черновик версии. */
@@ -326,6 +333,7 @@ export class BookWorldService {
         entities: rows.map(withEditor),
         alternates: await worldAlternates(this.prisma, bookVersionId),
         places: await worldPlaceCards(this.prisma, bookVersionId),
+        terms: await worldTermCards(this.prisma, bookVersionId),
         // Карта — только читателю страницы (`F08-12d`): запись тайлы OSM не берёт.
         map: null,
       },
@@ -458,7 +466,7 @@ export class BookWorldService {
       // одно правило со сменой типа героя.
       const referring = new Set([
         ...pairsHolding(key, others),
-        ...entitiesReferring(key, others, analysisCharacterKeys(analysis?.characters)),
+        ...entitiesReferring(key, others, analysisKeysOf(analysis?.characters)),
       ]);
       const referencedBy = others.filter((o) => referring.has(o.key)).map((o) => o.key);
       if (referencedBy.length > 0) {
@@ -545,16 +553,35 @@ export class BookWorldService {
       select: BOOK_WORLD_PUBLIC_SELECT,
     });
     if (!row) return null;
-    const neighbours = coPresenceKeys(row.mentions);
-    const listed =
+    // Публичные соседи — и для `coPresence`, и для героев предмета и события (`characterKeys`,
+    // `F08-13a`): ключ героя не на сайте читателю не уходит.
+    const neighbours = [
+      ...new Set([
+        ...coPresenceKeys(row.mentions),
+        ...(readStringList(readStoredBlocks(row.blocks).characterKeys) ?? []),
+      ]),
+    ];
+    // Темы анализа — только типу с темами (решение `F08 | F08-13a` R1): читателю ключи тем текущего
+    // анализа, и только публичного — у анализа без ядра страницы нет (шлюз `BookAnalysisService`).
+    const [listed, analysis] = await Promise.all([
       neighbours.length === 0
-        ? []
-        : await this.prisma.bookWorldEntity.findMany({
+        ? ([] as { key: string }[])
+        : this.prisma.bookWorldEntity.findMany({
             where: { bookVersionId, key: { in: neighbours }, ...WORLD_ENTITY_PUBLIC_WHERE },
             select: { key: true },
             take: BOOK_WORLD_LIMITS.entities,
-          });
-    return toEntityDto(row, { visibleKeys: new Set(listed.map((r) => r.key)) });
+          }),
+      worldTypeHasBlock(row.type, 'themeKeys')
+        ? this.prisma.bookAnalysis.findUnique({
+            where: { bookVersionId },
+            select: { themes: true, hasCore: true },
+          })
+        : null,
+    ]);
+    return toEntityDto(row, {
+      visibleKeys: new Set(listed.map((r) => r.key)),
+      themeKeys: analysis?.hasCore ? analysisKeysOf(analysis.themes) : new Set<string>(),
+    });
   }
 
   /**
@@ -582,7 +609,10 @@ export class BookWorldService {
         orderBy: { key: 'asc' },
         take: BOOK_WORLD_LIMITS.entities,
       }),
-      client.bookAnalysis.findUnique({ where: { bookVersionId }, select: { characters: true } }),
+      client.bookAnalysis.findUnique({
+        where: { bookVersionId },
+        select: { characters: true, themes: true },
+      }),
       // Присутствие героев пар тела — вход условия заведения (Q4); без пар не читается.
       savedMentionsOf(client, bookVersionId, pairKeys),
     ]);
@@ -607,8 +637,9 @@ export class BookWorldService {
     const ctx = {
       entityKeys,
       characterKeys,
-      analysisKeys: analysisCharacterKeys(analysis?.characters),
+      analysisKeys: analysisKeysOf(analysis?.characters),
     };
+    const themeKeys = analysisKeysOf(analysis?.themes);
 
     // Герои, уходящие из героев сменой типа (с `F08-12a` — в место): на них не должны ссылаться
     // другие сущности версии — то же правило, что у отказа удаления (`WORLD_ENTITY_REFERENCED`).
@@ -655,6 +686,10 @@ export class BookWorldService {
         ...keyErrors,
         ...typeErrors,
         ...checkWorldRefs(entity, ctx),
+        // Темы — только у предмета; у другого типа поле уже 400 `checkWorldTypeFields`.
+        ...(worldTypeHasBlock(entity.type, 'themeKeys')
+          ? checkThemeKeys(input.themeKeys, stored?.themeKeys, themeKeys)
+          : []),
         ...pairErrors,
       ]) {
         errors.push({ path: `${prefix(i)}${e.path}`, message: e.message });
@@ -880,15 +915,16 @@ async function referencedTypeChanges(
   bodyKeys: readonly string[],
   analysisKeys: ReadonlySet<string>,
 ): Promise<WorldRefError[]> {
-  const checked = leaving.filter((l) => !analysisKeys.has(l.key));
-  if (checked.length === 0) return [];
+  // Ключ героя анализа отношения и реплики держит, а связь предмета и события — нет
+  // (`entitiesReferring`): героев анализа здесь не отсеять заранее.
+  if (leaving.length === 0) return [];
   const stored = await client.bookWorldEntity.findMany({
     where: { bookVersionId, key: { notIn: [...bodyKeys] } },
     select: { key: true, blocks: true },
     orderBy: { key: 'asc' },
     take: BOOK_WORLD_LIMITS.entities,
   });
-  return checked.flatMap(({ key, path }) => {
+  return leaving.flatMap(({ key, path }) => {
     const by = entitiesReferring(key, stored, analysisKeys);
     return by.length > 0
       ? [
@@ -934,12 +970,10 @@ const characterListedMoved = (
   (before?.type === 'character' && before.isListed) !==
   (after.type === 'character' && after.isListed);
 
-/** Ключи героев анализа версии: только строки `key` элементов `characters`. */
-function analysisCharacterKeys(characters: Prisma.JsonValue | undefined): Set<string> {
-  if (!Array.isArray(characters)) return new Set();
-  return new Set(
-    characters.flatMap((c) => (isRecord(c) && typeof c.key === 'string' ? [c.key] : [])),
-  );
+/** Ключи элементов списка анализа версии (`characters`, `themes`): только строки `key`. */
+function analysisKeysOf(items: Prisma.JsonValue | undefined): Set<string> {
+  if (!Array.isArray(items)) return new Set();
+  return new Set(items.flatMap((c) => (isRecord(c) && typeof c.key === 'string' ? [c.key] : [])));
 }
 
 async function findEntity(
@@ -1034,7 +1068,9 @@ async function writePlanned(
   // сущность, тип или итоговые формы поиска (имя, формы имени и исключения вместе). Формы
   // сравниваются без порядка: подсчёт от него не зависит, перестановка форм и исключение формы,
   // которой нет, пересчёт не ставят. Правка цитат, сцен и пути его не ставит: пункты сверены
-  // R4/R8 в этой записи, `stale` хранится ключами по содержанию (S1).
+  // R4/R8 в этой записи, `stale` хранится ключами по содержанию (S1). Исключение — главы сцен
+  // события (решение `F08 | F08-13a` R3): они вход его глав (`eventMentions`); смена их набора
+  // ставит пересчёт, правка текста, названия и порядка сцен — нет.
   const after = {
     ...p.merged,
     aliasExclusions: p.exclusions,
@@ -1043,7 +1079,10 @@ async function writePlanned(
   const needsRecount =
     !p.existing ||
     p.existing.type !== p.merged.type ||
-    stableJson(searchInput(worldMentionSourceOf(p.existing))) !== stableJson(searchInput(after));
+    stableJson(searchInput(worldMentionSourceOf(p.existing))) !== stableJson(searchInput(after)) ||
+    (p.merged.type === 'event' &&
+      stableJson(eventSceneChapters(readStoredEntity(p.existing).scenes)) !==
+        stableJson(eventSceneChapters(p.merged.scenes)));
   return { row, needsRecount };
 }
 

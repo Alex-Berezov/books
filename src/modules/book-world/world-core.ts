@@ -2,6 +2,7 @@ import { isFilled } from '../book-analysis/book-analysis-core';
 import { isRecord } from '../../shared/prisma/json-record.util';
 import type { StoredWorldEntity } from './book-world-data';
 import { worldCompareKey, worldItemKey } from './world-quote-check';
+import { isWorldObjectType, type WorldObjectType } from './dto/book-world-blocks.dto';
 
 /**
  * Ядро героя (`books-app-docs/features/F08-book-wiki/product.md` §3, `tech.md` §3): «Коротко»,
@@ -24,6 +25,17 @@ export const WORLD_PAIR_CORE = { compare: 4, mentionChapters: 1 } as const;
  * в одной главе. Цитата в ядро не входит (`product.md` §3: «цитата или упоминания»).
  */
 export const WORLD_PLACE_CORE = { scenes: 2, mentionChapters: 1 } as const;
+
+/**
+ * Ядро предмета, понятия и события (`F08-13a`, решение арбитра `F08 | F08-13` Q1, `product.md` §7):
+ * у предмета — «Коротко», значение и присутствие хотя бы в одной главе; у понятия — «Коротко»
+ * (определение глоссария) и присутствие; у события — «Коротко» без исхода, значение и не меньше
+ * одной сцены с главой (эпизод часто в одной главе, порог места к нему неприменим). Цитата в ядро
+ * не входит ни у одного.
+ */
+export const WORLD_OBJECT_CORE = { mentionChapters: 1 } as const;
+export const WORLD_TERM_CORE = { mentionChapters: 1 } as const;
+export const WORLD_EVENT_CORE = { scenes: 1 } as const;
 
 export type WorldCorePart =
   | 'short'
@@ -73,6 +85,7 @@ export function mentionStale(mentions: unknown): Set<string> {
 export function computeWorldCore(entity: CoreInput): WorldCoreResult {
   if (entity.type === 'pair') return computePairCore(entity);
   if (entity.type === 'place') return computePlaceCore(entity);
+  if (isWorldObjectType(entity.type)) return computeObjectCore(entity, entity.type);
   const stale = mentionStale(entity.mentions);
   const quotes = (entity.quotes ?? []).filter(
     (q) => isFilled(q.text) && hasChapter(q.chapter) && !stale.has(worldItemKey('quotes', q)),
@@ -145,6 +158,29 @@ function computePlaceCore(entity: CoreInput): WorldCoreResult {
   }
   if (chapters < WORLD_PLACE_CORE.mentionChapters) {
     missing.push({ part: 'mentions', have: chapters, need: WORLD_PLACE_CORE.mentionChapters });
+  }
+  return { hasCore: missing.length === 0, missing };
+}
+
+/** Ядро предмета, понятия и события (`WORLD_OBJECT_CORE`, `WORLD_TERM_CORE`, `WORLD_EVENT_CORE`). */
+function computeObjectCore(entity: CoreInput, type: WorldObjectType): WorldCoreResult {
+  const missing: WorldCoreResult['missing'] = [];
+  if (!isFilled(entity.short)) missing.push({ part: 'short', have: 0, need: 1 });
+  if (type !== 'term' && !isFilled(entity.significance)) {
+    missing.push({ part: 'significance', have: 0, need: 1 });
+  }
+  if (type === 'event') {
+    const stale = mentionStale(entity.mentions);
+    const scenes = (entity.scenes ?? []).filter(
+      (s) => isFilled(s.text) && hasChapter(s.chapter) && !stale.has(worldItemKey('scenes', s)),
+    ).length;
+    if (scenes < WORLD_EVENT_CORE.scenes) {
+      missing.push({ part: 'scenes', have: scenes, need: WORLD_EVENT_CORE.scenes });
+    }
+  } else {
+    const need = (type === 'object' ? WORLD_OBJECT_CORE : WORLD_TERM_CORE).mentionChapters;
+    const chapters = mentionChapters(entity.mentions).length;
+    if (chapters < need) missing.push({ part: 'mentions', have: chapters, need });
   }
   return { hasCore: missing.length === 0, missing };
 }

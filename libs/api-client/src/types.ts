@@ -7845,6 +7845,8 @@ export interface components {
       /** @description Pairs only (F08-8c) */
       bonds: string | null;
       character: string | null;
+      /** @description Objects and events only (F08-13a): keys of the characters of this world */
+      characterKeys: string[] | null;
       /** @description Pairs only (F08-8c) */
       compare: components['schemas']['BookWorldCompareDto'][] | null;
       /** @description Pairs only (F08-8c) */
@@ -7852,7 +7854,7 @@ export interface components {
       /** Format: date-time */
       createdAt: string;
       critique: string | null;
-      /** @description Places only (F08-12a) */
+      /** @description Places (F08-12a) and objects (F08-13a) */
       description: string | null;
       /** @description Pairs only (F08-8c) */
       differences: string | null;
@@ -7884,9 +7886,11 @@ export interface components {
       role: 'main' | 'secondary' | 'minor' | null;
       scenes: components['schemas']['BookWorldSceneDto'][] | null;
       short: string | null;
-      /** @description Places only (F08-12a) */
+      /** @description Places (F08-12a), objects, terms and events (F08-13a) */
       significance: string | null;
       sources: components['schemas']['BookAnalysisSourceDto'][] | null;
+      /** @description Objects only (F08-13a): keys of the themes of the analysis of this version */
+      themeKeys: string[] | null;
       type: components['schemas']['WorldEntityType'];
       /** Format: date-time */
       updatedAt: string;
@@ -7906,12 +7910,14 @@ export interface components {
       /** @description Pairs only: what binds the two characters */
       bonds?: string | null;
       character?: string | null;
+      /** @description Objects and events only (F08-13a): keys of the characters of this world the entity is tied to */
+      characterKeys?: string[] | null;
       /** @description Pairs only (F08-8c): comparison table, at least 4 rows for the page core */
       compare?: components['schemas']['BookWorldCompareDto'][] | null;
       /** @description Pairs only: conclusion of the comparison; required for the page core */
       conclusion?: string | null;
       critique?: string | null;
-      /** @description Places only: how the place looks in the text */
+      /** @description Places and objects (F08-13a): how it looks in the text */
       description?: string | null;
       /** @description Pairs only: what sets the two characters apart */
       differences?: string | null;
@@ -7936,14 +7942,16 @@ export interface components {
       role?: 'main' | 'secondary' | 'minor' | null;
       scenes?: components['schemas']['BookWorldSceneDto'][] | null;
       short?: string | null;
-      /** @description Places only: what the place means in the book; required for the page core */
+      /** @description Places, objects, terms and events (F08-13a): what it means in the book; required for the page core of a place, an object and an event */
       significance?: string | null;
       sources?: components['schemas']['BookAnalysisSourceDto'][] | null;
+      /** @description Objects only (F08-13a): keys of the themes of the analysis of this version */
+      themeKeys?: string[] | null;
       /**
-       * @description character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order
+       * @description character, pair (F08-8c), place (F08-12a), object, term or event (F08-13a). A pair key is {a}--{b}: two character keys of the version in alphabetical order
        * @enum {string}
        */
-      type: 'character' | 'pair' | 'place';
+      type: 'character' | 'pair' | 'place' | 'object' | 'term' | 'event';
       /** @description Places only, kind real: Wikidata item (Q90). The server reads the coordinates (P625) from Wikidata and checks the label against the name; coordinates are never taken from input */
       wikidataId?: string | null;
     };
@@ -8051,6 +8059,8 @@ export interface components {
       map: components['schemas']['BookWorldMapDto'] | null;
       /** @description Places shown on the world page (F08-12a, public since F08-12c): visible, read after the model text; with or without their own page. Same set for editors */
       places: components['schemas']['BookWorldPlaceCardDto'][];
+      /** @description Glossary of the world page (F08-13a): terms shown on the page — visible, read after the model text, with or without their own page; by first chapter, then key. Empty until terms are public (F08-13c). Same set for editors */
+      terms: components['schemas']['BookWorldTermCardDto'][];
     };
     BookWorldMapDto: {
       cols: number;
@@ -8152,6 +8162,17 @@ export interface components {
       paragraph?: number | null;
       text: string;
       title: string;
+    };
+    BookWorldTermCardDto: {
+      /** @description First chapter where the term is found; null — not counted yet */
+      chapter: number | null;
+      /** @description The term has its own page /wiki/{key} (core, read, visible); otherwise a row without a link */
+      hasPage: boolean;
+      key: string;
+      /** @description The term */
+      name: string;
+      /** @description Definition (short) */
+      short: string | null;
     };
     BookWorldWarningDto: {
       /** @enum {string} */
@@ -15916,12 +15937,14 @@ export interface components {
       /** @description Pairs only: what binds the two characters */
       bonds?: string | null;
       character?: string | null;
+      /** @description Objects and events only (F08-13a): keys of the characters of this world the entity is tied to */
+      characterKeys?: string[] | null;
       /** @description Pairs only (F08-8c): comparison table, at least 4 rows for the page core */
       compare?: components['schemas']['BookWorldCompareDto'][] | null;
       /** @description Pairs only: conclusion of the comparison; required for the page core */
       conclusion?: string | null;
       critique?: string | null;
-      /** @description Places only: how the place looks in the text */
+      /** @description Places and objects (F08-13a): how it looks in the text */
       description?: string | null;
       /** @description Pairs only: what sets the two characters apart */
       differences?: string | null;
@@ -15952,14 +15975,16 @@ export interface components {
       role?: 'main' | 'secondary' | 'minor' | null;
       scenes?: components['schemas']['BookWorldSceneDto'][] | null;
       short?: string | null;
-      /** @description Places only: what the place means in the book; required for the page core */
+      /** @description Places, objects, terms and events (F08-13a): what it means in the book; required for the page core of a place, an object and an event */
       significance?: string | null;
       sources?: components['schemas']['BookAnalysisSourceDto'][] | null;
+      /** @description Objects only (F08-13a): keys of the themes of the analysis of this version */
+      themeKeys?: string[] | null;
       /**
-       * @description character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order
+       * @description character, pair (F08-8c), place (F08-12a), object, term or event (F08-13a). A pair key is {a}--{b}: two character keys of the version in alphabetical order
        * @enum {string}
        */
-      type: 'character' | 'pair' | 'place';
+      type: 'character' | 'pair' | 'place' | 'object' | 'term' | 'event';
       /** @description Places only, kind real: Wikidata item (Q90). The server reads the coordinates (P625) from Wikidata and checks the label against the name; coordinates are never taken from input */
       wikidataId?: string | null;
     };

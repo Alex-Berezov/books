@@ -43,6 +43,7 @@ import {
   WIKIDATA_ID_MAX,
   WIKIDATA_ID_REGEX,
   WORLD_PLACE_KINDS,
+  WorldKeyList,
   type BookWorldImportType,
   type WorldPlaceKind,
 } from './book-world-blocks.dto';
@@ -66,11 +67,11 @@ export class BookWorldEntityInputDto {
   @ApiProperty({
     enum: BOOK_WORLD_IMPORT_TYPES,
     description:
-      'character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. ' +
+      'character, pair (F08-8c), place (F08-12a), object, term or event (F08-13a). ' +
       'A pair key is {a}--{b}: two character keys of the version in alphabetical order',
   })
   @IsIn(BOOK_WORLD_IMPORT_TYPES, {
-    message: '$property must be character, pair or place (other types are not supported yet)',
+    message: '$property must be character, pair, place, object, term or event',
   })
   type!: BookWorldImportType;
 
@@ -229,7 +230,9 @@ export class BookWorldEntityInputDto {
     type: String,
     nullable: true,
     maxLength: BOOK_WORLD_LIMITS.significance,
-    description: 'Places only: what the place means in the book; required for the page core',
+    description:
+      'Places, objects, terms and events (F08-13a): what it means in the book; required for the page ' +
+      'core of a place, an object and an event',
   })
   @OptionalText(BOOK_WORLD_LIMITS.significance)
   significance?: string | null;
@@ -238,7 +241,7 @@ export class BookWorldEntityInputDto {
     type: String,
     nullable: true,
     maxLength: BOOK_WORLD_LIMITS.description,
-    description: 'Places only: how the place looks in the text',
+    description: 'Places and objects (F08-13a): how it looks in the text',
   })
   @OptionalText(BOOK_WORLD_LIMITS.description)
   description?: string | null;
@@ -275,6 +278,25 @@ export class BookWorldEntityInputDto {
    * (решение `F08 | F08-11d-2`). Без декораторов — в теле запроса это лишнее поле, 400 whitelist.
    */
   declare imageBriefFor?: string | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    nullable: true,
+    maxItems: BOOK_WORLD_LIMITS.characterKeys,
+    description:
+      'Objects and events only (F08-13a): keys of the characters of this world the entity is tied to',
+  })
+  @WorldKeyList(BOOK_WORLD_LIMITS.characterKeys)
+  characterKeys?: string[] | null;
+
+  @ApiPropertyOptional({
+    type: [String],
+    nullable: true,
+    maxItems: BOOK_WORLD_LIMITS.themeKeys,
+    description: 'Objects only (F08-13a): keys of the themes of the analysis of this version',
+  })
+  @WorldKeyList(BOOK_WORLD_LIMITS.themeKeys)
+  themeKeys?: string[] | null;
 
   @ApiPropertyOptional({ type: [BookAnalysisFaqDto], nullable: true })
   @NestedList(() => BookAnalysisFaqDto, BOOK_WORLD_LIMITS.faq)

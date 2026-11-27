@@ -8057,6 +8057,14 @@
             "nullable": true,
             "type": "string"
           },
+          "characterKeys": {
+            "description": "Objects and events only (F08-13a): keys of the characters of this world",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "compare": {
             "description": "Pairs only (F08-8c)",
             "items": {
@@ -8079,7 +8087,7 @@
             "type": "string"
           },
           "description": {
-            "description": "Places only (F08-12a)",
+            "description": "Places (F08-12a) and objects (F08-13a)",
             "nullable": true,
             "type": "string"
           },
@@ -8202,13 +8210,21 @@
             "type": "string"
           },
           "significance": {
-            "description": "Places only (F08-12a)",
+            "description": "Places (F08-12a), objects, terms and events (F08-13a)",
             "nullable": true,
             "type": "string"
           },
           "sources": {
             "items": {
               "$ref": "#/components/schemas/BookAnalysisSourceDto"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "themeKeys": {
+            "description": "Objects only (F08-13a): keys of the themes of the analysis of this version",
+            "items": {
+              "type": "string"
             },
             "nullable": true,
             "type": "array"
@@ -8261,6 +8277,8 @@
           "description",
           "wikidataId",
           "faq",
+          "characterKeys",
+          "themeKeys",
           "sources",
           "mentions",
           "point",
@@ -8326,6 +8344,15 @@
             "nullable": true,
             "type": "string"
           },
+          "characterKeys": {
+            "description": "Objects and events only (F08-13a): keys of the characters of this world the entity is tied to",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "nullable": true,
+            "type": "array"
+          },
           "compare": {
             "description": "Pairs only (F08-8c): comparison table, at least 4 rows for the page core",
             "items": {
@@ -8346,7 +8373,7 @@
             "type": "string"
           },
           "description": {
-            "description": "Places only: how the place looks in the text",
+            "description": "Places and objects (F08-13a): how it looks in the text",
             "maxLength": 1500,
             "nullable": true,
             "type": "string"
@@ -8444,7 +8471,7 @@
             "type": "string"
           },
           "significance": {
-            "description": "Places only: what the place means in the book; required for the page core",
+            "description": "Places, objects, terms and events (F08-13a): what it means in the book; required for the page core of a place, an object and an event",
             "maxLength": 3000,
             "nullable": true,
             "type": "string"
@@ -8456,12 +8483,24 @@
             "nullable": true,
             "type": "array"
           },
+          "themeKeys": {
+            "description": "Objects only (F08-13a): keys of the themes of the analysis of this version",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "nullable": true,
+            "type": "array"
+          },
           "type": {
-            "description": "character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order",
+            "description": "character, pair (F08-8c), place (F08-12a), object, term or event (F08-13a). A pair key is {a}--{b}: two character keys of the version in alphabetical order",
             "enum": [
               "character",
               "pair",
-              "place"
+              "place",
+              "object",
+              "term",
+              "event"
             ],
             "type": "string"
           },
@@ -8813,6 +8852,13 @@
               "$ref": "#/components/schemas/BookWorldPlaceCardDto"
             },
             "type": "array"
+          },
+          "terms": {
+            "description": "Glossary of the world page (F08-13a): terms shown on the page — visible, read after the model text, with or without their own page; by first chapter, then key. Empty until terms are public (F08-13c). Same set for editors",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldTermCardDto"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -8820,6 +8866,7 @@
           "alternates",
           "entities",
           "places",
+          "terms",
           "map"
         ],
         "type": "object"
@@ -9204,6 +9251,40 @@
           "chapter",
           "title",
           "text"
+        ],
+        "type": "object"
+      },
+      "BookWorldTermCardDto": {
+        "properties": {
+          "chapter": {
+            "description": "First chapter where the term is found; null — not counted yet",
+            "minimum": 1,
+            "nullable": true,
+            "type": "number"
+          },
+          "hasPage": {
+            "description": "The term has its own page /wiki/{key} (core, read, visible); otherwise a row without a link",
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "description": "The term",
+            "type": "string"
+          },
+          "short": {
+            "description": "Definition (short)",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "short",
+          "chapter",
+          "hasPage"
         ],
         "type": "object"
       },
@@ -31612,6 +31693,15 @@
             "nullable": true,
             "type": "string"
           },
+          "characterKeys": {
+            "description": "Objects and events only (F08-13a): keys of the characters of this world the entity is tied to",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 10,
+            "nullable": true,
+            "type": "array"
+          },
           "compare": {
             "description": "Pairs only (F08-8c): comparison table, at least 4 rows for the page core",
             "items": {
@@ -31632,7 +31722,7 @@
             "type": "string"
           },
           "description": {
-            "description": "Places only: how the place looks in the text",
+            "description": "Places and objects (F08-13a): how it looks in the text",
             "maxLength": 1500,
             "nullable": true,
             "type": "string"
@@ -31742,7 +31832,7 @@
             "type": "string"
           },
           "significance": {
-            "description": "Places only: what the place means in the book; required for the page core",
+            "description": "Places, objects, terms and events (F08-13a): what it means in the book; required for the page core of a place, an object and an event",
             "maxLength": 3000,
             "nullable": true,
             "type": "string"
@@ -31754,12 +31844,24 @@
             "nullable": true,
             "type": "array"
           },
+          "themeKeys": {
+            "description": "Objects only (F08-13a): keys of the themes of the analysis of this version",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 8,
+            "nullable": true,
+            "type": "array"
+          },
           "type": {
-            "description": "character, pair (F08-8c) or place (F08-12a); other entity types come with their own batches. A pair key is {a}--{b}: two character keys of the version in alphabetical order",
+            "description": "character, pair (F08-8c), place (F08-12a), object, term or event (F08-13a). A pair key is {a}--{b}: two character keys of the version in alphabetical order",
             "enum": [
               "character",
               "pair",
-              "place"
+              "place",
+              "object",
+              "term",
+              "event"
             ],
             "type": "string"
           },

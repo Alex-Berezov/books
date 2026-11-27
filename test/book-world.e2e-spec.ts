@@ -10,6 +10,7 @@ import { PrismaService } from '../src/prisma/prisma.service';
 import { RightsContentHashService } from '../src/modules/rights-intake/rights-content-hash.service';
 import {
   WORLD_PAIRS,
+  WORLD_OBJECTS,
   WORLD_PLACES,
   computeWorldListed,
   pairMembersIn,
@@ -621,6 +622,8 @@ describe('BookWorld e2e', () => {
       entities: [],
       alternates: [],
       places: [],
+      // F08-13a: глоссарий — пуст, пока рубильник новых типов выключен.
+      terms: [],
       map: null,
     });
     const editor = await request(http())
@@ -678,6 +681,9 @@ describe('BookWorld e2e', () => {
         'wikidataId',
         'point',
         'faq',
+        // F08-13a: связи предмета и события — тот же единый тип ответа, у героя null.
+        'characterKeys',
+        'themeKeys',
         'sources',
         'mentions',
         'createdAt',
@@ -2687,6 +2693,320 @@ describe('BookWorld e2e', () => {
         expect(back.body.map).not.toBeNull();
         expect(tileCalls.length).toBeGreaterThan(0);
       });
+    });
+  });
+
+  describe('F08-13a: предмет, понятие, событие (решения арбитра `F08 | F08-13` Q1, Q4, Q6)', () => {
+    afterEach(() => {
+      WORLD_OBJECTS.public = false;
+    });
+    const robe = (over: Body = {}): Body => ({
+      key: 'robe',
+      type: 'object',
+      name: 'The robe',
+      short: 'An oriental robe.',
+      significance: 'The sign of his idleness.',
+      description: 'Of Persian cloth.',
+      characterKeys: ['oblomov'],
+      themeKeys: ['idleness'],
+      ...over,
+    });
+    const term = (over: Body = {}): Body => ({
+      key: 'oblomovism',
+      type: 'term',
+      name: 'Oblomovism',
+      short: 'Idle apathy.',
+      ...over,
+    });
+    const dream = (over: Body = {}): Body => ({
+      key: 'the-dream',
+      type: 'event',
+      name: 'The dream',
+      short: 'He dreams of his childhood.',
+      significance: 'The roots of his apathy.',
+      scenes: [{ chapter: 3, title: 'The dream', text: 'Far from the city.' }],
+      characterKeys: ['oblomov'],
+      ...over,
+    });
+    /** Анализ версии с ядром — его страница публична, темы читателю видны (R1). */
+    const withAnalysis = async (versionId: string) =>
+      prisma.bookAnalysis.create({
+        data: {
+          bookVersionId: versionId,
+          hasCore: true,
+          characters: [{ key: 'olga', name: 'Olga', role: 'main' }],
+          themes: [{ key: 'idleness', title: 'Idleness' }],
+        },
+      });
+
+    it('импорт трёх типов: ядро по своему правилу, рубильник выключен — не на сайте, глоссарий пуст', async () => {
+      const { versionId } = await createVersion();
+      await withAnalysis(versionId);
+      await put(versionId, {
+        language: 'en',
+        entities: [hero(), robe(), term(), dream()],
+      }).expect(200);
+      await setMentions(versionId, 'robe', [1]);
+      await setMentions(versionId, 'oblomovism', [2]);
+      await put(versionId, {
+        language: 'en',
+        entities: [
+          { key: 'robe', type: 'object' },
+          { key: 'oblomovism', type: 'term' },
+        ],
+      }).expect(200);
+      for (const key of ['robe', 'oblomovism', 'the-dream']) await readLatest(versionId, key);
+      for (const key of ['robe', 'oblomovism', 'the-dream']) {
+        const saved = await row(versionId, key);
+        expect(saved.hasCore).toBe(true);
+        expect(saved.isListed).toBe(false);
+        await request(http()).get(`/versions/${versionId}/world/${key}`).expect(404);
+      }
+      const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
+      expect(list.body.terms).toEqual([]);
+      expect(list.body.entities.map((e: Body) => e.key)).not.toContain('robe');
+      await expectListedConsistent(versionId);
+    });
+
+    it('рубильник включён: страницы по ядру, глоссарий со строкой понятия, связи в ответе', async () => {
+      WORLD_OBJECTS.public = true;
+      const { versionId } = await createVersion();
+      await withAnalysis(versionId);
+      // Герой на сайте — его ключ в связях предмета читатель видит.
+      await makeListed(versionId);
+      await put(versionId, { language: 'en', entities: [robe(), term()] }).expect(200);
+      await setMentions(versionId, 'robe', [1]);
+      await setMentions(versionId, 'oblomovism', [2]);
+      await put(versionId, {
+        language: 'en',
+        entities: [
+          { key: 'robe', type: 'object' },
+          { key: 'oblomovism', type: 'term' },
+        ],
+      }).expect(200);
+      await readLatest(versionId, 'robe');
+      await readLatest(versionId, 'oblomovism');
+      const page = await request(http()).get(`/versions/${versionId}/world/robe`).expect(200);
+      expect(page.body.entity).toMatchObject({
+        type: 'object',
+        characterKeys: ['oblomov'],
+        themeKeys: ['idleness'],
+      });
+      const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
+      expect(list.body.terms).toEqual([
+        {
+          key: 'oblomovism',
+          name: 'Oblomovism',
+          short: 'Idle apathy.',
+          chapter: 2,
+          hasPage: true,
+        },
+      ]);
+      await expectListedConsistent(versionId);
+    });
+
+    it('темы у не-предмета — одна ошибка поля чужого типа, без сверки с анализом', async () => {
+      const { versionId } = await createVersion();
+      const res = await put(versionId, {
+        language: 'en',
+        entities: [term({ themeKeys: ['nothing'] })],
+      }).expect(400);
+      expect(res.body.message).toEqual([
+        'entities.0.themeKeys: themeKeys is not a field of a term',
+      ]);
+    });
+
+    it('связи: не герой мира и не тема анализа — 400; поле чужого типа и ТЗ картинки — 400', async () => {
+      const { versionId } = await createVersion();
+      await withAnalysis(versionId);
+      const res = await put(versionId, {
+        language: 'en',
+        entities: [
+          hero(),
+          robe({ characterKeys: ['olga'], themeKeys: ['love'], imageBrief: 'A robe.' }),
+          term({ scenes: [{ chapter: 1, title: 'T', text: 'X.' }], role: 'main' }),
+        ],
+      }).expect(400);
+      expect(res.body.message).toEqual(
+        expect.arrayContaining([
+          'entities.1.imageBrief: imageBrief is not a field of an object',
+          'entities.1.characterKeys.0: "olga" is not a character of this world',
+          'entities.1.themeKeys.0: "love" is not a theme of the analysis of this version',
+          'entities.2.scenes: scenes is not a field of a term',
+          'entities.2.role: role is not a field of a term',
+        ]),
+      );
+    });
+
+    it('героя, к которому привязан предмет, не удалить — 409, даже при герое анализа с тем же ключом', async () => {
+      const { versionId } = await createVersion();
+      await prisma.bookAnalysis.create({
+        data: {
+          bookVersionId: versionId,
+          characters: [{ key: 'oblomov', name: 'Oblomov', role: 'main' }],
+          themes: [{ key: 'idleness', title: 'Idleness' }],
+        },
+      });
+      await put(versionId, { language: 'en', entities: [hero(), robe()] }).expect(200);
+      const res = await remove(versionId, 'oblomov').expect(409);
+      expect(res.body).toMatchObject({ code: 'WORLD_ENTITY_REFERENCED', referencedBy: ['robe'] });
+    });
+
+    it('смену типа героя держит связь предмета, даже при герое анализа с тем же ключом — 400 type', async () => {
+      const { versionId } = await createVersion();
+      await prisma.bookAnalysis.create({
+        data: {
+          bookVersionId: versionId,
+          characters: [{ key: 'oblomov', name: 'Oblomov', role: 'main' }],
+          themes: [{ key: 'idleness', title: 'Idleness' }],
+        },
+      });
+      await put(versionId, { language: 'en', entities: [hero(), robe()] }).expect(200);
+      const res = await putEntity(versionId, 'oblomov', {
+        language: 'en',
+        type: 'place',
+        role: null,
+        character: null,
+        arc: null,
+        quotes: null,
+        scenes: null,
+        kind: 'fictional',
+      }).expect(400);
+      expect(res.body.message).toEqual([
+        'type: other entities refer to "oblomov" as a character: robe; its type cannot change',
+      ]);
+    });
+
+    it('темы (R1): 400 только на ключ из тела; устаревший сохранённый не мешает правке; читателю — только текущие', async () => {
+      WORLD_OBJECTS.public = true;
+      const { versionId } = await createVersion();
+      await withAnalysis(versionId);
+      await put(versionId, { language: 'en', entities: [hero(), robe()] }).expect(200);
+      await setMentions(versionId, 'robe', [1]);
+      // Анализ пересоздан без темы `idleness`.
+      await prisma.bookAnalysis.update({
+        where: { bookVersionId: versionId },
+        data: { themes: [{ key: 'love', title: 'Love' }] },
+      });
+      await putEntity(versionId, 'robe', {
+        language: 'en',
+        type: 'object',
+        short: 'A worn oriental robe.',
+      }).expect(200);
+      const refused = await putEntity(versionId, 'robe', {
+        language: 'en',
+        type: 'object',
+        themeKeys: ['idleness', 'war'],
+      }).expect(400);
+      expect(refused.body.message).toEqual([
+        'themeKeys.1: "war" is not a theme of the analysis of this version',
+      ]);
+      // Форма вернула сохранённый устаревший ключ вместе с новой темой анализа — сохраняется.
+      await putEntity(versionId, 'robe', {
+        language: 'en',
+        type: 'object',
+        themeKeys: ['idleness', 'love'],
+      }).expect(200);
+      await readLatest(versionId, 'robe');
+      const page = await request(http()).get(`/versions/${versionId}/world/robe`).expect(200);
+      expect(page.body.entity.themeKeys).toEqual(['love']);
+      // Героя без страницы (рубильник героев — роль и ядро) читатель среди связей не видит.
+      expect(page.body.entity.characterKeys).toEqual([]);
+      const editor = await request(http())
+        .get(`/versions/${versionId}/world/robe`)
+        .set('Authorization', `Bearer ${adminAccess}`)
+        .expect(200);
+      expect(editor.body.entity.themeKeys).toEqual(['idleness', 'love']);
+      expect(editor.body.entity.characterKeys).toEqual(['oblomov']);
+      // Анализ без ядра читателю не показывается — и ключи его тем тоже (шлюз страницы анализа).
+      await prisma.bookAnalysis.update({
+        where: { bookVersionId: versionId },
+        data: { hasCore: false },
+      });
+      const hidden = await request(http()).get(`/versions/${versionId}/world/robe`).expect(200);
+      expect(hidden.body.entity.themeKeys).toEqual([]);
+      // Битая колонка связей (запись мимо API) — страница отвечает, связей читателю нет.
+      const saved = await row(versionId, 'robe');
+      await prisma.bookWorldEntity.update({
+        where: { bookVersionId_key: { bookVersionId: versionId, key: 'robe' } },
+        data: {
+          blocks: { ...(saved.blocks as Record<string, unknown>), characterKeys: { a: 1 } },
+          updatedAt: saved.updatedAt,
+        },
+      });
+      const broken = await request(http()).get(`/versions/${versionId}/world/robe`).expect(200);
+      expect(broken.body.entity.type).toBe('object');
+    });
+
+    it('главы события (R2, R3): формы ∪ сцены после пересчёта; смена глав сцен ставит очередь, правка названия — нет', async () => {
+      const { versionId } = await createVersion();
+      await put(versionId, {
+        language: 'en',
+        entities: [
+          dream({
+            name: 'Casta diva',
+            characterKeys: null,
+            scenes: [{ chapter: 3, title: 'The aria', text: 'She sings.' }],
+          }),
+        ],
+      }).expect(200);
+      await drain(versionId);
+      const counted = await row(versionId, 'the-dream');
+      expect(counted.mentions).toMatchObject({ chapters: [2, 3], first: 2 });
+      expect(counted.mentionFirst).toBe(2);
+
+      await putEntity(versionId, 'the-dream', {
+        language: 'en',
+        type: 'event',
+        scenes: [{ chapter: 3, title: 'The aria again', text: 'She sings.' }],
+      }).expect(200);
+      expect(await pending(versionId)).toBeNull();
+
+      await putEntity(versionId, 'the-dream', {
+        language: 'en',
+        type: 'event',
+        scenes: [{ chapter: 1, title: 'The aria again', text: 'She sings.' }],
+      }).expect(200);
+      expect(await pending(versionId)).not.toBeNull();
+      await drain(versionId);
+      expect((await row(versionId, 'the-dream')).mentions).toMatchObject({
+        chapters: [1, 2],
+        first: 1,
+      });
+    });
+
+    it('глоссарий через ручку: скрытое и непрочитанное — нет; без ядра — строкой без страницы в конце; тот же набор в ответе PUT', async () => {
+      WORLD_OBJECTS.public = true;
+      const { versionId } = await createVersion();
+      await put(versionId, {
+        language: 'en',
+        entities: [
+          term(),
+          term({ key: 'zakharism', name: 'Zakharism', short: 'Grumbling.' }),
+          term({ key: 'hidden', name: 'Hidden', short: 'H.' }),
+          term({ key: 'unread', name: 'Unread', short: 'U.' }),
+          term({ key: 'aaa', name: 'Aaa', short: 'A.' }),
+        ],
+      }).expect(200);
+      await setMentions(versionId, 'oblomovism', [2]);
+      await setMentions(versionId, 'zakharism', [1]);
+      await setMentions(versionId, 'hidden', [1]);
+      for (const key of ['oblomovism', 'zakharism', 'hidden', 'aaa']) {
+        await put(versionId, { language: 'en', entities: [{ key, type: 'term' }] }).expect(200);
+        await readLatest(versionId, key);
+      }
+      await flags(versionId, 'hidden', { isVisible: false }).expect(200);
+      const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
+      expect(list.body.terms).toEqual([
+        { key: 'zakharism', name: 'Zakharism', short: 'Grumbling.', chapter: 1, hasPage: true },
+        { key: 'oblomovism', name: 'Oblomovism', short: 'Idle apathy.', chapter: 2, hasPage: true },
+        { key: 'aaa', name: 'Aaa', short: 'A.', chapter: null, hasPage: false },
+      ]);
+      const saved = await put(versionId, {
+        language: 'en',
+        entities: [{ key: 'aaa', type: 'term' }],
+      }).expect(200);
+      expect(saved.body.world.terms).toEqual(list.body.terms);
     });
   });
 });

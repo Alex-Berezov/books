@@ -283,6 +283,36 @@ export class BookWorldPlaceCardDto {
   scenes!: BookWorldPlaceSceneDto[];
 }
 
+/**
+ * Строка глоссария общей страницы `/wiki` (`F08-13a`, `product.md` §7): понятие, и без своей
+ * страницы — строкой без адреса; «термин — определение — глава».
+ */
+export class BookWorldTermCardDto {
+  @ApiProperty({ type: String })
+  key!: string;
+
+  @ApiProperty({ type: String, description: 'The term' })
+  name!: string;
+
+  @ApiProperty({ type: String, nullable: true, description: 'Definition (short)' })
+  short!: string | null;
+
+  @ApiProperty({
+    type: Number,
+    nullable: true,
+    minimum: 1,
+    description: 'First chapter where the term is found; null — not counted yet',
+  })
+  chapter!: number | null;
+
+  @ApiProperty({
+    type: Boolean,
+    description:
+      'The term has its own page /wiki/{key} (core, read, visible); otherwise a row without a link',
+  })
+  hasPage!: boolean;
+}
+
 /** Тайл мозаики литературной карты (`F08-12d`): место в сетке и адрес копии в хранилище сайта. */
 export class BookWorldMapTileDto {
   @ApiProperty({ type: Number, minimum: 0, description: 'Column in the mosaic, from the left' })
@@ -358,6 +388,15 @@ export class BookWorldListResponseDto {
       'text; with or without their own page. Same set for editors',
   })
   places!: BookWorldPlaceCardDto[];
+
+  @ApiProperty({
+    type: [BookWorldTermCardDto],
+    description:
+      'Glossary of the world page (F08-13a): terms shown on the page — visible, read after the model ' +
+      'text, with or without their own page; by first chapter, then key. Empty until terms are public ' +
+      '(F08-13c). Same set for editors',
+  })
+  terms!: BookWorldTermCardDto[];
 
   @ApiProperty({
     type: BookWorldMapDto,
@@ -466,10 +505,18 @@ export class BookWorldEntityDto extends BookWorldEntitySummaryDto {
   @ApiProperty({ type: String, nullable: true, description: 'Places only (F08-12a)' })
   location!: string | null;
 
-  @ApiProperty({ type: String, nullable: true, description: 'Places only (F08-12a)' })
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Places (F08-12a), objects, terms and events (F08-13a)',
+  })
   significance!: string | null;
 
-  @ApiProperty({ type: String, nullable: true, description: 'Places only (F08-12a)' })
+  @ApiProperty({
+    type: String,
+    nullable: true,
+    description: 'Places (F08-12a) and objects (F08-13a)',
+  })
   description!: string | null;
 
   @ApiProperty({
@@ -481,6 +528,20 @@ export class BookWorldEntityDto extends BookWorldEntitySummaryDto {
 
   @ApiProperty({ type: [BookAnalysisFaqDto], nullable: true })
   faq!: BookAnalysisFaqDto[] | null;
+
+  @ApiProperty({
+    type: [String],
+    nullable: true,
+    description: 'Objects and events only (F08-13a): keys of the characters of this world',
+  })
+  characterKeys!: string[] | null;
+
+  @ApiProperty({
+    type: [String],
+    nullable: true,
+    description: 'Objects only (F08-13a): keys of the themes of the analysis of this version',
+  })
+  themeKeys!: string[] | null;
 
   @ApiProperty({ type: [BookAnalysisSourceDto], nullable: true })
   sources!: BookAnalysisSourceDto[] | null;

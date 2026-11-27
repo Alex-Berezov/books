@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { isRecord } from '../../shared/prisma/json-record.util';
 import { htmlToParagraphs } from '../translation/content-draft/content-draft.text';
 import { coPresenceWith, type StoredWorldEntity } from './book-world-data';
 import { pairMembers } from './world-refs';
@@ -87,7 +88,10 @@ export async function countWorldMentions(
       (n) => digests.has(n),
       (n, text) => verbatim.get(worldQuoteKey(n, text)) === true,
     ).map((issue) => issue.key);
-    const own = e.type === 'pair' ? pairMentions(e.key, counted) : counted.get(e.key)!;
+    const own =
+      e.type === 'pair'
+        ? pairMentions(e.key, counted)
+        : eventMentions(e, counted.get(e.key)!, (n) => digests.has(n));
     byKey.set(e.key, { ...own, stale: [...new Set(stale)].sort() });
   }
   return {
@@ -96,6 +100,38 @@ export async function countWorldMentions(
       [...digests].map(([number, digest]) => ({ number, digest })),
     ),
   };
+}
+
+/**
+ * Главы события (`F08-13a`, решения арбитра `F08 | F08-13` Q1, `F08 | F08-13a` R2): название эпизода
+ * («Сон Обломова») в тексте почти не встречается, и одно случайное совпадение формы не должно стирать
+ * главы сцен, проверенные редактором, — главы события = главы форм ∪ главы его сцен, которые есть
+ * в версии; `first` — наименьшая. Счёт по главам и абзацы — только по формам (у сцены их нет).
+ * Единственное место правила: ядро, публичность и выдача читают `mentions`. Не событие — как есть.
+ */
+export function eventMentions(
+  e: Pick<WorldCountSource, 'type' | 'scenes'>,
+  own: WorldMentions,
+  inVersion: (chapter: number) => boolean,
+): WorldMentions {
+  if (e.type !== 'event') return own;
+  const fromScenes = eventSceneChapters(e.scenes).filter(inVersion);
+  const chapters = [...new Set([...own.chapters, ...fromScenes])].sort((a, b) => a - b);
+  return { ...own, chapters, first: chapters[0] ?? null };
+}
+
+/**
+ * Главы сцен события — вход его глав (`eventMentions`) и условие пересчёта при записи (решение
+ * `F08 | F08-13a` R3): целые номера без повторов по возрастанию. Колонка читается как есть: не массив
+ * или не номер — не глава.
+ */
+export function eventSceneChapters(scenes: unknown): number[] {
+  if (!Array.isArray(scenes)) return [];
+  const chapters = scenes.flatMap((s: unknown) => {
+    const n = isRecord(s) ? s.chapter : undefined;
+    return typeof n === 'number' && Number.isInteger(n) ? [n] : [];
+  });
+  return [...new Set(chapters)].sort((a, b) => a - b);
 }
 
 /**

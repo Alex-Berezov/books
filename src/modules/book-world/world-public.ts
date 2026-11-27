@@ -1,6 +1,6 @@
 import { Prisma, PublicationStatus } from '@prisma/client';
 import { stableJson } from '../../shared/json/stable-json';
-import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
+import { BOOK_WORLD_LIMITS, isWorldObjectType } from './dto/book-world-blocks.dto';
 import { mentionChapters } from './world-core';
 import { pairMembers } from './world-refs';
 
@@ -30,6 +30,15 @@ export const WORLD_PAIRS = { public: true };
  * Объект, а не константа: e2e проверяют оба положения в одном процессе.
  */
 export const WORLD_PLACES = { public: true };
+
+/**
+ * Рубильник публичности предмета, понятия и события (`F08-13a`, решение арбитра `F08 | F08-13` Q6):
+ * один на три типа. Выключенный, он держит их вне сайта — списка, глоссария `/wiki`, карты сайта
+ * и hreflang, — пока их страниц нет на фронте (старый фронт рисует любой новый тип шаблоном героя).
+ * Включается тегом бэкенда в `F08-13c` после фронта, с разовым пересчётом `isListed`.
+ * Объект, а не константа: e2e проверяют оба положения в одном процессе.
+ */
+export const WORLD_OBJECTS = { public: false };
 
 export interface WorldListedInput {
   /** Тип сущности; нет — герой. */
@@ -72,6 +81,8 @@ export function computeWorldListed(e: WorldListedInput): boolean {
   if (e.type === 'pair') return WORLD_PAIRS.public && e.hasListedMembers === true;
   // Место (решение арбитра `F08 | F08-12` Q1): роли нет, страница — по ядру без порога ролей.
   if (e.type === 'place') return WORLD_PLACES.public;
+  // Предмет, понятие, событие (решение арбитра `F08 | F08-13` Q1, Q6): роли нет, страница — по ядру.
+  if (isWorldObjectType(e.type)) return WORLD_OBJECTS.public;
   return worldRolePasses(e.role, mentionChapters(e.mentions).length);
 }
 
@@ -84,20 +95,23 @@ function readAfterAutoText(e: { readAt: Date | null; autoTextAt: Date | null }):
 }
 
 /**
- * Место показывается на общей странице `/wiki` (решение арбитра `F08 | F08-12` Q4): текстовым
- * списком и точкой на карте — и без своей страницы (`product.md` §2: карточкой без адреса).
- * Условие: рубильник мест, «показывать», «прочитано» не раньше текста модели; ядро не нужно —
- * оно даёт только страницу (`isListed`). Опубликованность версии — условие самой ручки (404 на
- * черновик не редактору). Единственная копия: список читателя (`BookWorldService.getList`) другой
- * не держит. Карточка не даёт адреса, не идёт в карту сайта и hreflang.
+ * Карточка без своей страницы на общей странице `/wiki`: место (решение арбитра `F08 | F08-12` Q4)
+ * текстовым списком и точкой на карте, понятие (`F08-13a`, решение `F08 | F08-13` Q6) строкой
+ * глоссария (`product.md` §2, §7: без адреса). Условие: рубильник типа, «показывать», «прочитано»
+ * не раньше текста модели; ядро не нужно — оно даёт только страницу (`isListed`). Опубликованность
+ * версии — условие самой ручки (404 на черновик не редактору). Единственная копия: списки читателя
+ * (`worldPlaceCards`, `worldTermCards`) другой не держат. Карточка не даёт адреса, не идёт в карту
+ * сайта и hreflang. Другие типы — `false`.
  */
-export function worldPlaceShown(e: {
+export function worldCardShown(e: {
   type: string;
   isVisible: boolean;
   readAt: Date | null;
   autoTextAt: Date | null;
 }): boolean {
-  return WORLD_PLACES.public && e.type === 'place' && e.isVisible && readAfterAutoText(e);
+  const switchedOn =
+    (e.type === 'place' && WORLD_PLACES.public) || (e.type === 'term' && WORLD_OBJECTS.public);
+  return switchedOn && e.isVisible && readAfterAutoText(e);
 }
 
 /**

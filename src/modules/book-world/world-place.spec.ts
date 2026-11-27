@@ -7,7 +7,7 @@ import {
   type WorldPlaceCardRow,
 } from './book-world-data';
 import { computeWorldCore, WORLD_PLACE_CORE } from './world-core';
-import { computeWorldListed, WORLD_PLACES, worldPlaceShown } from './world-public';
+import { computeWorldListed, WORLD_PLACES, worldCardShown } from './world-public';
 import { worldItemKey } from './world-quote-check';
 import { geoFingerprint } from './world-geo';
 import { checkWorldRefs, checkWorldTypeFields } from './world-refs';
@@ -49,6 +49,8 @@ const place = (over: Partial<StoredWorldEntity> = {}): StoredWorldEntity => ({
   imageBrief: null,
   imageBriefFor: null,
   faq: null,
+  characterKeys: null,
+  themeKeys: null,
   ...over,
 });
 const noExclusions = { aliasExclusions: null, aliasChapterExclusions: null };
@@ -151,6 +153,7 @@ describe('поля чужого типа (F08-12a, Q1): 400 явной ветк�
       entityKeys: new Set(['oblomovka', 'oblomov']),
       characterKeys: new Set(['oblomov']),
       analysisKeys: new Set<string>(),
+      themeKeys: new Set<string>(),
     };
     const quotes = [{ text: 'Q', chapter: 1, interpretation: 'I', speakerKey: 'oblomovka' }];
     expect(checkWorldRefs(place({ quotes }), ctx).map((e) => e.path)).toEqual([
@@ -198,13 +201,13 @@ describe('публичность места (F08-12a, Q0: рубильник WOR
   it('карточка общей страницы — без ядра, но только «показывать» и «прочитано» при включённом рубильнике', () => {
     const card = { type: 'place', isVisible: true, readAt: null, autoTextAt: null };
     WORLD_PLACES.public = false;
-    expect(worldPlaceShown(card)).toBe(false);
+    expect(worldCardShown(card)).toBe(false);
     WORLD_PLACES.public = true;
-    expect(worldPlaceShown(card)).toBe(true);
-    expect(worldPlaceShown({ ...card, isVisible: false })).toBe(false);
-    expect(worldPlaceShown({ ...card, autoTextAt: new Date(2), readAt: new Date(1) })).toBe(false);
-    expect(worldPlaceShown({ ...card, autoTextAt: new Date(2), readAt: new Date(2) })).toBe(true);
-    expect(worldPlaceShown({ ...card, type: 'character' })).toBe(false);
+    expect(worldCardShown(card)).toBe(true);
+    expect(worldCardShown({ ...card, isVisible: false })).toBe(false);
+    expect(worldCardShown({ ...card, autoTextAt: new Date(2), readAt: new Date(1) })).toBe(false);
+    expect(worldCardShown({ ...card, autoTextAt: new Date(2), readAt: new Date(2) })).toBe(true);
+    expect(worldCardShown({ ...card, type: 'character' })).toBe(false);
   });
 });
 
