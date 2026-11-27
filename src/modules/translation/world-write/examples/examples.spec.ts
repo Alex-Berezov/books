@@ -5,15 +5,15 @@ import { validateSync } from 'class-validator';
 import { UpdateBookWorldDto } from '../../../book-world/dto/update-book-world.dto';
 import { checkWorldTypeFields } from '../../../book-world/world-refs';
 import { WORLD_WRITE_LANGUAGES } from '../world-write.constants';
+import { WORLD_RUN_OBJECT_TYPES } from '../world-write.data';
 import {
-  EXAMPLE_WORLD_OBJECTS,
   EXAMPLE_WORLD_PAIRS,
   EXAMPLE_WORLD_PLACES,
-  EXAMPLE_WORLD_TERMS,
   EXAMPLE_WORLDS,
   hasWorldObjectExample,
   hasWorldPairExample,
   hasWorldPlaceExample,
+  worldObjectExample,
 } from './index';
 
 const fixture = (name: string): unknown =>
@@ -79,15 +79,17 @@ describe('world examples', () => {
     ]);
   });
 
-  // F08-13b (решение арбитра `F08 | F08-13b` Q7): эталоны предмета и понятия на пять языков.
+  // F08-13b (решение арбитра `F08 | F08-13b` Q7): эталоны типов страницы на пять языков. Типы - из
+  // `WORLD_RUN_OBJECT_TYPES`, эталон - из `worldObjectExample` (/qa круг 3 13b-2): новый тип хода
+  // без эталона и без фикстуры краснеет здесь, а не выпадает из сверки.
   it.each(
-    (['object', 'term'] as const).flatMap((type) =>
+    WORLD_RUN_OBJECT_TYPES.flatMap((type) =>
       (['en', 'ru', 'es', 'fr', 'pt'] as const).map((language) => [type, language] as const),
     ),
   )(
     'the %s example of %s equals its JSON fixture and passes the world import rule (F08-13b)',
     (type, language) => {
-      const example = (type === 'object' ? EXAMPLE_WORLD_OBJECTS : EXAMPLE_WORLD_TERMS)[language];
+      const example = worldObjectExample(language, type);
       expect(example).toEqual(fixture(`example-world-${type}.${language}.json`));
       const dto = plainToInstance(UpdateBookWorldDto, example);
       expect(validateSync(dto, { whitelist: true, forbidNonWhitelisted: true })).toEqual([]);
@@ -101,7 +103,7 @@ describe('world examples', () => {
   );
 
   it('objects and terms are written on every language of the run with their example (F08-13b)', () => {
-    for (const type of ['object', 'term'] as const) {
+    for (const type of WORLD_RUN_OBJECT_TYPES) {
       expect(
         ['en', 'ru', 'es', 'fr', 'pt', 'de'].filter((l) => hasWorldObjectExample(l, type)),
       ).toEqual(['en', 'ru', 'es', 'fr', 'pt']);

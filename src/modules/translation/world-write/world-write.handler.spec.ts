@@ -6,6 +6,7 @@ import { droppedOfBlock, pageRecord, pairRecord } from './world-write.handler';
 import { choosePairs } from './world-write.pairs';
 import { indexChapters } from '../draft-quality/quote-check';
 import { emptyWorldData, readWorldData, worldDataJson } from './world-write.data';
+import type { WorldContext } from './world-write.steps';
 
 /**
  * Круг /fix 1 (/qa 17.11.2026, L-019): снятие отметки перегенерации переписывает данные хода целиком -
@@ -117,7 +118,7 @@ describe('WorldWriteHandler: a regeneration and the external step', () => {
   it('step 0: the only main hero sits on a place key (F08-12a, review round 5) - the run fails WORLD_ANALYSIS_MISSING before any paid call', async () => {
     const fields = { read: jest.fn().mockResolvedValue(emptyWorldData()) };
     const { handler, tasks, updateMany } = make({}, fields);
-    jest.spyOn(handler, 'contextOf').mockResolvedValue({
+    const contextOf = jest.spyOn(handler, 'contextOf').mockResolvedValue({
       language: 'en',
       dossier: {},
       glossary: null,
@@ -128,6 +129,7 @@ describe('WorldWriteHandler: a regeneration and the external step', () => {
       analysis: { characters: [{ key: 'paris', name: 'Paris', role: 'main' }] } as never,
       entities: new Map([['paris', { key: 'paris', type: 'place' }]]) as never,
       names: { titles: ['Book'], authors: ['Author'] },
+      knownEvents: [],
     });
     const task = { operationId: 'op1', payload: { draftId: 'd1' } };
     // `llm` - пустой объект: платный вызов выбора здесь упал бы.
@@ -135,11 +137,39 @@ describe('WorldWriteHandler: a regeneration and the external step', () => {
       handler.handler.run(task as never, { renewLease: jest.fn() } as never),
     ).resolves.toEqual({ kind: 'done' });
     expect(tasks.failOperation).toHaveBeenCalledTimes(1);
+    // Шаг 0 - выбор: только он читает известные события (/qa круг 2 13b-2).
+    expect(contextOf).toHaveBeenCalledWith(expect.anything(), {}, true);
     expect(updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: { status: 'failed', failedReason: 'WORLD_ANALYSIS_MISSING' },
       }),
     );
+  });
+
+  // /qa круг 2 13b-2: известные события читает только шаг выбора - шаг страницы их не запрашивает.
+  it('a step past the choice reads the context without the known events', async () => {
+    const data = {
+      ...emptyWorldData(),
+      candidates: [worldHero('anna', [1])],
+      pairs: [],
+      places: [],
+      objects: [],
+      terms: [],
+      events: [],
+      steps: [step(0, 'select', null)],
+    };
+    const fields = { read: jest.fn().mockResolvedValue(data) };
+    const { handler } = make({}, fields);
+    const contextOf = jest
+      .spyOn(handler, 'contextOf')
+      .mockResolvedValue({ entities: new Map() } as never);
+    jest
+      .spyOn(handler as unknown as { produceStep: () => Promise<unknown> }, 'produceStep')
+      .mockResolvedValue(null);
+    const task = { operationId: 'op1', payload: { draftId: 'd1' } };
+    await handler.handler.run(task as never, { renewLease: jest.fn() } as never);
+    expect(contextOf).toHaveBeenCalledTimes(1);
+    expect(contextOf).toHaveBeenCalledWith(expect.anything(), {}, false);
   });
 
   it('a regeneration resumed with its item still waiting: the refused import is reported WORLD_WRITE_REFUSED, not dropped silently', async () => {
@@ -249,6 +279,7 @@ describe('WorldWriteHandler: a regeneration and the external step', () => {
       analysis: { characters: [{ key: 'anna', name: 'Anna', role: 'main' }] } as never,
       entities: new Map(),
       names: { titles: ['Book'], authors: ['Author'] },
+      knownEvents: [],
     });
     const task = { operationId: 'op1', payload: { draftId: 'd1' } };
     // `llm` и фетчер - пустые объекты: любой платный вызов здесь упал бы.
@@ -319,6 +350,7 @@ describe('WorldWriteHandler: a step written by another attempt; dropped sources 
       analysis: { characters: [{ key: 'ghost', name: 'Ghost', role: 'main' }] } as never,
       entities: new Map(),
       names: { titles: ['Book'], authors: ['Author'] },
+      knownEvents: [],
     });
     const task = { operationId: 'op1', payload: { draftId: 'd1' } };
     await expect(
@@ -841,6 +873,7 @@ describe('WorldWriteHandler: the choice step of a run started before F08-8e (F08
       ],
     },
     names: { titles: ['B'], authors: ['A'] },
+    knownEvents: [],
   };
   const veraLeftOut = {
     key: 'vera--new',
@@ -912,6 +945,7 @@ describe('WorldWriteHandler: pair step branches after the checks (F08-8e-1 revie
     chapters: [{ number: 1, title: 'C1', content: '<p>Anna and Boris.</p>' }],
     analysis: { characters: [] },
     names: { titles: ['B'], authors: ['A'] },
+    knownEvents: [],
   };
   const data = {
     ...emptyWorldData(),
@@ -1228,5 +1262,148 @@ describe('pageRecord / pairRecord: the items of a written step (F08-8e-5)', () =
       },
     ]);
     expect(got.step).toMatchObject({ step: 6, kind: 'pair', key: 'anna--boris', outcome: 'done' });
+  });
+});
+
+/** Номер шага вне хода (хвост `F08-13b-1`): свой код и при перегенерации, и на границе. */
+const outOfRunHero = (key: string) => ({
+  key,
+  role: 'main' as const,
+  name: key.toUpperCase(),
+  aliases: [] as string[],
+  mentions: { chapters: [1], perChapter: {} },
+});
+
+const outOfRunContext = (entities = new Map<string, unknown>()) =>
+  ({
+    language: 'en',
+    dossier: null,
+    glossary: null,
+    bookTitle: 'B',
+    author: 'A',
+    originalLanguage: '',
+    entities,
+    chapters: [{ number: 1, title: 'C1', content: '<p>Anna and Boris.</p>' }],
+    analysis: {
+      characters: [
+        { key: 'anna', name: 'ANNA', role: 'main' },
+        { key: 'boris', name: 'BORIS', role: 'main' },
+      ],
+    },
+    names: { titles: ['B'], authors: ['A'] },
+    knownEvents: [],
+  }) as unknown as WorldContext;
+
+describe('WorldWriteHandler: a step number out of the run (F08-13b-1 tails)', () => {
+  const data = {
+    ...emptyWorldData(),
+    candidates: [outOfRunHero('anna')],
+    pairs: [],
+    places: [],
+    objects: [],
+    terms: [],
+    events: [
+      { key: 'duel', name: 'duel', aliases: [], mentions: { chapters: [1], perChapter: {} } },
+    ],
+  };
+  // 1 выбор + 2 шага героя + 1 событие = 4 шага: номера 0-3; номер 4 - вне хода.
+  const produce = async (step: number, regen: unknown) => {
+    const handler = worldWriteHandler({
+      llm: {
+        stageFit: jest.fn().mockResolvedValue({ fits: true }),
+        stageInputCeiling: jest.fn().mockResolvedValue({ maxInputChars: null }),
+        getStageSetting: jest.fn().mockResolvedValue({}),
+      },
+    });
+    const inner = handler as unknown as {
+      loop: jest.Mock;
+      produceStep: (...a: unknown[]) => Promise<{
+        step: { failedReason: string | null };
+      } | null>;
+    };
+    inner.loop = jest.fn().mockResolvedValue(null);
+    const record = await inner.produceStep(
+      { id: 'd1', bookVersionId: 'v1' },
+      { kind: 'run', operationId: 'op1' },
+      step,
+      outOfRunContext(),
+      data,
+      null,
+      {},
+      regen,
+    );
+    return { record, loop: inner.loop };
+  };
+
+  it('on the boundary: the last step is a step, the next one is WORLD_STEP_OUT_OF_RUN without a call', async () => {
+    const last = await produce(3, null);
+    expect(last.loop).toHaveBeenCalledTimes(1);
+    // Последний номер - шаг события: вход страницы события, а не другого вида.
+    expect((last.loop.mock.calls[0] as unknown[])[2]).toMatchObject({ kind: 'event' });
+    const over = await produce(4, null);
+    expect(over.record?.step.failedReason).toBe('WORLD_STEP_OUT_OF_RUN');
+    expect(over.loop).toHaveBeenCalledTimes(0);
+  });
+
+  it('a regeneration of an item whose step is out of the run - the same code, no call', async () => {
+    const regen = { spec: { block: 'short', current: null, remark: null }, index: 0 };
+    const over = await produce(4, regen);
+    expect(over.record?.step.failedReason).toBe('WORLD_STEP_OUT_OF_RUN');
+    expect(over.loop).toHaveBeenCalledTimes(0);
+  });
+});
+
+/**
+ * Известные события в контексте хода (`F08-13b-2`, /qa круг 2): читаются только для шага выбора
+ * (`withEvents`) - запросом своей версии, исходника по `originalLanguage` версии и прочих версий.
+ */
+describe('contextOf: the known events only for the choice step (F08-13b-2, /qa round 2)', () => {
+  const make = () => {
+    const findMany = jest.fn().mockResolvedValue([]);
+    const groupBy = jest.fn().mockResolvedValue([]);
+    const prisma = {
+      bookVersion: {
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ title: 'B', author: 'A', originalLanguage: 'ru' }),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      bookGlossary: { findUnique: jest.fn() },
+      chapter: { findMany: jest.fn().mockResolvedValue([]) },
+      bookAnalysis: { findUnique: jest.fn().mockResolvedValue(null) },
+      bookWorldEntity: { findMany, groupBy },
+    };
+    const row = { bookVersionId: 'v1', language: 'en', glossaryId: null };
+    return { handler: worldWriteHandler({ prisma }), findMany, row };
+  };
+  const eventQueries = (findMany: jest.Mock): unknown[][] =>
+    (findMany.mock.calls as unknown[][]).filter(
+      ([args]) => (args as { where: { type?: string } }).where.type === 'event',
+    );
+
+  it('without withEvents no event query, knownEvents is empty', async () => {
+    const { handler, findMany, row } = make();
+    const context = await handler.contextOf(row as never, {});
+    expect(context.knownEvents).toEqual([]);
+    expect(eventQueries(findMany)).toEqual([]);
+  });
+
+  it('with withEvents: the own version, then the source by the original language of the version', async () => {
+    const { handler, findMany, row } = make();
+    findMany.mockImplementation((args: { where: { type?: string; bookVersionId?: unknown } }) =>
+      Promise.resolve(
+        args.where.type === 'event' && args.where.bookVersionId === 'v1'
+          ? [{ key: 'the-ball', name: 'The ball' }]
+          : [],
+      ),
+    );
+    const context = await handler.contextOf(row as never, {}, true);
+    expect(context.knownEvents).toEqual([{ key: 'the-ball', name: 'The ball' }]);
+    const calls = eventQueries(findMany).map(([args]) => (args as { where: object }).where);
+    expect(calls[0]).toEqual({ type: 'event', bookVersionId: 'v1' });
+    expect(calls[1]).toMatchObject({
+      bookVersionId: { not: 'v1' },
+      bookVersion: { book: { versions: { some: { id: 'v1' } } }, language: 'ru' },
+    });
   });
 });

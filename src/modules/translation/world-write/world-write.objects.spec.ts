@@ -166,6 +166,7 @@ const context = (entities = new Map<string, { type: string; name?: string }>()) 
     themes: [{ key: 'guilt', title: 'Guilt' }],
   },
   names: { titles: ['B'], authors: ['A'] },
+  knownEvents: [],
 });
 
 const fitsLlm = () => ({

@@ -16817,6 +16817,13 @@ export interface components {
       createdAt: string;
       droppedQuotes: components['schemas']['WorldWriteDroppedQuoteDto'][];
       droppedSources: components['schemas']['WorldWriteDroppedSourceDto'][];
+      /** @description Events of the run (F08-13b-2), their steps go after the steps of the terms; named by the choice step, the key is built by the code; null - not chosen yet; [] for a run started before F08-13b-2 */
+      events: components['schemas']['WorldWritePlaceDto'][] | null;
+      /**
+       * @description The run writes no events: WORLD_EVENT_LANGUAGE - no event sample for the language
+       * @enum {string|null}
+       */
+      eventsOff: 'WORLD_EVENT_LANGUAGE' | null;
       /** @description Why the run failed: WORLD_ANALYSIS_MISSING, DRAFT_DATA_INVALID, DRAFT_INPUT_MISSING, DRAFT_CANCELLED */
       failedReason: string | null;
       /** Format: uuid */
@@ -16824,7 +16831,7 @@ export interface components {
       items: components['schemas']['WorldWriteItemDto'][];
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
-      /** @description Characters, pairs, places, objects, terms and organizations the choice step left out, with the reason */
+      /** @description Characters, pairs, places, objects, terms, events and organizations the choice step left out, with the reason */
       leftOut: components['schemas']['WorldWriteSkipDto'][];
       /** @description Objects of the run (F08-13b), their steps go after the steps of the places; null - not chosen yet; [] for a run started before F08-13b */
       objects: components['schemas']['WorldWritePlaceDto'][] | null;
@@ -16853,7 +16860,7 @@ export interface components {
       /** @enum {string} */
       status: 'building' | 'ready' | 'failed' | 'discarded';
       steps: components['schemas']['WorldWriteStepDto'][];
-      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place + 1 per object + 1 per term; null - the characters are not chosen yet */
+      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place + 1 per object + 1 per term + 1 per event (F08-13b-2); null - the characters are not chosen yet */
       stepsTotal: number | null;
       /** @description Terms of the run (F08-13b), their steps go after the steps of the objects; null - not chosen yet; [] for a run started before F08-13b */
       terms: components['schemas']['WorldWritePlaceDto'][] | null;
@@ -17008,6 +17015,13 @@ export interface components {
       createdAt: string;
       droppedQuotes: components['schemas']['WorldWriteDroppedQuoteDto'][];
       droppedSources: components['schemas']['WorldWriteDroppedSourceDto'][];
+      /** @description Events of the run (F08-13b-2), their steps go after the steps of the terms; named by the choice step, the key is built by the code; null - not chosen yet; [] for a run started before F08-13b-2 */
+      events: components['schemas']['WorldWritePlaceDto'][] | null;
+      /**
+       * @description The run writes no events: WORLD_EVENT_LANGUAGE - no event sample for the language
+       * @enum {string|null}
+       */
+      eventsOff: 'WORLD_EVENT_LANGUAGE' | null;
       /** @description Why the run failed: WORLD_ANALYSIS_MISSING, DRAFT_DATA_INVALID, DRAFT_INPUT_MISSING, DRAFT_CANCELLED */
       failedReason: string | null;
       /** Format: uuid */
@@ -17015,7 +17029,7 @@ export interface components {
       items: components['schemas']['WorldWriteItemDto'][];
       /** @enum {string} */
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
-      /** @description Characters, pairs, places, objects, terms and organizations the choice step left out, with the reason */
+      /** @description Characters, pairs, places, objects, terms, events and organizations the choice step left out, with the reason */
       leftOut: components['schemas']['WorldWriteSkipDto'][];
       /** @description Objects of the run (F08-13b), their steps go after the steps of the places; null - not chosen yet; [] for a run started before F08-13b */
       objects: components['schemas']['WorldWritePlaceDto'][] | null;
@@ -17042,7 +17056,7 @@ export interface components {
       /** @enum {string} */
       status: 'building' | 'ready' | 'failed' | 'discarded';
       steps: components['schemas']['WorldWriteStepDto'][];
-      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place + 1 per object + 1 per term; null - the characters are not chosen yet */
+      /** @description Steps of the run: 1 + 2 per character + 1 per pair + 1 per place + 1 per object + 1 per term + 1 per event (F08-13b-2); null - the characters are not chosen yet */
       stepsTotal: number | null;
       /** @description Terms of the run (F08-13b), their steps go after the steps of the objects; null - not chosen yet; [] for a run started before F08-13b */
       terms: components['schemas']['WorldWritePlaceDto'][] | null;
@@ -17061,6 +17075,8 @@ export interface components {
       candidates: number;
       /** @description The dossier is built first by its own operation; null - it is ready */
       dossier: components['schemas']['DossierContextLineDto'] | null;
+      /** @description Up to N event pages (F08-13b-2): 10 (the choice step has not named the events yet), 0 on a language without an event sample; one page each, included in stageUsd */
+      events: number;
       /** @description The glossary of the version language is built first; null - ready or not needed (the version is in the dossier language) */
       glossary: components['schemas']['CompareContextLineDto'] | null;
       /** @description Up to N object pages (F08-13b): min(10, objects of the dossier) before the chapter count (10 when the dossier is not ready), 0 on a language without an object sample; one page each, included in stageUsd */
@@ -17071,7 +17087,7 @@ export interface components {
       places: number;
       /**
        * Format: decimal
-       * @description Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages, up to places place pages, up to objects object pages and up to terms term pages on the whole version text, plus the reviewer of each step, each step × 2 passes
+       * @description Upper estimate: the choice of name forms on the whole version text, then per main and secondary character (before the chapter threshold) the page on the whole version text and the external blocks, then up to pairs pair pages, up to places place pages, up to objects object pages, up to terms term pages and up to events event pages on the whole version text, plus the reviewer of each step, each step × 2 passes
        * @example 100.00000000
        */
       stageUsd: string;
@@ -17227,12 +17243,12 @@ export interface components {
     WorldWriteSkipDto: {
       /** @description Chapters of the character, the place, the object or the term, or common chapters of the pair; null for a taken key and an organization */
       chapters: number | null;
-      /** @description Key of the character, the pair, the place, the object, the term or the organization */
+      /** @description Key of the character, the pair, the place, the object, the term, the event or the organization */
       key: string;
       /** @description Names to caption the entry: one for a character, a place, an object, a term or an organization, two for a pair in key order; empty for a run saved before this field */
       names: string[];
       /**
-       * @description BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b); OBJECT_BELOW_MIN_CHAPTERS, TERM_BELOW_MIN_CHAPTERS - an object or a term of the dossier found in no chapter; OBJECT_KEY_TAKEN, TERM_KEY_TAKEN - the key belongs to an entity or a candidate of another type (a character of the analysis, a pair of the run, a place of the dossier, for a term also an object of the dossier); OBJECTS_MAX, TERMS_MAX - over 10 objects or terms per run, by chapters then by key; ORGANIZATION_SKIPPED - an organization of the dossier, the run writes no page for it (F08-13b)
+       * @description BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds "--"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or "-" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b); OBJECT_BELOW_MIN_CHAPTERS, TERM_BELOW_MIN_CHAPTERS - an object or a term of the dossier found in no chapter; OBJECT_KEY_TAKEN, TERM_KEY_TAKEN - the key belongs to an entity or a candidate of another type (a character of the analysis, a pair of the run, a place of the dossier, for a term also an object of the dossier); OBJECTS_MAX, TERMS_MAX - over 10 objects or terms per run, by chapters then by key; ORGANIZATION_SKIPPED - an organization of the dossier, the run writes no page for it (F08-13b); EVENT_NO_CHAPTER - an event the choice step named without any chapter of the version; EVENT_KEY_TAKEN - the event key belongs to an entity or a candidate of another type; EVENT_KEY_INVALID - no key can be built for the event (from another version or from the name); EVENTS_MAX - over 10 events per run, by chapters then by key (F08-13b-2)
        * @enum {string}
        */
       reason:
@@ -17250,7 +17266,11 @@ export interface components {
         | 'TERM_BELOW_MIN_CHAPTERS'
         | 'TERM_KEY_TAKEN'
         | 'TERMS_MAX'
-        | 'ORGANIZATION_SKIPPED';
+        | 'ORGANIZATION_SKIPPED'
+        | 'EVENT_NO_CHAPTER'
+        | 'EVENT_KEY_TAKEN'
+        | 'EVENT_KEY_INVALID'
+        | 'EVENTS_MAX';
     };
     WorldWriteStateDto: {
       draft: components['schemas']['WorldWriteDto'] | null;
@@ -17275,7 +17295,7 @@ export interface components {
        * @enum {string|null}
        */
       source: 'text' | 'top' | 'none' | null;
-      /** @description 0 - the choice of name forms, then page and external blocks per character, then one step per pair, per place, per object and per term (F08-13b), then per event (none before F08-13b-2) */
+      /** @description 0 - the choice of name forms, then page and external blocks per character, then one step per pair, per place, per object and per term (F08-13b), then per event (F08-13b-2; none for a run started before it) */
       step: number;
       /** @enum {string} */
       verdict: 'ok' | 'flags' | 'failed';
@@ -17299,7 +17319,7 @@ export interface components {
       scenes: components['schemas']['BookWorldSceneDto'][] | null;
       /** @description Checked sources of an external block: «Accept» adds them to the sources of the entity */
       sources: components['schemas']['BookAnalysisSourceDto'][] | null;
-      /** @description short, appearance, character, critique, prototypes, bonds, differences, conclusion, imageBrief; places (F08-12b) - location, significance, description; objects and terms (F08-13b) - significance, description */
+      /** @description short, appearance, character, critique, prototypes, bonds, differences, conclusion, imageBrief; places (F08-12b) - location, significance, description; objects and terms (F08-13b) - significance, description (a term has no description); events (F08-13b-2) - significance; the scenes of a place or an event go in scenes */
       text: string | null;
       /** @description The themeKeys item of an object (F08-13b): keys of the themes of the analysis of this version */
       themeKeys: string[] | null;

@@ -84,7 +84,7 @@ export type WorldBlock = (typeof WORLD_BLOCKS)[number];
 
 /**
  * Виды шага хода (`F08-13b`, решение арбитра `F08 | F08-13b` Q6): после мест - предметы (`object`),
- * затем понятия (`term`), затем события (`event`, их пишет `F08-13b-2`; до неё событий в ходе нет).
+ * затем понятия (`term`), затем события (`event`, `F08-13b-2`: у хода до неё событий нет).
  */
 export const WORLD_STEP_KINDS = [
   'select',
@@ -97,8 +97,8 @@ export const WORLD_STEP_KINDS = [
   'event',
 ] as const;
 export type WorldStepKind = (typeof WORLD_STEP_KINDS)[number];
-/** Виды шага, у которых есть промпт и форма ответа: шага события до `F08-13b-2` нет. */
-export type WorldWrittenStepKind = Exclude<WorldStepKind, 'event'>;
+/** Виды шага, у которых есть промпт и форма ответа: с `F08-13b-2` - все виды шага. */
+export type WorldWrittenStepKind = WorldStepKind;
 
 /** Сколько в ходе героев, пар, мест, предметов, понятий и событий - вход нумерации шагов. */
 export interface WorldStepCounts {
@@ -153,6 +153,11 @@ export function stepAt(step: number, counts: WorldStepCounts): WorldStepPosition
 export interface CandidateMentions {
   chapters: number[];
   perChapter: Record<string, number>;
+  /**
+   * Главы, которые назвал шаг выбора (только у события, `F08-13b-2` Q4): эпизод в них происходит,
+   * даже если формы названия там не стоят. Книга страницы берёт их первыми (`pageBook`).
+   */
+  named?: number[];
 }
 
 /** Роли анализа, из которых ход берёт кандидатов (`F08-4` Q3, `F08-8b`): `minor` в ход не идёт. */
@@ -207,6 +212,11 @@ export interface WorldDossierCandidate {
 export type WorldPlaceCandidate = WorldDossierCandidate;
 /** Кандидат-предмет или кандидат-понятие (`F08-13b`, решение арбитра `F08 | F08-13b` Q1). */
 export type WorldObjectCandidate = WorldDossierCandidate;
+/**
+ * Кандидат-событие (`F08-13b-2`, Q2-Q4): не из досье, а из ответа шага выбора; главы - формы названия
+ * в тексте версии ∪ главы из ответа выбора.
+ */
+export type WorldEventCandidate = WorldDossierCandidate;
 
 /**
  * Почему герой или пара в ход не попали (видно редактору, без платного вызова): второстепенный ниже
@@ -232,6 +242,13 @@ export const WORLD_SKIP_REASONS = [
   'TERM_KEY_TAKEN',
   'TERMS_MAX',
   'ORGANIZATION_SKIPPED',
+  // События (`F08-13b-2`, `F08 | F08-13b` Q2, Q3): ни одной известной главы версии, ключ занят сущностью
+  // или кандидатом другого типа (повтор ключа события в ответе сливается в одно событие, `pickEvents`),
+  // ключ не собрать, за потолком.
+  'EVENT_NO_CHAPTER',
+  'EVENT_KEY_TAKEN',
+  'EVENT_KEY_INVALID',
+  'EVENTS_MAX',
 ] as const;
 export type WorldSkipReason = (typeof WORLD_SKIP_REASONS)[number];
 
@@ -261,6 +278,10 @@ export const WORLD_OBJECTS_OFF_REASONS = ['WORLD_OBJECT_LANGUAGE'] as const;
 export type WorldObjectsOffReason = (typeof WORLD_OBJECTS_OFF_REASONS)[number];
 export const WORLD_TERMS_OFF_REASONS = ['WORLD_TERM_LANGUAGE'] as const;
 export type WorldTermsOffReason = (typeof WORLD_TERMS_OFF_REASONS)[number];
+
+/** Этапа событий нет у хода: язык без эталона события (`F08-13b-2`, Q7). */
+export const WORLD_EVENTS_OFF_REASONS = ['WORLD_EVENT_LANGUAGE'] as const;
+export type WorldEventsOffReason = (typeof WORLD_EVENTS_OFF_REASONS)[number];
 
 /** Код снял элемент ответа или ответ целиком (видно редактору: что и почему). */
 export const WORLD_FIX_CODES = [
@@ -419,6 +440,13 @@ export interface WorldWriteData {
   /** Этапа предметов (понятий) нет и почему; `null` - есть или выбор ещё не прошёл. */
   objectsOff: WorldObjectsOffReason | null;
   termsOff: WorldTermsOffReason | null;
+  /**
+   * Кандидаты-события (`F08-13b-2`, Q2); `null` - выбор ещё не прошёл. Ход, начатый до `F08-13b-2` (поля
+   * нет), читается `[]`: его оценка событий не включала, он кончается на понятиях.
+   */
+  events: WorldEventCandidate[] | null;
+  /** Этапа событий нет и почему; `null` - есть или выбор ещё не прошёл. */
+  eventsOff: WorldEventsOffReason | null;
   /** Отсеянные шагом выбора герои, пары и места с причиной (`F08-8e`, `F08-12b`). */
   leftOut: WorldSkip[];
   /** Этапа пар нет и почему; `null` - есть или выбор ещё не прошёл. */
@@ -446,6 +474,8 @@ export const emptyWorldData = (): WorldWriteData => ({
   terms: null,
   objectsOff: null,
   termsOff: null,
+  events: null,
+  eventsOff: null,
   leftOut: [],
   pairsOff: null,
   mentionsRecounted: false,
@@ -459,39 +489,50 @@ export const emptyWorldData = (): WorldWriteData => ({
 
 /**
  * Тип сущности досье - список хода и список ответа выбора с её формами (имена совпадают): одна таблица
- * «тип → список» (`F08-13b`); событие (`F08-13b-2`) дописывается строкой сюда.
+ * «тип → список» (`F08-13b`). События (`F08-13b-2`) не из досье: их список - `WORLD_RUN_LISTS`.
  */
 export const WORLD_DOSSIER_LISTS = { place: 'places', object: 'objects', term: 'terms' } as const;
 /** Тип сущности мира, которую ход пишет из досье своим шагом страницы. */
 export type WorldDossierType = keyof typeof WORLD_DOSSIER_LISTS;
-/** Типы сущностей досье в порядке шагов хода - по таблице `WORLD_DOSSIER_LISTS`. */
-export const WORLD_DOSSIER_TYPES = Object.keys(WORLD_DOSSIER_LISTS) as WorldDossierType[];
-/** Тип сущности досье, которую ход пишет после мест (предмет, понятие). */
-export type WorldRunObjectType = Exclude<WorldDossierType, 'place'>;
+/** Списки хода по типу сущности с шагом страницы на сущность: досье и события (`F08-13b-2`). */
+export const WORLD_RUN_LISTS = { ...WORLD_DOSSIER_LISTS, event: 'events' } as const;
+/** Тип сущности, чью страницу пишет шаг по списку хода: место, предмет, понятие, событие. */
+export type WorldListType = keyof typeof WORLD_RUN_LISTS;
+/** Типы сущностей со списком хода в порядке шагов - по таблице `WORLD_RUN_LISTS`. */
+export const WORLD_LIST_TYPES = Object.keys(WORLD_RUN_LISTS) as WorldListType[];
+/** Типы шага страницы предмета, понятия и события - одна форма ответа с полями по типу (`objectInput`). */
+export type WorldRunObjectType = Exclude<WorldListType, 'place'>;
+/** Типы `WorldRunObjectType` по порядку шагов хода - из таблицы `WORLD_RUN_LISTS`, а не руками. */
+export const WORLD_RUN_OBJECT_TYPES = WORLD_LIST_TYPES.filter(
+  (t): t is WorldRunObjectType => t !== 'place',
+);
+/** Вид шага - тип предмета, понятия или события (`WORLD_RUN_OBJECT_TYPES`). */
+export const isRunObjectType = (kind: WorldStepKind): kind is WorldRunObjectType =>
+  (WORLD_RUN_OBJECT_TYPES as readonly string[]).includes(kind);
 
-/** Списки хода, по которым считаются шаги; полей предметов и понятий нет - их нет (ход до `F08-13b`). */
+/** Списки хода, по которым считаются шаги; полей предметов, понятий и событий нет - их нет (ход до типа). */
 export type WorldStepLists = Pick<WorldWriteData, 'candidates' | 'pairs' | 'places'> &
-  Partial<Pick<WorldWriteData, 'objects' | 'terms'>>;
+  Partial<Pick<WorldWriteData, 'objects' | 'terms' | 'events'>>;
 
-/** Список хода сущностей досье типа (`WORLD_DOSSIER_LISTS`); поля нет (ход до типа) - `null`. */
+/** Список хода сущностей типа (`WORLD_RUN_LISTS`); поля нет (ход до типа) - `null`. */
 export const dossierListOf = (
-  data: Partial<Pick<WorldWriteData, WorldDossierListName>>,
-  type: WorldDossierType,
-): WorldDossierCandidate[] | null => data[WORLD_DOSSIER_LISTS[type]] ?? null;
-type WorldDossierListName = (typeof WORLD_DOSSIER_LISTS)[WorldDossierType];
+  data: Partial<Pick<WorldWriteData, WorldRunListName>>,
+  type: WorldListType,
+): WorldDossierCandidate[] | null => data[WORLD_RUN_LISTS[type]] ?? null;
+type WorldRunListName = (typeof WORLD_RUN_LISTS)[WorldListType];
 
-/** Число сущностей каждого вида хода (`stepAt`); событий до `F08-13b-2` в ходе нет. */
+/** Число сущностей каждого вида хода (`stepAt`). */
 export const stepCountsOf = (data: WorldStepLists): WorldStepCounts => ({
   heroes: data.candidates?.length ?? 0,
   pairs: data.pairs?.length ?? 0,
   places: data.places?.length ?? 0,
   objects: data.objects?.length ?? 0,
   terms: data.terms?.length ?? 0,
-  events: 0,
+  events: data.events?.length ?? 0,
 });
 
 /**
- * Шагов в ходе: выбор, по два на героя, по одному на пару, место, предмет и понятие; до выбора -
+ * Шагов в ходе: выбор, по два на героя, по одному на пару, место, предмет, понятие и событие; до выбора -
  * неизвестно (`null`).
  */
 export function stepsTotalOf(data: WorldStepLists): number | null {
@@ -513,6 +554,7 @@ export type WorldEntityKind =
   | { type: 'place' }
   | { type: 'object' }
   | { type: 'term' }
+  | { type: 'event' }
   | { type: 'character'; role: WorldCandidateRole | null };
 
 export function entityKindOf(data: WorldStepLists, key: string): WorldEntityKind {
@@ -522,6 +564,8 @@ export function entityKindOf(data: WorldStepLists, key: string): WorldEntityKind
   // Предмет и понятие (`F08-13b`): ключ другого типа отсеян на выборе (`OBJECT_KEY_TAKEN`, `TERM_KEY_TAKEN`).
   if (data.objects?.some((o) => o.key === key)) return { type: 'object' };
   if (data.terms?.some((t) => t.key === key)) return { type: 'term' };
+  // Событие (`F08-13b-2`): по `events`; ключ другого типа отсеян на выборе (`EVENT_KEY_TAKEN`).
+  if (data.events?.some((e) => e.key === key)) return { type: 'event' };
   return { type: 'character', role: data.candidates?.find((c) => c.key === key)?.role ?? null };
 }
 
@@ -613,7 +657,8 @@ function mentionsOf(v: unknown): CandidateMentions {
       if (count !== null) perChapter[k] = count;
     }
   }
-  return { chapters, perChapter };
+  const named = Array.isArray(v.named) ? v.named.flatMap((n) => intOf(n) ?? []) : [];
+  return { chapters, perChapter, ...(named.length > 0 ? { named } : {}) };
 }
 
 function candidatesOf(v: unknown): WorldCandidate[] | null {
@@ -800,6 +845,7 @@ export function readWorldData(data: unknown): WorldWriteData {
   const storedPlaces = dossierCandidatesOf(d.places);
   const storedObjects = dossierCandidatesOf(d.objects);
   const storedTerms = dossierCandidatesOf(d.terms);
+  const storedEvents = dossierCandidatesOf(d.events);
   // Шаг берёт сущность по индексу: выпавшая запись или поле не той формы сдвинули бы шаги на чужую.
   const listBroken = (stored: unknown[] | null, raw: unknown): boolean =>
     (stored !== null && Array.isArray(raw) && stored.length !== raw.length) ||
@@ -814,7 +860,8 @@ export function readWorldData(data: unknown): WorldWriteData {
     (storedPlaces !== null && Array.isArray(d.places) && storedPlaces.length !== d.places.length) ||
     (d.places !== undefined && d.places !== null && storedPlaces === null) ||
     listBroken(storedObjects, d.objects) ||
-    listBroken(storedTerms, d.terms);
+    listBroken(storedTerms, d.terms) ||
+    listBroken(storedEvents, d.events);
   const stepsBroken =
     rawSteps === null ||
     candidatesBroken ||
@@ -834,6 +881,9 @@ export function readWorldData(data: unknown): WorldWriteData {
     terms: storedTerms ?? (d.terms === undefined ? [] : null),
     objectsOff: oneOf(WORLD_OBJECTS_OFF_REASONS, d.objectsOff),
     termsOff: oneOf(WORLD_TERMS_OFF_REASONS, d.termsOff),
+    // Ход до `F08-13b-2`: поля нет - событий нет (`[]`), его шаги кончаются на понятиях.
+    events: storedEvents ?? (d.events === undefined ? [] : null),
+    eventsOff: oneOf(WORLD_EVENTS_OFF_REASONS, d.eventsOff),
     leftOut: leftOutOf(d.leftOut),
     pairsOff: oneOf(WORLD_PAIRS_OFF_REASONS, d.pairsOff),
     mentionsRecounted: d.mentionsRecounted === true,
@@ -856,6 +906,8 @@ export const worldDataJson = (data: WorldWriteData): Prisma.InputJsonValue =>
     terms: data.terms,
     objectsOff: data.objectsOff,
     termsOff: data.termsOff,
+    events: data.events,
+    eventsOff: data.eventsOff,
     leftOut: data.leftOut,
     pairsOff: data.pairsOff,
     mentionsRecounted: data.mentionsRecounted,

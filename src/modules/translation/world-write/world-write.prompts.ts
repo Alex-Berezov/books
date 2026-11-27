@@ -1,5 +1,6 @@
 import { Language } from '@prisma/client';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
+import { worldTypeHasBlock } from '../../book-world/book-world-data';
 import { LlmChatMessage } from '../../llm/openrouter.client';
 import { Shape } from '../dossier/dossier.format';
 import { LANGUAGE_NAMES, shapedRequest, ShapedRequest } from '../dossier/dossier.prompts';
@@ -39,6 +40,23 @@ const SELECT_SHAPE: Shape = {
     // Формы названий предметов и понятий (`F08-13b`): то же правило, что у мест.
     objects: { array: { object: { key: str, name: str, aliases: { array: str } } } },
     terms: { array: { object: { key: str, name: str, aliases: { array: str } } } },
+    // События выбирает модель (`F08-13b-2`): ключ - из KNOWN_EVENTS или "", главы - номера из текста,
+    // originalName - название на языке оригинала, только для латиницы ключа (Q3-1). Форму списка код
+    // не проверяет: при EVENTS_ON = no и на ходе до 13b-2 событий не читают, а ответ без `events`
+    // не стоит платной переделки; при EVENTS_ON = yes `readEvents` разбирает пункт за пунктом.
+    events: {
+      unchecked: {
+        array: {
+          object: {
+            key: str,
+            name: str,
+            originalName: str,
+            aliases: { array: str },
+            chapters: { array: int },
+          },
+        },
+      },
+    },
   },
 };
 
@@ -135,6 +153,20 @@ const TERM_SHAPE: Shape = {
   },
 };
 
+/** Страница события (`F08-13b-2`): «Коротко» без исхода, значение, сцены, цитаты и герои мира (Q5). */
+const EVENT_SHAPE: Shape = {
+  object: {
+    name: str,
+    short: str,
+    significance: str,
+    scenes: { array: { object: { chapter: int, title: str, text: str } } },
+    quotes: {
+      array: { object: { text: str, chapter: int, speakerKey: str, interpretation: str } },
+    },
+    characterKeys: { array: str },
+  },
+};
+
 const REFS = { array: int } as const;
 
 const EXTERNAL_SHAPE: Shape = {
@@ -158,6 +190,7 @@ export const WORLD_STEP_SHAPES: Record<WorldWrittenStepKind, Shape> = {
   place: PLACE_SHAPE,
   object: OBJECT_SHAPE,
   term: TERM_SHAPE,
+  event: EVENT_SHAPE,
 };
 
 export const WORLD_STEP_STAGES: Record<WorldWrittenStepKind, string> = {
@@ -170,6 +203,7 @@ export const WORLD_STEP_STAGES: Record<WorldWrittenStepKind, string> = {
   // Предмет и понятие - тоже этапом страницы (`F08-13b`), каждый своей формой ответа.
   object: WORLD_PAGE_WRITE_STAGE,
   term: WORLD_PAGE_WRITE_STAGE,
+  event: WORLD_PAGE_WRITE_STAGE,
 };
 
 /** Коды проверяющей мира (`product.md` §5): `SHORT_SPOILER` - исход в «Коротко» (Q6). */
@@ -389,7 +423,19 @@ const SELECT_RULES =
   '\nThe same for the objects in OBJECT_CANDIDATES and the terms in TERM_CANDIDATES (none - ' +
   '"objects" [] or "terms" []): key exactly as given; name - the name as in this version; aliases - ' +
   'every form by which the text names it, for ru with the case forms ("топором", "заклада"). No ' +
-  'common words that occur in the text without this object or term. Do not add objects or terms.';
+  'common words that occur in the text without this object or term. Do not add objects or terms.' +
+  '\nEvents (only when EVENTS_ON says yes; otherwise "events" []): list the separate episodes of the ' +
+  'book that deserve a page - one event is one episode that happens in a place and a time (a meeting, ' +
+  'a crime, a trial, a departure), not a theme, not a state, not the whole path of a character and not ' +
+  'a chapter. At most 10, the most important first. For every event: name - a short title of the ' +
+  'episode in the language of this version, it need not stand in the text (for example ' +
+  '"Taking the axe" in English); key - ' +
+  'the key from KNOWN_EVENTS when it is the same event, otherwise ""; the code builds the key itself, ' +
+  'never invent one; originalName - the title of this episode in ORIGINAL_LANGUAGE, the original ' +
+  'language of the book (translate the title when you do not know the original one), "" only when ORIGINAL_LANGUAGE is the ' +
+  'language of this version or is unknown (it is used only to build the key); aliases - the forms by which the text names it, only forms that stand in the ' +
+  'text; chapters - the numbers of the chapters of CHAPTERS_LIST where the episode happens, only ' +
+  'those. An event without a chapter is thrown away.';
 
 function externalRules(language: Language): string {
   return numbered([
@@ -505,8 +551,16 @@ export interface SelectPromptInput {
   /** Кандидаты-предметы и кандидаты-понятия (`F08-13b`): «ключ - название» досье, `none` - нет. */
   objects: string;
   terms: string;
+  /** События других версий книги «ключ - название» (`F08-13b-2`, Q3); `none` - нет. */
+  knownEvents: string;
+  /** `yes` - выбор предлагает события (есть эталон языка и ход не старый), иначе `no`. */
+  eventsOn: 'yes' | 'no';
+  /** Язык оригинала книги словом - для `originalName` событий (Q3-1); `unknown` - не известен. */
+  originalLanguage: string;
   dossierNames: string;
   glossary: string;
+  /** Главы версии (номер - название): из них берутся `chapters` событий (Q2, Q4). */
+  chapterList: string;
   book: string;
   redo: WorldRedo | null;
 }
@@ -515,7 +569,8 @@ export function selectWriteRequest(input: SelectPromptInput): ShapedRequest {
   const system =
     'You prepare the character pages of a book for the site. ' +
     SELECT_RULES +
-    `\nWrite the names in ${LANGUAGE_NAMES[input.language]} as in the text of this version.`;
+    `\nWrite the names in ${LANGUAGE_NAMES[input.language]} as in the text of this version ` +
+    '(the title of an event is the exception above).';
   const items: Array<readonly [string, string]> = [
     ['BOOK_TITLE', input.bookTitle],
     ['AUTHOR', input.author],
@@ -523,8 +578,12 @@ export function selectWriteRequest(input: SelectPromptInput): ShapedRequest {
     ['PLACE_CANDIDATES', input.places],
     ['OBJECT_CANDIDATES', input.objects],
     ['TERM_CANDIDATES', input.terms],
+    ['EVENTS_ON', input.eventsOn],
+    ['KNOWN_EVENTS', input.knownEvents],
+    ['ORIGINAL_LANGUAGE', input.originalLanguage],
     ['DOSSIER_NAMES', input.dossierNames],
     ['GLOSSARY', input.glossary],
+    ['CHAPTERS_LIST', input.chapterList],
     ['BOOK_TEXT', input.book],
   ];
   return shapedRequest(
@@ -541,11 +600,15 @@ export function selectWriteRequest(input: SelectPromptInput): ShapedRequest {
           'the place candidates (key - name in the dossier)',
           'the object candidates (key - name in the dossier)',
           'the term candidates (key - name in the dossier)',
+          'whether to list the events of the book',
+          'the events already known for this book, this version and the others (key - name)',
+          'the language of the original of the book',
           'the names and variants of the dossier',
           'the glossary',
+          'the chapters of this version (number - title)',
           'the text of this version',
         ],
-        'List the name forms of every candidate, every place, object and term candidate.',
+        'List the name forms of every candidate, every place, object and term candidate and, if asked, the events.',
       ),
       input.redo,
     ),
@@ -803,23 +866,37 @@ export function placeWriteRequest(input: PlacePromptInput): ShapedRequest {
 
 /** «Главные правила» страницы предмета и понятия (`F08-13b`, `product.md` §7) по тексту версии. */
 function objectRules(language: Language, type: WorldRunObjectType): string {
-  const what = type === 'object' ? 'object' : 'term';
+  const lead: Record<WorldRunObjectType, string> = {
+    object:
+      'An object of the book, not a retelling: what the thing is, whose it is, where it appears ' +
+      'and what it means for the book. Name a scene only as much as it shows the object. Do not ' +
+      'repeat the analysis, the summary or the character pages.',
+    term:
+      'A term of the book for a reader who meets an unfamiliar word: what it means in this book ' +
+      'and in its time, and why the book needs it. Not a retelling and not an essay.',
+    event:
+      'An event of the book - one episode: when and where it happens, who takes part, what ' +
+      'happens in it and why it matters for the book. Scenes show the episode, they do not retell ' +
+      'the whole chapter. Do not repeat the analysis, the summary or the character pages.',
+  };
+  const short: Record<WorldRunObjectType, string> = {
+    object:
+      '"short" - 2-3 sentences without the ending: what this thing is and who has it. No ' +
+      'outcome, no turn of the last third.',
+    term:
+      '"short" - the glossary definition: 1-2 sentences, what the word means, then whom or what ' +
+      'it concerns in the book. No outcome, no turn of the last third.',
+    event:
+      '"short" - 2-3 sentences: what the episode is and who takes part, up to the moment before ' +
+      'its end. No outcome of the episode, no consequence, no turn of the last third.',
+  };
   return numbered([
-    type === 'object'
-      ? 'An object of the book, not a retelling: what the thing is, whose it is, where it appears ' +
-        'and what it means for the book. Name a scene only as much as it shows the object. Do not ' +
-        'repeat the analysis, the summary or the character pages.'
-      : 'A term of the book for a reader who meets an unfamiliar word: what it means in this book ' +
-        'and in its time, and why the book needs it. Not a retelling and not an essay.',
+    lead[type],
     `Every statement rests on a detail of the text of this version with its chapter number from ` +
-      `the list of chapters; the chapters where the ${what} is are given.`,
-    type === 'object'
-      ? '"short" - 2-3 sentences without the ending: what this thing is and who has it. No ' +
-        'outcome, no turn of the last third.'
-      : '"short" - the glossary definition: 1-2 sentences, what the word means, then whom or what ' +
-        'it concerns in the book. No outcome, no turn of the last third.',
+      `the list of chapters; the chapters where the ${type} is are given.`,
+    short[type],
     'Quotations only word for word from the text of this version given in the data, with the ' +
-      `number of the chapter where the words stand - words that name or show the ${what}. Not ` +
+      `number of the chapter where the words stand - words that name or show the ${type}. Not ` +
       'sure - leave the quotation out. No quotations in quotation marks inside the prose fields.',
     'Do not invent: no dates, history, sources or links beyond the text of this version. Present ' +
       'the disputable as an interpretation ("can be read as…").',
@@ -846,6 +923,20 @@ const OBJECT_FIELDS =
   'analysis the object stands for; another key is thrown away.' +
   '\nA field without reliable data - "" or an empty list.';
 
+const EVENT_FIELDS =
+  'The core - without it there is no page: short, significance and at least 1 scene with its chapter.' +
+  `\nname - a short title of the episode in the language of this version, it need not stand in the ` +
+  `text (at most ${L.name} characters). ` +
+  `short - at most ${L.short} characters, no outcome. significance - what the event means for the ` +
+  `book, a thesis with its chapters, at most ${L.significance}. scenes - 1-${L.scenes} scenes of ` +
+  'this event (chapter - from CHAPTERS_WITH_EVENT or CHAPTERS_LIST, title, text - 1-2 sentences: ' +
+  `what happens). quotes - at most ${L.quotes}, each at most ${L.quote} characters; speakerKey - ` +
+  'the key of the speaker from KEYS, or "" when the narrator speaks; interpretation - 1-3 ' +
+  `sentences: what the line shows about the event. characterKeys - at most ${L.characterKeys} keys ` +
+  'from the WORLD_CHARACTERS block: the characters who take part in the event; another key is ' +
+  'thrown away.' +
+  '\nAn event page has no other fields.\nA field without reliable data - "" or an empty list.';
+
 const TERM_FIELDS =
   'The core - without it there is no page: short.' +
   `\nname - the term as the text of this version writes it (at most ${L.name} characters). short - ` +
@@ -854,6 +945,13 @@ const TERM_FIELDS =
   `most ${L.quote} characters; speakerKey - the key of the speaker from KEYS, or "" when the ` +
   'narrator speaks; interpretation - 1-3 sentences: what the line shows about the term.' +
   '\nA term page has no other fields.\nA field without reliable data - "" or an empty list.';
+
+/** Поля ответа страницы по типу (`objectWriteRequest`, `reviewRules`); форма - `WORLD_STEP_SHAPES`. */
+const OBJECT_PAGE_FIELDS: Record<WorldRunObjectType, string> = {
+  object: OBJECT_FIELDS,
+  term: TERM_FIELDS,
+  event: EVENT_FIELDS,
+};
 
 export interface ObjectPromptInput {
   language: Language;
@@ -879,26 +977,60 @@ export interface ObjectPromptInput {
   redo: WorldRedo | null;
 }
 
+/** Связь страницы типа на входе модели (Q5): поле входа, метка и подпись во вступлении. */
+const OBJECT_LINK_ITEMS = {
+  characters: {
+    block: 'characterKeys',
+    label: 'WORLD_CHARACTERS',
+    value: (input: ObjectPromptInput) => input.worldCharacters,
+    lead: 'the characters of the world of this version (key - name; characterKeys)',
+  },
+  themes: {
+    block: 'themeKeys',
+    label: 'THEMES',
+    value: (input: ObjectPromptInput) => input.themes,
+    lead: 'the themes of the analysis (key - title; themeKeys)',
+  },
+} as const;
+
 /**
- * Страница одного предмета или понятия (`F08-13b`): этап страницы, форма своего типа (`OBJECT_SHAPE`,
- * `TERM_SHAPE`), эталон типа языка; предмету - герои мира и темы анализа с ключами (Q5).
+ * Связи страницы типа - из блоков типа (`worldTypeHasBlock`, `WORLD_BLOCKS_OF_TYPE`, решение
+ * `F08 | F08-13b` R1), а не второй копией: блок связи у типа есть - вход и подпись есть.
+ */
+const objectLinks = (type: WorldRunObjectType) =>
+  Object.values(OBJECT_LINK_ITEMS).filter((link) => worldTypeHasBlock(type, link.block));
+
+/**
+ * Страница одного предмета, понятия или события (`F08-13b`, `F08-13b-2`): этап страницы, форма своего
+ * типа (`WORLD_STEP_SHAPES`), эталон типа языка; связи - по `objectLinks` (Q5).
  */
 export function objectWriteRequest(input: ObjectPromptInput): ShapedRequest {
-  const object = input.type === 'object';
-  const what = object ? 'object' : 'term';
+  const { type } = input;
+  const links = objectLinks(type);
+  const intro: Record<WorldRunObjectType, string> = {
+    object:
+      'You write the page of one object of a book for the site: the reader comes for this ' +
+      'thing - what it is, whose it is, where it appears and why the book needs it.',
+    term:
+      'You write the page of one term of a book for the site: the reader comes for the meaning ' +
+      'of an unfamiliar word of this book.',
+    event:
+      'You write the page of one event of a book for the site: the reader comes for this ' +
+      'episode - what happens in it, who takes part and why the book needs it.',
+  };
   const system =
-    (object
-      ? 'You write the page of one object of a book for the site: the reader comes for this ' +
-        'thing - what it is, whose it is, where it appears and why the book needs it.'
-      : 'You write the page of one term of a book for the site: the reader comes for the meaning ' +
-        'of an unfamiliar word of this book.') +
+    intro[type] +
     ' This is the text for publication, not a draft.\nMain rules (breaking any is a defect):\n' +
     objectRules(input.language, input.type) +
-    `\n${object ? OBJECT_FIELDS : TERM_FIELDS}` +
+    `\n${OBJECT_PAGE_FIELDS[input.type]}` +
     (input.bookIsPartial
-      ? `\nThe whole text with the ${what} does not fit: you get the chapters with the most ` +
-        `mentions of the ${what} and the chapter summaries of the dossier. Quote only the ` +
-        'chapters whose text is given.'
+      ? (input.type === 'event'
+          ? '\nThe whole text with the event does not fit: you get the chapters the choice step ' +
+            'named for the episode, then the chapters with the most mentions of the event, and the ' +
+            'chapter summaries of the dossier. '
+          : `\nThe whole text with the ${type} does not fit: you get the chapters with the most ` +
+            `mentions of the ${type} and the chapter summaries of the dossier. `) +
+        'Quote only the chapters whose text is given.'
       : '') +
     (input.regen ? regenRule(input.regen) : '') +
     '\nBefore answering, check: the core is complete; every quotation is a line of this text word ' +
@@ -906,17 +1038,12 @@ export function objectWriteRequest(input: ObjectPromptInput): ShapedRequest {
   const items: Array<readonly [string, string]> = [
     ['BOOK_TITLE', input.bookTitle],
     ['AUTHOR', input.author],
-    [object ? 'OBJECT' : 'TERM', `${input.key} - ${input.name}`],
+    [type.toUpperCase(), `${input.key} - ${input.name}`],
     ['NAME_FORMS', input.aliases],
     ['CHAPTERS_LIST', input.chapterList],
-    [object ? 'CHAPTERS_WITH_OBJECT' : 'CHAPTERS_WITH_TERM', input.mentionChapters],
+    [`CHAPTERS_WITH_${type.toUpperCase()}`, input.mentionChapters],
     ['KEYS', input.keys],
-    ...(object
-      ? ([
-          ['WORLD_CHARACTERS', input.worldCharacters],
-          ['THEMES', input.themes],
-        ] as const)
-      : []),
+    ...links.map((link) => [link.label, link.value(input)] as const),
     ['ANALYSIS', input.analysis],
     ['GLOSSARY', input.glossary],
     ...regenItems(input.regen),
@@ -926,26 +1053,21 @@ export function objectWriteRequest(input: ObjectPromptInput): ShapedRequest {
   const labels = [
     'The title of the book is',
     'the author',
-    `the ${what} (key - name)`,
-    `the name forms of the ${what}`,
+    `the ${type} (key - name)`,
+    `the name forms of the ${type}`,
     'the chapters of this version (number - title)',
-    `the chapters where the ${what} is (number - mentions)`,
+    `the chapters where the ${type} is (number - mentions)`,
     'the keys to refer to (speakerKey)',
-    ...(object
-      ? [
-          'the characters of the world of this version (key - name; characterKeys)',
-          'the themes of the analysis (key - title; themeKeys)',
-        ]
-      : []),
+    ...links.map((link) => link.lead),
     'the analysis of this book (do not repeat it)',
     'the glossary',
     ...(input.regen ? ['the current content of the block to rewrite', 'the editor remark'] : []),
-    `a sample ${what} page of another book in this language`,
-    `the text of the chapters with the ${what}`,
+    `a sample ${type} page of another book in this language`,
+    `the text of the chapters with the ${type}`,
   ];
   return shapedRequest(
     WORLD_PAGE_WRITE_STAGE,
-    object ? OBJECT_SHAPE : TERM_SHAPE,
+    WORLD_STEP_SHAPES[input.type],
     messages(
       system,
       items,
@@ -1012,6 +1134,7 @@ const REVIEW_STEP: Record<WorldWrittenStepKind, string> = {
   place: 'the page of one place of the book',
   object: 'the page of one object of the book',
   term: 'the page of one term of the book (a glossary entry)',
+  event: 'the page of one event of the book (one episode)',
 };
 
 /** Правила, по которым проверяющая читает ответ шага: свои у каждого вида. */
@@ -1025,9 +1148,9 @@ function reviewRules(kind: WorldWrittenStepKind, language: Language): string {
       return `${placeRules(language)}\n${PLACE_FIELDS}`;
     // Поля по типу (`F08-13b`): у понятия «Коротко» - определение глоссария, других полей нет.
     case 'object':
-      return `${objectRules(language, 'object')}\n${OBJECT_FIELDS}`;
     case 'term':
-      return `${objectRules(language, 'term')}\n${TERM_FIELDS}`;
+    case 'event':
+      return `${objectRules(language, kind)}\n${OBJECT_PAGE_FIELDS[kind]}`;
     case 'select':
       return SELECT_RULES;
     case 'external':
@@ -1042,6 +1165,7 @@ const SPOILER_KINDS: ReadonlySet<WorldWrittenStepKind> = new Set([
   'place',
   'object',
   'term',
+  'event',
 ]);
 
 export interface WorldReviewInput {

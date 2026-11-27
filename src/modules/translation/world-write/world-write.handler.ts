@@ -84,6 +84,8 @@ import {
 import {
   WORLD_ANALYSIS_MISSING,
   WORLD_MENTIONS_MOVED,
+  WORLD_EVENT_KEY_TAKEN,
+  WORLD_EVENT_NOT_FOUND,
   WORLD_OBJECT_KEY_TAKEN,
   WORLD_OBJECT_NOT_FOUND,
   WORLD_PAIR_KEY_TAKEN,
@@ -110,9 +112,14 @@ import {
   WorldBlock,
   WorldCandidate,
   WorldDossierCandidate,
+  WorldDossierType,
   WorldFix,
   WorldRunObjectType,
   WORLD_DOSSIER_LISTS,
+  WorldEventCandidate,
+  WorldEventsOffReason,
+  WorldListType,
+  isRunObjectType,
   dossierListOf,
   WorldItem,
   WorldObjectCandidate,
@@ -171,11 +178,21 @@ import { ChosenCandidates, choosePairs } from './world-write.pairs';
 import { placesToChoose } from './world-write.places';
 import { objectsToChoose, organizationsSkipped } from './world-write.objects';
 import {
+  chaptersExcludedForAllForms,
+  EVENTS_OFF,
+  eventMentions,
+  eventsMode,
+  knownWorldEvents,
+  originalLanguageCode,
+  pickEvents,
+  selectEvents,
+} from './world-write.events';
+import {
   chooseDossierEntities,
+  dossierEntityKeys,
   dossierKeyTaken,
   entriesAfterPairs,
   type WorldDossierChosen,
-  type WorldDossierType,
 } from './world-write.dossier-entities';
 
 /** Задача хода мира: одна задача - один шаг; `index` - перегенерация пункта `index` своей операцией. */
@@ -347,6 +364,9 @@ interface StepRecord {
   terms?: WorldObjectCandidate[];
   objectsOff?: WorldObjectsOffReason | null;
   termsOff?: WorldTermsOffReason | null;
+  /** Итог выбора событий (`F08-13b-2`): события хода и причина хода без событий. */
+  events?: WorldEventCandidate[];
+  eventsOff?: WorldEventsOffReason | null;
   droppedQuotes: DroppedWorldQuote[];
   droppedSources: DroppedWorldSource[];
 }
@@ -449,6 +469,8 @@ function withStep(data: WorldWriteData, record: StepRecord): WorldWriteData {
     terms: record.terms ?? data.terms,
     objectsOff: record.objectsOff === undefined ? data.objectsOff : record.objectsOff,
     termsOff: record.termsOff === undefined ? data.termsOff : record.termsOff,
+    events: record.events ?? data.events,
+    eventsOff: record.eventsOff === undefined ? data.eventsOff : record.eventsOff,
     steps: [...data.steps, record.step],
     items: [...data.items, ...record.items],
     droppedQuotes: [...data.droppedQuotes, ...record.droppedQuotes],
@@ -457,11 +479,17 @@ function withStep(data: WorldWriteData, record: StepRecord): WorldWriteData {
   };
 }
 
-/** Отказы шага страницы досье без платного вызова - свои коды у типа (`dossierPageStep`). */
-const DOSSIER_REFUSALS: Record<WorldDossierType, { taken: string; notFound: string }> = {
+/**
+ * Отказы шага страницы без платного вызова - свои коды у типа (`dossierPageStep`). Это коды шага
+ * (`WORLD_*_KEY_TAKEN`, `WORLD_*_NOT_FOUND`), а не отсева на выборе: тот живёт в `RULES`
+ * (`world-write.dossier-entities.ts`, `*_KEY_TAKEN`/`*_BELOW_MIN_CHAPTERS`) и у событий - в
+ * `world-write.events.ts`; две таблицы называют разное и не сводятся в одну.
+ */
+const PAGE_REFUSALS: Record<WorldListType, { taken: string; notFound: string }> = {
   place: { taken: WORLD_PLACE_KEY_TAKEN, notFound: WORLD_PLACE_NOT_FOUND },
   object: { taken: WORLD_OBJECT_KEY_TAKEN, notFound: WORLD_OBJECT_NOT_FOUND },
   term: { taken: WORLD_TERM_KEY_TAKEN, notFound: WORLD_TERM_NOT_FOUND },
+  event: { taken: WORLD_EVENT_KEY_TAKEN, notFound: WORLD_EVENT_NOT_FOUND },
 };
 
 /** Контекст шага хода - общий у шагов, которым нужен цикл качества. */
@@ -477,7 +505,7 @@ interface WorldStepRun {
 
 /** Своё у типа в шаге страницы досье (`dossierPageStep`): сущность, коды отказа, вход и итог. */
 interface DossierPageStepSpec<T> {
-  kind: WorldDossierType;
+  kind: WorldListType;
   entry: WorldDossierCandidate | undefined;
   refusals: { taken: string; notFound: string };
   input: (
@@ -605,7 +633,8 @@ export class WorldWriteHandler {
     const step = data.steps.length;
     const total = stepsTotalOf(data);
     if (total !== null && step >= total) return finishRun(this.tasks, row);
-    const context = await this.contextOf(row, dossier);
+    // Шаг 0 - выбор: только ему нужны известные события (подсказка ключа, `eventChoice`).
+    const context = await this.contextOf(row, dossier, step === 0);
     if (step === 0 && runMainCharacters(context).length === 0) {
       return failRun(this.tasks, row, WORLD_ANALYSIS_MISSING);
     }
@@ -651,14 +680,6 @@ export class WorldWriteHandler {
         ...empty,
       };
     }
-    // Шаг события (`F08-13b-2`): до неё событий в ходе ноль - данные хода не те, как у шага без кандидата.
-    if (position.kind === 'event') {
-      return {
-        step: failedStep(step, 'event', null, DRAFT_DATA_INVALID, null),
-        items: [],
-        ...empty,
-      };
-    }
     const { kind, candidate: at } = position;
     // Индекс глав - только выбору и странице: внешний шаг текста книги не читает.
     const quotes = () => chapterIndexOf(context);
@@ -684,6 +705,8 @@ export class WorldWriteHandler {
         new Set((context.analysis.characters ?? []).map((c) => c.key)),
       );
       const index = quotes();
+      // События (`F08-13b-2`): выбор предлагает их сам, кроме старого хода и языка без эталона (Q7).
+      const eventMode = eventsMode(context.language, data.events);
       const make = (count: number) =>
         selectInput(
           context,
@@ -697,6 +720,10 @@ export class WorldWriteHandler {
             places: placeBase.places,
             objects: objectBase.objects.free,
             terms: objectBase.terms.free,
+            events: {
+              on: eventMode === 'on',
+              known: eventMode === 'on' ? context.knownEvents : [],
+            },
           },
         );
       // Весь текст сначала; не влез - наибольший префикс глав, как у страницы.
@@ -733,6 +760,14 @@ export class WorldWriteHandler {
       );
       const objectChoice = await choose('object', objectBase.objects, data.objects);
       const termChoice = await choose('term', objectBase.terms, data.terms);
+      const eventChoice = await this.eventChoice(
+        row.bookVersionId,
+        context,
+        eventMode,
+        data.events,
+        answer,
+        pairKeys,
+      );
       const stepRecord =
         input === null
           ? failedStep(step, kind, null, DRAFT_TOO_LONG, null)
@@ -750,11 +785,14 @@ export class WorldWriteHandler {
         objectsOff: objectChoice.off,
         terms: termChoice.list,
         termsOff: termChoice.off,
+        events: eventChoice.list,
+        eventsOff: eventChoice.off,
         leftOut: [
           ...choice.leftOut,
           ...placeChoice.leftOut,
           ...objectChoice.leftOut,
           ...termChoice.leftOut,
+          ...eventChoice.leftOut,
           ...organizationsSkipped(objectBase.organizations),
         ],
         ...empty,
@@ -765,24 +803,24 @@ export class WorldWriteHandler {
       return this.pairStep(row, gate, step, at ?? -1, context, data, pending, ctx, regen);
     }
 
-    // Места, предметы и понятия - один шаг страницы досье со своим входом и итогом (R1).
+    // Места, предметы, понятия и события - один шаг страницы со своим входом и итогом (R1).
     const run = { row, gate, step, context, pending, ctx, regen };
     if (kind === 'place') {
       return this.dossierPageStep(run, {
         kind,
         entry: dossierListOf(data, kind)?.[at ?? -1],
-        refusals: DOSSIER_REFUSALS[kind],
+        refusals: PAGE_REFUSALS[kind],
         input: (entry, index, top) =>
           placeInput(context, entry, index, pageBook(context, entry, top), regen?.spec ?? null),
         record: (entry, result, source) => placeRecord(step, entry, result, source, regen !== null),
       });
     }
 
-    if (kind === 'object' || kind === 'term') {
+    if (isRunObjectType(kind)) {
       return this.dossierPageStep(run, {
         kind,
         entry: dossierListOf(data, kind)?.[at ?? -1],
-        refusals: DOSSIER_REFUSALS[kind],
+        refusals: PAGE_REFUSALS[kind],
         input: (entry, index, top) =>
           objectInput(
             context,
@@ -1045,11 +1083,12 @@ export class WorldWriteHandler {
   }
 
   /**
-   * Шаг страницы сущности досье - места (`F08-12b`), предмета или понятия (`F08-13b`), одно правило
-   * (решение арбитра `F08 | F08-13b` R1): страница этапом страницы по главам, где формы названия нашли
-   * сущность (не влезло - главы с наибольшим числом упоминаний и краткое содержание глав досье). Без
-   * платного вызова: ключ заняли сущностью другого типа после выбора (`refusals.taken`), формы не нашли
-   * сущность ни в одной главе (`refusals.notFound`). Вход и итог - свои у типа (`spec`).
+   * Шаг страницы сущности со списком хода - места (`F08-12b`), предмета или понятия (`F08-13b`) из
+   * досье и события из ответа выбора (`F08-13b-2`), одно правило (решение арбитра `F08 | F08-13b` R1):
+   * страница этапом страницы по главам сущности (не влезло - сначала главы, названные выбором, затем
+   * с наибольшим числом упоминаний, и краткое содержание глав досье, `pageBook`). Без платного вызова:
+   * ключ заняли сущностью другого типа после выбора (`refusals.taken`), у сущности нет ни одной главы
+   * (`refusals.notFound`). Вход и итог - свои у типа (`spec`).
    */
   private async dossierPageStep<T>(
     run: WorldStepRun,
@@ -1098,8 +1137,12 @@ export class WorldWriteHandler {
   ): Promise<{
     entries: Array<T & { name: string; aliases: string[]; mentions: CandidateMentions }>;
     coPresence: ReadonlyMap<string, Record<string, number[]>>;
+    /** Главы, исключённые редактором у форм сохранённой сущности ключа (`F08-8a`). */
+    excludedChapters: ReadonlyMap<string, number[]>;
   }> {
-    if (base.length === 0) return { entries: [], coPresence: new Map() };
+    if (base.length === 0) {
+      return { entries: [], coPresence: new Map(), excludedChapters: new Map() };
+    }
     const exclusions = await this.prisma.bookWorldEntity.findMany({
       where: { bookVersionId, key: { in: base.map((e) => e.key) } },
       select: { key: true, aliasExclusions: true, aliasChapterExclusions: true },
@@ -1135,6 +1178,86 @@ export class WorldWriteHandler {
         };
       }),
       coPresence: new Map(named.map((n) => [n.key, counted.get(n.key)?.coPresence ?? {}])),
+      // Исключения ставил редактор у сохранённой сущности - и формы берутся её, а не новое название из
+      // ответа выбора: его в тексте обычно нет, исключений у него нет, и пересечение было бы пустым.
+      excludedChapters: new Map(
+        named.map((n) => {
+          const stored = context.entities.get(n.key);
+          return [
+            n.key,
+            chaptersExcludedForAllForms({
+              key: n.key,
+              name: stored?.name ?? null,
+              aliases: stored?.aliases ?? [],
+              aliasExclusions: n.exclusions,
+              aliasChapterExclusions: n.chapterExclusions,
+            }),
+          ];
+        }),
+      ),
+    };
+  }
+
+  /**
+   * События после выбора (`F08-13b-2`, решения арбитра `F08 | F08-13b` Q2-Q4, Q7): кандидатов даёт
+   * ответ выбора, не досье. Ключ - `pickEvents` (ключ мира другой версии или латиница; занятый ключ -
+   * `EVENT_KEY_TAKEN` до платного шага); формы - ответа выбора и сохранённой сущности; главы - формы
+   * названия в тексте ∪ главы ответа (`eventMentions`); без главы - отсечено, потолок - `selectEvents`.
+   * Старый ход - прежний список; язык без эталона - пусто и причина выключения.
+   */
+  private async eventChoice(
+    bookVersionId: string,
+    context: WorldContext,
+    mode: ReturnType<typeof eventsMode>,
+    previous: WorldEventCandidate[] | null,
+    answer: WorldSelectDraft | null,
+    pairKeys: ReadonlySet<string>,
+  ): Promise<{
+    list: WorldEventCandidate[];
+    leftOut: WorldSkip[];
+    off: WorldEventsOffReason | null;
+  }> {
+    if (mode === 'old') return { list: previous ?? [], leftOut: [], off: null };
+    if (mode === 'language') return { list: [], leftOut: [], off: EVENTS_OFF };
+    // Ключи героев анализа, сущностей досье любого вида и пар хода: событие на них не садится.
+    const taken = new Set<string>([
+      ...(context.analysis.characters ?? []).map((c) => c.key),
+      ...dossierEntityKeys(context.dossier),
+      ...pairKeys,
+    ]);
+    // Латиница по названию оригинала - только на переводе (Q3-1): на исходнике это название версии.
+    const picked = pickEvents(
+      answer?.events ?? [],
+      new Set(context.knownEvents.map((e) => e.key)),
+      taken,
+      context.entities,
+      context.language !== originalLanguageCode(context.originalLanguage),
+    );
+    const answered = new Map(picked.free.map((e) => [e.key, e]));
+    const { entries, excludedChapters } = await this.countedOf(
+      bookVersionId,
+      context,
+      picked.free,
+      (key) => answered.get(key),
+      () => [],
+    );
+    // Главы ответа - только версии: черновик выбора мог быть сохранён и прочитан не этим кодом.
+    const inVersion = new Set(context.chapters.map((c) => c.number));
+    const counted = entries.map((e) => ({
+      key: e.key,
+      name: e.name,
+      aliases: e.aliases,
+      mentions: eventMentions(
+        e.mentions,
+        (answered.get(e.key)?.chapters ?? []).filter((n) => inVersion.has(n)),
+        excludedChapters.get(e.key) ?? [],
+      ),
+    }));
+    const selection = selectEvents(counted);
+    return {
+      list: selection.list,
+      leftOut: [...picked.leftOut, ...selection.skipped],
+      off: null,
     };
   }
 
@@ -1360,8 +1483,11 @@ export class WorldWriteHandler {
     return { kind: 'done' };
   }
 
-  /** Версия, глоссарий, главы, анализ версии, сущности мира и названия всех версий книги. */
-  async contextOf(row: ContentDraft, dossier: unknown): Promise<WorldContext> {
+  /**
+   * Версия, глоссарий, главы, анализ версии, сущности мира и названия всех версий книги; известные
+   * события (`knownWorldEvents`) - только с `withEvents`: их читает один шаг выбора (/qa круг 2 13b-2).
+   */
+  async contextOf(row: ContentDraft, dossier: unknown, withEvents = false): Promise<WorldContext> {
     const [version, glossary, chapters, analysis, entities, versions] = await Promise.all([
       this.prisma.bookVersion.findUnique({
         where: { id: row.bookVersionId },
@@ -1391,6 +1517,10 @@ export class WorldWriteHandler {
       }),
     ]);
     if (!version) throw new NotFoundException('Book version not found');
+    // Известные события - подсказка ключа выбору (`F08-13b-2`, Q3, Q3-2): своя версия, исходник, прочие.
+    const knownEvents = withEvents
+      ? await knownWorldEvents(this.prisma, row.bookVersionId, version.originalLanguage ?? '')
+      : [];
     return {
       language: row.language,
       dossier,
@@ -1409,6 +1539,7 @@ export class WorldWriteHandler {
           (a) => a !== '',
         ),
       },
+      knownEvents,
     };
   }
 }

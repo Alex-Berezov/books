@@ -17,6 +17,7 @@ import {
 import type {
   WorldDossierCandidate,
   WorldDossierType,
+  WorldListType,
   WorldObjectsOffReason,
   WorldPlacesOffReason,
   WorldSkip,
@@ -29,10 +30,11 @@ import type {
  * отбора с правилами типа (`RULES`, решение арбитра `F08 | F08-13b` R1). Кандидат - сущность досье
  * своего вида с ключом досье как есть; ключ, занятый сущностью или кандидатом другого типа, - отсеян
  * с `*_KEY_TAKEN`; после подсчёта присутствия - порог глав и потолок своего типа. Новый тип шага досье
- * добавляет строку в `RULES`, а не копию функций (`folder-structure.md`, world-write).
+ * добавляет строку в `RULES`, а не копию функций (`folder-structure.md`, world-write). События
+ * (`F08-13b-2`) не сущности досье - их отбор в `world-write.events.ts`. Коды отказа шага страницы
+ * без вызова (`WORLD_*_KEY_TAKEN`, `WORLD_*_NOT_FOUND`) - `PAGE_REFUSALS` обработчика, не `RULES`:
+ * `RULES` называет причины отсева на выборе.
  */
-
-export type { WorldDossierType, WorldRunObjectType } from './world-write.data';
 
 /** Сущность досье до подсчёта присутствия: ключ и название досье. */
 export interface WorldDossierEntry {
@@ -115,11 +117,28 @@ export function dossierEntitiesOf(
   return out;
 }
 
+/** Все виды сущностей досье: новый вид в `DossierEntityDto['kind']` без строки здесь не соберётся. */
+const DOSSIER_KINDS: Record<DossierEntityDto['kind'], true> = {
+  place: true,
+  object: true,
+  organization: true,
+  term: true,
+};
+
+/**
+ * Ключи сущностей досье всех видов - то, на что не садится ключ события (`F08-13b-2`): одно место
+ * перечня видов, а не список руками у вызывающего.
+ */
+export const dossierEntityKeys = (dossier: unknown): string[] =>
+  (Object.keys(DOSSIER_KINDS) as Array<DossierEntityDto['kind']>).flatMap((kind) =>
+    dossierEntitiesOf(dossier, kind).map((e) => e.key),
+  );
+
 /**
  * Ключ сущности типа занят сохранённой сущностью другого типа: одно правило на выбор
  * (`runDossierEntities`) и на шаг (`*_KEY_TAKEN` без платного вызова), как `pairKeyTaken` у пар.
  */
-export const dossierKeyTaken = (type: WorldDossierType, storedType: string | undefined): boolean =>
+export const dossierKeyTaken = (type: WorldListType, storedType: string | undefined): boolean =>
   storedType !== undefined && storedType !== type;
 
 /**
@@ -131,9 +150,20 @@ export function dossierTypeMode(
   language: string,
   type: WorldDossierType,
   previous: WorldDossierCandidate[] | null,
-): 'old' | 'language' | 'on' {
+): WorldTypeMode {
+  return runTypeMode(previous, RULES[type].hasExample(language));
+}
+
+/** Режим типа на шаге выбора: `old` - ход до типа, `language` - язык без эталона, `on` - выбирается. */
+export type WorldTypeMode = 'old' | 'language' | 'on';
+
+/**
+ * Одно условие режима на все типы со списком хода - сущности досье (`dossierTypeMode`) и события
+ * (`eventsMode`): прежний список (не `null`) - `old`, иначе по эталону языка.
+ */
+export function runTypeMode(previous: unknown[] | null, hasExample: boolean): WorldTypeMode {
   if (previous !== null) return 'old';
-  return RULES[type].hasExample(language) ? 'on' : 'language';
+  return hasExample ? 'on' : 'language';
 }
 
 /** Сущности досье типа, которые ход может взять (`free`), и на занятом ключе (`taken`). */
@@ -175,8 +205,17 @@ export function entriesAfterPairs(
   };
 }
 
-const byKey = (x: { key: string }, y: { key: string }): number =>
+/** Порядок по ключу - одно сравнение на отбор досье и событий. */
+export const byKey = (x: { key: string }, y: { key: string }): number =>
   x.key < y.key ? -1 : x.key > y.key ? 1 : 0;
+
+/** Порог и потолок отбора по главам с причинами отсева - строка `RULES` или правило событий. */
+export interface WorldChapterRules {
+  min: number;
+  max: number;
+  below: WorldSkipReason;
+  over: WorldSkipReason;
+}
 
 /**
  * Сущности типа после подсчёта присутствия: ниже порога глав - `*_BELOW_MIN_CHAPTERS`; остальные по
@@ -186,8 +225,18 @@ export function selectDossierEntities(
   type: WorldDossierType,
   counted: readonly WorldDossierCandidate[],
 ): { list: WorldDossierCandidate[]; skipped: WorldSkip[] } {
-  const rules = RULES[type];
-  const skip = (o: WorldDossierCandidate, reason: WorldSkipReason): WorldSkip => ({
+  return selectByChapters(counted, RULES[type]);
+}
+
+/**
+ * Отбор по главам - одна реализация на сущности досье и события (`F08-13b-2`): ниже порога -
+ * `rules.below`, остальные по убыванию глав, при равенстве - по ключу, сверх потолка - `rules.over`.
+ */
+export function selectByChapters<T extends WorldDossierCandidate>(
+  counted: readonly T[],
+  rules: WorldChapterRules,
+): { list: T[]; skipped: WorldSkip[] } {
+  const skip = (o: T, reason: WorldSkipReason): WorldSkip => ({
     key: o.key,
     reason,
     names: [o.name],

@@ -1,0 +1,33 @@
+{
+  "language": "es",
+  "entities": [
+    {
+      "key": "taking-the-axe",
+      "type": "event",
+      "name": "La toma del hacha",
+      "short": "El día elegido, Raskólnikov baja a la cocina de la patrona por el hacha con la que contaba. Nastasia está en la cocina, y todo el plan pende de un hilo.",
+      "significance": "El episodio puede leerse como el momento en que el plan se encuentra con la realidad. Durante un mes el acto existió solo en el pensamiento; en el capítulo 6 todo depende de una nimiedad: dónde conseguir la herramienta y cómo llevarla. Raskólnikov contaba con una cocina vacía, y cuando Nastasia está allí, todo el plan parece venirse abajo.\n\nLa salida llega por azar, y eso es lo que muestra el episodio: no llega al hacha por cálculo. Toma la suerte por una señal, y el lector ve cuánto de la «idea» está hecho de coincidencias que Raskólnikov decide leer como destino.",
+      "scenes": [
+        {
+          "chapter": 6,
+          "title": "La cocina no está vacía",
+          "text": "Raskólnikov baja a la cocina de la patrona para coger el hacha. Nastasia está en la cocina, y su cálculo se derrumba en un instante."
+        },
+        {
+          "chapter": 6,
+          "title": "El cuarto del portero",
+          "text": "Al salir mira en el cuarto del portero y ve un hacha bajo el banco, entre dos leños. La coge, la esconde bajo el abrigo y sale a la calle."
+        }
+      ],
+      "quotes": [
+        {
+          "text": "«¡Si no es la razón, será el demonio!», pensó, sonriendo de un modo extraño.",
+          "chapter": 6,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskólnikov encuentra el hacha por casualidad cuando el plan de la cocina ha fracasado. Explica la suerte no por la razón sino por el demonio, y la sonrisa muestra que él mismo siente algo torcido en ello."
+        }
+      ],
+      "characterKeys": ["raskolnikov"]
+    }
+  ]
+}

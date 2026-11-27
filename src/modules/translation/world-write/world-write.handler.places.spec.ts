@@ -42,6 +42,7 @@ const context = (entities = new Map<string, { type: string; description?: string
   ],
   analysis: { characters: [{ key: 'anna', name: 'Anna', role: 'main' }] },
   names: { titles: ['B'], authors: ['A'] },
+  knownEvents: [],
 });
 
 describe('WorldWriteHandler: places at the choice step (F08-12b, Q1)', () => {

@@ -3,6 +3,9 @@ import { ConflictException } from '@nestjs/common';
 import { worldHero, worldPairContext } from './world-write.spec-fixtures';
 import { WorldGeoPass } from '../../book-world/world-geo.service';
 import { emptyWorldData, worldDataJson } from './world-write.data';
+import * as examples from './examples';
+import { upperKnownEvents } from './world-estimate';
+import * as steps from './world-write.steps';
 import { WorldWriteService } from './world-write.service';
 import { objectInput, pageBook, placeInput, worldStepUsd } from './world-write.steps';
 
@@ -151,6 +154,64 @@ describe('WorldWriteService: the regeneration estimate of a pair (F08-8e-4 Q1-bi
     expect(sent).toContain('WORLD_CHARACTERS');
     expect(sent).not.toContain('Anna maps the road.');
   });
+
+  // /qa круг 2 F08-13b-2 (books-tests): перегенерация пункта события - шаг события своей формой.
+  it('an event item: the estimate is the event step on the chapters of the event', async () => {
+    const estimate = jest.fn(
+      (request: unknown) => new Prisma.Decimal(JSON.stringify(request).length),
+    );
+    const est = { enabled: true, maxTokens: 0, contextLength: null, estimate };
+    const service = new WorldWriteService(
+      { bookDossier: { findUnique: jest.fn().mockResolvedValue({ data: {} }) } } as never,
+      { stageCallEstimator: jest.fn().mockResolvedValue(est) } as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      { contextOf: jest.fn().mockResolvedValue(context) } as never,
+    );
+    const ringing = {
+      key: 'the-ringing',
+      name: 'The ringing',
+      aliases: [],
+      mentions: { chapters: [2], perChapter: {}, named: [2] },
+    };
+    const data = {
+      ...emptyWorldData(),
+      candidates: [worldHero('anna', [1])],
+      pairs: [],
+      places: [],
+      objects: [],
+      terms: [],
+      events: [ringing],
+    };
+    const usd = await (
+      service as unknown as { regenUsd: (...a: unknown[]) => Promise<Prisma.Decimal> }
+    ).regenUsd(
+      { id: 'd1', dossierId: 'dos1' },
+      data,
+      { key: 'the-ringing', block: 'scenes', value: null, step: 3 },
+      null,
+    );
+    const expected = worldStepUsd(
+      est,
+      est,
+      objectInput(
+        context as never,
+        'event',
+        ringing,
+        new Map(),
+        pageBook(context as never, ringing, null),
+        { block: 'scenes', current: null, remark: null },
+      ),
+      0,
+    );
+    expect(usd.toString()).toBe(expected.toString());
+    const sent = JSON.stringify(estimate.mock.calls.slice(0, 2) as unknown[]);
+    expect(sent).toContain('Boris rings the bell.');
+    expect(sent).toContain('CHAPTERS_WITH_EVENT');
+    expect(sent).not.toContain('Anna maps the road.');
+  });
 });
 
 describe('WorldWriteService: a language without a sample (F08-9 Q2)', () => {
@@ -190,7 +251,11 @@ describe('WorldWriteService: a hero on a key taken by a place (F08-12a, review r
     characters: { key: string; name: string; role: string }[],
     dossier: unknown = {},
   ) => {
-    const findMany = jest.fn().mockResolvedValue([{ key: 'paris', type: 'place' }]);
+    // Известные события (`knownWorldEvents`) - свои запросы с `type: 'event'`: здесь их нет.
+    const findMany = jest.fn((args: { where: { type?: string } }) =>
+      Promise.resolve(args.where.type === 'event' ? [] : [{ key: 'paris', type: 'place' }]),
+    );
+    const groupBy = jest.fn().mockResolvedValue([]);
     const estimate = jest.fn().mockReturnValue(new Prisma.Decimal(1));
     const chapters = jest
       .fn()
@@ -204,7 +269,7 @@ describe('WorldWriteService: a hero on a key taken by a place (F08-12a, review r
             .mockResolvedValue({ language: 'en', title: 'T', author: 'A', originalLanguage: null }),
         },
         bookAnalysis: { findUnique: jest.fn().mockResolvedValue({ characters }) },
-        bookWorldEntity: { findMany },
+        bookWorldEntity: { findMany, groupBy },
         chapter: { findMany: chapters },
       } as never,
       {
@@ -226,7 +291,7 @@ describe('WorldWriteService: a hero on a key taken by a place (F08-12a, review r
       {} as never,
       {} as never,
     );
-    return { service, findMany };
+    return { service, findMany, groupBy };
   };
 
   it('the only main hero sits on a place key: estimate and start refuse with 409 WORLD_ANALYSIS_MISSING', async () => {
@@ -258,7 +323,39 @@ describe('WorldWriteService: a hero on a key taken by a place (F08-12a, review r
     ]);
     const dto = await service.estimate('v1');
     expect(dto.candidates).toBe(1);
+    // Сущности на ключах героев - один запрос; известные события в оценке - подставкой в пределе
+    // (`upperKnownEvents`, Q9, /qa круг 3 13b-2), не запросом: к шагу выбора их может стать больше.
     expect(findMany).toHaveBeenCalledTimes(1);
+  });
+
+  // /qa круг 3 13b-2 (code-review): верхняя оценка выбора - с известными событиями в пределе запроса.
+  it('the estimate prices the choice with the upper bound of known events (Q9)', async () => {
+    const pipeline = jest.spyOn(steps, 'worldPipelineUsd');
+    try {
+      const { service, groupBy } = setup([{ key: 'anna', name: 'Anna', role: 'main' }]);
+      await service.estimate('v1');
+      expect(pipeline).toHaveBeenCalledTimes(1);
+      expect(pipeline.mock.calls[0][1].knownEvents).toEqual(upperKnownEvents());
+      expect(groupBy).not.toHaveBeenCalled();
+    } finally {
+      pipeline.mockRestore();
+    }
+  });
+
+  // /qa круг 2 13b-2 (books-tests): язык без эталона события - событий в оценке нет, запроса тоже.
+  it('a language without an event sample: no known events query, events = 0', async () => {
+    const spy = jest
+      .spyOn(examples, 'hasWorldObjectExample')
+      .mockImplementation((_language: string, type: string) => type !== 'event');
+    try {
+      const { service, findMany, groupBy } = setup([{ key: 'anna', name: 'Anna', role: 'main' }]);
+      const dto = await service.estimate('v1');
+      expect(dto.events).toBe(0);
+      expect(findMany).toHaveBeenCalledTimes(1);
+      expect(groupBy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   // F08-12b: места досье в оценке - сверху (до порога глав), на языке с эталоном места.

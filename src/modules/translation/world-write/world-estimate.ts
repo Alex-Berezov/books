@@ -1,18 +1,21 @@
 import { Language, Prisma } from '@prisma/client';
 import { EMPTY_BOOK_ANALYSIS, StoredBookAnalysis } from '../../book-analysis/book-analysis-data';
 import { BOOK_ANALYSIS_LIMITS } from '../../book-analysis/dto/book-analysis-blocks.dto';
+import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { LlmService } from '../../llm/llm.service';
 import { withChapterText } from '../content-draft/content-draft.text';
 import { stageEstimatorFor } from '../llm-model-checks';
 import { SectionUpperSource } from '../run/section-upper-source';
 import { hasWorldPairExample } from './examples';
 import { dossierStepsUpperBound } from './world-write.dossier-entities';
+import { eventStepsUpperBound, type KnownWorldEvent } from './world-write.events';
 import { placeStepsUpperBound } from './world-write.places';
 import {
   WORLD_EXTERNAL_WRITE_STAGE,
   WORLD_PAGE_WRITE_STAGE,
   WORLD_PAIR_WRITE_STAGE,
   WORLD_REVIEW_STAGE,
+  WORLD_EVENT_KEY_MAX,
   WORLD_SELECT_STAGE,
 } from './world-write.constants';
 import { pairStepsUpperBound, WorldEstimators, worldPipelineUsd } from './world-write.steps';
@@ -41,6 +44,18 @@ export function upperWorldAnalysis(): StoredBookAnalysis {
     role: 'main' as const,
   }));
   return { ...EMPTY_BOOK_ANALYSIS, characters };
+}
+
+/**
+ * События других версий - подставка оценки запуска (`F08-13b-2`, Q9): мира версий до старта не знаем -
+ * столько, сколько отдаёт запрос хода (`knownWorldEvents`, предел `BOOK_WORLD_LIMITS.entities`),
+ * ключ и название в пределе: верхняя граница входа выбора не занижает цену.
+ */
+export function upperKnownEvents(): KnownWorldEvent[] {
+  return Array.from({ length: BOOK_WORLD_LIMITS.entities }, (_, i) => ({
+    key: `event-${i + 1}-`.padEnd(WORLD_EVENT_KEY_MAX, 'x'),
+    name: `Event ${i + 1} `.padEnd(BOOK_WORLD_LIMITS.name, 'x'),
+  }));
 }
 
 /**
@@ -74,6 +89,7 @@ export async function worldUpperUsd(
         analysis,
         entities: new Map(),
         names: { titles: [source.title], authors: [source.author] },
+        knownEvents: eventStepsUpperBound(language) > 0 ? upperKnownEvents() : [],
       };
       return [
         language,
@@ -88,6 +104,8 @@ export async function worldUpperUsd(
             // Предметы и понятия (`F08-13b`, Q9): так же - потолок своего типа на языке с его эталоном.
             objects: dossierStepsUpperBound(null, language, 'object'),
             terms: dossierStepsUpperBound(null, language, 'term'),
+            // События (`F08-13b-2`, Q9): потолок на языке с эталоном события.
+            events: eventStepsUpperBound(language),
           },
           context,
         ),

@@ -17,6 +17,7 @@ import { httpServerOf } from './http-server';
 import { cleanupBookWithRights, createBookWithRights } from './helpers/book-with-rights';
 import { llmCallName } from './helpers/llm-call-name';
 import { grantStaffRoles } from './helpers/staff-roles';
+import { knownWorldEvents } from '../src/modules/translation/world-write/world-write.events';
 
 /**
  * F08-4a: ход «Write World» на подменённом OpenRouter - герои `main` анализа версии (ключи - из
@@ -127,6 +128,8 @@ describe('World run «Write World» (e2e)', () => {
     // С F08-13b - и предметы с понятиями; в досье по умолчанию их нет.
     objects: [],
     terms: [],
+    // С F08-13b-2 - и события, которые выбор предлагает сам; по умолчанию их нет.
+    events: [],
   };
   const quote = (text: string, chapter: number, speakerKey = '') => ({
     text,
@@ -667,6 +670,60 @@ describe('World run «Write World» (e2e)', () => {
     expect(await entityOf(versionId, 'council')).toBeNull();
   });
 
+  // F08-13b-2 (решения арбитра `F08 | F08-13b` Q2-Q5): событие предлагает выбор, ключ - латиница, шаг - после пар.
+  it('F08-13b-2: an event named by the choice step gets its page step after the pairs; its key is latin from the name; foreign characterKeys are removed before the write', async () => {
+    const EVENT = {
+      name: 'Anna leaves',
+      short: 'Anna closes the door of her house and goes out of the town.',
+      significance:
+        'The leaving can be read as the break Anna has been preparing from the first chapter.',
+      scenes: [
+        {
+          chapter: 3,
+          title: 'The door',
+          text: 'Anna closes the door and walks away from the town.',
+        },
+      ],
+      quotes: [quote(LINES.leave, 3, 'anna')],
+      // «ghost» - не герой мира: код снимает его до записи (Q5).
+      characterKeys: ['anna', 'ghost'],
+    };
+    answer = (name, body) => {
+      if (name === 'world_select') {
+        return {
+          ...SELECT,
+          events: [{ key: '', name: 'Anna leaves', aliases: [], chapters: [3, 99] }],
+        };
+      }
+      if (name === 'world_page_write' && /<<<EVENT\w*\n/.test(textOf(body))) return EVENT;
+      return defaultAnswer(name, body);
+    };
+    const versionId = await version();
+    const estimate = await auth(http().get(`${base(versionId)}/estimate`)).expect(200);
+    expect(estimate.body).toMatchObject({ events: 10 });
+    await start(versionId).expect(202);
+    await drain();
+
+    const run = (await runOf(versionId)) as Run & {
+      events: Array<{ key: string; chapters: number[] }>;
+      eventsOff: string | null;
+    };
+    expect(run.status).toBe('ready');
+    // Глава 99 - не версии, снята; глава 3 - из ответа выбора (название в тексте не стоит).
+    expect(run.events.map((e) => [e.key, e.chapters])).toEqual([['anna-leaves', [3]]]);
+    expect(run.eventsOff).toBeNull();
+    expect(run.steps.slice(5).map((s) => [s.step, s.kind, s.key, s.outcome])).toEqual([
+      [5, 'pair', 'anna--boris', 'done'],
+      [6, 'event', 'anna-leaves', 'done'],
+    ]);
+    expect(run.steps[6].dropped.map((d) => [d.code, d.path])).toEqual([
+      ['KEY_UNKNOWN', 'characterKeys.1'],
+    ]);
+    const event = await entityOf(versionId, 'anna-leaves');
+    expect(event).toMatchObject({ type: 'event', role: null, name: 'Anna leaves' });
+    expect((event?.blocks as { characterKeys?: string[] }).characterKeys).toEqual(['anna']);
+  });
+
   it('external blocks: a statement whose only source did not open is dropped, the kept one is written with its checked source and flagged EXTERNAL_CHECK; the external step gets no book text', async () => {
     const versionId = await version();
     await start(versionId).expect(202);
@@ -1121,5 +1178,50 @@ describe('World run «Write World» (e2e)', () => {
       failedReason: 'WORLD_ANALYSIS_MISSING',
     });
     expect(callsOf('world_select')).toHaveLength(0);
+  });
+
+  // F08-13b-2, решения `F08 | F08-13b` Q3, `F08 | F08-13b-2` Q3-2: подсказка ключей событий на
+  // настоящей базе - своя версия первой, затем версия на языке оригинала, затем остальные по одному
+  // на ключ (groupBy с фильтром по связи книги), чужая книга не попадает.
+  it('known events: this version, then the original, then other versions once per key', async () => {
+    const ruId = await version({ language: Language.ru, analysis: false });
+    const ru = await prisma.bookVersion.findUniqueOrThrow({ where: { id: ruId } });
+    const sibling = (language: Language) =>
+      prisma.bookVersion.create({
+        data: {
+          bookId: ru.bookId,
+          language,
+          title: `Book ${language}`,
+          author: 'Author',
+          description: 'Desc',
+          coverImageUrl: 'https://example.com/c.jpg',
+          type: 'text',
+          isFree: true,
+          status: 'draft',
+          originalLanguage: 'Russian',
+        },
+      });
+    const en = await sibling(Language.en);
+    const es = await sibling(Language.es);
+    const fr = await sibling(Language.fr);
+    const stranger = await version({ language: Language.es, analysis: false, dossier: false });
+    const event = (bookVersionId: string, key: string, name: string) =>
+      prisma.bookWorldEntity.create({ data: { bookVersionId, key, type: 'event', name } });
+    await event(es.id, 'own-step', 'El paso');
+    await event(en.id, 'trial', 'The trial');
+    await event(en.id, 'axe', 'The axe');
+    await event(fr.id, 'axe', 'La hache');
+    await event(fr.id, 'ball', 'Le bal');
+    await event(stranger, 'foreign', 'Ajeno');
+    // Исходник книги - ru (originalLanguage версий - русский язык, `ru` в коде сайта).
+    await event(ruId, 'trial', 'Суд');
+
+    // Поле версии - свободный текст, как в проде («Russian»), а не код: код сводит сам запрос.
+    const known = await knownWorldEvents(prisma, es.id, es.originalLanguage ?? '');
+    expect(known.map((e) => e.key)).toEqual(['own-step', 'trial', 'axe', 'ball']);
+    expect(known[0].name).toBe('El paso');
+    expect(known[1].name).toBe('Суд');
+    expect(['The axe', 'La hache']).toContain(known[2].name);
+    expect(known[3].name).toBe('Le bal');
   });
 });

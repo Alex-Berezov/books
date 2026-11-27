@@ -1,6 +1,7 @@
 import { LlmStageDefinition, LlmStageRegistry } from '../../llm/llm-stages.registry';
 import { CHECK_CALL_TIMEOUT_MS, CHECK_REASONING_ANSWER_RESERVE } from '../check/check.constants';
 import { GPT_TERRA_MODEL } from '../translate/translate.constants';
+import { BLOCK_KEY_MAX } from '../../../shared/validators/block-fields.decorator';
 
 /**
  * Этапы хода «Write World» (`F08-4a`; `books-app-docs/features/F08-book-wiki/tech.md` §5): выбор героев
@@ -77,6 +78,21 @@ export const WORLD_OBJECT_KEY_TAKEN = 'WORLD_OBJECT_KEY_TAKEN';
 export const WORLD_OBJECT_NOT_FOUND = 'WORLD_OBJECT_NOT_FOUND';
 export const WORLD_TERM_KEY_TAKEN = 'WORLD_TERM_KEY_TAKEN';
 export const WORLD_TERM_NOT_FOUND = 'WORLD_TERM_NOT_FOUND';
+
+/**
+ * События хода (`F08-13b-2`, решения арбитра `F08 | F08-13b` Q2-Q4): кандидаты предлагает шаг выбора -
+ * отдельные эпизоды, не больше 10 на ход по убыванию глав, затем по ключу; событие без известной
+ * главы версии отсекается до платного шага.
+ */
+export const WORLD_EVENTS_MAX = 10;
+/** Предел длины ключа события из латиницы по названию (`F08 | F08-13b` Q3) - предел ключа мира. */
+export const WORLD_EVENT_KEY_MAX = BLOCK_KEY_MAX;
+/**
+ * Шаг события не платит за вызов (`F08-13b-2`): ключ заняли сущностью другого типа после выбора
+ * (`WORLD_EVENT_KEY_TAKEN`) или нет главы, где формы названия или выбор нашли событие (`WORLD_EVENT_NOT_FOUND`).
+ */
+export const WORLD_EVENT_KEY_TAKEN = 'WORLD_EVENT_KEY_TAKEN';
+export const WORLD_EVENT_NOT_FOUND = 'WORLD_EVENT_NOT_FOUND';
 
 /**
  * Номер шага вне всех списков хода (`F08-13b`): данные хода не те - шага с таким номером нет

@@ -20,7 +20,9 @@ import { Trim } from './trim.decorator';
  */
 
 /** Ключ темы, героя или сущности мира: на него ссылаются `themeKeys`, `speakerKey`, `relations[].to`, адрес `/wiki/{key}`. */
-export const BLOCK_KEY_REGEX = /^[a-z0-9-]{1,60}$/;
+export const BLOCK_KEY_MAX = 60;
+/** Ключ по `BLOCK_KEY_MAX`: строчная латиница, цифры, дефис. */
+export const BLOCK_KEY_REGEX = new RegExp(`^[a-z0-9-]{1,${BLOCK_KEY_MAX}}$`);
 
 /**
  * Список ключей (`themeKeys` анализа, `characterKeys`/`themeKeys` мира): не больше `max`, каждый —

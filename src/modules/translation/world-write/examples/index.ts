@@ -1,6 +1,11 @@
 import type { WorldWriteLanguage } from '../world-write.constants';
 import type { WorldRunObjectType } from '../world-write.data';
 import { EXAMPLE_WORLD_EN } from './en';
+import { EXAMPLE_WORLD_EVENT_EN } from './event-en';
+import { EXAMPLE_WORLD_EVENT_ES } from './event-es';
+import { EXAMPLE_WORLD_EVENT_FR } from './event-fr';
+import { EXAMPLE_WORLD_EVENT_PT } from './event-pt';
+import { EXAMPLE_WORLD_EVENT_RU } from './event-ru';
 import { EXAMPLE_WORLD_ES } from './es';
 import { EXAMPLE_WORLD_FR } from './fr';
 import { EXAMPLE_WORLD_OBJECT_EN } from './object-en';
@@ -91,12 +96,29 @@ export const EXAMPLE_WORLD_TERMS: Partial<Record<WorldWriteLanguage, Record<stri
   ru: EXAMPLE_WORLD_TERM_RU,
 };
 
-/** Эталон предмета или понятия языка; языка без эталона типа нет - `undefined`. */
+/**
+ * Эталоны страницы события (`F08-13b-2`, `F08 | F08-13b` Q7; канон
+ * `features/F08-book-wiki/prompts/example-world-event.<lang>.json`): как у предмета и понятия, язык хода
+ * без эталона события событий не получает (`eventsOff`).
+ */
+export const EXAMPLE_WORLD_EVENTS: Partial<Record<WorldWriteLanguage, Record<string, unknown>>> = {
+  en: EXAMPLE_WORLD_EVENT_EN,
+  es: EXAMPLE_WORLD_EVENT_ES,
+  fr: EXAMPLE_WORLD_EVENT_FR,
+  pt: EXAMPLE_WORLD_EVENT_PT,
+  ru: EXAMPLE_WORLD_EVENT_RU,
+};
+
+const EXAMPLES_OF_TYPE: Record<
+  WorldRunObjectType,
+  Partial<Record<WorldWriteLanguage, Record<string, unknown>>>
+> = { object: EXAMPLE_WORLD_OBJECTS, term: EXAMPLE_WORLD_TERMS, event: EXAMPLE_WORLD_EVENTS };
+
+/** Эталон предмета, понятия или события языка; языка без эталона типа нет - `undefined`. */
 export const worldObjectExample = (
   language: string,
   type: WorldRunObjectType,
-): Record<string, unknown> | undefined =>
-  (type === 'object' ? EXAMPLE_WORLD_OBJECTS : EXAMPLE_WORLD_TERMS)[language as WorldWriteLanguage];
+): Record<string, unknown> | undefined => EXAMPLES_OF_TYPE[type][language as WorldWriteLanguage];
 
 /** Пишет ли ход сущности типа на этом языке: только при эталоне типа (`F08-13b`). */
 export const hasWorldObjectExample = (language: string, type: WorldRunObjectType): boolean =>

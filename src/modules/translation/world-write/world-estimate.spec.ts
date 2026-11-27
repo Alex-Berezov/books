@@ -1,11 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { BOOK_ANALYSIS_LIMITS } from '../../book-analysis/dto/book-analysis-blocks.dto';
+import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { LlmService } from '../../llm/llm.service';
 import { stageEstimatorFor } from '../llm-model-checks';
 import { hasWorldPairExample } from './examples';
-import { upperWorldAnalysis, worldUpperUsd } from './world-estimate';
+import { upperKnownEvents, upperWorldAnalysis, worldUpperUsd } from './world-estimate';
 import { worldCharacters, worldPipelineUsd } from './world-write.steps';
 import {
+  WORLD_EVENT_KEY_MAX,
+  WORLD_EVENTS_MAX,
   WORLD_OBJECTS_MAX,
   WORLD_PAIRS_MAX,
   WORLD_PLACES_MAX,
@@ -53,6 +56,13 @@ describe('worldUpperUsd', () => {
     );
   });
 
+  it('подставка событий других версий - предел запроса хода, ключ и название в пределе', () => {
+    const events = upperKnownEvents();
+    expect(events).toHaveLength(BOOK_WORLD_LIMITS.entities);
+    expect(events.every((e) => e.key.length === WORLD_EVENT_KEY_MAX)).toBe(true);
+    expect(events.every((e) => e.name.length === BOOK_WORLD_LIMITS.name)).toBe(true);
+  });
+
   it('по языку - вход ручного старта сверху на исходнике, пары - верхняя граница', async () => {
     const chapters = [
       { number: 1, title: 'One', content: '<p>Text.</p>' },
@@ -80,6 +90,8 @@ describe('worldUpperUsd', () => {
         analysis: upperWorldAnalysis(),
         entities: new Map(),
         names: { titles: ['Book'], authors: ['Author'] },
+        // F08-13b-2 (Q9): события других версий до старта неизвестны - подставка в пределе запроса.
+        knownEvents: upperKnownEvents(),
       },
       4000,
       // F08-12b: места до старта - потолок (досье ещё нет); F08-13b (Q9): предметы и понятия - так же.
@@ -88,6 +100,8 @@ describe('worldUpperUsd', () => {
         places: WORLD_PLACES_MAX,
         objects: WORLD_OBJECTS_MAX,
         terms: WORLD_TERMS_MAX,
+        // F08-13b-2 (Q9): события - так же потолок (выбор ещё не назвал их).
+        events: WORLD_EVENTS_MAX,
       },
       expect.objectContaining({ language: 'fr' }),
     );

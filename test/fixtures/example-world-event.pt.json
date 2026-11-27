@@ -1,0 +1,33 @@
+{
+  "language": "pt",
+  "entities": [
+    {
+      "key": "taking-the-axe",
+      "type": "event",
+      "name": "A tomada do machado",
+      "short": "No dia escolhido, Raskólnikov desce à cozinha da senhoria em busca do machado com que contava. Nastácia está na cozinha, e todo o plano fica por um fio.",
+      "significance": "O episódio pode ser lido como o momento em que o plano encontra a realidade. Durante um mês o ato existiu só no pensamento; no capítulo 6, tudo depende de uma ninharia: onde arranjar a ferramenta e como levá-la. Raskólnikov contava com a cozinha vazia, e quando Nastácia está lá, todo o plano parece desmoronar.\n\nA saída vem por acaso, e é isso que o episódio mostra: ele não chega ao machado por cálculo. Toma a sorte por um sinal, e o leitor vê quanto da «ideia» é feito de coincidências que Raskólnikov decide ler como destino.",
+      "scenes": [
+        {
+          "chapter": 6,
+          "title": "A cozinha não está vazia",
+          "text": "Raskólnikov desce à cozinha da senhoria para pegar o machado. Nastácia está na cozinha, e o seu cálculo desmorona num instante."
+        },
+        {
+          "chapter": 6,
+          "title": "O quarto do porteiro",
+          "text": "Ao sair, espia o quarto do porteiro e vê um machado debaixo do banco, entre dois toros. Pega-o, esconde-o sob o casaco e sai para a rua."
+        }
+      ],
+      "quotes": [
+        {
+          "text": "“Se não é a razão, é o demônio!”, pensou ele, sorrindo de um modo estranho.",
+          "chapter": 6,
+          "speakerKey": "raskolnikov",
+          "interpretation": "Raskólnikov encontra o machado por acaso, depois de o plano da cozinha ter falhado. Explica a sorte não pela razão, mas pelo demônio, e o sorriso mostra que ele mesmo sente algo torto nisso."
+        }
+      ],
+      "characterKeys": ["raskolnikov"]
+    }
+  ]
+}

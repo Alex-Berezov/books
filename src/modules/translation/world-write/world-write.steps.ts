@@ -10,7 +10,7 @@ import { characterKeyRefused, worldPairKey } from '../../book-world/world-refs';
 import { ANSWER_CHARS_PER_TOKEN, estimateInputTokens } from '../../llm/openrouter.client';
 import type { LlmService, StageCallEstimator } from '../../llm/llm.service';
 import { chaptersText, htmlToParagraphs } from '../content-draft/content-draft.text';
-import { ShapedRequest } from '../dossier/dossier.prompts';
+import { LANGUAGE_NAMES, ShapedRequest } from '../dossier/dossier.prompts';
 import {
   dossierOf,
   glossaryNames,
@@ -49,6 +49,7 @@ import {
 } from './world-write.checks';
 import { isWorldWriteLanguage, WORLD_PAIRS_MAX, WORLD_REVIEW_STAGE } from './world-write.constants';
 import { dossierEntitiesOf } from './world-write.dossier-entities';
+import { originalLanguageCode, type KnownWorldEvent } from './world-write.events';
 import {
   CandidateMentions,
   WorldCandidate,
@@ -60,7 +61,8 @@ import {
   WorldRunObjectType,
   WorldStepSource,
   WorldWrittenStepKind,
-  WORLD_DOSSIER_LISTS,
+  WORLD_RUN_LISTS,
+  WORLD_RUN_OBJECT_TYPES,
 } from './world-write.data';
 import {
   EXAMPLE_WORLD_PAIRS,
@@ -94,6 +96,13 @@ export interface WorldContext extends PartContext {
   entities: ReadonlyMap<string, StoredWorldEntity>;
   /** Названия книги и имена авторов всех её версий - подтверждение страницы источника. */
   names: { titles: string[]; authors: string[] };
+  /**
+   * Известные события (`F08-13b-2`, `F08 | F08-13b` Q3, `F08 | F08-13b-2` Q3-2, `knownWorldEvents`):
+   * сохранённые этой версии, затем исходника, затем остальных версий - подсказка ключа выбору; ключ
+   * события принимается, только если он есть здесь. Читаются только для шага выбора и оценки -
+   * на остальных шагах пусто.
+   */
+  knownEvents: ReadonlyArray<KnownWorldEvent>;
 }
 
 /** Герой анализа версии - кандидат хода: роль нужна, чтобы отсеять второстепенных по порогу глав. */
@@ -289,7 +298,7 @@ const placeExampleOf = (language: Language): string => {
  * понятия: остаются только блок перегенерации и его спутники (`companions`: у места `kind` едет
  * с `wikidataId`, R3 `F08 | F08-12b`), прочие блоки ответа отброшены; без перегенерации - как есть.
  */
-export function onlyRegenBlock<D extends { blocks: object }>(
+function onlyRegenBlock<D extends { blocks: object }>(
   draft: D,
   regen: WorldRegenSpec | null,
   companions: Readonly<Partial<Record<string, readonly string[]>>> = {},
@@ -316,10 +325,25 @@ export interface WorldSelectNamed {
   places?: ReadonlyArray<{ key: string; name: string }>;
   objects?: ReadonlyArray<{ key: string; name: string }>;
   terms?: ReadonlyArray<{ key: string; name: string }>;
+  /**
+   * События (`F08-13b-2`): выбор их предлагает, когда `on`; `known` - события других версий книги
+   * («ключ - название»), подсказка ключа (Q3). Нет поля - выбор событий не просит.
+   */
+  events?: { on: boolean; known: ReadonlyArray<{ key: string; name: string }> };
 }
 
 const namedLines = (named: ReadonlyArray<{ key: string; name: string }>): string =>
   named.map((n) => `${n.key} - ${n.name}`).join('\n') || NONE;
+
+/**
+ * Язык оригинала словом для `originalName` событий (Q3-1): поле версии - свободный текст; язык сайта
+ * (распознан `originalLanguageCode`) - его английское название, иначе само поле как есть (модель
+ * поймёт «Ancient Greek» или опечатку лучше, чем код), пусто - `unknown`.
+ */
+export const originalLanguageName = (raw: string): string => {
+  const code = originalLanguageCode(raw);
+  return isWorldWriteLanguage(code) ? LANGUAGE_NAMES[code] : raw.trim() || 'unknown';
+};
 
 export function selectInput(
   context: WorldContext,
@@ -333,15 +357,17 @@ export function selectInput(
   const places = named.places ?? [];
   const objects = named.objects ?? [];
   const terms = named.terms ?? [];
+  const eventsOn = named.events?.on === true;
   // Проверяющей - герои списком, как до `F08-12b`, если других сущностей в выборе нет.
   const reviewed = (draft: WorldSelectDraft): unknown =>
-    places.length + objects.length + terms.length === 0
+    places.length + objects.length + terms.length === 0 && !eventsOn
       ? draft.characters
       : {
           characters: draft.characters,
           ...(places.length > 0 ? { places: draft.places } : {}),
           ...(objects.length > 0 ? { objects: draft.objects ?? [] } : {}),
           ...(terms.length > 0 ? { terms: draft.terms ?? [] } : {}),
+          ...(eventsOn ? { events: draft.events ?? [] } : {}),
         };
   return {
     kind: 'select',
@@ -355,8 +381,12 @@ export function selectInput(
         places: namedLines(places),
         objects: namedLines(objects),
         terms: namedLines(terms),
+        knownEvents: namedLines(named.events?.known ?? []),
+        eventsOn: eventsOn ? 'yes' : 'no',
+        originalLanguage: originalLanguageName(context.originalLanguage),
         dossierNames: dossierNames(context.dossier),
         glossary: glossaryText(context),
+        chapterList: chapterList(context),
         book: book.text,
         redo,
       }),
@@ -369,16 +399,49 @@ export function selectInput(
         answer: reviewed(draft),
         regenBlock: null,
       }),
-    read: (value) => readSelectAnswer(value, candidates, folded, places, objects, terms),
+    read: (value) =>
+      readSelectAnswer(
+        value,
+        candidates,
+        folded,
+        places,
+        objects,
+        terms,
+        eventsOn ? { chapters: quotes } : null,
+      ),
     codeCheck: () => [],
     empty: EMPTY_SELECT,
   };
 }
 
-/** Главы, где есть герой или место, по убыванию числа вхождений (при равенстве - по номеру). */
+/**
+ * Главы сущности для книги страницы: сначала главы, которые назвал шаг выбора (`named`, у события -
+ * там эпизод происходит, хотя форм названия может не быть), затем по убыванию числа вхождений;
+ * при равенстве - по номеру.
+ */
 function chaptersByMentions(candidate: { mentions: CandidateMentions }): number[] {
+  const named = new Set(candidate.mentions.named ?? []);
   const count = (n: number) => candidate.mentions.perChapter[String(n)] ?? 0;
-  return [...candidate.mentions.chapters].sort((a, b) => count(b) - count(a) || a - b);
+  return [...candidate.mentions.chapters].sort(
+    (a, b) => Number(named.has(b)) - Number(named.has(a)) || count(b) - count(a) || a - b,
+  );
+}
+
+/**
+ * Главы присутствия для промпта страницы: «глава - число вхождений»; глава, которую назвал только
+ * шаг выбора (формы названия там нет), - с пометкой, а не «0» (`F08-13b-2` Q4).
+ */
+export function mentionLines(mentions: CandidateMentions): string {
+  const named = new Set(mentions.named ?? []);
+  return (
+    mentions.chapters
+      .map((n) => {
+        const count = mentions.perChapter[String(n)];
+        if (count === undefined && named.has(n)) return `${n} - named by the choice step`;
+        return `${n} - ${count ?? 0}`;
+      })
+      .join('\n') || NONE
+  );
 }
 
 /**
@@ -444,10 +507,7 @@ export function pageInput(
         name: candidate.name,
         aliases: candidate.aliases.join('\n') || NONE,
         chapterList: chapterList(context),
-        mentionChapters:
-          candidate.mentions.chapters
-            .map((n) => `${n} - ${candidate.mentions.perChapter[String(n)] ?? 0}`)
-            .join('\n') || NONE,
+        mentionChapters: mentionLines(candidate.mentions),
         keys: keysText(context),
         analysis,
         glossary: glossaryText(context),
@@ -550,10 +610,7 @@ export function placeInput(
         name: place.name,
         aliases: place.aliases.join('\n') || NONE,
         chapterList: chapterList(context),
-        mentionChapters:
-          place.mentions.chapters
-            .map((n) => `${n} - ${place.mentions.perChapter[String(n)] ?? 0}`)
-            .join('\n') || NONE,
+        mentionChapters: mentionLines(place.mentions),
         keys: keysText(context),
         analysis,
         glossary: glossaryText(context),
@@ -645,10 +702,7 @@ export function objectInput(
         name: entry.name,
         aliases: entry.aliases.join('\n') || NONE,
         chapterList: chapterList(context),
-        mentionChapters:
-          entry.mentions.chapters
-            .map((n) => `${n} - ${entry.mentions.perChapter[String(n)] ?? 0}`)
-            .join('\n') || NONE,
+        mentionChapters: mentionLines(entry.mentions),
         keys: keysText(context),
         worldCharacters: worldHeroesText(context),
         themes: themesText(context),
@@ -908,14 +962,15 @@ export function worldStepUsd<T>(
 }
 
 /**
- * Шагов сверху по видам после героев (`F08-8e-1` Q8, `F08-12b`, `F08-13b` Q9): пары, места, предметы
- * и понятия; нет поля - 0.
+ * Шагов сверху по видам после героев (`F08-8e-1` Q8, `F08-12b`, `F08-13b` Q9, `F08-13b-2`): пары, места,
+ * предметы, понятия и события; нет поля - 0.
  */
 export interface WorldStepBounds {
   pairs?: number;
   places?: number;
   objects?: number;
   terms?: number;
+  events?: number;
 }
 
 /**
@@ -938,14 +993,6 @@ function selectNamedOf(
       }));
 }
 
-/**
- * Оценка хода сверху (`tech.md` §5): выбор героев по всему тексту версии, затем на каждого героя
- * `main` и `secondary` (до порога глав, решение арбитра `F08 | F08-8b` Q1) страница по всему
- * тексту версии (сверху: ход берёт только главы с героем) и внешние блоки, затем `pairs` шагов пар
- * по всему тексту версии (`F08-8e-1` Q8), каждый шаг с проверяющей × 2 прохода. Итог страницы во
- * входе внешнего шага - сверху выходом этапа. Места, предметы и понятия (`F08-12b`, `F08-13b` Q9) -
- * по шагу этапа страницы на сущность (`bounds`), их сущности досье - и во входе выбора.
- */
 /**
  * Сущности мира на входе оценки шага предмета (`F08-13b`, Q9): к сохранённым - заглушки героев хода,
  * которых ещё нет героями мира (их запишут шаги страниц до предмета), - вход `WORLD_CHARACTERS` сверху.
@@ -971,6 +1018,15 @@ function withRunHeroes(
   return out;
 }
 
+/**
+ * Оценка хода сверху (`tech.md` §5): выбор героев по всему тексту версии, затем на каждого героя
+ * `main` и `secondary` (до порога глав, решение арбитра `F08 | F08-8b` Q1) страница по всему
+ * тексту версии (сверху: ход берёт только главы с героем) и внешние блоки, затем `pairs` шагов пар
+ * по всему тексту версии (`F08-8e-1` Q8), каждый шаг с проверяющей × 2 прохода. Итог страницы во
+ * входе внешнего шага - сверху выходом этапа. Места, предметы, понятия и события (`F08-12b`,
+ * `F08-13b` Q9, `F08-13b-2`) - по шагу этапа страницы на сущность (`bounds`); их сущности досье - и
+ * во входе выбора, а выбор событий просит и сам список событий (`bounds.events`).
+ */
 export function worldPipelineUsd(
   calls: WorldEstimators,
   context: WorldContext,
@@ -993,6 +1049,11 @@ export function worldPipelineUsd(
       places: selectNamedOf(context.dossier, 'place', places),
       objects: selectNamedOf(context.dossier, 'object', bounds.objects ?? 0),
       terms: selectNamedOf(context.dossier, 'term', bounds.terms ?? 0),
+      // События других версий - тем же списком, что у хода (Q9): вход выбора растёт с ними.
+      events: {
+        on: (bounds.events ?? 0) > 0,
+        known: (bounds.events ?? 0) > 0 ? context.knownEvents : [],
+      },
     }),
     extraInputTokens,
   );
@@ -1064,8 +1125,8 @@ export function worldPipelineUsd(
     ...context,
     entities: withRunHeroes(context.entities, candidates),
   };
-  for (const type of ['object', 'term'] as const) {
-    const count = bounds[WORLD_DOSSIER_LISTS[type]] ?? 0;
+  for (const type of WORLD_RUN_OBJECT_TYPES) {
+    const count = bounds[WORLD_RUN_LISTS[type]] ?? 0;
     if (count === 0) continue;
     const entry: WorldObjectCandidate = {
       key: type,

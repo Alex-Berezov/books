@@ -6,6 +6,7 @@ import {
   WIKIDATA_ID_MAX,
   WIKIDATA_ID_REGEX,
   WORLD_PLACE_KINDS,
+  type BookWorldImportType,
   type WorldPlaceKind,
 } from '../../book-world/dto/book-world-blocks.dto';
 import type {
@@ -101,7 +102,32 @@ export interface WorldSelectDraft {
    */
   objects?: Array<{ key: string; name: string; aliases: string[] }>;
   terms?: Array<{ key: string; name: string; aliases: string[] }>;
+  /**
+   * События, которые предложил выбор (`F08-13b-2`, `F08 | F08-13b` Q2): отдельные эпизоды с названием,
+   * формами и главами версии. Ключ - как дала модель (ключ мира другой версии или пусто): финальный
+   * ключ ставит код (`eventKeyOf` в `pickEvents`, отбор - `eventChoice` обработчика). Нет поля -
+   * черновик старой формы: событий нет.
+   */
+  events?: WorldSelectEvent[];
   fixes: WorldFix[];
+}
+
+/** Событие из ответа выбора: ключ модели (может быть пустым), название, формы и главы. */
+export interface WorldSelectEvent {
+  key: string;
+  name: string;
+  /**
+   * Название на языке оригинала книги - только источник латиницы ключа (`F08 | F08-13b` Q3-1): в
+   * название и формы сущности не идёт; нет, не строка или сверх предела имени - пусто.
+   */
+  originalName: string;
+  aliases: string[];
+  /**
+   * Название стоит в тексте версии целым словом (проверка форм, `formInText`): только такое название
+   * второго пункта на том же ключе `pickEvents` берёт в формы события (/qa круг 2 13b-2).
+   */
+  nameInText: boolean;
+  chapters: number[];
 }
 
 export const EMPTY_SELECT: WorldSelectDraft = {
@@ -109,6 +135,7 @@ export const EMPTY_SELECT: WorldSelectDraft = {
   places: [],
   objects: [],
   terms: [],
+  events: [],
   fixes: [],
 };
 
@@ -149,6 +176,8 @@ export function readSelectAnswer(
   places: ReadonlyArray<{ key: string; name: string }> = [],
   objects: ReadonlyArray<{ key: string; name: string }> = [],
   terms: ReadonlyArray<{ key: string; name: string }> = [],
+  /** События выбирает модель (`F08-13b-2`): `null` - шаг событий выключен, ответ их не читает. */
+  events: { chapters: ChapterIndex } | null = null,
 ): WorldSelectDraft {
   const fixes: WorldFix[] = [];
   const v = rec(value);
@@ -157,8 +186,90 @@ export function readSelectAnswer(
     places: readForms(v.places, places, 'places', folded, fixes),
     objects: readForms(v.objects, objects, 'objects', folded, fixes),
     terms: readForms(v.terms, terms, 'terms', folded, fixes),
+    events: events ? readEvents(v.events, events.chapters, folded, fixes) : [],
     fixes,
   };
+}
+
+/**
+ * Формы названия из ответа выбора: пустая и повтор - молча, длиннее предела импорта и не стоящая в
+ * тексте версии целым словом - снята с причиной (`path` - путь элемента без `.aliases`).
+ */
+function readAliases(
+  raws: unknown,
+  path: string,
+  folded: readonly string[],
+  fixes: WorldFix[],
+): string[] {
+  const aliases: string[] = [];
+  list(raws).forEach((form, j) => {
+    const text = trimmed(form);
+    if (text === '' || aliases.includes(text)) return;
+    if (text.length > BOOK_WORLD_LIMITS.name) {
+      fixes.push({
+        code: 'IMPORT_INVALID',
+        path: `${path}.aliases.${j}`,
+        note: `longer than ${BOOK_WORLD_LIMITS.name} characters: removed`,
+      });
+      return;
+    }
+    if (!formInText(text, folded)) {
+      fixes.push({
+        code: 'ALIAS_NOT_IN_TEXT',
+        path: `${path}.aliases.${j}`,
+        note: `"${text}" is not in the text of this version as a whole word: removed`,
+      });
+      return;
+    }
+    aliases.push(text);
+  });
+  return limited(aliases, BOOK_WORLD_LIMITS.aliases, `${path}.aliases`, fixes);
+}
+
+/** Событий ответа выбора сверх этого числа код не читает (потолок хода - `WORLD_EVENTS_MAX`, отбор позже). */
+const EVENTS_READ_MAX = 30;
+
+/**
+ * События из ответа выбора (`F08-13b-2`, Q2): название обязательно, сверх предела имени - снято своей
+ * заметкой; ключ - как дала модель (проверка и сборка ключа - `eventKeyOf`); название оригинала -
+ * необязательно, без 400 (Q3-1); формы - по тексту версии; глава не версии - снята
+ * (`CHAPTER_UNKNOWN`), остальные главы - по возрастанию без повторов.
+ */
+function readEvents(
+  raws: unknown,
+  chapters: ChapterIndex,
+  folded: readonly string[],
+  fixes: WorldFix[],
+): WorldSelectEvent[] {
+  const out: WorldSelectEvent[] = [];
+  list(raws).forEach((raw, i) => {
+    const e = rec(raw);
+    const name = nameOf(e.name);
+    if (name === null) {
+      const long = (textOrNull(e.name)?.length ?? 0) > BOOK_WORLD_LIMITS.name;
+      fixes.push({
+        code: 'IMPORT_INVALID',
+        path: `events.${i}`,
+        note: long ? `name longer than ${BOOK_WORLD_LIMITS.name}: removed` : 'no name: removed',
+      });
+      return;
+    }
+    const known: number[] = [];
+    list(e.chapters).forEach((c, j) => {
+      const n = chapterOf(c);
+      if (!chapterKnown(chapters, n)) fixes.push(chapterFix(`events.${i}.chapters.${j}`, n));
+      else if (!known.includes(n)) known.push(n);
+    });
+    out.push({
+      key: trimmed(e.key),
+      name,
+      originalName: nameOf(e.originalName) ?? '',
+      aliases: readAliases(e.aliases, `events.${i}`, folded, fixes),
+      nameInText: formInText(name, folded),
+      chapters: known.sort((a, b) => a - b),
+    });
+  });
+  return limited(out, EVENTS_READ_MAX, 'events', fixes);
 }
 
 /** Формы одного списка ответа выбора (героев или мест): только ключи кандидатов, формы - по тексту. */
@@ -183,32 +294,10 @@ function readForms(
       });
       return;
     }
-    const aliases: string[] = [];
-    list(c.aliases).forEach((form, j) => {
-      const text = trimmed(form);
-      if (text === '' || aliases.includes(text)) return;
-      if (text.length > BOOK_WORLD_LIMITS.name) {
-        fixes.push({
-          code: 'IMPORT_INVALID',
-          path: `${path}.${i}.aliases.${j}`,
-          note: `longer than ${BOOK_WORLD_LIMITS.name} characters: removed`,
-        });
-        return;
-      }
-      if (!formInText(text, folded)) {
-        fixes.push({
-          code: 'ALIAS_NOT_IN_TEXT',
-          path: `${path}.${i}.aliases.${j}`,
-          note: `"${text}" is not in the text of this version as a whole word: removed`,
-        });
-        return;
-      }
-      aliases.push(text);
-    });
     out.push({
       key,
       name: nameOf(c.name) ?? candidate.name,
-      aliases: limited(aliases, BOOK_WORLD_LIMITS.aliases, `${path}.${i}.aliases`, fixes),
+      aliases: readAliases(c.aliases, `${path}.${i}`, folded, fixes),
     });
   });
   return out;
@@ -594,7 +683,7 @@ export function importRemarks(
   key: string,
   name: string,
   blocks: object,
-  type: 'character' | 'pair' | 'place' | 'object' | 'term' = 'character',
+  type: BookWorldImportType = 'character',
 ): DraftRemark[] {
   const own = new Set(Object.keys(blocks));
   const dto = plainToInstance(BookWorldEntityInputDto, {
@@ -1120,13 +1209,15 @@ export function placeRemarks(
 // ---------------------------------------------------------------- страница предмета и понятия
 
 /**
- * Блоки страницы предмета и понятия (`F08-13b`; поля по типу - решение арбитра `F08 | F08-13` Q1):
- * у понятия только `short`, `significance`, `quotes`; ТЗ на иллюстрацию нет ни у одного (Q4).
+ * Блоки страницы предмета, понятия и события (`F08-13b`, `F08-13b-2`; поля по типу - решение арбитра
+ * `F08 | F08-13` Q1): у понятия только `short`, `significance`, `quotes`, у события - `short` (без
+ * исхода), `significance`, `scenes`, `quotes`, `characterKeys`; ТЗ на иллюстрацию нет ни у одного (Q4).
  */
 export interface WorldObjectBlocks {
   short?: string;
   significance?: string;
   description?: string;
+  scenes?: BookWorldSceneDto[];
   quotes?: BookWorldQuoteDto[];
   faq?: BookAnalysisFaqDto[];
   characterKeys?: string[];
@@ -1210,6 +1301,8 @@ export function readObjectAnswer(value: unknown, check: WorldObjectCheck): World
     const text = own(field) ? textOrNull(v[field]) : null;
     if (text) blocks[field] = text;
   }
+  const scenes = own('scenes') ? readScenes(v.scenes, check.chapters, fixes) : undefined;
+  if (scenes) blocks.scenes = scenes;
   const quotes = own('quotes')
     ? readSpeakerQuotes(
         v.quotes,
@@ -1254,6 +1347,7 @@ function objectFields(blocks: WorldObjectBlocks): TextField[] {
   add('short', blocks.short, true);
   add('significance', blocks.significance, true);
   add('description', blocks.description, true);
+  (blocks.scenes ?? []).forEach((sc, i) => add(`scenes.${i}.text`, sc.text, true));
   (blocks.quotes ?? []).forEach((q, i) =>
     add(`quotes.${i}.interpretation`, q.interpretation, true),
   );
@@ -1273,6 +1367,11 @@ const OBJECT_CORE_NOTES: Record<WorldRunObjectType, Partial<Record<WorldCorePart
   term: {
     short: 'Write "short" - the glossary definition of the term: it is the core of the page.',
   },
+  event: {
+    short: 'Write "short": it is the core of the page.',
+    significance: 'Write "significance": it is the core of the page.',
+    scenes: 'The core needs at least 1 scene of this event, with its chapter and text.',
+  },
 };
 
 /**
@@ -1287,7 +1386,7 @@ function objectCoreRemarks(type: WorldRunObjectType, blocks: WorldObjectBlocks):
     character: null,
     arc: null,
     quotes: null,
-    scenes: null,
+    scenes: blocks.scenes ?? null,
     mentions: { chapters: [1] },
   });
   return core.missing.flatMap((m) => {

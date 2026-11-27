@@ -68,13 +68,14 @@ import {
   WorldItem,
   WorldDossierCandidate,
   WorldWriteData,
-  WORLD_DOSSIER_TYPES,
+  WORLD_LIST_TYPES,
   dossierListOf,
   worldDataJson,
 } from './world-write.data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
 import { hasWorldPairExample } from './examples';
-import { worldEstimators } from './world-estimate';
+import { upperKnownEvents, worldEstimators } from './world-estimate';
+import { eventStepsUpperBound } from './world-write.events';
 import { worldReadyGate, WorldWriteFields } from './world-write.fields';
 import { WorldGeoPass } from '../../book-world/world-geo.service';
 import { WorldWriteHandler, worldWriteTaskInput } from './world-write.handler';
@@ -441,8 +442,8 @@ export class WorldWriteService {
         0,
       );
     }
-    // Место, предмет и понятие (`F08-12b`, `F08-13b`): шаг страницы досье этапом страницы своей формой.
-    for (const type of WORLD_DOSSIER_TYPES) {
+    // Место, предмет, понятие и событие (`F08-12b`, `F08-13b`, `F08-13b-2`): шаг страницы этапом страницы своей формой.
+    for (const type of WORLD_LIST_TYPES) {
       const entry = dossierListOf(data, type)?.find((e) => e.key === item.key);
       if (!entry) continue;
       const context = await this.handler.contextOf(row, dossier.data);
@@ -544,6 +545,8 @@ export class WorldWriteService {
       'object',
     );
     const terms = dossierStepsUpperBound(context.dossier?.data ?? null, version.language, 'term');
+    // События (`F08-13b-2`, Q9): кандидатов выбор ещё не назвал - потолок на языке с эталоном события.
+    const events = eventStepsUpperBound(version.language);
     const usd = worldPipelineUsd(
       calls,
       {
@@ -557,9 +560,12 @@ export class WorldWriteService {
         analysis,
         entities: new Map(),
         names: { titles: [version.title], authors: [version.author] },
+        // Известные события - подставкой в пределе запроса (Q9, /qa круг 3): к шагу выбора их может
+        // стать больше, чем в момент оценки, а верхняя оценка не должна быть ниже вызова.
+        knownEvents: events > 0 ? upperKnownEvents() : [],
       },
       extra,
-      { pairs, places, objects, terms },
+      { pairs, places, objects, terms, events },
       { analysis, entities: onKeys },
     );
     const lines = contextLimits(context, usd);
@@ -576,6 +582,7 @@ export class WorldWriteService {
         places,
         objects,
         terms,
+        events,
         stageUsd: moneyUsd(usd),
         upperBound,
         suggestedLimitUsd: moneyUsd(lines.suggestedLimitUsd),
@@ -615,6 +622,8 @@ export class WorldWriteService {
       terms: data.terms?.map(namedDto) ?? null,
       objectsOff: data.objectsOff,
       termsOff: data.termsOff,
+      events: data.events?.map(namedDto) ?? null,
+      eventsOff: data.eventsOff,
       steps: data.steps.map((s) => ({
         ...s,
         remarks: remarksDto(s.remarks),

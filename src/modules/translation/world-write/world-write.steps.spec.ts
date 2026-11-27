@@ -20,7 +20,14 @@ import {
   worldCharacters,
   WorldContext,
   worldPipelineUsd,
+  externalInput,
+  mentionLines,
+  objectInput,
+  pageBook,
+  selectInput,
 } from './world-write.steps';
+import { indexChapters } from '../draft-quality/quote-check';
+import { EMPTY_SELECT } from './world-write.checks';
 
 describe('world run candidates: who goes into the run (F08-8b)', () => {
   it('main heroes first, then secondary ones; minor heroes are never candidates', () => {
@@ -93,6 +100,7 @@ describe('world run estimate: pair steps (F08-8e-1 Q6, Q8)', () => {
       },
       entities: new Map(),
       names: { titles: ['B'], authors: ['A'] },
+      knownEvents: [],
     } as unknown as WorldContext;
     const none = worldPipelineUsd(calls, context, 0, { pairs: 0 });
     // Шаг - (автор + проверяющая) × 2 прохода: 200 на пару.
@@ -149,6 +157,7 @@ describe('pair step input (F08-8e-1, review round 1)', () => {
     analysis: { characters: [] },
     entities: new Map(),
     names: { titles: ['B'], authors: ['A'] },
+    knownEvents: [],
   } as unknown as WorldContext;
   const row = (chapterA: number) => ({
     feature: 'Place',
@@ -279,6 +288,7 @@ describe('page step: the illustration brief (F08-11d-2)', () => {
       analysis: { characters: [] },
       entities: new Map(appearance === null ? [] : [['anna', { appearance, role }]]),
       names: { titles: ['Река'], authors: ['Иван Петров'] },
+      knownEvents: [],
     }) as unknown as WorldContext;
   const quotes = new Map([[1, [{ raw: 'Анна у реки.' }]]]) as never;
   const book = { text: 'Анна у реки.', partial: false };
@@ -424,6 +434,7 @@ describe('refKeys and the KEYS of a prompt: characters only (F08-12b)', () => {
       ['boris', { key: 'boris', type: 'character', name: 'Boris' }],
     ]),
     names: { titles: ['B'], authors: ['A'] },
+    knownEvents: [],
   } as unknown as WorldContext;
 
   it('refKeys: analysis heroes and stored characters, no place or pair key', () => {
@@ -495,6 +506,7 @@ describe('worldPipelineUsd: the choice step carries the place candidates (F08-12
       analysis: { characters: [{ key: 'anna', name: 'Anna', role: 'main' }] },
       entities: new Map(),
       names: { titles: ['B'], authors: ['A'] },
+      knownEvents: [],
     };
     const withDossier = {
       ...base,
@@ -520,5 +532,229 @@ describe('worldPipelineUsd: the choice step carries the place candidates (F08-12
     } as unknown as WorldContext;
     worldPipelineUsd(calls, eleven, 0, { places: 10 }, eleven);
     expect(seen.at(-1)).toContain('p11 - Spot 11');
+  });
+});
+
+/** Хвосты ревью `F08-13b-1`, закрытые в `F08-13b-2`: оценка и перегенерация блока. */
+const tailsHero = (key: string) => ({
+  key,
+  role: 'main' as const,
+  name: key.toUpperCase(),
+  aliases: [] as string[],
+  mentions: { chapters: [1], perChapter: {} },
+});
+
+const tailsContext = (entities = new Map<string, unknown>()) =>
+  ({
+    language: 'en',
+    dossier: null,
+    glossary: null,
+    bookTitle: 'B',
+    author: 'A',
+    originalLanguage: '',
+    entities,
+    chapters: [{ number: 1, title: 'C1', content: '<p>Anna and Boris.</p>' }],
+    analysis: {
+      characters: [
+        { key: 'anna', name: 'ANNA', role: 'main' },
+        { key: 'boris', name: 'BORIS', role: 'main' },
+      ],
+    },
+    names: { titles: ['B'], authors: ['A'] },
+    knownEvents: [],
+  }) as unknown as WorldContext;
+
+describe('the estimate does not overwrite a stored world character with the hero of the run (withRunHeroes)', () => {
+  const seen: string[] = [];
+  const call = (record = false) => ({
+    maxTokens: 1000,
+    enabled: true,
+    contextLength: null,
+    estimate: (request: unknown) => {
+      const text = (request as { messages: Array<{ content: string }> }).messages
+        .map((m) => m.content)
+        .join('\n');
+      const block = /<<<WORLD_CHARACTERS(?:_\d+)?\n([\s\S]*?)\nWORLD_CHARACTERS(?:_\d+)?>>>/.exec(
+        text,
+      );
+      if (record && block) seen.push(block[1]);
+      return new Prisma.Decimal(1);
+    },
+  });
+  const calls = {
+    select: call(),
+    page: call(true),
+    external: call(),
+    pair: call(),
+    review: call(),
+  };
+
+  it.each(['objects', 'events'] as const)(
+    'the %s step lists the stored Anna under her stored name and adds only the hero Boris of the run',
+    (list) => {
+      seen.length = 0;
+      const stored = new Map<string, unknown>([
+        ['anna', { key: 'anna', type: 'character', name: 'Stored Anna', role: 'main' }],
+      ]);
+      worldPipelineUsd(calls, tailsContext(stored), 0, { [list]: 1 });
+      expect(seen.at(-1)).toContain('anna - Stored Anna');
+      expect(seen.at(-1)).toContain('boris - BORIS');
+      expect(seen.at(-1)).not.toContain('ANNA');
+    },
+  );
+});
+
+describe('a regeneration of one block drops the other blocks of the answer (onlyRegenBlock)', () => {
+  const regen = (block: string) => ({ block, current: null, remark: null }) as never;
+
+  it('the external step: only the block of the regeneration stays', () => {
+    const candidate = {
+      ...tailsHero('anna'),
+      aliases: [],
+      mentions: { chapters: [1], perChapter: {} },
+    };
+    const input = externalInput(tailsContext(), candidate, null, regen('critique'));
+    const draft = input.read({
+      critique: { text: 'A critic wrote it.', refs: [1] },
+      prototypes: { text: 'A prototype.', refs: [1] },
+    });
+    expect(Object.keys(draft.blocks)).toEqual(['critique']);
+  });
+
+  it('the pair step: only the block of the regeneration stays', () => {
+    const [a, b] = [tailsHero('anna'), tailsHero('boris')];
+    const pair = { key: 'anna--boris', a: 'anna', b: 'boris', linked: true, chapters: [1] };
+    const input = pairInput(
+      tailsContext(),
+      pair,
+      { a, b },
+      indexChapters(new Map([[1, 'Anna and Boris.']])),
+      { text: 'Anna and Boris.', partial: false, chapters: [1] },
+      regen('conclusion'),
+    );
+    const draft = input.read({ short: 'Dropped.', conclusion: 'Together.' });
+    expect(Object.keys(draft.blocks)).toEqual(['conclusion']);
+  });
+});
+
+describe('event steps in the estimate and the choice input (F08-13b-2, /qa round 1)', () => {
+  const texts: string[] = [];
+  const recorder = (record: boolean) => ({
+    maxTokens: 1000,
+    enabled: true,
+    contextLength: null,
+    estimate: (request: unknown) => {
+      if (record) {
+        texts.push(
+          (request as { messages: Array<{ content: string }> }).messages
+            .map((m) => m.content)
+            .join('\n'),
+        );
+      }
+      return new Prisma.Decimal(1);
+    },
+  });
+
+  it('Q9: the estimate sends the events of other versions into the choice input', () => {
+    texts.length = 0;
+    const calls = {
+      select: recorder(true),
+      page: recorder(false),
+      external: recorder(false),
+      pair: recorder(false),
+      review: recorder(false),
+    };
+    const context = {
+      ...tailsContext(),
+      knownEvents: [{ key: 'duel-at-dawn', name: 'The duel at dawn' }],
+    } as unknown as WorldContext;
+    worldPipelineUsd(calls, context, 0, { events: 1 });
+    expect(texts[0]).toContain('duel-at-dawn - The duel at dawn');
+    // Без шагов событий выбор событий не просит - и списка нет.
+    texts.length = 0;
+    worldPipelineUsd(calls, context, 0, { events: 0 });
+    expect(texts[0]).not.toContain('duel-at-dawn');
+  });
+
+  /** Ответ, который видит проверяющая: блок ANSWER запроса проверки. */
+  const reviewedAnswer = (request: unknown): unknown => {
+    const user =
+      (request as { messages: Array<{ content: string }> }).messages.at(-1)?.content ?? '';
+    return JSON.parse(/<<<ANSWER\n([\s\S]*?)\nANSWER>>>/.exec(user)?.[1] ?? 'null');
+  };
+
+  it('the choice input: EVENTS_ON, KNOWN_EVENTS, ORIGINAL_LANGUAGE to the author, the events to the review', () => {
+    const context = { ...tailsContext(), originalLanguage: 'ru' } as unknown as WorldContext;
+    const input = selectInput(
+      context,
+      [],
+      new Map(),
+      { text: 'Text.', partial: false },
+      { events: { on: true, known: [{ key: 'duel', name: 'Duel' }] } },
+    );
+    const author = JSON.stringify(input.author(null));
+    expect(author).toMatch(/EVENTS_ON[^"]*\\nyes/);
+    expect(author).toContain('duel - Duel');
+    expect(author).toMatch(/ORIGINAL_LANGUAGE[^"]*\\nRussian/);
+    // /qa круг 3 (code-review): правило выбора берёт главы событий из CHAPTERS_LIST - блок во входе.
+    expect(author).toMatch(/CHAPTERS_LIST[^"]*\\n1 — C1/);
+    expect(author).toContain('the chapters of this version (number - title)');
+    expect(author).toContain('the events already known for this book, this version and the others');
+    const draft = {
+      ...EMPTY_SELECT,
+      events: [
+        {
+          key: 'duel',
+          name: 'Duel',
+          originalName: '',
+          aliases: [],
+          nameInText: true,
+          chapters: [1],
+        },
+      ],
+    };
+    expect(reviewedAnswer(input.review(draft))).toHaveProperty('events');
+    const off = selectInput(context, [], new Map(), { text: 'Text.', partial: false }, {});
+    expect(JSON.stringify(off.author(null))).toMatch(/EVENTS_ON[^"]*\\nno/);
+    expect(reviewedAnswer(off.review(draft))).toEqual([]);
+  });
+
+  it('the page book takes the chapters named by the choice first; the prompt does not call them 0', () => {
+    const context = {
+      ...tailsContext(),
+      chapters: [1, 2, 3, 4].map((n) => ({
+        number: n,
+        title: `C${n}`,
+        content: `<p>Text ${n}.</p>`,
+      })),
+    } as unknown as WorldContext;
+    const mentions = {
+      chapters: [1, 2, 3, 4],
+      perChapter: { '1': 3, '2': 2, '3': 1 },
+      named: [4],
+    };
+    expect(pageBook(context, { mentions }, 2).text).toContain('Text 4.');
+    expect(pageBook(context, { mentions }, 2).text).not.toContain('Text 2.');
+    expect(mentionLines(mentions)).toBe('1 - 3\n2 - 2\n3 - 1\n4 - named by the choice step');
+    expect(mentionLines({ chapters: [5], perChapter: {} })).toBe('5 - 0');
+  });
+
+  it('a regeneration of one block of an event keeps only that block', () => {
+    const event = {
+      key: 'duel',
+      name: 'Duel',
+      aliases: [],
+      mentions: { chapters: [1], perChapter: {} },
+    };
+    const input = objectInput(
+      tailsContext(),
+      'event',
+      event,
+      indexChapters(new Map([[1, 'Anna and Boris.']])),
+      { text: 'Anna and Boris.', partial: false },
+      { block: 'significance', current: null, remark: null } as never,
+    );
+    const draft = input.read({ short: 'Dropped.', significance: 'Kept.' });
+    expect(Object.keys(draft.blocks)).toEqual(['significance']);
   });
 });
