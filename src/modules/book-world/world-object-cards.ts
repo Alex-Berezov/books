@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import {
+  readStoredBlocks,
   toObjectCard,
   WORLD_EVENT_CARD_SELECT,
   WORLD_OBJECT_CARD_SELECT,
@@ -13,6 +14,8 @@ import {
 } from './dto/book-world-blocks.dto';
 import type { BookWorldObjectCardDto } from './dto/book-world-response.dto';
 import { WORLD_OBJECTS, worldCardShown } from './world-public';
+import { eventSceneChapters } from './world-core';
+import { loadChapterNumbers } from '../../shared/chapters/chapter-numbers';
 
 /**
  * Порядок карточек (решение арбитра `F08 | F08-13` Q7): по первой главе, без главы — в конце,
@@ -51,7 +54,7 @@ export interface WorldObjectCards {
  * (`WORLD_EVENT_CARD_SELECT`), а предметам и понятиям тянуть `blocks` незачем.
  */
 export async function worldObjectCards(
-  prisma: Pick<Prisma.TransactionClient, 'bookWorldEntity'>,
+  prisma: Pick<Prisma.TransactionClient, 'bookWorldEntity' | 'chapter'>,
   bookVersionId: string,
 ): Promise<WorldObjectCards> {
   if (!WORLD_OBJECTS.public) return { objects: [], terms: [], events: [] };
@@ -69,10 +72,20 @@ export async function worldObjectCards(
       take: BOOK_WORLD_LIMITS.entities,
     }),
   ]);
+  // Главы версии (`F08-13b-3`): сцена с главой вне версии карточке главу не даёт. Читатель номеров
+  // глав один на мир (`loadChapterNumbers`); у событий без глав сцен запроса нет.
+  const hasSceneChapters = events.some(
+    (e) => eventSceneChapters(readStoredBlocks(e.blocks).scenes).length > 0,
+  );
+  const known = new Set(hasSceneChapters ? await loadChapterNumbers(prisma, bookVersionId) : []);
+  const inVersion = (n: number) => known.has(n);
   const cards = (type: WorldObjectType) => {
     const rows: readonly (WorldObjectCardRow | WorldEventCardRow)[] =
       type === 'event' ? events : plain.filter((r) => r.type === type);
-    return rows.filter(worldCardShown).map(toObjectCard).sort(byFirstChapter);
+    return rows
+      .filter(worldCardShown)
+      .map((r) => toObjectCard(r, inVersion))
+      .sort(byFirstChapter);
   };
   return { objects: cards('object'), terms: cards('term'), events: cards('event') };
 }

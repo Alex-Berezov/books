@@ -146,6 +146,19 @@ describe('WorldWriteHandler: a regeneration and the external step', () => {
     );
   });
 
+  // F08-13b-3: язык без эталона события (`eventsMode` не `on`) - шаг выбора известных событий не читает.
+  it('step 0 of a language without the event sample does not read the known events', async () => {
+    const fields = { read: jest.fn().mockResolvedValue(emptyWorldData()) };
+    const { handler } = make({ language: 'de' }, fields);
+    const contextOf = jest
+      .spyOn(handler, 'contextOf')
+      .mockResolvedValue({ analysis: { characters: [] }, entities: new Map() } as never);
+    const task = { operationId: 'op1', payload: { draftId: 'd1' } };
+    await handler.handler.run(task as never, { renewLease: jest.fn() } as never);
+    expect(contextOf).toHaveBeenCalledTimes(1);
+    expect(contextOf).toHaveBeenCalledWith(expect.anything(), {}, false);
+  });
+
   // /qa круг 2 13b-2: известные события читает только шаг выбора - шаг страницы их не запрашивает.
   it('a step past the choice reads the context without the known events', async () => {
     const data = {

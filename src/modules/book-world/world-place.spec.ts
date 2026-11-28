@@ -249,6 +249,19 @@ describe('карточка места на общей странице (F08-12a,
     ...over,
   });
 
+  it('не объект в сценах колонки не роняет карточку (F08-13b-3)', () => {
+    const card = toPlaceCard(
+      row({
+        blocks: {
+          kind: 'real',
+          location: 'Neva',
+          scenes: [null, 5, { title: 'Kept', chapter: 1, text: 't' }],
+        },
+      }),
+    );
+    expect(card.scenes).toEqual([{ title: 'Kept', chapter: 1, paragraph: 5 }]);
+  });
+
   it('сцены белым списком title/chapter/paragraph, без текста и без несошедшихся', () => {
     const card = toPlaceCard(row());
     expect(card.scenes).toEqual([{ title: 'Kept', chapter: 1, paragraph: 5 }]);

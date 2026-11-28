@@ -1,10 +1,6 @@
 import { Prisma, PublicationStatus } from '@prisma/client';
 import { stableJson } from '../../shared/json/stable-json';
-import {
-  BOOK_WORLD_LIMITS,
-  isWorldObjectType,
-  WORLD_OBJECT_TYPES,
-} from './dto/book-world-blocks.dto';
+import { BOOK_WORLD_LIMITS, isWorldObjectType } from './dto/book-world-blocks.dto';
 import { mentionChapters } from './world-core';
 import { pairMembers } from './world-refs';
 
@@ -39,8 +35,8 @@ export const WORLD_PLACES = { public: true };
  * Рубильник публичности предмета, понятия и события (`F08-13a`, решение арбитра `F08 | F08-13` Q6):
  * один на три типа. Выключенный, он держит их вне сайта — списка, карточек и глоссария `/wiki`,
  * карты сайта и hreflang. Включён тегом бэкенда в `F08-13c` после страниц на фронте; записанные при
- * выключенном выводит на сайт разовый пересчёт при старте (`WorldObjectsRelistService`, Q6, снять
- * следующей пачкой). Объект, а не константа: e2e проверяют оба положения в одном процессе.
+ * выключенном вывел на сайт разовый пересчёт при старте (`F08-13c`, снят в `F08-13b-3`). Объект, а не
+ * константа: e2e проверяют оба положения в одном процессе.
  */
 export const WORLD_OBJECTS = { public: true };
 
@@ -247,7 +243,7 @@ export function worldMembersReader(
 }
 
 /**
- * Поля пересчёта `isListed` (`relistWorldPairs`, `relistWorldObjects`): вход `worldListedWrite`
+ * Поля пересчёта `isListed` (`relistWorldPairs`): вход `worldListedWrite`
  * и прежний `updatedAt`.
  * Одна копия: новое поле `WorldListedInput` добавляется сюда.
  */
@@ -293,36 +289,6 @@ export async function relistWorldPairs(
     await tx.bookWorldEntity.update({
       where: { bookVersionId_key: { bookVersionId, key: pair.key } },
       data: { ...listed, updatedAt: pair.updatedAt },
-    });
-    written++;
-  }
-  return written;
-}
-
-/**
- * Предметы, понятия и события версии (разовый пересчёт `F08-13c`, решение арбитра `F08 | F08-13` Q6,
- * по образцу мест `F08 | F08-12a` R4): `isListed` тем же `worldListedWrite`. Пишутся только строки,
- * у которых он или первая отметка публикации изменились, с прежним `updatedAt`. Число записанных.
- */
-export async function relistWorldObjects(
-  tx: Pick<Prisma.TransactionClient, 'bookWorldEntity'>,
-  bookVersionId: string,
-  version: { status: PublicationStatus },
-  now: Date,
-): Promise<number> {
-  const rows = await tx.bookWorldEntity.findMany({
-    where: { bookVersionId, type: { in: [...WORLD_OBJECT_TYPES] } },
-    select: WORLD_RELIST_SELECT,
-    orderBy: { key: 'asc' },
-    take: BOOK_WORLD_LIMITS.entities,
-  });
-  let written = 0;
-  for (const row of rows) {
-    const listed = worldListedWrite(row, version, now);
-    if (row.isListed === listed.isListed && listed.firstPublishedAt === undefined) continue;
-    await tx.bookWorldEntity.update({
-      where: { bookVersionId_key: { bookVersionId, key: row.key } },
-      data: { ...listed, updatedAt: row.updatedAt },
     });
     written++;
   }

@@ -22,8 +22,8 @@ export const EXAMPLE_WORLD_EVENT_FR: Record<string, unknown> = {
         },
         {
           chapter: 6,
-          title: 'La loge du portier',
-          text: 'En sortant, il jette un coup d’œil dans la loge du portier et voit une hache sous le banc, entre deux bûches. Il la prend, la cache sous son manteau et sort dans la rue.',
+          title: 'La loge du concierge',
+          text: 'En sortant, il jette un coup d’œil dans la loge du concierge et voit une hache sous le banc, entre deux bûches. Il la prend, la cache sous son manteau et sort dans la rue.',
         },
       ],
       quotes: [

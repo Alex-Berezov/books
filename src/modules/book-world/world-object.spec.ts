@@ -72,6 +72,9 @@ const ctx = {
 };
 const themes = new Set(['idleness']);
 
+/** Все главы есть в версии: правило карточки здесь не проверяется (`world-object-cards.spec.ts`). */
+const anyChapter = () => true;
+
 describe('перечни полей (F08-13a, Q1): явные, без «всё прочее»', () => {
   it('поля героя — прежний состав, ни одного поля нового типа', () => {
     expect([...WORLD_CHARACTER_BLOCK_KEYS].sort()).toEqual(
@@ -408,6 +411,7 @@ describe('карточки общей страницы (F08-13a Q7, F08-13c Q2)'
           { title: 'Dawn', text: 'They meet.', chapter: 7 },
           { title: 'Shot', text: 'One falls.', chapter: 5 },
         ]),
+        anyChapter,
       ),
     ).toEqual({
       key: 'duel',
@@ -419,8 +423,10 @@ describe('карточки общей страницы (F08-13a Q7, F08-13c Q2)'
   });
 
   it('событие без сцен с главой — глава null; устаревшая сцена не считается', () => {
-    expect(toObjectCard(eventRow(null)).chapter).toBeNull();
-    expect(toObjectCard(eventRow([{ title: 'x', text: 'y', chapter: null }])).chapter).toBeNull();
+    expect(toObjectCard(eventRow(null), anyChapter).chapter).toBeNull();
+    expect(
+      toObjectCard(eventRow([{ title: 'x', text: 'y', chapter: null }]), anyChapter).chapter,
+    ).toBeNull();
     const stale = {
       stale: [worldItemKey('scenes', { title: 'Shot', text: 'One falls.', chapter: 5 })],
     };
@@ -433,14 +439,17 @@ describe('карточки общей страницы (F08-13a Q7, F08-13c Q2)'
           ],
           stale,
         ),
+        anyChapter,
       ).chapter,
     ).toBe(7);
   });
 
   it('событие: мусор в сценах (null, не объект) не роняет карточку, сцена без текста главы не даёт', () => {
     expect(
-      toObjectCard(eventRow([null, 'x', { title: 'Shot', text: 'One falls.', chapter: 5 }]))
-        .chapter,
+      toObjectCard(
+        eventRow([null, 'x', { title: 'Shot', text: 'One falls.', chapter: 5 }]),
+        anyChapter,
+      ).chapter,
     ).toBe(5);
     expect(
       toObjectCard(
@@ -448,23 +457,27 @@ describe('карточки общей страницы (F08-13a Q7, F08-13c Q2)'
           { title: 'Empty', text: '', chapter: 2 },
           { title: 'Shot', text: 'One falls.', chapter: 5 },
         ]),
+        anyChapter,
       ).chapter,
     ).toBe(5);
   });
 
   it('строка белым списком: термин, определение, первая глава, своя страница', () => {
     expect(
-      toObjectCard({
-        key: 'oblomovism',
-        type: 'term',
-        name: 'Oblomovism',
-        short: 'Idle apathy.',
-        mentionFirst: 4,
-        isListed: false,
-        isVisible: true,
-        readAt: null,
-        autoTextAt: null,
-      }),
+      toObjectCard(
+        {
+          key: 'oblomovism',
+          type: 'term',
+          name: 'Oblomovism',
+          short: 'Idle apathy.',
+          mentionFirst: 4,
+          isListed: false,
+          isVisible: true,
+          readAt: null,
+          autoTextAt: null,
+        },
+        anyChapter,
+      ),
     ).toEqual({
       key: 'oblomovism',
       name: 'Oblomovism',

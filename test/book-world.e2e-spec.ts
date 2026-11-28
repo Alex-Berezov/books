@@ -25,7 +25,6 @@ import { WikidataClient } from '../src/modules/book-world/wikidata.client';
 import { WIKIDATA_EARTH } from '../src/modules/book-world/world-geo';
 import { OsmTileClient, solidPng } from '../src/modules/book-world/osm-tile.client';
 import { WorldMapService } from '../src/modules/book-world/world-map.service';
-import { WorldObjectsRelistService } from '../src/modules/book-world/world-objects-relist.service';
 import { STORAGE_SERVICE, type StorageService } from '../src/shared/storage/storage.interface';
 import { createBookFixture } from './helpers/book-fixture';
 import { createBookWithRights } from './helpers/book-with-rights';
@@ -289,10 +288,6 @@ describe('BookWorld e2e', () => {
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
     );
     await app.init();
-    // Разовый пересчёт предметов, понятий и событий при старте (F08-13c) идёт в фоне и читает
-    // рубильник `WORLD_OBJECTS` на каждой строке: дождаться его до первого теста, иначе тест,
-    // выключивший рубильник, снимет `isListed` у сущностей сида посреди прохода.
-    await app.get(WorldObjectsRelistService).onModuleDestroy();
 
     userAccess = await register(`user_world_${Date.now()}@example.com`);
     adminAccess = await register('admin@example.com');
@@ -2774,29 +2769,6 @@ describe('BookWorld e2e', () => {
       expect([list.body.objects, list.body.terms, list.body.events]).toEqual([[], [], []]);
       expect(list.body.entities.map((e: Body) => e.key)).not.toContain('robe');
       await expectListedConsistent(versionId);
-
-      // F08-13c (Q6): включённый рубильник и разовый пересчёт при старте выводят записанные при
-      // выключенном на сайт без повторной записи - на настоящей базе, с прежним `updatedAt`.
-      const before = new Map<string, Date>();
-      for (const key of ['robe', 'oblomovism', 'the-dream']) {
-        before.set(key, (await row(versionId, key)).updatedAt);
-      }
-      WORLD_OBJECTS.public = true;
-      const relisted = await app.get(WorldObjectsRelistService).relistAll();
-      expect(relisted.failed).toBe(0);
-      for (const key of ['robe', 'oblomovism', 'the-dream']) {
-        const saved = await row(versionId, key);
-        expect({ key, isListed: saved.isListed, updatedAt: saved.updatedAt }).toEqual({
-          key,
-          isListed: true,
-          updatedAt: before.get(key),
-        });
-        await request(http()).get(`/versions/${versionId}/world/${key}`).expect(200);
-      }
-      await expectListedConsistent(versionId);
-      // Повтор ничего не пишет у этой версии.
-      const again = await app.get(WorldObjectsRelistService).relistAll();
-      expect(again).toEqual({ written: 0, failed: 0 });
     });
 
     it('рубильник включён: страницы по ядру, глоссарий со строкой понятия, связи в ответе', async () => {

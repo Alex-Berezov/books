@@ -378,12 +378,15 @@ export type WorldEventCardRow = Prisma.BookWorldEntityGetPayload<{
  * Карточка белым списком: имя, «Коротко», глава, своя страница. Глава предмета и понятия — первое
  * упоминание формы; события — первая глава сцен без пунктов `mentions.stale` (Q2), сцен нет — null.
  */
-export function toObjectCard(row: WorldObjectCardRow | WorldEventCardRow): BookWorldObjectCardDto {
+export function toObjectCard(
+  row: WorldObjectCardRow | WorldEventCardRow,
+  inVersion: (chapter: number) => boolean,
+): BookWorldObjectCardDto {
   return {
     key: row.key,
     name: row.name,
     short: row.short,
-    chapter: 'blocks' in row ? firstSceneChapter(row) : row.mentionFirst,
+    chapter: 'blocks' in row ? firstSceneChapter(row, inVersion) : row.mentionFirst,
     hasPage: row.isListed,
   };
 }
@@ -391,15 +394,19 @@ export function toObjectCard(row: WorldObjectCardRow | WorldEventCardRow): BookW
 /**
  * Первая глава сцен события для карточки (решение арбитра `F08 | F08-13c` круг 3): только сцены-объекты
  * с текстом — тем же условием, что ядро (`computeObjectCore`); мусор в колонке (`null`, не объект)
- * отбрасывается до `freshScenes`, а не роняет список `/wiki` в 500.
+ * отбрасывается до `freshScenes`, а не роняет список `/wiki` в 500. Глава вне версии (`inVersion`,
+ * окно до пересчёта присутствия) — не глава карточки (`F08-13b-3`).
  */
-function firstSceneChapter(row: WorldEventCardRow): number | null {
+function firstSceneChapter(
+  row: WorldEventCardRow,
+  inVersion: (chapter: number) => boolean,
+): number | null {
   const stored = readStoredBlocks(row.blocks).scenes;
   const filled = Array.isArray(stored)
     ? stored.filter((scene: unknown) => isRecord(scene) && isFilled(scene.text))
     : null;
   const scenes = freshScenes(withoutParagraph(filled), row.mentions);
-  return eventSceneChapters(scenes)[0] ?? null;
+  return eventSceneChapters(scenes).find(inVersion) ?? null;
 }
 
 /**
@@ -774,7 +781,8 @@ function freshScenes(
 ): BookWorldSceneDto[] | null {
   if (!Array.isArray(scenes)) return scenes;
   const stale = mentionStale(mentions);
-  return scenes.filter((scene) => !stale.has(worldItemKey('scenes', scene)));
+  // Не объект в колонке читателю не отдаётся (`F08-13b-3`): ни 500 здесь, ни падения рендера фронта.
+  return scenes.filter((scene) => isRecord(scene) && !stale.has(worldItemKey('scenes', scene)));
 }
 
 /**

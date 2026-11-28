@@ -1470,6 +1470,11 @@ describe('Seeded dataset (e2e)', () => {
           },
         ],
       ]);
+      // Связь предмета с героем сида (F08-13c, Q5): блок «Связи» на странице предмета не пуст.
+      const compass = await get(`/versions/${en.id}/world/brass-compass`).expect(200);
+      expect(
+        (compass.body as { entity: { characterKeys: string[] } }).entity.characterKeys,
+      ).toEqual(['anna-lark']);
       // Реальное место сида (F08-12d): литерал `geo` совпадает с отпечатком текущих названий -
       // точка читателю есть (иначе `publicPoint` её прячет, и карта CI фронта пуста).
       const london = await get(`/versions/${en.id}/world/london`).expect(200);

@@ -120,7 +120,7 @@ import {
   WorldEventsOffReason,
   WorldListType,
   isRunObjectType,
-  dossierListOf,
+  runListOf,
   WorldItem,
   WorldObjectCandidate,
   WorldObjectsOffReason,
@@ -480,7 +480,7 @@ function withStep(data: WorldWriteData, record: StepRecord): WorldWriteData {
 }
 
 /**
- * Отказы шага страницы без платного вызова - свои коды у типа (`dossierPageStep`). Это коды шага
+ * Отказы шага страницы без платного вызова - свои коды у типа (`runPageStep`). Это коды шага
  * (`WORLD_*_KEY_TAKEN`, `WORLD_*_NOT_FOUND`), а не отсева на выборе: тот живёт в `RULES`
  * (`world-write.dossier-entities.ts`, `*_KEY_TAKEN`/`*_BELOW_MIN_CHAPTERS`) и у событий - в
  * `world-write.events.ts`; две таблицы называют разное и не сводятся в одну.
@@ -503,8 +503,8 @@ interface WorldStepRun {
   regen: { spec: WorldRegenSpec; index: number } | null;
 }
 
-/** Своё у типа в шаге страницы досье (`dossierPageStep`): сущность, коды отказа, вход и итог. */
-interface DossierPageStepSpec<T> {
+/** Своё у типа в шаге страницы списка хода (`runPageStep`): сущность, коды отказа, вход и итог. */
+interface RunPageStepSpec<T> {
   kind: WorldListType;
   entry: WorldDossierCandidate | undefined;
   refusals: { taken: string; notFound: string };
@@ -634,7 +634,11 @@ export class WorldWriteHandler {
     const total = stepsTotalOf(data);
     if (total !== null && step >= total) return finishRun(this.tasks, row);
     // Шаг 0 - выбор: только ему нужны известные события (подсказка ключа, `eventChoice`).
-    const context = await this.contextOf(row, dossier, step === 0);
+    const context = await this.contextOf(
+      row,
+      dossier,
+      step === 0 && eventsMode(row.language, data.events) === 'on',
+    );
     if (step === 0 && runMainCharacters(context).length === 0) {
       return failRun(this.tasks, row, WORLD_ANALYSIS_MISSING);
     }
@@ -707,14 +711,18 @@ export class WorldWriteHandler {
       const index = quotes();
       // События (`F08-13b-2`): выбор предлагает их сам, кроме старого хода и языка без эталона (Q7).
       const eventMode = eventsMode(context.language, data.events);
-      const make = (count: number) =>
-        selectInput(
+      // Сколько глав прочёл выбор (префикс, когда весь текст не влез): главы событий из ответа -
+      // только из них (`F08-13b-3`, круг 4 `F08-13b-2`).
+      const readOf = new Map<object, number>();
+      const make = (count: number) => {
+        const made = selectInput(
           context,
           base,
           index,
           {
             text: chaptersText(context.chapters.slice(0, count)) || 'none',
             partial: count < context.chapters.length,
+            readChapters: count,
           },
           {
             places: placeBase.places,
@@ -726,6 +734,9 @@ export class WorldWriteHandler {
             },
           },
         );
+        readOf.set(made, count);
+        return made;
+      };
       // Весь текст сначала; не влез - наибольший префикс глав, как у страницы.
       const input = await fittingInput(
         context.chapters.length,
@@ -767,6 +778,7 @@ export class WorldWriteHandler {
         data.events,
         answer,
         pairKeys,
+        (input && readOf.get(input)) ?? context.chapters.length,
       );
       const stepRecord =
         input === null
@@ -806,9 +818,9 @@ export class WorldWriteHandler {
     // Места, предметы, понятия и события - один шаг страницы со своим входом и итогом (R1).
     const run = { row, gate, step, context, pending, ctx, regen };
     if (kind === 'place') {
-      return this.dossierPageStep(run, {
+      return this.runPageStep(run, {
         kind,
-        entry: dossierListOf(data, kind)?.[at ?? -1],
+        entry: runListOf(data, kind)?.[at ?? -1],
         refusals: PAGE_REFUSALS[kind],
         input: (entry, index, top) =>
           placeInput(context, entry, index, pageBook(context, entry, top), regen?.spec ?? null),
@@ -817,9 +829,9 @@ export class WorldWriteHandler {
     }
 
     if (isRunObjectType(kind)) {
-      return this.dossierPageStep(run, {
+      return this.runPageStep(run, {
         kind,
-        entry: dossierListOf(data, kind)?.[at ?? -1],
+        entry: runListOf(data, kind)?.[at ?? -1],
         refusals: PAGE_REFUSALS[kind],
         input: (entry, index, top) =>
           objectInput(
@@ -1090,9 +1102,9 @@ export class WorldWriteHandler {
    * ключ заняли сущностью другого типа после выбора (`refusals.taken`), у сущности нет ни одной главы
    * (`refusals.notFound`). Вход и итог - свои у типа (`spec`).
    */
-  private async dossierPageStep<T>(
+  private async runPageStep<T>(
     run: WorldStepRun,
-    spec: DossierPageStepSpec<T>,
+    spec: RunPageStepSpec<T>,
   ): Promise<StepRecord | null> {
     const { row, gate, step, context, pending, ctx, regen } = run;
     const entry = spec.entry;
@@ -1212,6 +1224,7 @@ export class WorldWriteHandler {
     previous: WorldEventCandidate[] | null,
     answer: WorldSelectDraft | null,
     pairKeys: ReadonlySet<string>,
+    readChapters: number,
   ): Promise<{
     list: WorldEventCandidate[];
     leftOut: WorldSkip[];
@@ -1241,8 +1254,9 @@ export class WorldWriteHandler {
       (key) => answered.get(key),
       () => [],
     );
-    // Главы ответа - только версии: черновик выбора мог быть сохранён и прочитан не этим кодом.
-    const inVersion = new Set(context.chapters.map((c) => c.number));
+    // Главы ответа - только прочитанные выбором главы версии (префикс, `readChapters`): черновик выбора
+    // мог быть сохранён и прочитан не этим кодом, а главу вне префикса модель не читала.
+    const inVersion = new Set(context.chapters.slice(0, readChapters).map((c) => c.number));
     const counted = entries.map((e) => ({
       key: e.key,
       name: e.name,

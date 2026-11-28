@@ -758,3 +758,57 @@ describe('event steps in the estimate and the choice input (F08-13b-2, /qa round
     expect(Object.keys(draft.blocks)).toEqual(['significance']);
   });
 });
+
+/** Хвосты `F08-13b-2`, закрытые в `F08-13b-3`: оценка шага события и список глав выбора по префиксу. */
+describe('F08-13b-3: event estimate and the chapter list of a partial choice', () => {
+  const chapters = [1, 2, 3].map((n) => ({
+    number: n,
+    title: `Chapter ${n}`,
+    content: '<p>x</p>',
+  }));
+  const context = {
+    language: 'en',
+    dossier: null,
+    glossary: null,
+    bookTitle: 'B',
+    author: 'A',
+    originalLanguage: '',
+    entities: new Map(),
+    chapters,
+    analysis: { characters: [{ key: 'anna', name: 'ANNA', role: 'main' }] },
+    names: { titles: ['B'], authors: ['A'] },
+    knownEvents: [],
+  } as unknown as WorldContext;
+
+  it('the event step of the estimate carries the chapters of the whole version', () => {
+    const seen: string[] = [];
+    const call = (keep = false) => ({
+      maxTokens: 0,
+      enabled: true,
+      contextLength: null,
+      estimate: (request: unknown) => {
+        if (keep) seen.push(JSON.stringify(request));
+        return new Prisma.Decimal(0);
+      },
+    });
+    const calls = {
+      select: call(),
+      page: call(true),
+      external: call(),
+      pair: call(),
+      review: call(),
+    };
+    worldPipelineUsd(calls, context, 0, { events: 1 }, context);
+    // Запрос шага события: все три главы версии списком присутствия, самой длинной строкой, и он один.
+    const lines = [1, 2, 3].map((n) => `${n} - named by the choice step`).join('\\n');
+    expect(seen.filter((r) => r.includes(lines))).toHaveLength(1);
+  });
+
+  it('a choice that read a prefix lists only the chapters of that prefix', () => {
+    const request = (book: { text: string; partial: boolean; readChapters?: number }) =>
+      JSON.stringify(selectInput(context, [], new Map(), book).author(null));
+    expect(request({ text: 't', partial: true, readChapters: 2 })).not.toContain('3 — Chapter 3');
+    expect(request({ text: 't', partial: true, readChapters: 2 })).toContain('2 — Chapter 2');
+    expect(request({ text: 't', partial: false })).toContain('3 — Chapter 3');
+  });
+});

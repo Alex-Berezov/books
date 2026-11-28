@@ -69,7 +69,7 @@ import {
   WorldDossierCandidate,
   WorldWriteData,
   WORLD_LIST_TYPES,
-  dossierListOf,
+  runListOf,
   worldDataJson,
 } from './world-write.data';
 import { BOOK_WORLD_LIMITS } from '../../book-world/dto/book-world-blocks.dto';
@@ -444,7 +444,7 @@ export class WorldWriteService {
     }
     // Место, предмет, понятие и событие (`F08-12b`, `F08-13b`, `F08-13b-2`): шаг страницы этапом страницы своей формой.
     for (const type of WORLD_LIST_TYPES) {
-      const entry = dossierListOf(data, type)?.find((e) => e.key === item.key);
+      const entry = runListOf(data, type)?.find((e) => e.key === item.key);
       if (!entry) continue;
       const context = await this.handler.contextOf(row, dossier.data);
       const book = pageBook(context, entry, null);

@@ -311,6 +311,16 @@ describe('присутствие наружу (F08-2, решения арбит�
     },
   };
 
+  it('toEntityDto читателю: не объект в сценах не отдаётся; редактору — как лежит (F08-13b-3)', () => {
+    const junk = {
+      ...row,
+      blocks: { scenes: [null, 5, { chapter: 1, title: 'kept', text: 'y' }] },
+    };
+    const reader = toEntityDto(junk as unknown as typeof row, { visibleKeys: new Set() });
+    expect(reader.scenes!.map((x) => x.title)).toEqual(['kept']);
+    expect(toEntityDto(junk as unknown as typeof row).scenes).toHaveLength(3);
+  });
+
   it('toEntityDto читателю: пункты из stale не отдаются; редактору — все', () => {
     const reader = toEntityDto(row, { visibleKeys: new Set() });
     expect(reader.quotes!.map((q) => q.text)).toEqual(['kept']);

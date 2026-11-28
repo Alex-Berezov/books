@@ -3,8 +3,9 @@ import { WORLD_EVENT_CARD_SELECT, WORLD_OBJECT_CARD_SELECT } from './book-world-
 import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
 import { WORLD_OBJECTS } from './world-public';
 import { worldObjectCards } from './world-object-cards';
+import { CHAPTER_NUMBERS_LIMIT } from '../../shared/chapters/chapter-numbers';
 
-type Client = Pick<Prisma.TransactionClient, 'bookWorldEntity'>;
+type Client = Pick<Prisma.TransactionClient, 'bookWorldEntity' | 'chapter'>;
 
 /**
  * Карточки общей страницы (`F08-13a`; решения `F08 | F08-13` Q6, Q7 и `F08 | F08-13c` Q2, Q3):
@@ -27,7 +28,10 @@ describe('worldObjectCards', () => {
     blocks: { scenes: chapters.map((chapter) => ({ title: key, text: key, chapter })) },
     mentions: null,
   });
-  const client = () => ({
+  const client = (versionChapters = [1, 2, 4, 6]) => ({
+    chapter: {
+      findMany: jest.fn().mockResolvedValue(versionChapters.map((number) => ({ number }))),
+    },
     bookWorldEntity: {
       findMany: jest
         .fn()
@@ -85,6 +89,38 @@ describe('worldObjectCards', () => {
       orderBy: { key: 'asc' },
       take: BOOK_WORLD_LIMITS.entities,
     });
+  });
+
+  it('глава события вне версии - не глава карточки (F08-13b-3)', async () => {
+    const store = client([2, 6]);
+    const cards = await worldObjectCards(store as unknown as Client, 'v-1');
+    // duel: сцены 4 и 6, главы 4 в версии нет - карточке глава 6.
+    expect(cards.events.map((c) => [c.key, c.chapter])).toEqual([
+      ['ball', 2],
+      ['duel', 6],
+    ]);
+    expect(store.chapter.findMany).toHaveBeenCalledTimes(1);
+    expect(store.chapter.findMany).toHaveBeenCalledWith({
+      where: { bookVersionId: 'v-1' },
+      select: { number: true },
+      orderBy: { number: 'asc' },
+      take: CHAPTER_NUMBERS_LIMIT,
+    });
+  });
+
+  it('все сцены события вне версии - глава null; событий без сцен - глав не читает', async () => {
+    const none = await worldObjectCards(client([]) as unknown as Client, 'v-1');
+    expect(none.events.map((c) => [c.key, c.chapter])).toEqual([
+      ['ball', null],
+      ['duel', null],
+    ]);
+    const store = client();
+    store.bookWorldEntity.findMany.mockImplementation(({ where }: { where: { type: unknown } }) =>
+      Promise.resolve(where.type === 'event' ? [event('quiet', [])] : []),
+    );
+    const cards = await worldObjectCards(store as unknown as Client, 'v-1');
+    expect(cards.events.map((c) => c.chapter)).toEqual([null]);
+    expect(store.chapter.findMany).not.toHaveBeenCalled();
   });
 
   it('карточка — белым списком, без сцен и полей строки', async () => {

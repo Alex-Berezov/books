@@ -262,8 +262,11 @@ function keysText(context: WorldContext): string {
   return lines.length > 0 ? lines.join('\n') : NONE;
 }
 
-const chapterList = (context: WorldContext): string =>
-  context.chapters.map((c) => `${c.number} — ${c.title}`).join('\n') || NONE;
+const chapterList = (context: WorldContext, readChapters?: number): string =>
+  context.chapters
+    .slice(0, readChapters)
+    .map((c) => `${c.number} — ${c.title}`)
+    .join('\n') || NONE;
 
 function dossierNames(dossier: unknown): string {
   const characters = dossierOf(dossier).characters ?? [];
@@ -318,6 +321,8 @@ const PLACE_REGEN_COMPANIONS = { kind: ['wikidataId'] } as const;
 export interface WorldBook {
   text: string;
   partial: boolean;
+  /** Сколько первых глав вошло в `text`; нет - все (`selectInput` даёт выбору список только этих глав). */
+  readChapters?: number;
 }
 
 /** Сущности досье шага выбора, кроме героев: места (`F08-12b`), предметы и понятия (`F08-13b`). */
@@ -386,7 +391,7 @@ export function selectInput(
         originalLanguage: originalLanguageName(context.originalLanguage),
         dossierNames: dossierNames(context.dossier),
         glossary: glossaryText(context),
-        chapterList: chapterList(context),
+        chapterList: chapterList(context, book.partial ? book.readChapters : undefined),
         book: book.text,
         redo,
       }),
@@ -1132,7 +1137,16 @@ export function worldPipelineUsd(
       key: type,
       name: type,
       aliases: [],
-      mentions: { chapters: [], perChapter: {} },
+      // Событие встречается в главах (список глав входит в запрос шага): сверху - во всех главах версии,
+      // каждая самой длинной строкой списка - «названа выбором» (`mentionLines`).
+      mentions:
+        type === 'event'
+          ? {
+              chapters: context.chapters.map((c) => c.number),
+              perChapter: {},
+              named: context.chapters.map((c) => c.number),
+            }
+          : { chapters: [], perChapter: {} },
     };
     const step = worldStepUsd(
       calls.page,

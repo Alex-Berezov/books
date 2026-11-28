@@ -136,6 +136,64 @@ describe('pickEvents: keys taken before the paid step (Q3, Q4)', () => {
     expect(got.leftOut.map((s) => s.reason)).toEqual(['EVENT_KEY_INVALID']);
   });
 
+  it('two long names with the same first 60 letters are not merged: the second is EVENT_KEY_TAKEN (F08-13b-3)', () => {
+    const head = 'a'.repeat(59);
+    const got = pickEvents(
+      [pick(`${head} first`), pick(`${head} second`)],
+      new Set(),
+      new Set(),
+      new Map(),
+      false,
+    );
+    expect(got.free.map((e) => e.name)).toEqual([`${head} first`]);
+    expect(got.leftOut.map((s) => [s.key, s.reason])).toEqual([[head, 'EVENT_KEY_TAKEN']]);
+  });
+
+  it('on a translation the overlap check reads the same name the key is built from (F08-13b-3)', () => {
+    const head = 'a'.repeat(59);
+    const tr = (name: string, originalName: string) => ({ ...pick(name), originalName });
+    // Оригинал не даёт ключа - ключ и основа из названия версии: второе отсеяно, а не слито.
+    const fromName = pickEvents(
+      [tr(`${head} first`, '— ? —'), tr(`${head} second`, '— ? —')],
+      new Set(),
+      new Set(),
+      new Map(),
+      true,
+    );
+    expect(fromName.free).toHaveLength(1);
+    expect(fromName.leftOut.map((x) => x.reason)).toEqual(['EVENT_KEY_TAKEN']);
+    // Ключ из оригинала: один оригинал - одно событие, хотя названия версии разные.
+    const fromOriginal = pickEvents(
+      [tr('Le duel', 'Duel'), tr('La duel', 'Duel')],
+      new Set(),
+      new Set(),
+      new Map(),
+      true,
+    );
+    expect([fromOriginal.free.map((e) => e.key), fromOriginal.leftOut]).toEqual([['duel'], []]);
+  });
+
+  it('on a cut-key overlap the item with answer chapters keeps the key (F08-13b-3)', () => {
+    const head = 'a'.repeat(59);
+    const got = pickEvents(
+      [pick(`${head} first`, []), pick(`${head} second`, [3])],
+      new Set(),
+      new Set(),
+      new Map(),
+      false,
+    );
+    expect(got.free.map((e) => [e.name, e.chapters])).toEqual([[`${head} second`, [3]]]);
+    expect(got.leftOut.map((x) => [x.names[0], x.reason])).toEqual([
+      [`${head} first`, 'EVENT_KEY_TAKEN'],
+    ]);
+  });
+
+  it('a name with no key is left out under a label of at most the key length (F08-13b-3)', () => {
+    const got = pickEvents([pick('?'.repeat(100))], new Set(), new Set(), new Map(), false);
+    expect(got.leftOut).toHaveLength(1);
+    expect(got.leftOut[0].key.length).toBe(60);
+  });
+
   it('a second item on the same key keeps its name as a form of the event', () => {
     const got = pickEvents(
       [
@@ -364,9 +422,14 @@ const fitsLlm = () => ({
 });
 
 /** Шаг выбора с ответом `answer`; герои анализа - Anna и Boris (кандидаты хода подставлены). */
-const choose = async (data: unknown, context: ReturnType<typeof ctx>, answer: unknown) => {
+const choose = async (
+  data: unknown,
+  context: ReturnType<typeof ctx>,
+  answer: unknown,
+  llm: ReturnType<typeof fitsLlm> = fitsLlm(),
+) => {
   const prisma = { bookWorldEntity: { findMany: jest.fn().mockResolvedValue([]) } };
-  const handler = worldWriteHandler({ llm: fitsLlm(), prisma });
+  const handler = worldWriteHandler({ llm, prisma });
   const inner = handler as unknown as {
     candidatesOf: jest.Mock;
     loop: jest.Mock;
@@ -486,6 +549,23 @@ describe('WorldWriteHandler: events at the choice step (F08-13b-2, Q2-Q4, Q7)', 
       answerOf([event]),
     );
     expect(source?.events?.map((e) => e.key)).toEqual(['el-duelo']);
+  });
+
+  it('a choice that read a prefix takes no answer chapter past it (F08-13b-3)', async () => {
+    // Весь текст не влезает: влезает только префикс без главы 3 («Nothing here.»).
+    const llm = fitsLlm();
+    llm.stageFit = jest.fn((_stage: unknown, request: unknown) =>
+      Promise.resolve({ fits: !JSON.stringify(request).includes('Nothing here.') }),
+    );
+    const record = await choose(
+      fresh,
+      ctx(),
+      answerOf([{ key: '', name: 'The duel', aliases: ['duel'], chapters: [2, 3] }]),
+      llm,
+    );
+    expect(record?.events?.map((e) => [e.key, e.mentions.chapters, e.mentions.named])).toEqual([
+      ['the-duel', [1, 2], [2]],
+    ]);
   });
 
   it('the chapters named only by the choice stay apart from the counted ones (named)', async () => {

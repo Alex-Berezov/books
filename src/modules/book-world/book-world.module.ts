@@ -11,7 +11,6 @@ import { WorldStatsController } from './world-stats.controller';
 import { WikidataClient } from './wikidata.client';
 import { WorldGeoService } from './world-geo.service';
 import { WorldMapService } from './world-map.service';
-import { WorldObjectsRelistService } from './world-objects-relist.service';
 import { OsmTileClient } from './osm-tile.client';
 import { StorageModule } from '../../shared/storage/storage.module';
 
@@ -24,8 +23,6 @@ import { StorageModule } from '../../shared/storage/storage.module';
  * Чтение для читателя — только ручкой. `WorldSitemapService` — карта сайта мира (`F08-3`), её ручку
  * держит публичный контроллер `:lang`; счётчики страниц и отчёт — `WorldStatsController`.
  * `WorldMapService` — литературная карта (`F08-12d`): тайлы OSM по запросу страницы с картой.
- * `WorldObjectsRelistService` — разовый пересчёт публичности предметов, понятий и событий при старте
- * (`F08-13c`, снять следующей пачкой).
  */
 @Module({
   // Реестр глобальный; его импорт — для изолированной сборки модуля в тестах, как у остальных
@@ -42,7 +39,6 @@ import { StorageModule } from '../../shared/storage/storage.module';
     WorldGeoService,
     OsmTileClient,
     WorldMapService,
-    WorldObjectsRelistService,
   ],
   exports: [BookWorldService, WorldMentionsService, WorldSitemapService],
 })

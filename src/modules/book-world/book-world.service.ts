@@ -326,13 +326,19 @@ export class BookWorldService {
     // Точки мест — после транзакции (решение арбитра `F08 | F08-12` Q2): запрос к Wikidata не держит
     // замок мира, отказ Wikidata запись не валит.
     await this.geo.refresh(bookVersionId, language, placeKeys(planned));
+    // Три независимых чтения - вместе (`F08-13b-3`), а не по очереди.
+    const [alternates, places, objectCards] = await Promise.all([
+      worldAlternates(this.prisma, bookVersionId),
+      worldPlaceCards(this.prisma, bookVersionId),
+      worldObjectCards(this.prisma, bookVersionId),
+    ]);
     return {
       world: {
         language,
         entities: rows.map(withEditor),
-        alternates: await worldAlternates(this.prisma, bookVersionId),
-        places: await worldPlaceCards(this.prisma, bookVersionId),
-        ...(await worldObjectCards(this.prisma, bookVersionId)),
+        alternates,
+        places,
+        ...objectCards,
         // Карта — только читателю страницы (`F08-12d`): запись тайлы OSM не берёт.
         map: null,
       },

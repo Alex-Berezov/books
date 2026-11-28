@@ -253,7 +253,10 @@ export const WORLD_SKIP_REASONS = [
 export type WorldSkipReason = (typeof WORLD_SKIP_REASONS)[number];
 
 export interface WorldSkip {
-  /** Ключ героя или пары; у `PAIR_KEY_INVALID` - ключи героев через `--`, как вышел бы ключ. */
+  /**
+   * Ключ героя или пары; у `PAIR_KEY_INVALID` - ключи героев через `--`, как вышел бы ключ; у
+   * `EVENT_KEY_INVALID` - подпись строки: ключ модели или начало названия, не больше предела ключа.
+   */
   key: string;
   reason: WorldSkipReason;
   /**
@@ -515,7 +518,7 @@ export type WorldStepLists = Pick<WorldWriteData, 'candidates' | 'pairs' | 'plac
   Partial<Pick<WorldWriteData, 'objects' | 'terms' | 'events'>>;
 
 /** Список хода сущностей типа (`WORLD_RUN_LISTS`); поля нет (ход до типа) - `null`. */
-export const dossierListOf = (
+export const runListOf = (
   data: Partial<Pick<WorldWriteData, WorldRunListName>>,
   type: WorldListType,
 ): WorldDossierCandidate[] | null => data[WORLD_RUN_LISTS[type]] ?? null;
@@ -688,7 +691,7 @@ function pairsOf(v: unknown): WorldPairCandidate[] | null {
   });
 }
 
-function dossierCandidatesOf(v: unknown): WorldDossierCandidate[] | null {
+function runCandidatesOf(v: unknown): WorldDossierCandidate[] | null {
   if (!Array.isArray(v)) return null;
   return v.flatMap((p) => {
     if (!isRecord(p)) return [];
@@ -842,10 +845,10 @@ export function readWorldData(data: unknown): WorldWriteData {
   const items = rawItems.flatMap((i) => itemOf(i) ?? []);
   const candidates = candidatesOf(d.candidates);
   const storedPairs = pairsOf(d.pairs);
-  const storedPlaces = dossierCandidatesOf(d.places);
-  const storedObjects = dossierCandidatesOf(d.objects);
-  const storedTerms = dossierCandidatesOf(d.terms);
-  const storedEvents = dossierCandidatesOf(d.events);
+  const storedPlaces = runCandidatesOf(d.places);
+  const storedObjects = runCandidatesOf(d.objects);
+  const storedTerms = runCandidatesOf(d.terms);
+  const storedEvents = runCandidatesOf(d.events);
   // Шаг берёт сущность по индексу: выпавшая запись или поле не той формы сдвинули бы шаги на чужую.
   const listBroken = (stored: unknown[] | null, raw: unknown): boolean =>
     (stored !== null && Array.isArray(raw) && stored.length !== raw.length) ||

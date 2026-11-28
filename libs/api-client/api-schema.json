@@ -9017,7 +9017,7 @@
       "BookWorldObjectCardDto": {
         "properties": {
           "chapter": {
-            "description": "First chapter: of the name forms for an object and a term, of the scenes for an event; null — not counted yet or no scene with a chapter",
+            "description": "First chapter: of the name forms for an object and a term, of the scenes for an event; null — not counted yet, no scene with a chapter, or no scene chapter in this version",
             "minimum": 1,
             "nullable": true,
             "type": "number"
@@ -35007,7 +35007,7 @@
             "type": "array"
           },
           "reason": {
-            "description": "BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds \"--\"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or \"-\" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b); OBJECT_BELOW_MIN_CHAPTERS, TERM_BELOW_MIN_CHAPTERS - an object or a term of the dossier found in no chapter; OBJECT_KEY_TAKEN, TERM_KEY_TAKEN - the key belongs to an entity or a candidate of another type (a character of the analysis, a pair of the run, a place of the dossier, for a term also an object of the dossier); OBJECTS_MAX, TERMS_MAX - over 10 objects or terms per run, by chapters then by key; ORGANIZATION_SKIPPED - an organization of the dossier, the run writes no page for it (F08-13b); EVENT_NO_CHAPTER - an event the choice step named without any chapter of the version; EVENT_KEY_TAKEN - the event key belongs to an entity or a candidate of another type; EVENT_KEY_INVALID - no key can be built for the event (from another version or from the name); EVENTS_MAX - over 10 events per run, by chapters then by key (F08-13b-2)",
+            "description": "BELOW_MIN_CHAPTERS - a secondary character in fewer chapters than the threshold; KEY_PAIR_FORM - a character key holds \"--\"; PAIR_KEY_INVALID - no pair key for these characters (longer than 60 or \"-\" at the joint); PAIR_KEY_TAKEN - the pair key belongs to an entity of another type; PAIRS_MAX - over 10 pairs per run; PLACE_BELOW_MIN_CHAPTERS - a place in fewer than 2 chapters; PLACE_KEY_TAKEN - the place key belongs to an entity or a candidate of another type; PLACES_MAX - over 10 places per run (F08-12b); OBJECT_BELOW_MIN_CHAPTERS, TERM_BELOW_MIN_CHAPTERS - an object or a term of the dossier found in no chapter; OBJECT_KEY_TAKEN, TERM_KEY_TAKEN - the key belongs to an entity or a candidate of another type (a character of the analysis, a pair of the run, a place of the dossier, for a term also an object of the dossier); OBJECTS_MAX, TERMS_MAX - over 10 objects or terms per run, by chapters then by key; ORGANIZATION_SKIPPED - an organization of the dossier, the run writes no page for it (F08-13b); EVENT_NO_CHAPTER - an event the choice step named without any chapter of the version; EVENT_KEY_TAKEN - the event key belongs to an entity or a candidate of another type, or to another event of the answer whose long name gives the same cut key; EVENT_KEY_INVALID - no key can be built for the event (from another version or from the name); EVENTS_MAX - over 10 events per run, by chapters then by key (F08-13b-2)",
             "enum": [
               "BELOW_MIN_CHAPTERS",
               "KEY_PAIR_FORM",

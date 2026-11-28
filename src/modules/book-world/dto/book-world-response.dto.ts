@@ -304,7 +304,7 @@ export class BookWorldObjectCardDto {
     minimum: 1,
     description:
       'First chapter: of the name forms for an object and a term, of the scenes for an event; ' +
-      'null — not counted yet or no scene with a chapter',
+      'null — not counted yet, no scene with a chapter, or no scene chapter in this version',
   })
   chapter!: number | null;
 

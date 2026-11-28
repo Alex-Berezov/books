@@ -221,8 +221,19 @@ export function eventKeyOf(
   useOriginal: boolean,
 ): string | null {
   if (known.has(pick.key) && keyUsable(pick.key)) return pick.key;
-  const original = useOriginal && pick.originalName ? latinEventKey(pick.originalName) : null;
-  return original ?? latinEventKey(pick.name);
+  return latinEventKey(eventKeySource(pick, useOriginal));
+}
+
+/**
+ * Название, из которого собирается латиница ключа (`eventKeyOf`): оригинала, если оно даёт ключ, иначе
+ * версии. Одно правило и для ключа, и для основы сверки обрезанных ключей (`pickEvents`).
+ */
+function eventKeySource(
+  pick: Pick<WorldSelectEvent, 'name' | 'originalName'>,
+  useOriginal: boolean,
+): string {
+  const original = useOriginal && pick.originalName ? pick.originalName : null;
+  return original !== null && latinEventKey(original) !== null ? original : pick.name;
 }
 
 const skip = (key: string, reason: WorldSkipReason, name: string, chapters: number | null) =>
@@ -237,7 +248,8 @@ export interface WorldEventsPicked {
 /**
  * Ключи, формы и отсев до подсчёта присутствия: ключ по `eventKeyOf` (не собрать - `EVENT_KEY_INVALID`);
  * повтор ключа в ответе - одно событие (формы, главы и название второго пункта как форма
- * складываются); ключ, занятый героем анализа,
+ * складываются), кроме повтора, где ключ латиницы совпал только обрезкой двух разных названий, - второе
+ * `EVENT_KEY_TAKEN` (`F08-13b-3`); ключ, занятый героем анализа,
  * сущностью досье, парой хода или сохранённой сущностью другого типа (`otherKeys`, `entities`), -
  * `EVENT_KEY_TAKEN` до платного шага (запись отбилась бы 400, `checkWorldTypeFields`).
  */
@@ -249,13 +261,16 @@ export function pickEvents(
   useOriginal: boolean,
 ): WorldEventsPicked {
   const merged = new Map<string, WorldEventPick>();
+  // Латиница, из которой собран ключ: два названия с общим началом после обрезки до предела дают один
+  // ключ (`latinEventKey`) - второе отсеивается, а не сливается в первое.
+  const basis = new Map<string, string>();
   const leftOut: WorldSkip[] = [];
   for (const pick of picks) {
     const key = eventKeyOf(pick, known, useOriginal);
     if (key === null) {
       leftOut.push(
         skip(
-          pick.key || pick.name.slice(0, WORLD_EVENT_KEY_MAX),
+          (pick.key || pick.name).slice(0, WORLD_EVENT_KEY_MAX),
           'EVENT_KEY_INVALID',
           pick.name,
           null,
@@ -264,6 +279,17 @@ export function pickEvents(
       continue;
     }
     const same = merged.get(key);
+    const pickBasis = slugifyLocalized(eventKeySource(pick, useOriginal));
+    if (same && !known.has(key) && basis.get(key) !== pickBasis) {
+      // Ключ остаётся за пунктом с главами ответа: первый без глав не отнимает его у второго с главами
+      // (второй иначе отсеян, а первый потом уйдёт в `EVENT_NO_CHAPTER` - ни одного события).
+      if (same.chapters.length === 0 && pick.chapters.length > 0) {
+        leftOut.push(skip(key, 'EVENT_KEY_TAKEN', same.name, null));
+        merged.set(key, { key, name: pick.name, aliases: pick.aliases, chapters: pick.chapters });
+        basis.set(key, pickBasis);
+      } else leftOut.push(skip(key, 'EVENT_KEY_TAKEN', pick.name, null));
+      continue;
+    }
     if (same) {
       // Название второго пункта - форма, только если оно стоит в тексте, как формы из `readAliases`.
       const asForm = pick.name !== same.name && pick.nameInText;
@@ -273,6 +299,7 @@ export function pickEvents(
       continue;
     }
     merged.set(key, { key, name: pick.name, aliases: pick.aliases, chapters: pick.chapters });
+    basis.set(key, pickBasis);
   }
   const free: WorldEventPick[] = [];
   for (const event of merged.values()) {
