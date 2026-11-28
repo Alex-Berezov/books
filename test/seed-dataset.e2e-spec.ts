@@ -1327,6 +1327,10 @@ describe('Seeded dataset (e2e)', () => {
             'london',
             'salt-quay',
           ]);
+          // Предмет, понятие и событие сида (F08-13c): проверки трёх типов не молчат.
+          expect(
+            rows.filter((r) => ['object', 'term', 'event'].includes(r.type)).map((r) => r.key),
+          ).toEqual(['brass-compass', 'high-water', 'night-crossing']);
         }
         // Пара (F08-8c): оба героя ключа на сайте — по тем же строкам сида.
         const listedHeroes = new Set(
@@ -1376,7 +1380,7 @@ describe('Seeded dataset (e2e)', () => {
           key: e.key,
           type: e.type ?? 'character',
           name: e.name,
-          ...(e.type === 'pair' || e.type === 'place' ? {} : { role: 'main' }),
+          ...(e.type && e.type !== 'character' ? {} : { role: 'main' }),
           short: e.short,
           ...e.blocks,
           ...(e.sources ? { sources: e.sources } : {}),
@@ -1395,7 +1399,7 @@ describe('Seeded dataset (e2e)', () => {
       },
     );
 
-    it('читатель видит ровно публичные сущности: en — шесть с парой и местами, ru — одна', async () => {
+    it('читатель видит ровно публичные сущности: en — девять с парой, местами, предметом, понятием и событием, ru — одна', async () => {
       const keysOf = async (language: Language) => {
         const { id } = await versionOf(WORLD_ACCEPTANCE.book, language);
         const res = await get(`/versions/${id}/world`).expect(200);
@@ -1405,8 +1409,11 @@ describe('Seeded dataset (e2e)', () => {
       expect(await keysOf(Language.en)).toEqual([
         'anna-lark',
         'anna-lark--tom-reed',
+        'brass-compass',
+        'high-water',
         'london',
         'mira-vale',
+        'night-crossing',
         'salt-quay',
         'tom-reed',
       ]);
@@ -1431,6 +1438,37 @@ describe('Seeded dataset (e2e)', () => {
       expect((enList.body as { places: { key: string; hasPage: boolean }[] }).places).toEqual([
         expect.objectContaining({ key: 'london', hasPage: true }),
         expect.objectContaining({ key: 'salt-quay', hasPage: true }),
+      ]);
+      // Карточки F08-13c: предмет, строка глоссария и событие (глава - первая глава сцен) со страницей.
+      const cards = enList.body as Record<'objects' | 'terms' | 'events', unknown[]>;
+      expect([cards.objects, cards.terms, cards.events]).toEqual([
+        [
+          {
+            key: 'brass-compass',
+            name: 'Brass Compass',
+            short: 'The compass Anna Lark carries across the river.',
+            chapter: 2,
+            hasPage: true,
+          },
+        ],
+        [
+          {
+            key: 'high-water',
+            name: 'High Water',
+            short: 'The yearly flood the town waits for.',
+            chapter: 1,
+            hasPage: true,
+          },
+        ],
+        [
+          {
+            key: 'night-crossing',
+            name: 'Night Crossing',
+            short: 'Anna Lark leads the town over the bridge.',
+            chapter: 2,
+            hasPage: true,
+          },
+        ],
       ]);
       // Реальное место сида (F08-12d): литерал `geo` совпадает с отпечатком текущих названий -
       // точка читателю есть (иначе `publicPoint` её прячет, и карта CI фронта пуста).
@@ -1500,12 +1538,15 @@ describe('Seeded dataset (e2e)', () => {
       expect(book?.entities.map((e) => e.key)).toEqual([
         'anna-lark',
         'anna-lark--tom-reed',
+        'brass-compass',
+        'high-water',
         'london',
+        'night-crossing',
         'salt-quay',
         'tom-reed',
       ]);
       expect(book?.entities[0].alternates.map((a) => a.language)).toEqual(['en', 'ru']);
-      // Пара, места и Том — только en: в ru-версии сида их нет.
+      // Пара, места, Том, предмет, понятие и событие — только en: в ru-версии сида их нет.
       for (const entity of book?.entities.slice(1) ?? []) {
         expect({ key: entity.key, languages: entity.alternates.map((a) => a.language) }).toEqual({
           key: entity.key,

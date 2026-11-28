@@ -184,3 +184,18 @@ function computeObjectCore(entity: CoreInput, type: WorldObjectType): WorldCoreR
   }
   return { hasCore: missing.length === 0, missing };
 }
+
+/**
+ * Главы сцен события — вход его глав (`eventMentions`) и условие пересчёта при записи (решение
+ * `F08 | F08-13a` R3), а первая из них — глава карточки события на `/wiki` (`toObjectCard`,
+ * решение `F08 | F08-13c` Q2): целые номера без повторов по возрастанию. Колонка читается как есть: не массив
+ * или не номер — не глава.
+ */
+export function eventSceneChapters(scenes: unknown): number[] {
+  if (!Array.isArray(scenes)) return [];
+  const chapters = scenes.flatMap((s: unknown) => {
+    const n = isRecord(s) ? s.chapter : undefined;
+    return typeof n === 'number' && Number.isInteger(n) ? [n] : [];
+  });
+  return [...new Set(chapters)].sort((a, b) => a - b);
+}

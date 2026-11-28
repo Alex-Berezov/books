@@ -60,7 +60,7 @@ import type {
   UpdateBookWorldDto,
   UpdateBookWorldEntityDto,
 } from './dto/update-book-world.dto';
-import { computeWorldCore, type WorldCoreResult } from './world-core';
+import { computeWorldCore, eventSceneChapters, type WorldCoreResult } from './world-core';
 import {
   chapterDigests,
   chapterTexts,
@@ -88,8 +88,7 @@ import {
 } from './world-public';
 import { worldAlternates } from './world-alternates';
 import { worldPlaceCards } from './world-place-cards';
-import { worldTermCards } from './world-term-cards';
-import { eventSceneChapters } from './world-mentions-count';
+import { worldObjectCards } from './world-object-cards';
 import { WorldGeoPass, WorldGeoService } from './world-geo.service';
 import { acceptedWorldImage } from './world-image-public';
 import { WorldMapService } from './world-map.service';
@@ -194,7 +193,7 @@ export class BookWorldService {
       actor,
     );
     // hreflang общей страницы — правилом карты сайта (решение арбитра `F08 | F08-3a`), одно для всех.
-    const [entities, alternates, places, terms] = await Promise.all([
+    const [entities, alternates, places, cards] = await Promise.all([
       editor
         ? this.prisma.bookWorldEntity
             .findMany({
@@ -214,11 +213,11 @@ export class BookWorldService {
             .then((rows) => rows.map(toReaderSummary)),
       worldAlternates(this.prisma, bookVersionId),
       worldPlaceCards(this.prisma, bookVersionId),
-      worldTermCards(this.prisma, bookVersionId),
+      worldObjectCards(this.prisma, bookVersionId),
     ]);
     const map =
       options.map && !editor ? await this.worldMap.buildBookMap(bookMapPoints(places)) : null;
-    return { language, entities, alternates, places, terms, map };
+    return { language, entities, alternates, places, ...cards, map };
   }
 
   /** Страница сущности: непубличная не редактору — 404, как и черновик версии. */
@@ -333,7 +332,7 @@ export class BookWorldService {
         entities: rows.map(withEditor),
         alternates: await worldAlternates(this.prisma, bookVersionId),
         places: await worldPlaceCards(this.prisma, bookVersionId),
-        terms: await worldTermCards(this.prisma, bookVersionId),
+        ...(await worldObjectCards(this.prisma, bookVersionId)),
         // Карта — только читателю страницы (`F08-12d`): запись тайлы OSM не берёт.
         map: null,
       },

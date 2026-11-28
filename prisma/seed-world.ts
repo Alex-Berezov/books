@@ -24,6 +24,9 @@ import {
  *     пара в списке (`isListed`, рубильник пар включён в `F08-8c-2`);
  *   - `salt-quay` — место (`F08-12c`, решение `F08 | F08-12c` R2) с ядром, только `en`: страница
  *     места и карточка в списке `/wiki` (рубильник мест включён в `F08-12c`); точки нет — вымышленное;
+ *   - `brass-compass`, `high-water`, `night-crossing` — предмет, понятие и событие (`F08-13c`) с ядром,
+ *     только `en`: их страницы, карточки предметов и событий и строка глоссария на `/wiki` (рубильник
+ *     `WORLD_OBJECTS` включён в `F08-13c`); у события значение - под островом последней главы сцен;
  *   - `london` — реальное место (`F08-12d`, решение `F08 | F08-12d` Р5) с ядром и проверенной точкой
  *     Wikidata Q84, только `en`: литературная карта `/wiki` и малая карта страницы места. Колонка `geo`
  *     записана литералом (её пишет только сервер после Wikidata, а сид в сеть не ходит); тайлы сид
@@ -65,6 +68,8 @@ const CHAPTERS_EN: Record<number, string[]> = {
     'Anna Lark said the river would rise.',
     'Lou Grey sang in the yard.',
     'The boats waited at Salt Quay.',
+    // Понятие `high-water` (F08-13c) - последним абзацем: индексы прежних абзацев не сдвигаются.
+    'They called it High Water.',
   ],
   2: [
     'The river rose before noon.',
@@ -73,6 +78,8 @@ const CHAPTERS_EN: Record<number, string[]> = {
     'Sam Holt counted the boats.',
     // Реальное место `london` (F08-12d) - последними абзацами: индексы прежних абзацев не сдвигаются.
     'The flood reached London by night.',
+    // Предмет `brass-compass` (F08-13c) - последним абзацем.
+    'The Brass Compass pointed downriver.',
   ],
   3: [
     'Tom Reed lit the lamp in the tower.',
@@ -198,8 +205,11 @@ const SCENES_EN: [number, string][] = [
 
 type EntitySeed = {
   key: string;
-  /** Тип сущности; нет — герой `main`. Пара (`F08-8c`) и место (`F08-12c`) — без роли. */
-  type?: 'character' | 'pair' | 'place';
+  /**
+   * Тип сущности; нет — герой `main`. Пара (`F08-8c`), место (`F08-12c`), предмет, понятие
+   * и событие (`F08-13c`) — без роли.
+   */
+  type?: 'character' | 'pair' | 'place' | 'object' | 'term' | 'event';
   name: string;
   short: string | null;
   blocks: Record<string, unknown>;
@@ -502,6 +512,91 @@ const ENTITIES_EN: EntitySeed[] = [
       reason: null,
     },
   },
+  {
+    // Предмет (`F08-13c`): ядро — «Коротко», значение, присутствие. Название — в последнем абзаце
+    // главы 2.
+    key: 'brass-compass',
+    type: 'object',
+    name: 'Brass Compass',
+    short: 'The compass Anna Lark carries across the river.',
+    blocks: {
+      significance: 'Service text: it keeps the crossing on course.',
+      // Связь с героем сида (Q5): блок «Связи» на странице предмета есть и на 375 px.
+      characterKeys: ['anna-lark'],
+      description: 'Service text: brass case, cracked glass.',
+      quotes: [
+        {
+          text: 'The Brass Compass pointed downriver.',
+          chapter: 2,
+          interpretation: 'What it shows.',
+        },
+      ],
+      faq: [{ question: 'Whose compass is it?', answer: 'It belongs to the mapmaker.' }],
+    },
+    mentions: {
+      chapters: [2],
+      first: 2,
+      perChapter: { '2': 1 },
+      paragraphs: { '2': [5] },
+      coPresence: {},
+      stale: [],
+    },
+    hasCore: true,
+    coreMissing: [],
+    isListed: true,
+  },
+  {
+    // Понятие (`F08-13c`): ядро — «Коротко» и присутствие; строка глоссария со ссылкой на страницу.
+    // Название — в последнем абзаце главы 1.
+    key: 'high-water',
+    type: 'term',
+    name: 'High Water',
+    short: 'The yearly flood the town waits for.',
+    blocks: {
+      significance: 'Service text: the rule the whole town lives by.',
+      quotes: [
+        { text: 'They called it High Water.', chapter: 1, interpretation: 'What it shows.' },
+      ],
+    },
+    mentions: {
+      chapters: [1],
+      first: 1,
+      perChapter: { '1': 1 },
+      paragraphs: { '1': [5] },
+      coPresence: {},
+      stale: [],
+    },
+    hasCore: true,
+    coreMissing: [],
+    isListed: true,
+  },
+  {
+    // Событие (`F08-13c`): ядро — «Коротко» без исхода, значение, сцены с главой. Название в тексте
+    // не встречается: главы события — главы его сцен (`eventMentions`, R2).
+    key: 'night-crossing',
+    type: 'event',
+    name: 'Night Crossing',
+    short: 'Anna Lark leads the town over the bridge.',
+    blocks: {
+      significance: 'Service text: the crossing ends with the map closed for good.',
+      characterKeys: ['anna-lark'],
+      scenes: [
+        { chapter: 2, title: 'The bridge', text: 'They cross before noon.' },
+        { chapter: 3, title: 'The last map', text: 'The map is closed.' },
+      ],
+    },
+    mentions: {
+      chapters: [2, 3],
+      first: 2,
+      perChapter: {},
+      paragraphs: {},
+      coPresence: {},
+      stale: [],
+    },
+    hasCore: true,
+    coreMissing: [],
+    isListed: true,
+  },
 ];
 
 const ENTITIES_RU: EntitySeed[] = [
@@ -613,7 +708,7 @@ function entityData(e: EntitySeed) {
   return {
     type: e.type ?? 'character',
     name: e.name,
-    role: e.type === 'pair' || e.type === 'place' ? null : 'main',
+    role: e.type && e.type !== 'character' ? null : 'main',
     short: e.short,
     aliases: Prisma.DbNull,
     aliasExclusions: Prisma.DbNull,

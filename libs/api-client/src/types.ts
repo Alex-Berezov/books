@@ -8050,6 +8050,8 @@ export interface components {
       alternates: components['schemas']['WorldAlternateDto'][];
       /** @description Readers: public entities only; editors: every entity of the version */
       entities: components['schemas']['BookWorldListEntityDto'][];
+      /** @description Events shown on the world page (F08-13c): visible, read after the model text, with or without their own page; by first chapter of the scenes, then key; no scenes in the card. Same set for editors */
+      events: components['schemas']['BookWorldObjectCardDto'][];
       /**
        * @description Language of the version
        * @enum {string}
@@ -8057,10 +8059,12 @@ export interface components {
       language: 'en' | 'es' | 'fr' | 'pt' | 'ru';
       /** @description Literary map of the places with points (F08-12d): readers with ?map=1 only; null without the parameter, for editors, in the save response, when no place has a point or a tile could not be fetched */
       map: components['schemas']['BookWorldMapDto'] | null;
+      /** @description Objects shown on the world page (F08-13c): visible, read after the model text, with or without their own page; by first chapter, then key. Same set for editors */
+      objects: components['schemas']['BookWorldObjectCardDto'][];
       /** @description Places shown on the world page (F08-12a, public since F08-12c): visible, read after the model text; with or without their own page. Same set for editors */
       places: components['schemas']['BookWorldPlaceCardDto'][];
-      /** @description Glossary of the world page (F08-13a): terms shown on the page — visible, read after the model text, with or without their own page; by first chapter, then key. Empty until terms are public (F08-13c). Same set for editors */
-      terms: components['schemas']['BookWorldTermCardDto'][];
+      /** @description Glossary of the world page (F08-13a, public since F08-13c): terms shown on the page — visible, read after the model text, with or without their own page; by first chapter, then key. Same set for editors */
+      terms: components['schemas']['BookWorldObjectCardDto'][];
     };
     BookWorldMapDto: {
       cols: number;
@@ -8096,6 +8100,17 @@ export interface components {
       first: number | null;
       /** @description Mentions per chapter, ascending by chapter */
       perChapter: components['schemas']['BookWorldChapterCountDto'][];
+    };
+    BookWorldObjectCardDto: {
+      /** @description First chapter: of the name forms for an object and a term, of the scenes for an event; null — not counted yet or no scene with a chapter */
+      chapter: number | null;
+      /** @description Has its own page /wiki/{key} (core, read, visible); otherwise a row without a link */
+      hasPage: boolean;
+      key: string;
+      /** @description Name of the object, the term or the event */
+      name: string;
+      /** @description Short (the definition of a term) */
+      short: string | null;
     };
     BookWorldPlaceCardDto: {
       /** @description The place has its own page /wiki/{key} (core, read, visible); otherwise a card without a link */
@@ -8162,17 +8177,6 @@ export interface components {
       paragraph?: number | null;
       text: string;
       title: string;
-    };
-    BookWorldTermCardDto: {
-      /** @description First chapter where the term is found; null — not counted yet */
-      chapter: number | null;
-      /** @description The term has its own page /wiki/{key} (core, read, visible); otherwise a row without a link */
-      hasPage: boolean;
-      key: string;
-      /** @description The term */
-      name: string;
-      /** @description Definition (short) */
-      short: string | null;
     };
     BookWorldWarningDto: {
       /** @enum {string} */

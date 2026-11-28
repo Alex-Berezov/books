@@ -25,6 +25,7 @@ import { WikidataClient } from '../src/modules/book-world/wikidata.client';
 import { WIKIDATA_EARTH } from '../src/modules/book-world/world-geo';
 import { OsmTileClient, solidPng } from '../src/modules/book-world/osm-tile.client';
 import { WorldMapService } from '../src/modules/book-world/world-map.service';
+import { WorldObjectsRelistService } from '../src/modules/book-world/world-objects-relist.service';
 import { STORAGE_SERVICE, type StorageService } from '../src/shared/storage/storage.interface';
 import { createBookFixture } from './helpers/book-fixture';
 import { createBookWithRights } from './helpers/book-with-rights';
@@ -288,6 +289,10 @@ describe('BookWorld e2e', () => {
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
     );
     await app.init();
+    // Разовый пересчёт предметов, понятий и событий при старте (F08-13c) идёт в фоне и читает
+    // рубильник `WORLD_OBJECTS` на каждой строке: дождаться его до первого теста, иначе тест,
+    // выключивший рубильник, снимет `isListed` у сущностей сида посреди прохода.
+    await app.get(WorldObjectsRelistService).onModuleDestroy();
 
     userAccess = await register(`user_world_${Date.now()}@example.com`);
     adminAccess = await register('admin@example.com');
@@ -622,8 +627,10 @@ describe('BookWorld e2e', () => {
       entities: [],
       alternates: [],
       places: [],
-      // F08-13a: глоссарий — пуст, пока рубильник новых типов выключен.
+      // F08-13c: карточки предметов, понятий и событий — у версии их нет.
+      objects: [],
       terms: [],
+      events: [],
       map: null,
     });
     const editor = await request(http())
@@ -2698,7 +2705,7 @@ describe('BookWorld e2e', () => {
 
   describe('F08-13a: предмет, понятие, событие (решения арбитра `F08 | F08-13` Q1, Q4, Q6)', () => {
     afterEach(() => {
-      WORLD_OBJECTS.public = false;
+      WORLD_OBJECTS.public = true;
     });
     const robe = (over: Body = {}): Body => ({
       key: 'robe',
@@ -2740,6 +2747,7 @@ describe('BookWorld e2e', () => {
       });
 
     it('импорт трёх типов: ядро по своему правилу, рубильник выключен — не на сайте, глоссарий пуст', async () => {
+      WORLD_OBJECTS.public = false;
       const { versionId } = await createVersion();
       await withAnalysis(versionId);
       await put(versionId, {
@@ -2763,9 +2771,32 @@ describe('BookWorld e2e', () => {
         await request(http()).get(`/versions/${versionId}/world/${key}`).expect(404);
       }
       const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
-      expect(list.body.terms).toEqual([]);
+      expect([list.body.objects, list.body.terms, list.body.events]).toEqual([[], [], []]);
       expect(list.body.entities.map((e: Body) => e.key)).not.toContain('robe');
       await expectListedConsistent(versionId);
+
+      // F08-13c (Q6): включённый рубильник и разовый пересчёт при старте выводят записанные при
+      // выключенном на сайт без повторной записи - на настоящей базе, с прежним `updatedAt`.
+      const before = new Map<string, Date>();
+      for (const key of ['robe', 'oblomovism', 'the-dream']) {
+        before.set(key, (await row(versionId, key)).updatedAt);
+      }
+      WORLD_OBJECTS.public = true;
+      const relisted = await app.get(WorldObjectsRelistService).relistAll();
+      expect(relisted.failed).toBe(0);
+      for (const key of ['robe', 'oblomovism', 'the-dream']) {
+        const saved = await row(versionId, key);
+        expect({ key, isListed: saved.isListed, updatedAt: saved.updatedAt }).toEqual({
+          key,
+          isListed: true,
+          updatedAt: before.get(key),
+        });
+        await request(http()).get(`/versions/${versionId}/world/${key}`).expect(200);
+      }
+      await expectListedConsistent(versionId);
+      // Повтор ничего не пишет у этой версии.
+      const again = await app.get(WorldObjectsRelistService).relistAll();
+      expect(again).toEqual({ written: 0, failed: 0 });
     });
 
     it('рубильник включён: страницы по ядру, глоссарий со строкой понятия, связи в ответе', async () => {
@@ -3007,6 +3038,60 @@ describe('BookWorld e2e', () => {
         entities: [{ key: 'aaa', type: 'term' }],
       }).expect(200);
       expect(saved.body.world.terms).toEqual(list.body.terms);
+    });
+
+    it('карточки предметов и событий через ручку (F08-13c Q2): со страницей и без, глава события — первая глава сцен, тот же набор в ответе PUT', async () => {
+      const { versionId } = await createVersion();
+      await put(versionId, {
+        language: 'en',
+        entities: [
+          robe({ characterKeys: [], themeKeys: [] }),
+          robe({
+            key: 'cane',
+            name: 'The cane',
+            short: 'A cane.',
+            characterKeys: [],
+            themeKeys: [],
+          }),
+          dream({
+            characterKeys: [],
+            scenes: [
+              { chapter: 3, title: 'Waking', text: 'He wakes.' },
+              { chapter: 2, title: 'The dream', text: 'Far from the city.' },
+            ],
+          }),
+          dream({ key: 'hidden-event', name: 'Hidden', characterKeys: [] }),
+        ],
+      }).expect(200);
+      await setMentions(versionId, 'robe', [2]);
+      await put(versionId, { language: 'en', entities: [{ key: 'robe', type: 'object' }] }).expect(
+        200,
+      );
+      for (const key of ['robe', 'cane', 'the-dream', 'hidden-event']) {
+        await readLatest(versionId, key);
+      }
+      await flags(versionId, 'hidden-event', { isVisible: false }).expect(200);
+      const list = await request(http()).get(`/versions/${versionId}/world`).expect(200);
+      expect(list.body.objects).toEqual([
+        { key: 'robe', name: 'The robe', short: 'An oriental robe.', chapter: 2, hasPage: true },
+        // Без глав присутствия ядра нет — строка без страницы, в конце.
+        { key: 'cane', name: 'The cane', short: 'A cane.', chapter: null, hasPage: false },
+      ]);
+      expect(list.body.events).toEqual([
+        {
+          key: 'the-dream',
+          name: 'The dream',
+          short: 'He dreams of his childhood.',
+          chapter: 2,
+          hasPage: true,
+        },
+      ]);
+      const saved = await put(versionId, {
+        language: 'en',
+        entities: [{ key: 'cane', type: 'object' }],
+      }).expect(200);
+      expect(saved.body.world.objects).toEqual(list.body.objects);
+      expect(saved.body.world.events).toEqual(list.body.events);
     });
   });
 });

@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { Prisma, WorldEntityType } from '@prisma/client';
+import { isFilled } from '../book-analysis/book-analysis-core';
 import { compactBlock } from '../../shared/prisma/compact-block.util';
 import { jsonField } from '../../shared/prisma/json-field.util';
 import { isRecord } from '../../shared/prisma/json-record.util';
 import { stableJson } from '../../shared/json/stable-json';
-import { mentionChapters, mentionStale } from './world-core';
+import { eventSceneChapters, mentionChapters, mentionStale } from './world-core';
 import { stalePaths, worldCompareKey, worldItemKey } from './world-quote-check';
 import { publicMentionForms, type WorldChapterExclusion } from './world-mentions';
 import { currentGeo, geoInputOf, publicPoint, readGeo, type WorldGeoSubject } from './world-geo';
@@ -32,7 +33,7 @@ import type {
   BookWorldListEntityDto,
   BookWorldMentionsDto,
   BookWorldPlaceCardDto,
-  BookWorldTermCardDto,
+  BookWorldObjectCardDto,
 } from './dto/book-world-response.dto';
 
 /**
@@ -341,10 +342,11 @@ export type WorldPlaceCardRow = Prisma.BookWorldEntityGetPayload<{
 }>;
 
 /**
- * Что нужно строке глоссария (`F08-13a`, решения арбитра `F08 | F08-13` Q6, Q7): условию показа
- * (`worldCardShown`) и строке «термин — определение — глава». Наружу — только `toTermCard`.
+ * Что нужно карточке предмета, понятия и события на общей странице (`F08-13a`; решения арбитра
+ * `F08 | F08-13` Q6, Q7 и `F08 | F08-13c` Q2): условию показа (`worldCardShown`) и строке
+ * «имя — Коротко — глава». Наружу — только `toObjectCard`.
  */
-export const WORLD_TERM_CARD_SELECT = {
+export const WORLD_OBJECT_CARD_SELECT = {
   key: true,
   type: true,
   name: true,
@@ -355,19 +357,49 @@ export const WORLD_TERM_CARD_SELECT = {
   readAt: true,
   autoTextAt: true,
 } as const satisfies Prisma.BookWorldEntitySelect;
-export type WorldTermCardRow = Prisma.BookWorldEntityGetPayload<{
-  select: typeof WORLD_TERM_CARD_SELECT;
+export type WorldObjectCardRow = Prisma.BookWorldEntityGetPayload<{
+  select: typeof WORLD_OBJECT_CARD_SELECT;
 }>;
 
-/** Строка глоссария белым списком: термин, определение («Коротко»), первая глава, своя страница. */
-export function toTermCard(row: WorldTermCardRow): BookWorldTermCardDto {
+/**
+ * Карточке события ещё нужны сцены (решение арбитра `F08 | F08-13c` Q2, Q6): её глава — первая глава
+ * сцен, которые видит читатель, а не первое упоминание формы.
+ */
+export const WORLD_EVENT_CARD_SELECT = {
+  ...WORLD_OBJECT_CARD_SELECT,
+  blocks: true,
+  mentions: true,
+} as const satisfies Prisma.BookWorldEntitySelect;
+export type WorldEventCardRow = Prisma.BookWorldEntityGetPayload<{
+  select: typeof WORLD_EVENT_CARD_SELECT;
+}>;
+
+/**
+ * Карточка белым списком: имя, «Коротко», глава, своя страница. Глава предмета и понятия — первое
+ * упоминание формы; события — первая глава сцен без пунктов `mentions.stale` (Q2), сцен нет — null.
+ */
+export function toObjectCard(row: WorldObjectCardRow | WorldEventCardRow): BookWorldObjectCardDto {
   return {
     key: row.key,
     name: row.name,
     short: row.short,
-    chapter: row.mentionFirst,
+    chapter: 'blocks' in row ? firstSceneChapter(row) : row.mentionFirst,
     hasPage: row.isListed,
   };
+}
+
+/**
+ * Первая глава сцен события для карточки (решение арбитра `F08 | F08-13c` круг 3): только сцены-объекты
+ * с текстом — тем же условием, что ядро (`computeObjectCore`); мусор в колонке (`null`, не объект)
+ * отбрасывается до `freshScenes`, а не роняет список `/wiki` в 500.
+ */
+function firstSceneChapter(row: WorldEventCardRow): number | null {
+  const stored = readStoredBlocks(row.blocks).scenes;
+  const filled = Array.isArray(stored)
+    ? stored.filter((scene: unknown) => isRecord(scene) && isFilled(scene.text))
+    : null;
+  const scenes = freshScenes(withoutParagraph(filled), row.mentions);
+  return eventSceneChapters(scenes)[0] ?? null;
 }
 
 /**

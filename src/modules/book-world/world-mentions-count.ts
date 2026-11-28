@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
-import { isRecord } from '../../shared/prisma/json-record.util';
 import { htmlToParagraphs } from '../translation/content-draft/content-draft.text';
 import { coPresenceWith, type StoredWorldEntity } from './book-world-data';
+import { eventSceneChapters } from './world-core';
 import { pairMembers } from './world-refs';
 import { WorldMentionCounter, type WorldMentionSource, type WorldMentions } from './world-mentions';
 import {
@@ -118,20 +118,6 @@ export function eventMentions(
   const fromScenes = eventSceneChapters(e.scenes).filter(inVersion);
   const chapters = [...new Set([...own.chapters, ...fromScenes])].sort((a, b) => a - b);
   return { ...own, chapters, first: chapters[0] ?? null };
-}
-
-/**
- * Главы сцен события — вход его глав (`eventMentions`) и условие пересчёта при записи (решение
- * `F08 | F08-13a` R3): целые номера без повторов по возрастанию. Колонка читается как есть: не массив
- * или не номер — не глава.
- */
-export function eventSceneChapters(scenes: unknown): number[] {
-  if (!Array.isArray(scenes)) return [];
-  const chapters = scenes.flatMap((s: unknown) => {
-    const n = isRecord(s) ? s.chapter : undefined;
-    return typeof n === 'number' && Number.isInteger(n) ? [n] : [];
-  });
-  return [...new Set(chapters)].sort((a, b) => a - b);
 }
 
 /**

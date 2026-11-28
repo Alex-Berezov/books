@@ -8825,6 +8825,13 @@
             },
             "type": "array"
           },
+          "events": {
+            "description": "Events shown on the world page (F08-13c): visible, read after the model text, with or without their own page; by first chapter of the scenes, then key; no scenes in the card. Same set for editors",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldObjectCardDto"
+            },
+            "type": "array"
+          },
           "language": {
             "description": "Language of the version",
             "enum": [
@@ -8846,6 +8853,13 @@
             "nullable": true,
             "type": "object"
           },
+          "objects": {
+            "description": "Objects shown on the world page (F08-13c): visible, read after the model text, with or without their own page; by first chapter, then key. Same set for editors",
+            "items": {
+              "$ref": "#/components/schemas/BookWorldObjectCardDto"
+            },
+            "type": "array"
+          },
           "places": {
             "description": "Places shown on the world page (F08-12a, public since F08-12c): visible, read after the model text; with or without their own page. Same set for editors",
             "items": {
@@ -8854,9 +8868,9 @@
             "type": "array"
           },
           "terms": {
-            "description": "Glossary of the world page (F08-13a): terms shown on the page — visible, read after the model text, with or without their own page; by first chapter, then key. Empty until terms are public (F08-13c). Same set for editors",
+            "description": "Glossary of the world page (F08-13a, public since F08-13c): terms shown on the page — visible, read after the model text, with or without their own page; by first chapter, then key. Same set for editors",
             "items": {
-              "$ref": "#/components/schemas/BookWorldTermCardDto"
+              "$ref": "#/components/schemas/BookWorldObjectCardDto"
             },
             "type": "array"
           }
@@ -8866,7 +8880,9 @@
           "alternates",
           "entities",
           "places",
+          "objects",
           "terms",
+          "events",
           "map"
         ],
         "type": "object"
@@ -8995,6 +9011,40 @@
           "first",
           "perChapter",
           "coPresence"
+        ],
+        "type": "object"
+      },
+      "BookWorldObjectCardDto": {
+        "properties": {
+          "chapter": {
+            "description": "First chapter: of the name forms for an object and a term, of the scenes for an event; null — not counted yet or no scene with a chapter",
+            "minimum": 1,
+            "nullable": true,
+            "type": "number"
+          },
+          "hasPage": {
+            "description": "Has its own page /wiki/{key} (core, read, visible); otherwise a row without a link",
+            "type": "boolean"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "description": "Name of the object, the term or the event",
+            "type": "string"
+          },
+          "short": {
+            "description": "Short (the definition of a term)",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "key",
+          "name",
+          "short",
+          "chapter",
+          "hasPage"
         ],
         "type": "object"
       },
@@ -9251,40 +9301,6 @@
           "chapter",
           "title",
           "text"
-        ],
-        "type": "object"
-      },
-      "BookWorldTermCardDto": {
-        "properties": {
-          "chapter": {
-            "description": "First chapter where the term is found; null — not counted yet",
-            "minimum": 1,
-            "nullable": true,
-            "type": "number"
-          },
-          "hasPage": {
-            "description": "The term has its own page /wiki/{key} (core, read, visible); otherwise a row without a link",
-            "type": "boolean"
-          },
-          "key": {
-            "type": "string"
-          },
-          "name": {
-            "description": "The term",
-            "type": "string"
-          },
-          "short": {
-            "description": "Definition (short)",
-            "nullable": true,
-            "type": "string"
-          }
-        },
-        "required": [
-          "key",
-          "name",
-          "short",
-          "chapter",
-          "hasPage"
         ],
         "type": "object"
       },

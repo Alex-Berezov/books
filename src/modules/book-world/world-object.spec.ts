@@ -1,6 +1,6 @@
 import { plainToInstance } from 'class-transformer';
 import { validate } from 'class-validator';
-import type { StoredWorldEntity } from './book-world-data';
+import type { StoredWorldEntity, WorldEventCardRow } from './book-world-data';
 import { BOOK_WORLD_LIMITS } from './dto/book-world-blocks.dto';
 import { BookWorldEntityInputDto } from './dto/update-book-world.dto';
 import {
@@ -10,10 +10,10 @@ import {
   WORLD_OBJECT_BLOCK_KEYS,
   WORLD_TERM_BLOCK_KEYS,
   toEntityDto,
-  toTermCard,
+  toObjectCard,
 } from './book-world-data';
-import { computeWorldCore, WORLD_EVENT_CORE } from './world-core';
-import { eventMentions, eventSceneChapters } from './world-mentions-count';
+import { computeWorldCore, eventSceneChapters, WORLD_EVENT_CORE } from './world-core';
+import { eventMentions } from './world-mentions-count';
 import { computeWorldListed, WORLD_OBJECTS, WORLD_PLACES, worldCardShown } from './world-public';
 import { worldItemKey } from './world-quote-check';
 import {
@@ -22,7 +22,7 @@ import {
   checkWorldTypeFields,
   entitiesReferring,
 } from './world-refs';
-import { byFirstChapter } from './world-term-cards';
+import { byFirstChapter } from './world-object-cards';
 
 /**
  * Предмет, понятие и событие (`F08-13a`, решения арбитра `F08 | F08-13` Q1, Q4, Q6, Q7): явные
@@ -332,7 +332,7 @@ describe('рубильник WORLD_OBJECTS (F08-13a, Q6)', () => {
     mentions: counted,
   };
   afterEach(() => {
-    WORLD_OBJECTS.public = false;
+    WORLD_OBJECTS.public = true;
     WORLD_PLACES.public = true;
   });
 
@@ -343,8 +343,12 @@ describe('рубильник WORLD_OBJECTS (F08-13a, Q6)', () => {
     }
   });
 
-  it('выключен по умолчанию: ни предмет, ни понятие, ни событие не на сайте', () => {
-    expect(WORLD_OBJECTS.public).toBe(false);
+  it('включён по умолчанию с F08-13c (Q6)', () => {
+    expect(WORLD_OBJECTS.public).toBe(true);
+  });
+
+  it('выключенный: ни предмет, ни понятие, ни событие не на сайте', () => {
+    WORLD_OBJECTS.public = false;
     for (const type of ['object', 'term', 'event']) {
       expect(computeWorldListed({ ...listed, type })).toBe(false);
     }
@@ -361,23 +365,96 @@ describe('рубильник WORLD_OBJECTS (F08-13a, Q6)', () => {
     }
   });
 
-  it('строка глоссария — только понятие, под своим рубильником, «показывать» и «прочитано»', () => {
-    const card = { type: 'term', isVisible: true, readAt: null, autoTextAt: null };
-    expect(worldCardShown(card)).toBe(false);
-    WORLD_OBJECTS.public = true;
-    WORLD_PLACES.public = false;
-    expect(worldCardShown(card)).toBe(true);
-    expect(worldCardShown({ ...card, isVisible: false })).toBe(false);
-    expect(worldCardShown({ ...card, autoTextAt: new Date(2), readAt: new Date(1) })).toBe(false);
-    expect(worldCardShown({ ...card, type: 'object' })).toBe(false);
-    expect(worldCardShown({ ...card, type: 'place' })).toBe(false);
+  it('карточка предмета, понятия и события — под своим рубильником, «показывать» и «прочитано» (F08-13c Q2)', () => {
+    for (const type of ['object', 'term', 'event']) {
+      const card = { type, isVisible: true, readAt: null, autoTextAt: null };
+      WORLD_OBJECTS.public = false;
+      expect(worldCardShown(card)).toBe(false);
+      WORLD_OBJECTS.public = true;
+      WORLD_PLACES.public = false;
+      expect(worldCardShown(card)).toBe(true);
+      expect(worldCardShown({ ...card, isVisible: false })).toBe(false);
+      expect(worldCardShown({ ...card, autoTextAt: new Date(2), readAt: new Date(1) })).toBe(false);
+    }
+    expect(worldCardShown({ type: 'place', isVisible: true, readAt: null, autoTextAt: null })).toBe(
+      false,
+    );
+    expect(
+      worldCardShown({ type: 'character', isVisible: true, readAt: null, autoTextAt: null }),
+    ).toBe(false);
   });
 });
 
-describe('глоссарий (F08-13a, Q7)', () => {
+describe('карточки общей страницы (F08-13a Q7, F08-13c Q2)', () => {
+  const eventRow = (scenes: unknown, mentions: unknown = null): WorldEventCardRow =>
+    ({
+      key: 'duel',
+      type: 'event',
+      name: 'The duel',
+      short: 'Two men meet at dawn.',
+      mentionFirst: 1,
+      isListed: true,
+      isVisible: true,
+      readAt: null,
+      autoTextAt: null,
+      blocks: { scenes },
+      mentions,
+    }) as unknown as WorldEventCardRow;
+
+  it('событие: глава — первая глава сцен, а не первое упоминание формы; сцен в карточке нет', () => {
+    expect(
+      toObjectCard(
+        eventRow([
+          { title: 'Dawn', text: 'They meet.', chapter: 7 },
+          { title: 'Shot', text: 'One falls.', chapter: 5 },
+        ]),
+      ),
+    ).toEqual({
+      key: 'duel',
+      name: 'The duel',
+      short: 'Two men meet at dawn.',
+      chapter: 5,
+      hasPage: true,
+    });
+  });
+
+  it('событие без сцен с главой — глава null; устаревшая сцена не считается', () => {
+    expect(toObjectCard(eventRow(null)).chapter).toBeNull();
+    expect(toObjectCard(eventRow([{ title: 'x', text: 'y', chapter: null }])).chapter).toBeNull();
+    const stale = {
+      stale: [worldItemKey('scenes', { title: 'Shot', text: 'One falls.', chapter: 5 })],
+    };
+    expect(
+      toObjectCard(
+        eventRow(
+          [
+            { title: 'Dawn', text: 'They meet.', chapter: 7 },
+            { title: 'Shot', text: 'One falls.', chapter: 5 },
+          ],
+          stale,
+        ),
+      ).chapter,
+    ).toBe(7);
+  });
+
+  it('событие: мусор в сценах (null, не объект) не роняет карточку, сцена без текста главы не даёт', () => {
+    expect(
+      toObjectCard(eventRow([null, 'x', { title: 'Shot', text: 'One falls.', chapter: 5 }]))
+        .chapter,
+    ).toBe(5);
+    expect(
+      toObjectCard(
+        eventRow([
+          { title: 'Empty', text: '', chapter: 2 },
+          { title: 'Shot', text: 'One falls.', chapter: 5 },
+        ]),
+      ).chapter,
+    ).toBe(5);
+  });
+
   it('строка белым списком: термин, определение, первая глава, своя страница', () => {
     expect(
-      toTermCard({
+      toObjectCard({
         key: 'oblomovism',
         type: 'term',
         name: 'Oblomovism',

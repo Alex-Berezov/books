@@ -284,31 +284,34 @@ export class BookWorldPlaceCardDto {
 }
 
 /**
- * Строка глоссария общей страницы `/wiki` (`F08-13a`, `product.md` §7): понятие, и без своей
- * страницы — строкой без адреса; «термин — определение — глава».
+ * Карточка предмета, понятия или события общей страницы `/wiki` (`F08-13a`; `product.md` §2, §7;
+ * решение арбитра `F08 | F08-13c` Q2): и без своей страницы — строкой без адреса; у понятия —
+ * строка глоссария «термин — определение — глава».
  */
-export class BookWorldTermCardDto {
+export class BookWorldObjectCardDto {
   @ApiProperty({ type: String })
   key!: string;
 
-  @ApiProperty({ type: String, description: 'The term' })
+  @ApiProperty({ type: String, description: 'Name of the object, the term or the event' })
   name!: string;
 
-  @ApiProperty({ type: String, nullable: true, description: 'Definition (short)' })
+  @ApiProperty({ type: String, nullable: true, description: 'Short (the definition of a term)' })
   short!: string | null;
 
   @ApiProperty({
     type: Number,
     nullable: true,
     minimum: 1,
-    description: 'First chapter where the term is found; null — not counted yet',
+    description:
+      'First chapter: of the name forms for an object and a term, of the scenes for an event; ' +
+      'null — not counted yet or no scene with a chapter',
   })
   chapter!: number | null;
 
   @ApiProperty({
     type: Boolean,
     description:
-      'The term has its own page /wiki/{key} (core, read, visible); otherwise a row without a link',
+      'Has its own page /wiki/{key} (core, read, visible); otherwise a row without a link',
   })
   hasPage!: boolean;
 }
@@ -390,13 +393,30 @@ export class BookWorldListResponseDto {
   places!: BookWorldPlaceCardDto[];
 
   @ApiProperty({
-    type: [BookWorldTermCardDto],
+    type: [BookWorldObjectCardDto],
     description:
-      'Glossary of the world page (F08-13a): terms shown on the page — visible, read after the model ' +
-      'text, with or without their own page; by first chapter, then key. Empty until terms are public ' +
-      '(F08-13c). Same set for editors',
+      'Objects shown on the world page (F08-13c): visible, read after the model text, with or ' +
+      'without their own page; by first chapter, then key. Same set for editors',
   })
-  terms!: BookWorldTermCardDto[];
+  objects!: BookWorldObjectCardDto[];
+
+  @ApiProperty({
+    type: [BookWorldObjectCardDto],
+    description:
+      'Glossary of the world page (F08-13a, public since F08-13c): terms shown on the page — visible, ' +
+      'read after the model text, with or without their own page; by first chapter, then key. Same ' +
+      'set for editors',
+  })
+  terms!: BookWorldObjectCardDto[];
+
+  @ApiProperty({
+    type: [BookWorldObjectCardDto],
+    description:
+      'Events shown on the world page (F08-13c): visible, read after the model text, with or without ' +
+      'their own page; by first chapter of the scenes, then key; no scenes in the card. Same set for ' +
+      'editors',
+  })
+  events!: BookWorldObjectCardDto[];
 
   @ApiProperty({
     type: BookWorldMapDto,

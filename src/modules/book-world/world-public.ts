@@ -1,6 +1,10 @@
 import { Prisma, PublicationStatus } from '@prisma/client';
 import { stableJson } from '../../shared/json/stable-json';
-import { BOOK_WORLD_LIMITS, isWorldObjectType } from './dto/book-world-blocks.dto';
+import {
+  BOOK_WORLD_LIMITS,
+  isWorldObjectType,
+  WORLD_OBJECT_TYPES,
+} from './dto/book-world-blocks.dto';
 import { mentionChapters } from './world-core';
 import { pairMembers } from './world-refs';
 
@@ -33,12 +37,12 @@ export const WORLD_PLACES = { public: true };
 
 /**
  * Рубильник публичности предмета, понятия и события (`F08-13a`, решение арбитра `F08 | F08-13` Q6):
- * один на три типа. Выключенный, он держит их вне сайта — списка, глоссария `/wiki`, карты сайта
- * и hreflang, — пока их страниц нет на фронте (старый фронт рисует любой новый тип шаблоном героя).
- * Включается тегом бэкенда в `F08-13c` после фронта, с разовым пересчётом `isListed`.
- * Объект, а не константа: e2e проверяют оба положения в одном процессе.
+ * один на три типа. Выключенный, он держит их вне сайта — списка, карточек и глоссария `/wiki`,
+ * карты сайта и hreflang. Включён тегом бэкенда в `F08-13c` после страниц на фронте; записанные при
+ * выключенном выводит на сайт разовый пересчёт при старте (`WorldObjectsRelistService`, Q6, снять
+ * следующей пачкой). Объект, а не константа: e2e проверяют оба положения в одном процессе.
  */
-export const WORLD_OBJECTS = { public: false };
+export const WORLD_OBJECTS = { public: true };
 
 export interface WorldListedInput {
   /** Тип сущности; нет — герой. */
@@ -97,10 +101,11 @@ function readAfterAutoText(e: { readAt: Date | null; autoTextAt: Date | null }):
 /**
  * Карточка без своей страницы на общей странице `/wiki`: место (решение арбитра `F08 | F08-12` Q4)
  * текстовым списком и точкой на карте, понятие (`F08-13a`, решение `F08 | F08-13` Q6) строкой
- * глоссария (`product.md` §2, §7: без адреса). Условие: рубильник типа, «показывать», «прочитано»
+ * глоссария, предмет и событие (решение `F08 | F08-13c` Q2) карточкой списка (`product.md` §2, §7:
+ * без адреса). Условие: рубильник типа, «показывать», «прочитано»
  * не раньше текста модели; ядро не нужно — оно даёт только страницу (`isListed`). Опубликованность
  * версии — условие самой ручки (404 на черновик не редактору). Единственная копия: списки читателя
- * (`worldPlaceCards`, `worldTermCards`) другой не держат. Карточка не даёт адреса, не идёт в карту
+ * (`worldPlaceCards`, `worldObjectCards`) другой не держат. Карточка не даёт адреса, не идёт в карту
  * сайта и hreflang. Другие типы — `false`.
  */
 export function worldCardShown(e: {
@@ -110,7 +115,8 @@ export function worldCardShown(e: {
   autoTextAt: Date | null;
 }): boolean {
   const switchedOn =
-    (e.type === 'place' && WORLD_PLACES.public) || (e.type === 'term' && WORLD_OBJECTS.public);
+    (e.type === 'place' && WORLD_PLACES.public) ||
+    (isWorldObjectType(e.type) && WORLD_OBJECTS.public);
   return switchedOn && e.isVisible && readAfterAutoText(e);
 }
 
@@ -241,7 +247,8 @@ export function worldMembersReader(
 }
 
 /**
- * Поля пересчёта `isListed` пар (`relistWorldPairs`): вход `worldListedWrite` и прежний `updatedAt`.
+ * Поля пересчёта `isListed` (`relistWorldPairs`, `relistWorldObjects`): вход `worldListedWrite`
+ * и прежний `updatedAt`.
  * Одна копия: новое поле `WorldListedInput` добавляется сюда.
  */
 const WORLD_RELIST_SELECT = {
@@ -286,6 +293,36 @@ export async function relistWorldPairs(
     await tx.bookWorldEntity.update({
       where: { bookVersionId_key: { bookVersionId, key: pair.key } },
       data: { ...listed, updatedAt: pair.updatedAt },
+    });
+    written++;
+  }
+  return written;
+}
+
+/**
+ * Предметы, понятия и события версии (разовый пересчёт `F08-13c`, решение арбитра `F08 | F08-13` Q6,
+ * по образцу мест `F08 | F08-12a` R4): `isListed` тем же `worldListedWrite`. Пишутся только строки,
+ * у которых он или первая отметка публикации изменились, с прежним `updatedAt`. Число записанных.
+ */
+export async function relistWorldObjects(
+  tx: Pick<Prisma.TransactionClient, 'bookWorldEntity'>,
+  bookVersionId: string,
+  version: { status: PublicationStatus },
+  now: Date,
+): Promise<number> {
+  const rows = await tx.bookWorldEntity.findMany({
+    where: { bookVersionId, type: { in: [...WORLD_OBJECT_TYPES] } },
+    select: WORLD_RELIST_SELECT,
+    orderBy: { key: 'asc' },
+    take: BOOK_WORLD_LIMITS.entities,
+  });
+  let written = 0;
+  for (const row of rows) {
+    const listed = worldListedWrite(row, version, now);
+    if (row.isListed === listed.isListed && listed.firstPublishedAt === undefined) continue;
+    await tx.bookWorldEntity.update({
+      where: { bookVersionId_key: { bookVersionId, key: row.key } },
+      data: { ...listed, updatedAt: row.updatedAt },
     });
     written++;
   }
